@@ -1,0 +1,49 @@
+name: Deploy website to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Build static site configuration
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          cp -R app _site
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          base = os.environ.get("API_BASE_URL", "").rstrip("/")
+          Path("_site/config.js").write_text("window.EM_CONFIG=" + json.dumps({"apiBase": base}) + ";\n")
+          PY
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v5
