@@ -61,6 +61,13 @@ inputs. Never change stored hashes to bypass validation. The recovered equations
 remain at their researched version; current data is not proof of current-game
 numerical accuracy.
 
+The user-approved removal of 36 unsupported fixed-wing records is maintained in
+`references/aircraft-exclusions.json`. The unified local catalog, worker snapshots
+and generated website metadata omit those IDs. Refreshing upstream data preserves
+the exclusions. Raw source FMs remain synchronized because retained vehicle aliases
+may share them. This is an explicit list, not an automatic deletion of any aircraft
+that becomes temporarily unsupported after an update.
+
 For one vehicle with an exact installed collision resource, the transactional
 producer is `python scripts/refresh_prop_assets.py VEHICLE --game GAME_DIRECTORY`.
 It reruns the pinned native loaders and checks mass at four fuel selections

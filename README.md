@@ -14,6 +14,10 @@ The [latest continuation](research/WINDOWS_BALANCED_TURN_CONTINUATION.md)
 adds current-data Windows predictor comparisons and conditional full-pitch
 balance checks. A validated maximum boundary is still under investigation.
 
+The [Windows moving-controller checks](research/WINDOWS_MOVING_CONTROLLER.md)
+cover native trim advancement and owner restoration. The 36 user-approved
+unsupported fixed-wing entries are excluded from the catalog across refreshes.
+
 - **Windows:** follow [WINDOWS.md](WINDOWS.md), then run `Launch EM Plotter.cmd`
   or `Launch Altitude Plotter.cmd`.
 - **macOS:** the existing `.command` launchers remain available. For a fresh

@@ -1,10 +1,13 @@
 """Unified jet and fixed-wing propeller catalog; each family retains its loader."""
 from functools import lru_cache
 from collections.abc import Mapping
+import json
+from pathlib import Path
 import jet_catalog
 import prop_catalog
 REFERENCE=jet_catalog.REFERENCE
 _worker_snapshot=None
+EXCLUSIONS=Path(__file__).resolve().parents[1]/'references/aircraft-exclusions.json'
 
 
 class LazyCatalog(Mapping):
@@ -29,6 +32,10 @@ def catalog():
     if _worker_snapshot is not None:return _worker_snapshot
     result={k:dict(v,propulsion='jet') for k,v in jet_catalog.catalog().items()}
     result.update(prop_catalog.catalog())
+    # Explicit user removals survive upstream refreshes. Do not remove a
+    # shared source FM or silently discard newly unsupported aircraft.
+    excluded=json.loads(EXCLUSIONS.read_text(encoding='utf-8'))['aircraft']
+    for name in excluded:result.pop(name,None)
     from aircraft_upgrades import profile
     for name, row in result.items():
         try:
@@ -59,5 +66,5 @@ def asset_sources():
     from vehicle_names import SOURCE
     return (sorted((root/'references/prop-propulsion').glob('*.json'))+
             sorted((root/'references/prop-mass').glob('*.json'))+source_paths()+
-            [SOURCE,root/'app/fonts/wt-symbols.ttf',root/'references/prop-native-config.json',
+            [EXCLUSIONS,SOURCE,root/'app/fonts/wt-symbols.ttf',root/'references/prop-native-config.json',
              root/'references/body-gameplay.blkx',root/'references/body-gameparams.blkx'])

@@ -24,6 +24,7 @@
 !references/body-gameplay.blkx
 !references/body-flightmodels-config.blkx
 !references/prop-native-config.json
+!references/aircraft-exclusions.json
 !references/data-version.json
 !references/data-sync-config.json
 **/__pycache__/

@@ -14,7 +14,8 @@ import struct
 from em_solver import TrimSolver, settings, command_allocation
 from component_assembly import f32
 from instructor_chart_inputs import source_state
-from instructor_keyboard import fixed_source, keyboard_step
+from instructor_keyboard import keyboard_step
+from windows_instructor_source import fixed_source
 from instructor_protection import predicted_wing_angles
 from instructor_settings import trim_retained
 from primary_controls import steady_commands
@@ -69,7 +70,7 @@ class BalancedProbe:
             dt_samples=[dt]*5,dt_index=0,dt_sum=f32(dt*5))
         before = copy.deepcopy(history)
         backend = lambda kind, packed, model, source, old: n.predict(packed,old)
-        result = keyboard_step(solver.model,state,history,dt,predictor_backend=backend)
+        result = keyboard_step(solver.model,state,history,dt,predictor_cache={'fixed_source':fixed},predictor_backend=backend)
         assert history==before
         endpoints = steady_commands(controls,result['commands'],result['trim_actual'],fixed['ranges'])
         endpoint = endpoints[1]

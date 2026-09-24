@@ -128,7 +128,13 @@ $env:PYTHONUTF8 = '1'
 & '.\.venv\Scripts\python.exe' scripts/probe_windows_balanced_turn.py --binary 'D:\New folder\Games\War Thunder\win64\aces.exe'
 ```
 
-Next required work is the Windows moving prediction/owner trim path and a
+The later [moving-controller continuation](WINDOWS_MOVING_CONTROLLER.md) executes
+the Windows moving prediction and final owner trim restore in prepared fixtures.
+It also corrects Windows-specific polar rounding in this conditional-root driver;
+the two reported J6K1 roots are unchanged on rerun. The driver still holds actual
+entry trim and does not replay a complete moving owner trajectory.
+
+Next required work is the complete Windows owner/physics initialization path and a
 justified projection onto maximum balanced flight under fixed configuration.
 It must preserve retained state across prediction restores, exclude unresolved
 physical solves, and handle disconnected permission regions. Requiring all

@@ -2,6 +2,17 @@
 
 ## Windows continuation
 
+Newest: [Windows moving-controller checks](research/WINDOWS_MOVING_CONTROLLER.md).
+The 36 user-approved unsupported fixed-wing entries have been removed through
+an explicit persistent catalog exclusion list; all 1,312 supported entries remain.
+Windows controller execution now includes moving prediction, native actuator
+trim, authored flap lookup tables and explicit scratch allocation. The Windows
+wing-polar high-side parabola uses a different float32 expression grouping from
+the Mac constructor; `windows_instructor_source.py` supplies that reviewed order
+to Windows research drivers. Read the validation scope before promoting results.
+The maximum boundary remains unresolved; fixed configuration does not grant
+arbitrary entry trim, stationary histories or a connected one-g starting state.
+
 Latest: [fixed-configuration Windows continuation](research/WINDOWS_BALANCED_TURN_CONTINUATION.md)
 records data 2.59.0.34, the complete Windows reduced predictor comparison,
 regenerated SB-25J assets and conditional full-pitch roots. The user requires
