@@ -2,9 +2,9 @@
   "aircraft": "sb_25j_netherlands",
   "resource": "sb_25j_netherlands_collision",
   "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
-  "fm_sha256": "b1b9a37e5e01d4992714164a3c0b419891faf7077b59af50dec4722fd9b3c141",
+  "fm_sha256": "c4e4e5ae36b2ceaefe1fd99da4363a8150d60d114f50c7887b3eb65933ca2046",
   "collision_provenance": {
-    "grp_path": "/Applications/WarThunderLauncher.app/Contents/WarThunder.app/Contents/Resources/game/content/base/res/aircrafts/usa_aircraft_logic.grp",
+    "grp_path": "D:\\New folder\\Games\\War Thunder\\content\\base\\res\\aircrafts\\usa_aircraft_logic.grp",
     "grp_sha256": "1a69ecec67c04fbb7cb6dbd54614b7688b50f5200820526e08a1e6d0d59739b7",
     "grp_size": 12848131,
     "resource": "sb_25j_netherlands_collision",
@@ -16,16 +16,17 @@
     "stream_sha256": "dcd05083aec818c833c668d7001c840bbbebc6b13ebb3c4f3cc5a29741041ada",
     "stream_size": 84485,
     "format": "0xace50003",
-    "fm_commit": "28e93b1b1f7f0ec30644bfbd25c7f82673106012",
-    "version_boundary": "Installed asset hashes are pinned independently; no unverified assertion that installed assets equal datamine patch 2.59.0.13.",
-    "grp_format_source": "https://raw.githubusercontent.com/GaijinEntertainment/DagorEngine/75723669297e48e200a0dc67b18c1629e0975daf/prog/engine/gameRes/grpData.h"
+    "fm_commit": "2e2b2e050d80802a64dc1e155d16e088cf2cf122",
+    "version_boundary": "Installed geometry and FM data are independently pinned; version equivalence is not assumed.",
+    "grp_format_source": "https://raw.githubusercontent.com/GaijinEntertainment/DagorEngine/75723669297e48e200a0dc67b18c1629e0975daf/prog/engine/gameRes/grpData.h",
+    "fm_version": "2.59.0.34"
   },
   "vehicle_mapping": {
     "aircraft": "sb_25j_netherlands",
     "vehicles": [
       {
         "vehicle": "sb_25j_netherlands",
-        "sha": "94803f3ed51c73c884dd5936df73ff432ca70c34",
+        "sha": "749a25baf3183b887ef5f1559eb5b9800cc94d1b",
         "fm": "fm/sb_25j_netherlands.blk",
         "model": "sb_25j_netherlands"
       }
@@ -60,9 +61,9 @@
     }
   },
   "tank_capacities": [
-    200.0,
-    214.0,
     913.0,
+    214.0,
+    200.0,
     913.0,
     214.0,
     200.0
@@ -70,7 +71,7 @@
   "tanks": [
     {
       "index": 0,
-      "capacity": 200.0,
+      "capacity": 913.0,
       "system": 0,
       "priority": 0,
       "external": false
@@ -84,7 +85,7 @@
     },
     {
       "index": 2,
-      "capacity": 913.0,
+      "capacity": 200.0,
       "system": 0,
       "priority": 1,
       "external": false
@@ -1585,5 +1586,5 @@
   ],
   "damage_records": [],
   "consumer_checks": 4,
-  "scope": "Original collision decoder, complete mass-property loader and geometry producer; independent native-priority fuel allocation and intact mass consumer. Four initial internal fuel selections. Default authored intact pose. No weapon ammunition or payload. Installed geometry and FM patch pins remain separate."
+  "scope": "Current FM and exact installed collision resource; native producer and independent intact mass consumer at four fuel selections. Geometry and executable pins are separate from FM version; no ammunition or payload."
 }

@@ -62,7 +62,7 @@ def extract_state(n,model,raw_flaps):
         command_cache_enabled=bool(n.u.mem_read(INPUT+0x29,1)[0]),recovery_enabled=bool(n.u.mem_read(0x107d6fbb8,1)[0]),recovery_suppressed=bool(n.u.mem_read(INPUT+9,1)[0]))
 
 
-def main(names=None):
+def main(names=None,report_path=None):
     n=InstructorNative();rng=random.Random(260921);failures=[];counts={'updates':0,'failures':0,'active_recovery':0,'autotrim_success':0,'autotrim_failure':0}
     for name,item in catalog().items():
         if not item['supported'] or names and name not in names:continue
@@ -91,7 +91,9 @@ def main(names=None):
         if counts['updates']%100==0:print(counts,flush=True)
     report=dict(binary_sha256=n.sha,counts=counts,failures=failures,
         scope='Whole independent full-pitch keyboard commands, auto trim, relevant histories and response filters from entry source state. Intact symmetric free-air RB constant-gain path, orbiting disabled, gyro enabled; MouseAim disabled-output internals are not ported. Prepared providers, not live aircraft.')
-    Path('analysis/instructor-full/keyboard-port-validation.json').write_text(json.dumps(report,indent=2)+'\n');print(counts,flush=True)
+    path=Path(report_path or 'analysis/instructor-full/keyboard-port-validation.json')
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_text(json.dumps(report,indent=2)+'\n');print(counts,flush=True)
     if counts['failures']:raise SystemExit(1)
 
 if __name__=='__main__':main(sys.argv[1].split(',') if len(sys.argv)>1 else None)

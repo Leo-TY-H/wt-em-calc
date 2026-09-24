@@ -1932,16 +1932,16 @@
       "sha256": "7fd04bf5b068f28e154465c0145701aaec57f0640086342aec54c96a6dabf73f"
     },
     {
+      "aircraft": "p-47d",
+      "sha256": "d353c149e557da929611013370c4d3a1d653b32cf217738eac9a76f7d68f6e6e"
+    },
+    {
       "aircraft": "p-47d-28",
       "sha256": "f0cc31dd435d18ee0b18de6a844f820577d7d38de3d92b63583dbdcf43fbca60"
     },
     {
       "aircraft": "p-47d-30",
       "sha256": "fa7f73b49ecf773debf9859d8f7c3913269d9aa890a34f5c3f8dac4eaaec835e"
-    },
-    {
-      "aircraft": "p-47d",
-      "sha256": "d353c149e557da929611013370c4d3a1d653b32cf217738eac9a76f7d68f6e6e"
     },
     {
       "aircraft": "p-47d_16_re",
@@ -2329,7 +2329,7 @@
     },
     {
       "aircraft": "sb_25j_netherlands",
-      "sha256": "c676e35fef821c4528d50580860929e80717502e6dce43784e872eca9835910b"
+      "sha256": "377c2e11128ac9eabc02b98f12f7028cd33de72b6775a698fd5c30eb9f5d3d99"
     },
     {
       "aircraft": "sb_2m_100",
@@ -2856,5 +2856,6 @@
       "sha256": "6dedd80eca1c3cc1641308ff4ca488c76fc1b446288ac348fe286c1e340a8497"
     }
   ],
-  "failures": []
+  "failures": [],
+  "scope": "Mixed input generations; inspect each asset commit and FM hash."
 }

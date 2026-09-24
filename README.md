@@ -10,6 +10,10 @@ The Windows continuation repaired legacy Instructor wake branches affecting
 [Windows Instructor progress](research/WINDOWS_INSTRUCTOR_PROGRESS.md) for
 test evidence and the unresolved full-pitch boundary work.
 
+The [latest continuation](research/WINDOWS_BALANCED_TURN_CONTINUATION.md)
+adds current-data Windows predictor comparisons and conditional full-pitch
+balance checks. A validated maximum boundary is still under investigation.
+
 - **Windows:** follow [WINDOWS.md](WINDOWS.md), then run `Launch EM Plotter.cmd`
   or `Launch Altitude Plotter.cmd`.
 - **macOS:** the existing `.command` launchers remain available. For a fresh

@@ -1,5 +1,9 @@
 # Windows Instructor work — 2026-09-24
 
+For newer data and complete Windows reduced-predictor execution, see
+[the fixed-configuration continuation](WINDOWS_BALANCED_TURN_CONTINUATION.md).
+This report retains the scope and version pins of the earlier checks.
+
 ## Target and current status
 
 The user resumed Instructor research after the Windows transfer and selected

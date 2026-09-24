@@ -2,6 +2,12 @@
 
 ## Windows continuation
 
+Latest: [fixed-configuration Windows continuation](research/WINDOWS_BALANCED_TURN_CONTINUATION.md)
+records data 2.59.0.34, the complete Windows reduced predictor comparison,
+regenerated SB-25J assets and conditional full-pitch roots. The user requires
+the prescribed configuration/control mode to remain fixed. A global maximum
+over attainable internal controller states is still unresolved.
+
 The user has now resumed Instructor research and selected **maximum balanced
 turn with full pitch input**. Read
 [research/WINDOWS_INSTRUCTOR_PROGRESS.md](research/WINDOWS_INSTRUCTOR_PROGRESS.md)

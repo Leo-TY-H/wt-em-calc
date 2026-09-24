@@ -198,7 +198,11 @@ def main():
         print('Compiled EM engine is up to date.');return
     from setuptools import setup,Extension
     from Cython.Build import cythonize
-    src=DIRECTORY/'src';lib=DIRECTORY/'lib';src.mkdir(parents=True,exist_ok=True);lib.mkdir(exist_ok=True)
+    # Windows keeps loaded extension DLLs locked while a plotter is open.
+    # Publish a new generation without overwriting the running application's
+    # libraries. The manifest selects it only after all extensions build.
+    library=('lib/'+expected[:16]) if os.name=='nt' else 'lib'
+    src=DIRECTORY/'src';lib=DIRECTORY/library;src.mkdir(parents=True,exist_ok=True);lib.mkdir(parents=True,exist_ok=True)
     extensions=[]
     def write_source(path,text):
         if not path.exists() or path.read_text()!=text:path.write_text(text)
@@ -346,7 +350,10 @@ def main():
     setup(name='wt-em-local-kernels',ext_modules=cythonize(extensions,nthreads=min(4,os.cpu_count() or 1),
           compiler_directives={'language_level':3,'infer_types':None,'binding':True}),
           script_args=['build_ext','--build-lib',str(lib),'--build-temp',str(DIRECTORY/'objects'),'-j','4'])
-    manifest.write_text(json.dumps({'signature':expected,'modules':MODULES,'compiler':'Cython; '+' '.join(COMPILE_ARGS)},indent=2)+'\n')
+    temporary=manifest.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'signature':expected,'modules':MODULES,'library':library,
+        'compiler':'Cython; '+' '.join(COMPILE_ARGS)},indent=2)+'\n')
+    temporary.replace(manifest)
     print('Compiled EM engine ready.')
 
 

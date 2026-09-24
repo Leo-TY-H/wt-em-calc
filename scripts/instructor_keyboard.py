@@ -58,12 +58,15 @@ def fixed_source(model,state):
         auto_inputs=pack_autotrim_inputs(**wrapper),rudder_trim=rb_rudder_trim(model,state) if not wrapper['torque_gyro'] and state['autotrim_enabled'] else 0.)
 
 
-def keyboard_step(model,state,history,dt,*,predictor_cache=None):
+def keyboard_step(model,state,history,dt,*,predictor_cache=None,predictor_backend=None):
     """Source state in; command/trims and relevant persistent histories out.
 
     Provider results (engine, flap and current wing runtime) are explicit source
     inputs. No output or intermediate of the native controller is consumed.
     `history` is returned independently and is not mutated in place.
+    An optional research backend receives (kind, packed, model, predictor
+    source, previous history). The default continues to use the translated
+    predictors. Backend injection does not change controller timing or state.
     """
     dt=f32(dt);pstate=state['predictor'];wrapper=dict(state['wrapper']);props=state['properties']
     trim=list(state['trim_requested']);actual_trim=list(state['trim_actual']);cache=list(state['trim_cache'])
@@ -74,6 +77,8 @@ def keyboard_step(model,state,history,dt,*,predictor_cache=None):
         if 'fixed_source' not in predictor_cache:predictor_cache['fixed_source']=fixed_source(model,state)
         constant=predictor_cache['fixed_source']
     def predict(kind,packed,predictor,previous):
+        if predictor_backend is not None:
+            return predictor_backend(kind,packed,model,pstate,previous)
         # This optional cache belongs to ONE fixed-source controller replay.
         # Native input bytes and the full predictor history identify a repeat.
         # It never skips a controller tick or changes predictor arithmetic.

@@ -89,7 +89,7 @@ def activate():
     try:
         manifest=json.loads((DIRECTORY/'manifest.json').read_text())
         if manifest['signature']!=expected:raise RuntimeError('Compiled EM backend signature mismatch after rebuild')
-        path=str(DIRECTORY/'lib')
+        path=str(DIRECTORY/manifest.get('library','lib'))
         # Spawned workers inherit sys.path, then their entry script may insert
         # scripts/ ahead of it. Restore precedence even when lib is present.
         while path in sys.path:sys.path.remove(path)

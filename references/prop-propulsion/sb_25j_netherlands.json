@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "aircraft": "sb_25j_netherlands",
-  "commit": "28e93b1b1f7f0ec30644bfbd25c7f82673106012",
+  "commit": "2e2b2e050d80802a64dc1e155d16e088cf2cf122",
   "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
-  "fm_sha256": "b1b9a37e5e01d4992714164a3c0b419891faf7077b59af50dec4722fd9b3c141",
+  "fm_sha256": "c4e4e5ae36b2ceaefe1fd99da4363a8150d60d114f50c7887b3eb65933ca2046",
   "properties": {
     "engine_type_count": 2,
     "propeller_type_count": 2,
@@ -896,5 +896,5 @@
       }
     ]
   },
-  "scope": "Original property loading and value-only decoding. No emulated pointers at runtime; dynamics are independent Python/Cython ports."
+  "scope": "Current FM, pinned original property loader, value-only decoding; dynamics remain independent ports."
 }

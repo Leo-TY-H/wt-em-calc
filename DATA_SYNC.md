@@ -61,6 +61,12 @@ inputs. Never change stored hashes to bypass validation. The recovered equations
 remain at their researched version; current data is not proof of current-game
 numerical accuracy.
 
+For one vehicle with an exact installed collision resource, the transactional
+producer is `python scripts/refresh_prop_assets.py VEHICLE --game GAME_DIRECTORY`.
+It reruns the pinned native loaders and checks mass at four fuel selections
+before publishing both assets and updating the propulsion manifest. Rebuild
+website metadata afterward with `python scripts/update_pages_snapshot.py --offline`.
+
 Historical `fm-2.59.0.13` fixtures are retained for research. Runtime jets all
 read the updated catalog, including the two reference jets. Runtime data,
 prepared JSON assets and code are tracked in Git; executable oracles, analysis,
