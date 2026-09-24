@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.blkx -text
+*.cmd text eol=crlf
+*.command text eol=lf
+*.ttf binary
+*.woff2 binary

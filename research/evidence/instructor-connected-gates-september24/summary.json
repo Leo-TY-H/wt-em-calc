@@ -1,0 +1,94 @@
+{
+  "gate_1": {
+    "status": "PASS within tested numerical resolution",
+    "acceptance": {
+      "alpha_spread_deg": 0.02,
+      "load_spread_g": 0.002,
+      "unresolved_allowed": false
+    },
+    "cases": [
+      {
+        "speed_kmh": 157.91807776016896,
+        "runs": 9,
+        "alpha_spread_deg": 0.009148974801068022,
+        "load_spread_g": 0.0004021332465080629,
+        "alpha_range_deg": [
+          25.67616963609676,
+          25.685318610897827
+        ],
+        "pass_gate": true,
+        "elapsed_range_s": [
+          4.318048833000001,
+          14.133834625000006
+        ]
+      },
+      {
+        "speed_kmh": 158.34307140020326,
+        "runs": 9,
+        "alpha_spread_deg": 0.008721435546274137,
+        "load_spread_g": 0.0003845256017021015,
+        "alpha_range_deg": [
+          25.669501539974604,
+          25.678222975520878
+        ],
+        "pass_gate": true,
+        "elapsed_range_s": [
+          4.35066350000001,
+          14.428850416999996
+        ]
+      }
+    ],
+    "continuous_first_crossing_proven": false
+  },
+  "gate_2": {
+    "status": "FAIL: no validated permitted 1 g starting equilibrium",
+    "cases": [
+      {
+        "speed_kmh": 770.9,
+        "level_starts": 5,
+        "sideslip_starts": 6,
+        "physically_valid_level_solutions": 0,
+        "closed_lower_stall_states": []
+      },
+      {
+        "speed_kmh": 771.0316217800856,
+        "level_starts": 5,
+        "sideslip_starts": 6,
+        "physically_valid_level_solutions": 0,
+        "closed_lower_stall_states": [
+          {
+            "load_g": 1.0118202747480463,
+            "alpha_deg": -11.64423517017999,
+            "stall_margin_deg": 0.0020008087158203125,
+            "force_error_g": 1.076537846367399e-07,
+            "angular_error_rad_s2": 5.60308191829802e-07,
+            "instructor_margin": -0.0005146265029907227
+          },
+          {
+            "load_g": 1.0118050560398797,
+            "alpha_deg": -11.645703305426668,
+            "stall_margin_deg": 0.0004987716674804688,
+            "force_error_g": 1.756068835581592e-07,
+            "angular_error_rad_s2": 4.6679327931577287e-07,
+            "instructor_margin": -0.0006300210952758789
+          },
+          {
+            "load_g": 1.0118009830652541,
+            "alpha_deg": -11.646092777172594,
+            "stall_margin_deg": 0.0001010894775390625,
+            "force_error_g": 2.0235382396989048e-07,
+            "angular_error_rad_s2": 1.766029171373657e-07,
+            "instructor_margin": -0.0006605386734008789
+          }
+        ]
+      }
+    ],
+    "global_nonexistence_proven": false
+  },
+  "native_checks": 15,
+  "native_equal": true,
+  "representative_runtime_benchmark_run": false,
+  "benchmark_reason": "User conditioned fleet benchmark on both gates passing; starting-equilibrium gate did not pass.",
+  "acceptable_runtime_established": false,
+  "production_changed": false
+}

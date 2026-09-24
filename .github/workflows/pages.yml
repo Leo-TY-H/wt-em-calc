@@ -1,0 +1,54 @@
+name: Deploy website
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['app/**', '.github/workflows/pages.yml']
+  workflow_run:
+    workflows: ['Sync game data']
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      (vars.ENABLE_PAGES == 'true' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Configure calculation service
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from urllib.parse import urlsplit
+          url = os.environ.get('API_BASE_URL', '').rstrip('/')
+          if url and (urlsplit(url).scheme != 'https' or not urlsplit(url).hostname):
+              raise SystemExit('API_BASE_URL must be an HTTPS URL')
+          Path('app/config.js').write_text('window.EM_CONFIG=' + json.dumps({'apiBase': url}) + ';\n')
+          PY
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app
+      - name: Publish
+        id: deployment
+        uses: actions/deploy-pages@v4

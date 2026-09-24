@@ -1,0 +1,842 @@
+{
+  "schema": 1,
+  "aircraft": "db_3b",
+  "commit": "28e93b1b1f7f0ec30644bfbd25c7f82673106012",
+  "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
+  "fm_sha256": "e0d0cc140cdf7784c8a652035921b3e341f9bdee52581b3279a7a171c5be802b",
+  "properties": {
+    "engine_type_count": 2,
+    "propeller_type_count": 2,
+    "engines": [
+      {
+        "index": 0,
+        "type_id": 0,
+        "family": 1,
+        "position": [
+          2.299999952316284,
+          -0.550000011920929,
+          2.450000047683716
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "carburetor": 2,
+        "mixture": 2,
+        "compressor": 1,
+        "compressor_stages": 1,
+        "exact_altitudes": true,
+        "boost_type": 7,
+        "torque_base": 2494.82421875,
+        "properties": {
+          "base_hp": 830.0,
+          "min_throttle": 0.12999999523162842,
+          "max_throttle": 1.0,
+          "shaft_min": 47.1238899230957,
+          "max_omega": 248.18582153320312,
+          "afterburner_omega": 235.6194610595703,
+          "omega_limit": 272.2713623046875,
+          "inverse_omega": 0.004029239062219858,
+          "compressor_reference": 1.0,
+          "torque_base": 2494.82421875,
+          "engine_inertia": 25.0,
+          "mixer_scale": 0.7799999713897705,
+          "compressor_sq": 0.0,
+          "max_ata": 1.1299999952316284,
+          "ram_recovery": 0.4000000059604645,
+          "boost_ata_ratio": 1.0973451137542725,
+          "compressor_zero": 0.30000001192092896,
+          "turbo_min": 0.0,
+          "turbo_max": 2617.993896484375,
+          "turbo_allowed": 1911.1356201171875,
+          "inverse_time": 1.0,
+          "throttle_boost": 1.0010000467300415,
+          "afterburner_boost": 1.1577999591827393,
+          "reservoir_capacity": 0.2586109936237335,
+          "family": 1,
+          "exact_altitudes": true,
+          "ata_enabled": true,
+          "mixer_type": 2,
+          "compressor_type": 1,
+          "boost_type": 7,
+          "cylinders": 14,
+          "manual_compressor": false,
+          "boost_controllable": true,
+          "carburetor": 2,
+          "amplitude": [
+            0.0,
+            -0.0,
+            0.0
+          ],
+          "consumption": [
+            0.4000000059604645,
+            0.27000001072883606,
+            0.28999999165534973,
+            0.30000001192092896
+          ],
+          "stages": [
+            {
+              "critical": 0.5552361011505127,
+              "power": 1.1875,
+              "boost": 1.0,
+              "flat": 0.07139456272125244,
+              "flat_power": 1.0,
+              "curvature": 1.0,
+              "ceiling": 0.4057809114456177,
+              "ceiling_factor": 1.0949673652648926,
+              "pressure_boost": 1.0
+            }
+          ],
+          "ata": [
+            [
+              0.0,
+              1.163636326789856,
+              [
+                0.699999988079071
+              ]
+            ],
+            [
+              0.8593750596046448,
+              7.111114025115967,
+              [
+                1.0
+              ]
+            ],
+            [
+              1.0,
+              0.0,
+              [
+                1.1299999952316284
+              ]
+            ]
+          ],
+          "rpm_targets": [
+            [
+              0.0,
+              47.1238899230957
+            ],
+            [
+              0.8999999761581421,
+              219.9114990234375
+            ],
+            [
+              1.0,
+              248.18582153320312
+            ],
+            [
+              1.100000023841858,
+              235.6194610595703
+            ]
+          ]
+        },
+        "mass": 640.0,
+        "maximum_direct_thrust": 10.699999809265137,
+        "fuel_system": 0,
+        "control_group": 0
+      },
+      {
+        "index": 1,
+        "type_id": 1,
+        "family": 1,
+        "position": [
+          2.299999952316284,
+          -0.550000011920929,
+          -2.450000047683716
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          -0.0
+        ],
+        "carburetor": 2,
+        "mixture": 2,
+        "compressor": 1,
+        "compressor_stages": 1,
+        "exact_altitudes": true,
+        "boost_type": 7,
+        "torque_base": 2494.82421875,
+        "properties": {
+          "base_hp": 830.0,
+          "min_throttle": 0.12999999523162842,
+          "max_throttle": 1.0,
+          "shaft_min": 47.1238899230957,
+          "max_omega": 248.18582153320312,
+          "afterburner_omega": 235.6194610595703,
+          "omega_limit": 272.2713623046875,
+          "inverse_omega": 0.004029239062219858,
+          "compressor_reference": 1.0,
+          "torque_base": 2494.82421875,
+          "engine_inertia": 25.0,
+          "mixer_scale": 0.7799999713897705,
+          "compressor_sq": 0.0,
+          "max_ata": 1.1299999952316284,
+          "ram_recovery": 0.4000000059604645,
+          "boost_ata_ratio": 1.0973451137542725,
+          "compressor_zero": 0.30000001192092896,
+          "turbo_min": 0.0,
+          "turbo_max": 2617.993896484375,
+          "turbo_allowed": 1911.1356201171875,
+          "inverse_time": 1.0,
+          "throttle_boost": 1.0010000467300415,
+          "afterburner_boost": 1.1577999591827393,
+          "reservoir_capacity": 0.2586109936237335,
+          "family": 1,
+          "exact_altitudes": true,
+          "ata_enabled": true,
+          "mixer_type": 2,
+          "compressor_type": 1,
+          "boost_type": 7,
+          "cylinders": 14,
+          "manual_compressor": false,
+          "boost_controllable": true,
+          "carburetor": 2,
+          "amplitude": [
+            0.0,
+            -0.0,
+            0.0
+          ],
+          "consumption": [
+            0.4000000059604645,
+            0.27000001072883606,
+            0.28999999165534973,
+            0.30000001192092896
+          ],
+          "stages": [
+            {
+              "critical": 0.5552361011505127,
+              "power": 1.1875,
+              "boost": 1.0,
+              "flat": 0.07139456272125244,
+              "flat_power": 1.0,
+              "curvature": 1.0,
+              "ceiling": 0.4057809114456177,
+              "ceiling_factor": 1.0949673652648926,
+              "pressure_boost": 1.0
+            }
+          ],
+          "ata": [
+            [
+              0.0,
+              1.163636326789856,
+              [
+                0.699999988079071
+              ]
+            ],
+            [
+              0.8593750596046448,
+              7.111114025115967,
+              [
+                1.0
+              ]
+            ],
+            [
+              1.0,
+              0.0,
+              [
+                1.1299999952316284
+              ]
+            ]
+          ],
+          "rpm_targets": [
+            [
+              0.0,
+              47.1238899230957
+            ],
+            [
+              0.8999999761581421,
+              219.9114990234375
+            ],
+            [
+              1.0,
+              248.18582153320312
+            ],
+            [
+              1.100000023841858,
+              235.6194610595703
+            ]
+          ]
+        },
+        "mass": 640.0,
+        "maximum_direct_thrust": 10.699999809265137,
+        "fuel_system": 0,
+        "control_group": 1
+      }
+    ],
+    "propellers": [
+      {
+        "index": 0,
+        "type_id": 0,
+        "basis": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          -4.371138828673793e-08,
+          -0.0,
+          4.371138828673793e-08,
+          1.0
+        ],
+        "position": [
+          2.299999952316284,
+          -0.550000011920929,
+          2.450000047683716
+        ],
+        "rotation": 0,
+        "governor": 2,
+        "fast": false,
+        "airflow_solver": false,
+        "coaxial": false,
+        "manual": true,
+        "automatic": false,
+        "feathering": false,
+        "cyclic": false,
+        "differential_pitch": false,
+        "torque_gyro_always": false,
+        "force_always": true,
+        "pitch_min": 0.3490658402442932,
+        "pitch_max": 0.6981316804885864,
+        "pitch_2d_rows": 1,
+        "pitch_1d_rows": 0,
+        "pitch_feather": 1.439896583557129,
+        "governor_speed": 0.14999999105930328,
+        "min_omega": 47.1238899230957,
+        "max_omega": 248.18582153320312,
+        "boost_omega": 235.6194610595703,
+        "critical_ias": 1000.0000610351562,
+        "diameter": 3.25,
+        "inertia": 131.1510467529297,
+        "properties": {
+          "polar": {
+            "base": [
+              8.130081176757812,
+              0.07500000298023224,
+              4.0,
+              0.0020000000949949026,
+              30.0,
+              0.009999999776482582,
+              -1.0,
+              1.0,
+              0.14000000059604645,
+              16.0,
+              -10.0,
+              1.2400000095367432,
+              -0.38999998569488525,
+              0.009999999776482582,
+              1.0,
+              0.7795125246047974
+            ],
+            "mode": 3,
+            "mach": [
+              [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.9950000047683716,
+                3.9000000953674316,
+                -2.0,
+                2.0,
+                -22560146.0,
+                67850808.0,
+                -68021176.0,
+                22730514.0
+              ],
+              [
+                1.0,
+                1.5,
+                0.5,
+                -0.20000000298023224,
+                0.25,
+                -11.800000190734863,
+                32.79999923706055,
+                -27.200000762939453,
+                7.199999809265137
+              ],
+              [
+                1.0,
+                1.5,
+                0.5,
+                -0.20000000298023224,
+                0.699999988079071,
+                -11.800000190734863,
+                32.79999923706055,
+                -27.200000762939453,
+                7.199999809265137
+              ],
+              [
+                0.0,
+                0.0,
+                1.2999999523162842,
+                0.0,
+                1.2999999523162842,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            ],
+            "combined": true,
+            "cm": [
+              [
+                0.0,
+                0.0,
+                [
+                  0.0,
+                  0.0
+                ]
+              ]
+            ]
+          },
+          "radius": 1.625,
+          "blades": 3,
+          "twist": [
+            0.1745329201221466,
+            0.10471975803375244,
+            0.0,
+            -0.10471975803375244
+          ],
+          "mean_twist": 0.009197838604450226,
+          "width": [
+            0.12800000607967377,
+            0.15399999916553497,
+            0.14900000393390656,
+            0.061000000685453415
+          ],
+          "projected_width": 0.19860653579235077,
+          "thrust_deflection": 0.0,
+          "max_deflection": 0.949999988079071,
+          "momentum_scale": 1.0,
+          "coaxial": false,
+          "pitch_damping": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "yaw_damping": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "damping_speed": [
+            0.0,
+            1.0,
+            0.0,
+            1.0
+          ],
+          "iterative": false,
+          "shake": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "inertia_coefficient": 1.0,
+          "mass": 149.0,
+          "diameter": 3.25,
+          "neutral_radius": 1.21875,
+          "inertia": 131.1510467529297,
+          "inverse_inertia": 0.007624796591699123,
+          "pitch_min": 0.3490658402442932,
+          "pitch_max": 0.6981316804885864,
+          "feather_pitch": 1.439896583557129,
+          "aoa0": 0.19198621809482574,
+          "governor_speed": 0.14999999105930328,
+          "governor": 2,
+          "governor_fast": false,
+          "min_omega": 47.1238899230957,
+          "max_omega": 248.18582153320312,
+          "inv_max_omega": 0.004029239062219858,
+          "boost_omega": 235.6194610595703,
+          "auto_allowed": false,
+          "torque_gyro_always": false,
+          "force_always": true,
+          "critical_ias": 1000.0000610351562,
+          "manual_allowed": true,
+          "pitch_command_report": false,
+          "feather_allowed": false,
+          "cyclic": false,
+          "differential_pitch": false,
+          "basis": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            -4.371138828673793e-08,
+            -0.0,
+            4.371138828673793e-08,
+            1.0
+          ],
+          "position": [
+            2.299999952316284,
+            -0.550000011920929,
+            2.450000047683716
+          ],
+          "direction": 0,
+          "reduction": 0.6660000085830688,
+          "airflow": [
+            [
+              -1000.0,
+              0.0005000000237487257,
+              0.0,
+              0.0,
+              1.0
+            ],
+            [
+              1000.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "active_pitch_2d": false,
+          "pitch_1d_count": 0
+        }
+      },
+      {
+        "index": 1,
+        "type_id": 1,
+        "basis": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          -4.371138828673793e-08,
+          -0.0,
+          4.371138828673793e-08,
+          1.0
+        ],
+        "position": [
+          2.299999952316284,
+          -0.550000011920929,
+          -2.450000047683716
+        ],
+        "rotation": 0,
+        "governor": 2,
+        "fast": false,
+        "airflow_solver": false,
+        "coaxial": false,
+        "manual": true,
+        "automatic": false,
+        "feathering": false,
+        "cyclic": false,
+        "differential_pitch": false,
+        "torque_gyro_always": false,
+        "force_always": true,
+        "pitch_min": 0.3490658402442932,
+        "pitch_max": 0.6981316804885864,
+        "pitch_2d_rows": 1,
+        "pitch_1d_rows": 0,
+        "pitch_feather": 1.439896583557129,
+        "governor_speed": 0.14999999105930328,
+        "min_omega": 47.1238899230957,
+        "max_omega": 248.18582153320312,
+        "boost_omega": 235.6194610595703,
+        "critical_ias": 1000.0000610351562,
+        "diameter": 3.25,
+        "inertia": 131.1510467529297,
+        "properties": {
+          "polar": {
+            "base": [
+              8.130081176757812,
+              0.07500000298023224,
+              4.0,
+              0.0020000000949949026,
+              30.0,
+              0.009999999776482582,
+              -1.0,
+              1.0,
+              0.14000000059604645,
+              16.0,
+              -10.0,
+              1.2400000095367432,
+              -0.38999998569488525,
+              0.009999999776482582,
+              1.0,
+              0.7795125246047974
+            ],
+            "mode": 3,
+            "mach": [
+              [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.9950000047683716,
+                3.9000000953674316,
+                -2.0,
+                2.0,
+                -22560146.0,
+                67850808.0,
+                -68021176.0,
+                22730514.0
+              ],
+              [
+                1.0,
+                1.5,
+                0.5,
+                -0.20000000298023224,
+                0.25,
+                -11.800000190734863,
+                32.79999923706055,
+                -27.200000762939453,
+                7.199999809265137
+              ],
+              [
+                1.0,
+                1.5,
+                0.5,
+                -0.20000000298023224,
+                0.699999988079071,
+                -11.800000190734863,
+                32.79999923706055,
+                -27.200000762939453,
+                7.199999809265137
+              ],
+              [
+                0.0,
+                0.0,
+                1.2999999523162842,
+                0.0,
+                1.2999999523162842,
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            ],
+            "combined": true,
+            "cm": [
+              [
+                0.0,
+                0.0,
+                [
+                  0.0,
+                  0.0
+                ]
+              ]
+            ]
+          },
+          "radius": 1.625,
+          "blades": 3,
+          "twist": [
+            0.1745329201221466,
+            0.10471975803375244,
+            0.0,
+            -0.10471975803375244
+          ],
+          "mean_twist": 0.009197838604450226,
+          "width": [
+            0.12800000607967377,
+            0.15399999916553497,
+            0.14900000393390656,
+            0.061000000685453415
+          ],
+          "projected_width": 0.19860653579235077,
+          "thrust_deflection": 0.0,
+          "max_deflection": 0.949999988079071,
+          "momentum_scale": 1.0,
+          "coaxial": false,
+          "pitch_damping": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "yaw_damping": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "damping_speed": [
+            0.0,
+            1.0,
+            0.0,
+            1.0
+          ],
+          "iterative": false,
+          "shake": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "inertia_coefficient": 1.0,
+          "mass": 149.0,
+          "diameter": 3.25,
+          "neutral_radius": 1.21875,
+          "inertia": 131.1510467529297,
+          "inverse_inertia": 0.007624796591699123,
+          "pitch_min": 0.3490658402442932,
+          "pitch_max": 0.6981316804885864,
+          "feather_pitch": 1.439896583557129,
+          "aoa0": 0.19198621809482574,
+          "governor_speed": 0.14999999105930328,
+          "governor": 2,
+          "governor_fast": false,
+          "min_omega": 47.1238899230957,
+          "max_omega": 248.18582153320312,
+          "inv_max_omega": 0.004029239062219858,
+          "boost_omega": 235.6194610595703,
+          "auto_allowed": false,
+          "torque_gyro_always": false,
+          "force_always": true,
+          "critical_ias": 1000.0000610351562,
+          "manual_allowed": true,
+          "pitch_command_report": false,
+          "feather_allowed": false,
+          "cyclic": false,
+          "differential_pitch": false,
+          "basis": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            -4.371138828673793e-08,
+            -0.0,
+            4.371138828673793e-08,
+            1.0
+          ],
+          "position": [
+            2.299999952316284,
+            -0.550000011920929,
+            -2.450000047683716
+          ],
+          "direction": 0,
+          "reduction": 0.6660000085830688,
+          "airflow": [
+            [
+              -1000.0,
+              0.0005000000237487257,
+              0.0,
+              0.0,
+              1.0
+            ],
+            [
+              1000.0,
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "active_pitch_2d": false,
+          "pitch_1d_count": 0
+        }
+      }
+    ],
+    "transmissions": [
+      {
+        "index": 0,
+        "engines": [
+          {
+            "index": 0,
+            "ratio": 1.0,
+            "inverse_ratio": 1.0
+          }
+        ],
+        "propellers": [
+          {
+            "index": 0,
+            "ratio": 0.6660000085830688,
+            "inverse_ratio": 1.501501441001892,
+            "pitch_source": 0
+          }
+        ],
+        "auto_inertia": false,
+        "acceleration": 4.0,
+        "correct_link": false
+      },
+      {
+        "index": 1,
+        "engines": [
+          {
+            "index": 1,
+            "ratio": 1.0,
+            "inverse_ratio": 1.0
+          }
+        ],
+        "propellers": [
+          {
+            "index": 1,
+            "ratio": 0.6660000085830688,
+            "inverse_ratio": 1.501501441001892,
+            "pitch_source": 0
+          }
+        ],
+        "auto_inertia": false,
+        "acceleration": 4.0,
+        "correct_link": false
+      }
+    ]
+  },
+  "scope": "Original property loading and value-only decoding. No emulated pointers at runtime; dynamics are independent Python/Cython ports."
+}

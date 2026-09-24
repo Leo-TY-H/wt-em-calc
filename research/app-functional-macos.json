@@ -1,0 +1,80 @@
+{
+  "date": "2026-09-24",
+  "scope": "Real browser and HTTP application checks on macOS Chrome; not a fleet runtime benchmark or Windows certification",
+  "note": "Reruns reused completed results where settings matched. Reported seconds are observed test durations, not cold-start benchmarks.",
+  "fix": "Restore altitude throttle without floating-point overflow beyond the HTML 110% maximum",
+  "reports": {
+    "em": {
+      "app": "em",
+      "platform": "macOS Chrome",
+      "status": "PASS",
+      "browser_errors": [],
+      "comparison": {
+        "job": "adab943904a5bf947e0c",
+        "seconds": 6.899015083,
+        "valid_points": [
+          873,
+          1061
+        ]
+      },
+      "exports": {
+        "data.json": 192290183,
+        "samples.csv": 3190579,
+        "diagram.svg": 104492,
+        "diagram.png": 156412,
+        "diagram.pdf": 25259
+      },
+      "propeller": {
+        "job": "71f6c0809d7c3e7c7899",
+        "seconds": 9.727898582999998,
+        "valid_points": 462
+      },
+      "checks": [
+        "empty-selection validation",
+        "search/add/duplicate",
+        "independent SB/RB settings",
+        "experimental label",
+        "completed charts with valid points",
+        "both point inspectors",
+        "five export formats",
+        "saved result restore",
+        "changed-settings notice",
+        "mobile layout",
+        "reset",
+        "propeller calculation",
+        "cancel and subsequent calculation"
+      ]
+    },
+    "altitude": {
+      "app": "altitude",
+      "platform": "macOS Chrome",
+      "status": "PASS",
+      "browser_errors": [],
+      "calculation": {
+        "job": "ca60bbfaf3ec147ecbf9",
+        "seconds": 0.23910258399999984
+      },
+      "exports": {
+        "data.json": 3251944,
+        "samples.csv": 165665,
+        "diagram.svg": 83396,
+        "diagram.png": 361248,
+        "diagram.pdf": 29725
+      },
+      "checks": [
+        "search, aircraft-dependent sweep/prop controls",
+        "visible Calculate and completed contours",
+        "energy guide and CSV",
+        "point inspector",
+        "samples/guide toggles",
+        "five export formats",
+        "3D surface and PNG export",
+        "2D/3D switch",
+        "reload restoration",
+        "changed-settings notice",
+        "mobile layout",
+        "cancel and fresh calculation"
+      ]
+    }
+  }
+}

@@ -1,0 +1,38 @@
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  WT_EM_HOST = "0.0.0.0"
+  WT_EM_OUTPUT_DIR = "/data/em"
+  WT_EM_MAX_PENDING_JOBS = "2"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 16
+    hard_limit = 32
+
+[[http_service.checks]]
+  grace_period = "60s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/api/health"
+
+[mounts]
+  source = "em_data"
+  destination = "/data"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory = "2gb"

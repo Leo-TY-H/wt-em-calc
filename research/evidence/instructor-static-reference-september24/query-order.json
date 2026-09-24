@@ -1,0 +1,211 @@
+{
+  "equal": true,
+  "forward": {
+    "770.8": {
+      "history": [
+        -11.403751373291016,
+        -2545.617431640625,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9220492839813232,
+        0.0
+      ],
+      "success": true,
+      "source_speed_kmh": 770.8,
+      "observation_speed_kmh": 770.8
+    },
+    "770.9": {
+      "history": [
+        -11.504471778869629,
+        -2610.409912109375,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374303221702576,
+        0.0
+      ],
+      "success": true,
+      "source_speed_kmh": 770.9,
+      "observation_speed_kmh": 770.9
+    },
+    "770.912": {
+      "history": [
+        -11.540559768676758,
+        -2610.849609375,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374174475669861,
+        0.0
+      ],
+      "success": true,
+      "source_speed_kmh": 770.912,
+      "observation_speed_kmh": 770.912
+    },
+    "770.913": {
+      "history": [
+        -11.540913581848145,
+        -2610.88134765625,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374169707298279,
+        0.0
+      ],
+      "success": false,
+      "source_speed_kmh": 770.9123617858887,
+      "observation_speed_kmh": 770.913,
+      "failure_bracket_kmh": [
+        770.9123617858887,
+        770.913
+      ]
+    },
+    "771.03162178": {
+      "history": [
+        -11.541097640991211,
+        -2610.861328125,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374172687530518,
+        0.0
+      ],
+      "success": false,
+      "source_speed_kmh": 770.9122406260974,
+      "observation_speed_kmh": 771.03162178,
+      "failure_bracket_kmh": [
+        770.9122406260974,
+        770.9128824602582
+      ]
+    },
+    "775.0": {
+      "history": [
+        -11.541097640991211,
+        -2610.861328125,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374172687530518,
+        0.0
+      ],
+      "success": false,
+      "source_speed_kmh": 770.9121704101562,
+      "observation_speed_kmh": 775.0,
+      "failure_bracket_kmh": [
+        770.9121704101562,
+        770.9129333496094
+      ]
+    }
+  },
+  "reverse": {
+    "775.0": {
+      "history": [
+        -11.541097640991211,
+        -2610.861328125,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374172687530518,
+        0.0
+      ],
+      "success": false,
+      "source_speed_kmh": 770.9121704101562,
+      "observation_speed_kmh": 775.0,
+      "failure_bracket_kmh": [
+        770.9121704101562,
+        770.9129333496094
+      ]
+    },
+    "771.03162178": {
+      "history": [
+        -11.541097640991211,
+        -2610.861328125,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374172687530518,
+        0.0
+      ],
+      "success": false,
+      "source_speed_kmh": 770.9122406260974,
+      "observation_speed_kmh": 771.03162178,
+      "failure_bracket_kmh": [
+        770.9122406260974,
+        770.9128824602582
+      ]
+    },
+    "770.913": {
+      "history": [
+        -11.540913581848145,
+        -2610.88134765625,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374169707298279,
+        0.0
+      ],
+      "success": false,
+      "source_speed_kmh": 770.9123617858887,
+      "observation_speed_kmh": 770.913,
+      "failure_bracket_kmh": [
+        770.9123617858887,
+        770.913
+      ]
+    },
+    "770.912": {
+      "history": [
+        -11.540559768676758,
+        -2610.849609375,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374174475669861,
+        0.0
+      ],
+      "success": true,
+      "source_speed_kmh": 770.912,
+      "observation_speed_kmh": 770.912
+    },
+    "770.9": {
+      "history": [
+        -11.504471778869629,
+        -2610.409912109375,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9374303221702576,
+        0.0
+      ],
+      "success": true,
+      "source_speed_kmh": 770.9,
+      "observation_speed_kmh": 770.9
+    },
+    "770.8": {
+      "history": [
+        -11.403751373291016,
+        -2545.617431640625,
+        true
+      ],
+      "trim": [
+        0.0,
+        -0.9220492839813232,
+        0.0
+      ],
+      "success": true,
+      "source_speed_kmh": 770.8,
+      "observation_speed_kmh": 770.8
+    }
+  }
+}

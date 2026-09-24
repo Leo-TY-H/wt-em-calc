@@ -1,0 +1,899 @@
+{
+  "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
+  "rows": [
+    {
+      "aircraft": "f_16xl",
+      "speed": 157.91807776016896,
+      "load": 1.3090407601834713,
+      "alpha": 25.68196499059793,
+      "native_equal": true,
+      "permitted": true,
+      "margin": 0.3765745460987091,
+      "required": -0.03160664439201355,
+      "bounds": [
+        -0.40818119049072266,
+        0.9999999403953552
+      ],
+      "auto_success": true,
+      "trim": [
+        0.0,
+        -0.07482282817363739,
+        0.0
+      ],
+      "predictor": [
+        -0.40818125009536743,
+        1.0
+      ],
+      "predictor_success": [
+        false,
+        false
+      ],
+      "targets": [
+        -19.760000228881836,
+        28.119998931884766
+      ],
+      "force_error": 4.0044791819626874e-08,
+      "angular_error": 1.0355225321699898e-06,
+      "pitch_rate": -0.12265295830405112,
+      "delivered": [
+        0.0918571949005127,
+        -0.031606629490852356,
+        -0.17634207010269165
+      ],
+      "applied_force_error": 4.0044791819626874e-08,
+      "applied_angular_error": 1.037751237990078e-06,
+      "reference": {
+        "history": [
+          20.15648651123047,
+          8938.990234375,
+          true
+        ],
+        "trim": [
+          0.0,
+          -0.07631006836891174,
+          0.0
+        ],
+        "success": true,
+        "source_speed_kmh": 157.91807776016896,
+        "observation_speed_kmh": 157.91807776016896
+      },
+      "point": {
+        "speed_kmh": 157.91807776016896,
+        "load_g": 1.3090407601834713,
+        "turn_dps": 10.823955336915986,
+        "ps_mps": 22.854311041382655,
+        "ps_continuous_mps": 22.753543062824185,
+        "alpha_deg": 25.68196499059793,
+        "bank_deg": 40.44226779349352,
+        "sideslip_deg": 0.0,
+        "sideslip_attitude_deg": 0.0,
+        "roll_leveling_branch": null,
+        "converged": true,
+        "valid": true,
+        "reasons": [],
+        "structural_flags": [],
+        "bounded_search_stationary": false,
+        "pitch_response": {
+          "normal": true,
+          "reversed": false,
+          "margin": 0.008531607043414822,
+          "gain_rad_s2": 0.1864326893356904,
+          "samples": [
+            {
+              "step": 0.002,
+              "gain_rad_s2": 0.1864326893356904,
+              "margin": 0.008531607043414822,
+              "rounding": 1.4435639064338713e-07
+            }
+          ],
+          "method": "Native steady pitch moment derivative at fixed flight state; normal control sign"
+        },
+        "force_error_g": 4.0044791819626874e-08,
+        "angular_error_rad_s2": 1.0355225321699898e-06,
+        "history_error": 0.0,
+        "stall_margin_deg": 10.224187850952148,
+        "wing_load_ratios": [
+          0.05276225887345679,
+          0.05321525366512345
+        ],
+        "commands": [
+          0.09185715764760971,
+          -0.03160664439201355,
+          -0.17634208500385284
+        ],
+        "control_bounds": [
+          [
+            -1.0,
+            1.0
+          ],
+          [
+            -1.0,
+            0.9999999403953552
+          ],
+          [
+            -1.0,
+            1.0
+          ]
+        ],
+        "authority_margin": 0.8236579149961472,
+        "sticks": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "trim": [
+          0.09185715764760971,
+          -0.03160664439201355,
+          -0.17634208500385284
+        ],
+        "ias_kmh": 142.31789703369142,
+        "mach": 0.12856312096118927,
+        "sweep_percent": null,
+        "flaps_percent": 0.0,
+        "flaps_requested_percent": 0.0,
+        "gear_percent": 0.0,
+        "instructor": {
+          "converged": true,
+          "margin": 0.3765745460987091,
+          "margins": {
+            "Instructor delivered pitch": 0.3765745460987091,
+            "control authority with auto trim": 0.8236579149961472
+          },
+          "envelope_margin": 0.3765745460987091,
+          "pitch_margin": 0.3765745460987091,
+          "angle_margin": 0.14342060089111328,
+          "limiting": "Instructor delivered pitch",
+          "control_bounds": [
+            [
+              -1.0,
+              1.0
+            ],
+            [
+              -1.0,
+              0.9999999403953552
+            ],
+            [
+              -1.0,
+              1.0
+            ]
+          ],
+          "protected_pitch_bounds": [
+            -0.40818119049072266,
+            0.9999999403953552
+          ],
+          "pilot_pitch_bounds": [
+            -0.36031845211982727,
+            1.0
+          ],
+          "auto_trim": [
+            0.0,
+            -0.07482282817363739,
+            0.0
+          ],
+          "autotrim_success": true,
+          "retained_trim_on_failure": false,
+          "delivered_pitch": 0.9999999403953552,
+          "required_pitch": -0.03160664439201355,
+          "required_pilot": [
+            0.09185715764760971,
+            0.04020772874355316,
+            -0.17634208500385284
+          ],
+          "angle_limits_deg": [
+            -19.760000228881836,
+            28.119998931884766
+          ],
+          "adjusted_wing_angles_deg": [
+            26.685792922973633,
+            26.640018463134766
+          ],
+          "native_angle_rate_rad_s": -0.011946465045574867,
+          "model": "static balanced-turn reference with native delivered-control permission",
+          "static_reference": true,
+          "history_independent": false,
+          "exact_native_controller": false,
+          "rate_demands": [
+            {
+              "target_angle": 26.640018463134766,
+              "target_acceleration": 15.864559173583984
+            },
+            {
+              "target_angle": 26.685792922973633,
+              "target_acceleration": -1.3593904972076416
+            }
+          ],
+          "predictor_pitch": [
+            -0.40818125009536743,
+            1.0
+          ],
+          "predictor_success": [
+            false,
+            false
+          ],
+          "recovery_active": false,
+          "overload_timer": 1.0,
+          "authority_factor": 1.0,
+          "overload_policy": "maximum retained timer; native reserve/release mapping",
+          "trim_reference": {
+            "history": [
+              20.15648651123047,
+              8938.990234375,
+              true
+            ],
+            "trim": [
+              0.0,
+              -0.07631006836891174,
+              0.0
+            ],
+            "success": true,
+            "source_speed_kmh": 157.91807776016896,
+            "observation_speed_kmh": 157.91807776016896
+          },
+          "autotrim_history_after": [
+            20.17555046081543,
+            8938.990234375,
+            true
+          ],
+          "actuator_assumption": "settled at post-update requested trim; steady adjusted-angle history"
+        },
+        "instructor_enabled": true,
+        "sweep_available_percent": null,
+        "force_n": [
+          104850.392578125,
+          96827.375,
+          -427.9517822265625
+        ],
+        "moment_nm": [
+          -440.23052978515625,
+          -117.5863037109375,
+          -821.84423828125
+        ],
+        "engine_force_n": [
+          91017.7421875,
+          0.0,
+          0.0
+        ],
+        "component_forces": {
+          "left_hstab": [
+            2641.69189453125,
+            5580.28759765625,
+            0.0
+          ],
+          "right_hstab": [
+            2380.417236328125,
+            5405.30126953125,
+            0.0
+          ],
+          "vstab": [
+            -86.7684097290039,
+            0.0,
+            -220.6383514404297
+          ],
+          "fuselage": [
+            -197.29481506347656,
+            0.0,
+            -207.31344604492188
+          ],
+          "left_wing": [
+            4519.23291015625,
+            42737.4296875,
+            0.0
+          ],
+          "right_wing": [
+            4575.373046875,
+            43104.35546875,
+            0.0
+          ],
+          "chute": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "parasite": [
+            -0.0,
+            0.0,
+            -0.0
+          ]
+        },
+        "evaluations": 3,
+        "solution": [
+          25.68196499059793,
+          40.44226779349352,
+          0.09185715460351564,
+          -0.03160664517213842,
+          -0.17634209064016754
+        ],
+        "vertical_step_velocity_mps": -1.9868215517249155e-08,
+        "altitude_correction": false,
+        "actual_turn_dps": 10.823955081319873,
+        "envelope_limit": {
+          "kind": "Instructor pitch",
+          "axis": null,
+          "limiting_load_g": 1.3090407601834713,
+          "limiting_load_interval_g": [
+            1.3090407601834713,
+            1.3091902990743876
+          ],
+          "constraint_residual": 0.3765745460987091,
+          "rejected_constraint_residual": -0.043170612305402756,
+          "evaluations": 3,
+          "initial_bracket_g": [
+            1.3086124902115879,
+            1.3094930614457454
+          ],
+          "active_constraints": [
+            "Instructor pitch"
+          ],
+          "turn_interval_dps": [
+            10.823955336915986,
+            10.826924343765787
+          ],
+          "turn_target_dps": 0.005,
+          "ps_interval_mps": [
+            22.854311041382655,
+            22.850332922132687
+          ],
+          "ps_target_mps": 0.1,
+          "rejected_endpoint": {
+            "speed_kmh": 157.91807776016896,
+            "load_g": 1.3091902990743876,
+            "solution": [
+              25.685368298245614,
+              40.449988161283535,
+              0.0918967141985946,
+              -0.03165170744325095,
+              -0.1763578740998339
+            ],
+            "valid": false,
+            "converged": true,
+            "reasons": [
+              "Instructor pitch limit"
+            ],
+            "force_error_g": 1.4733099797822623e-07,
+            "angular_error_rad_s2": 2.322478626811052e-07,
+            "history_error": 0.0,
+            "stall_margin_deg": 10.220746994018555,
+            "wing_load_ratios": [
+              0.05276873553240741,
+              0.05322174961419753
+            ]
+          },
+          "method": "balanced physical constraint bracket"
+        }
+      },
+      "resolution": 0.125,
+      "side": "accepted"
+    },
+    {
+      "aircraft": "f_16xl",
+      "speed": 157.91807776016896,
+      "load": 1.3091902990743876,
+      "alpha": 25.685368298245614,
+      "native_equal": true,
+      "permitted": false,
+      "margin": -0.043170612305402756,
+      "required": -0.031651709228754044,
+      "bounds": [
+        -0.40798813104629517,
+        -0.0748223215341568
+      ],
+      "auto_success": true,
+      "trim": [
+        0.0,
+        -0.0748223215341568,
+        0.0
+      ],
+      "predictor": [
+        -0.4079880714416504,
+        -0.40556684136390686
+      ],
+      "predictor_success": [
+        false,
+        true
+      ],
+      "targets": [
+        -19.760000228881836,
+        28.119998931884766
+      ],
+      "force_error": 1.4733099797822623e-07,
+      "angular_error": 2.322478626811052e-07,
+      "pitch_rate": -0.12270599398434481,
+      "delivered": [
+        0.09189677238464355,
+        -0.04698750004172325,
+        -0.17635786533355713
+      ],
+      "applied_force_error": 0.0008697157532967046,
+      "applied_angular_error": 0.002763259899961298,
+      "reference": {
+        "history": [
+          20.15648651123047,
+          8938.990234375,
+          true
+        ],
+        "trim": [
+          0.0,
+          -0.07631006836891174,
+          0.0
+        ],
+        "success": true,
+        "source_speed_kmh": 157.91807776016896,
+        "observation_speed_kmh": 157.91807776016896
+      },
+      "point": {
+        "speed_kmh": 157.91807776016896,
+        "load_g": 1.3091902990743876,
+        "solution": [
+          25.685368298245614,
+          40.449988161283535,
+          0.0918967141985946,
+          -0.03165170744325095,
+          -0.1763578740998339
+        ],
+        "valid": false,
+        "converged": true,
+        "reasons": [
+          "Instructor pitch limit"
+        ],
+        "force_error_g": 1.4733099797822623e-07,
+        "angular_error_rad_s2": 2.322478626811052e-07,
+        "history_error": 0.0,
+        "stall_margin_deg": 10.220746994018555,
+        "wing_load_ratios": [
+          0.05276873553240741,
+          0.05322174961419753
+        ],
+        "alpha_deg": 25.685368298245614
+      },
+      "resolution": 0.125,
+      "side": "rejected"
+    },
+    {
+      "aircraft": "f_16xl",
+      "speed": 157.91807776016896,
+      "load": 1.3089679913669405,
+      "alpha": 25.680308612157216,
+      "native_equal": true,
+      "permitted": true,
+      "margin": 0.3766896314918995,
+      "required": -0.031585972756147385,
+      "bounds": [
+        -0.4082756042480469,
+        1.0
+      ],
+      "auto_success": true,
+      "trim": [
+        0.0,
+        -0.07482261955738068,
+        0.0
+      ],
+      "predictor": [
+        -0.4082755446434021,
+        1.0
+      ],
+      "predictor_success": [
+        false,
+        false
+      ],
+      "targets": [
+        -19.760000228881836,
+        28.119998931884766
+      ],
+      "force_error": 4.280420602070598e-08,
+      "angular_error": 6.508510276602161e-07,
+      "pitch_rate": -0.12262715446955567,
+      "delivered": [
+        0.09183979034423828,
+        -0.031585924327373505,
+        -0.17633605003356934
+      ],
+      "applied_force_error": 4.280420602070598e-08,
+      "applied_angular_error": 6.887390302654532e-07,
+      "reference": {
+        "history": [
+          20.15648651123047,
+          8938.990234375,
+          true
+        ],
+        "trim": [
+          0.0,
+          -0.07631006836891174,
+          0.0
+        ],
+        "success": true,
+        "source_speed_kmh": 157.91807776016896,
+        "observation_speed_kmh": 157.91807776016896
+      },
+      "point": {
+        "speed_kmh": 157.91807776016896,
+        "load_g": 1.3089679913669405,
+        "turn_dps": 10.822510382893865,
+        "ps_mps": 22.856247237647477,
+        "ps_continuous_mps": 22.755494389850583,
+        "alpha_deg": 25.680308612157216,
+        "bank_deg": 40.43851224261726,
+        "sideslip_deg": 0.0,
+        "sideslip_attitude_deg": 0.0,
+        "roll_leveling_branch": null,
+        "converged": true,
+        "valid": true,
+        "reasons": [],
+        "structural_flags": [],
+        "bounded_search_stationary": false,
+        "pitch_response": {
+          "normal": true,
+          "reversed": false,
+          "margin": 0.008535504665962194,
+          "gain_rad_s2": 0.18651786018917957,
+          "samples": [
+            {
+              "step": 0.002,
+              "gain_rad_s2": 0.18651786018917957,
+              "margin": 0.008535504665962194,
+              "rounding": 1.4435639064338713e-07
+            }
+          ],
+          "method": "Native steady pitch moment derivative at fixed flight state; normal control sign"
+        },
+        "force_error_g": 4.280420602070598e-08,
+        "angular_error_rad_s2": 6.508510276602161e-07,
+        "history_error": 0.0,
+        "stall_margin_deg": 10.225860595703125,
+        "wing_load_ratios": [
+          0.052759114583333336,
+          0.05321208043981481
+        ],
+        "commands": [
+          0.09183976799249649,
+          -0.031585972756147385,
+          -0.17633603513240814
+        ],
+        "control_bounds": [
+          [
+            -1.0,
+            1.0
+          ],
+          [
+            -1.0,
+            1.0
+          ],
+          [
+            -1.0,
+            1.0
+          ]
+        ],
+        "authority_margin": 0.8236639648675919,
+        "sticks": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "trim": [
+          0.09183976799249649,
+          -0.031585972756147385,
+          -0.17633603513240814
+        ],
+        "ias_kmh": 142.31987457275392,
+        "mach": 0.12856312096118927,
+        "sweep_percent": null,
+        "flaps_percent": 0.0,
+        "flaps_requested_percent": 0.0,
+        "gear_percent": 0.0,
+        "instructor": {
+          "converged": true,
+          "margin": 0.3766896314918995,
+          "margins": {
+            "Instructor delivered pitch": 0.3766896314918995,
+            "control authority with auto trim": 0.8236639648675919
+          },
+          "envelope_margin": 0.3766896314918995,
+          "pitch_margin": 0.3766896314918995,
+          "angle_margin": 0.1435861587524414,
+          "limiting": "Instructor delivered pitch",
+          "control_bounds": [
+            [
+              -1.0,
+              1.0
+            ],
+            [
+              -1.0,
+              1.0
+            ],
+            [
+              -1.0,
+              1.0
+            ]
+          ],
+          "protected_pitch_bounds": [
+            -0.4082756042480469,
+            1.0
+          ],
+          "pilot_pitch_bounds": [
+            -0.3604205548763275,
+            1.0
+          ],
+          "auto_trim": [
+            0.0,
+            -0.07482261955738068,
+            0.0
+          ],
+          "autotrim_success": true,
+          "retained_trim_on_failure": false,
+          "delivered_pitch": 1.0,
+          "required_pitch": -0.031585972756147385,
+          "required_pilot": [
+            0.09183976799249649,
+            0.0402267724275589,
+            -0.17633603513240814
+          ],
+          "angle_limits_deg": [
+            -19.760000228881836,
+            28.119998931884766
+          ],
+          "adjusted_wing_angles_deg": [
+            26.68413734436035,
+            26.638370513916016
+          ],
+          "native_angle_rate_rad_s": -0.011942372202938853,
+          "model": "static balanced-turn reference with native delivered-control permission",
+          "static_reference": true,
+          "history_independent": false,
+          "exact_native_controller": false,
+          "rate_demands": [
+            {
+              "target_angle": 26.638370513916016,
+              "target_acceleration": 15.864262580871582
+            },
+            {
+              "target_angle": 26.68413734436035,
+              "target_acceleration": -1.3621810674667358
+            }
+          ],
+          "predictor_pitch": [
+            -0.4082755446434021,
+            1.0
+          ],
+          "predictor_success": [
+            false,
+            false
+          ],
+          "recovery_active": false,
+          "overload_timer": 1.0,
+          "authority_factor": 1.0,
+          "overload_policy": "maximum retained timer; native reserve/release mapping",
+          "trim_reference": {
+            "history": [
+              20.15648651123047,
+              8938.990234375,
+              true
+            ],
+            "trim": [
+              0.0,
+              -0.07631006836891174,
+              0.0
+            ],
+            "success": true,
+            "source_speed_kmh": 157.91807776016896,
+            "observation_speed_kmh": 157.91807776016896
+          },
+          "autotrim_history_after": [
+            20.175548553466797,
+            8938.990234375,
+            true
+          ],
+          "actuator_assumption": "settled at post-update requested trim; steady adjusted-angle history"
+        },
+        "instructor_enabled": true,
+        "sweep_available_percent": null,
+        "force_n": [
+          104848.4560546875,
+          96821.8046875,
+          -427.9542236328125
+        ],
+        "moment_nm": [
+          -440.05889892578125,
+          -117.44219970703125,
+          -821.67431640625
+        ],
+        "engine_force_n": [
+          91017.7734375,
+          0.0,
+          0.0
+        ],
+        "component_forces": {
+          "left_hstab": [
+            2641.345947265625,
+            5580.0810546875,
+            0.0
+          ],
+          "right_hstab": [
+            2380.103759765625,
+            5405.0517578125,
+            0.0
+          ],
+          "vstab": [
+            -86.7680435180664,
+            0.0,
+            -220.65635681152344
+          ],
+          "fuselage": [
+            -197.29554748535156,
+            0.0,
+            -207.2978515625
+          ],
+          "left_wing": [
+            4518.58984375,
+            42734.8828125,
+            0.0
+          ],
+          "right_wing": [
+            4574.70703125,
+            43101.78515625,
+            0.0
+          ],
+          "chute": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "parasite": [
+            -0.0,
+            0.0,
+            -0.0
+          ]
+        },
+        "evaluations": 9,
+        "solution": [
+          25.680308612157216,
+          40.43851224261726,
+          0.09183977163337341,
+          -0.031585971260152376,
+          -0.1763360398420256
+        ],
+        "vertical_step_velocity_mps": -9.934107758624577e-09,
+        "altitude_correction": false,
+        "actual_turn_dps": 10.82251264750864,
+        "envelope_limit": {
+          "kind": "Instructor pitch",
+          "axis": null,
+          "limiting_load_g": 1.3089679913669405,
+          "limiting_load_interval_g": [
+            1.3089679913669405,
+            1.3090779721358021
+          ],
+          "constraint_residual": 0.3766896314918995,
+          "rejected_constraint_residual": -0.04320358484983444,
+          "evaluations": 0,
+          "initial_bracket_g": [
+            1.3089679913669405,
+            1.3090779721358021
+          ],
+          "active_constraints": [
+            "Instructor pitch"
+          ],
+          "turn_interval_dps": [
+            10.822510382893865,
+            10.82469420278346
+          ],
+          "turn_target_dps": 0.005,
+          "ps_interval_mps": [
+            22.856247237647477,
+            22.85331650052405
+          ],
+          "ps_target_mps": 0.1,
+          "rejected_endpoint": {
+            "speed_kmh": 157.91807776016896,
+            "load_g": 1.3090779721358021,
+            "solution": [
+              25.68281725435864,
+              40.44419033924685,
+              0.09186793259734569,
+              -0.03161883537248897,
+              -0.1763467931682366
+            ],
+            "valid": false,
+            "converged": true,
+            "reasons": [
+              "Instructor pitch limit"
+            ],
+            "force_error_g": 7.822065346134027e-08,
+            "angular_error_rad_s2": 8.455692970276396e-07,
+            "history_error": 0.0,
+            "stall_margin_deg": 10.223325729370117,
+            "wing_load_ratios": [
+              0.0527638744212963,
+              0.05321687885802469
+            ]
+          },
+          "method": "balanced physical constraint bracket"
+        }
+      },
+      "resolution": 0.015625,
+      "side": "accepted"
+    },
+    {
+      "aircraft": "f_16xl",
+      "speed": 157.91807776016896,
+      "load": 1.3090779721358021,
+      "alpha": 25.68281725435864,
+      "native_equal": true,
+      "permitted": false,
+      "margin": -0.04320358484983444,
+      "required": -0.03161883354187012,
+      "bounds": [
+        -0.4081328511238098,
+        -0.07482241839170456
+      ],
+      "auto_success": true,
+      "trim": [
+        0.0,
+        -0.07482241839170456,
+        0.0
+      ],
+      "predictor": [
+        -0.4081328809261322,
+        -0.40571242570877075
+      ],
+      "predictor_success": [
+        false,
+        true
+      ],
+      "targets": [
+        -19.760000228881836,
+        28.119998931884766
+      ],
+      "force_error": 7.822065346134027e-08,
+      "angular_error": 8.455692970276396e-07,
+      "pitch_rate": -0.12266615912379794,
+      "delivered": [
+        0.09186792373657227,
+        -0.046965859830379486,
+        -0.1763467788696289
+      ],
+      "applied_force_error": 0.0008710040139742392,
+      "applied_angular_error": 0.0027673721407352136,
+      "reference": {
+        "history": [
+          20.15648651123047,
+          8938.990234375,
+          true
+        ],
+        "trim": [
+          0.0,
+          -0.07631006836891174,
+          0.0
+        ],
+        "success": true,
+        "source_speed_kmh": 157.91807776016896,
+        "observation_speed_kmh": 157.91807776016896
+      },
+      "point": {
+        "speed_kmh": 157.91807776016896,
+        "load_g": 1.3090779721358021,
+        "solution": [
+          25.68281725435864,
+          40.44419033924685,
+          0.09186793259734569,
+          -0.03161883537248897,
+          -0.1763467931682366
+        ],
+        "valid": false,
+        "converged": true,
+        "reasons": [
+          "Instructor pitch limit"
+        ],
+        "force_error_g": 7.822065346134027e-08,
+        "angular_error_rad_s2": 8.455692970276396e-07,
+        "history_error": 0.0,
+        "stall_margin_deg": 10.223325729370117,
+        "wing_load_ratios": [
+          0.0527638744212963,
+          0.05321687885802469
+        ],
+        "alpha_deg": 25.68281725435864
+      },
+      "resolution": 0.015625,
+      "side": "rejected"
+    }
+  ]
+}

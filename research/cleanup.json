@@ -1,0 +1,48 @@
+{
+  "date": "2026-09-24",
+  "archive_sibling": "WT FM Reconstruction Archive 2026-09-24",
+  "retired_scripts": [
+    "scripts/audit_instructor_boundaries.py",
+    "scripts/audit_instructor_hold.py",
+    "scripts/instructor_equilibrium.py",
+    "scripts/instructor_history.py",
+    "scripts/instructor_hold.py",
+    "scripts/instructor_level_speed.py",
+    "scripts/instructor_prolonged.py",
+    "scripts/probe_established_instructor.py",
+    "scripts/probe_instructor_branches.py",
+    "scripts/probe_instructor_columns.py",
+    "scripts/probe_instructor_switches.py",
+    "scripts/verify_em_low_g_controller.py",
+    "scripts/verify_em_low_speed_native.py",
+    "scripts/verify_em_sideslip_native.py",
+    "scripts/verify_instructor_angle_ceiling.py",
+    "scripts/verify_instructor_aoa.py",
+    "scripts/verify_instructor_boundary_recovery.py",
+    "scripts/verify_instructor_boundary_switches.py",
+    "scripts/verify_instructor_entry_history.py",
+    "scripts/verify_instructor_entry_order.py",
+    "scripts/verify_instructor_history.py",
+    "scripts/verify_instructor_hold.py",
+    "scripts/verify_instructor_integration.py",
+    "scripts/verify_instructor_native_permission.py",
+    "scripts/verify_instructor_root_precision.py",
+    "scripts/verify_instructor_switch.py",
+    "scripts/verify_instructor_trim_entry.py"
+  ],
+  "archived_bulk": [
+    "analysis",
+    "outputs",
+    ".tools",
+    ".wrangler"
+  ],
+  "preserved": [
+    "current app edits",
+    "native source and fixtures",
+    "reference datasets",
+    "FlightTestData",
+    "experimental Instructor option",
+    "positive-only stall exclusion policy"
+  ],
+  "git_history": "Retained on Mac; excluded from portable ZIP"
+}

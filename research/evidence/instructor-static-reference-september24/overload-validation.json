@@ -1,0 +1,125 @@
+{
+  "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
+  "rows": [
+    {
+      "aircraft": "f_16xl",
+      "speed": 800.0,
+      "load": 13.0,
+      "timer": 0.0,
+      "angle_limits": [
+        -11.605228424072266,
+        18.303720474243164
+      ],
+      "predictors": [
+        0.372820645570755,
+        0.8086583018302917
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "f_16xl",
+      "speed": 800.0,
+      "load": 13.0,
+      "timer": 0.899,
+      "angle_limits": [
+        -11.605228424072266,
+        18.303720474243164
+      ],
+      "predictors": [
+        0.372820645570755,
+        0.8086583018302917
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "f_16xl",
+      "speed": 800.0,
+      "load": 13.0,
+      "timer": 0.901,
+      "angle_limits": [
+        -11.686779975891113,
+        18.401887893676758
+      ],
+      "predictors": [
+        0.372820645570755,
+        0.811830461025238
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "f_16xl",
+      "speed": 800.0,
+      "load": 13.0,
+      "timer": 1.0,
+      "angle_limits": [
+        -19.760000228881836,
+        28.119998931884766
+      ],
+      "predictors": [
+        0.372820645570755,
+        1.0
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "saab_j35d",
+      "speed": 800.0,
+      "load": 10.0,
+      "timer": 0.0,
+      "angle_limits": [
+        -10.173100471496582,
+        19.445810317993164
+      ],
+      "predictors": [
+        0.12102776765823364,
+        0.8929053544998169
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "saab_j35d",
+      "speed": 800.0,
+      "load": 10.0,
+      "timer": 0.899,
+      "angle_limits": [
+        -10.173100471496582,
+        19.445810317993164
+      ],
+      "predictors": [
+        0.12102776765823364,
+        0.8929053544998169
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "saab_j35d",
+      "speed": 800.0,
+      "load": 10.0,
+      "timer": 0.901,
+      "angle_limits": [
+        -10.173100471496582,
+        19.445810317993164
+      ],
+      "predictors": [
+        0.12102776765823364,
+        0.8929053544998169
+      ],
+      "native_equal": true
+    },
+    {
+      "aircraft": "saab_j35d",
+      "speed": 800.0,
+      "load": 10.0,
+      "timer": 1.0,
+      "angle_limits": [
+        -10.173100471496582,
+        19.445810317993164
+      ],
+      "predictors": [
+        0.12102776765823364,
+        0.8929053544998169
+      ],
+      "native_equal": true
+    }
+  ]
+}

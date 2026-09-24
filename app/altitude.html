@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>neothunderism · Speed–altitude</title><link rel="icon" href="data:,">
+<link rel="stylesheet" href="./altitude.css">
+<script>if(location.protocol==='file:')location.replace('http://127.0.0.1:8766/');</script>
+<script defer src="./vendor/plotly.min.js"></script><script defer src="./altitude_surface.js"></script><script defer src="./altitude.js"></script>
+</head>
+<body>
+<header><a class="brand" href="./">neothunderism</a><span class="runtime">● &nbsp; LOCAL WORKSPACE</span></header>
+<div class="workspace">
+<aside><form id="scenario">
+<div class="section-title"><span class="eyebrow">AIRCRAFT &amp; CONDITIONS</span><button id="reset" type="button" class="text-button">Reset</button></div>
+<label>Find aircraft<input id="search" type="search" placeholder="Search by name or vehicle ID…" autocomplete="off"></label>
+<label>Aircraft<select id="aircraft" size="6" required aria-label="Aircraft"><option value="">Loading catalog…</option></select></label>
+<p id="aircraft-info" class="hint">Select an aircraft to begin.</p>
+<div class="pair"><label>Fuel <span>%</span><input id="fuel" type="number" min="1" max="100" step="1" value="30" required></label><label>Throttle <span>%</span><input id="throttle" type="number" min="0" max="110" step="1" value="110" required></label></div>
+<p class="hint">Above 100% requests afterburner / WEP where available.</p>
+<label id="sweep-field" hidden>Fixed wing sweep <span>%</span><input id="sweep" type="number" min="0" max="100" step="1" value="0" required></label>
+<p id="prop-hint" class="hint" hidden>Experimental propeller support. Native automatic engine management, closed radiators.</p>
+<label class="check"><input id="limits" type="checkbox" checked> Respect wing-force, IAS and Mach limits</label>
+<div class="section-title"><span class="eyebrow">PLOT RANGE</span></div>
+<div class="pair"><label>Minimum TAS <span>km/h</span><input id="speed-min" type="number" min="100" max="2500" step="10" value="100" required></label><label>Maximum TAS <span>km/h</span><input id="speed-max" type="number" min="200" max="2600" step="10" value="1600" required></label></div>
+<div class="pair"><label>Minimum altitude <span>m</span><input id="altitude-min" type="number" min="0" max="17900" step="100" value="0" required></label><label>Maximum altitude <span>m</span><input id="altitude-max" type="number" min="100" max="18000" step="100" value="16000" required></label></div>
+<label>Sampling<select id="quality"><option value="preview" selected>Fast · 1 m/s</option><option value="smooth">Smooth · 0.5 m/s</option><option value="detailed">Detailed · 0.15 m/s</option></select></label>
+<p class="hint">Checks SEP interpolation at additional solved points. Unresolved areas remain blank.</p>
+<label>SEP contour interval <span>m/s</span><select id="interval"><option value="5">5</option><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label>
+<button id="calculate" type="submit" class="primary" disabled>Calculate altitude plot <span>↗</span></button>
+<button id="cancel" type="button" hidden>Cancel calculation</button>
+<p class="baseline">Fully upgraded · constant fuel · intact aircraft<br>Clean configuration · full available trim · still air</p>
+</form></aside>
+<main>
+<div class="heading"><div><span class="eyebrow">AIRCRAFT PERFORMANCE</span><h1>Speed–altitude</h1><p>Specific excess power across speed and altitude.</p></div><span class="badge">RECONSTRUCTION</span></div>
+<div id="error" class="notice error" role="alert" hidden></div>
+<div id="progress" class="notice" role="status" aria-live="polite" hidden><strong id="progress-label">Preparing aircraft…</strong><span id="progress-detail"></span><progress></progress></div>
+<div id="stale" class="notice" hidden>Settings have changed. Calculate to update the plot.</div>
+<div id="metrics" class="metrics"></div>
+<section class="chart-card">
+<div class="view-bar"><div class="view-switch" role="group" aria-label="Plot view"><button id="view-2d" type="button" aria-pressed="true">2D envelope</button><button id="view-3d" type="button" aria-pressed="false">3D surface</button></div><span id="view-description">Speed × altitude · SEP contours</span><button id="surface-download" type="button" class="text-button" hidden>3D PNG ↓</button></div>
+<div class="toolbar"><strong>Level-flight SEP <span>m/s</span></strong><div><label class="check"><input id="climb-visible" type="checkbox" checked> Best SEP</label><label class="check"><input id="samples" type="checkbox"> Samples</label><label class="check"><input id="gaps" type="checkbox"> Unresolved</label><button id="reset-view" class="text-button" type="button">Reset view</button></div></div>
+<div id="chart" aria-label="Speed versus altitude with specific excess power contours"><div class="empty"><span>⌁</span><h2>Explore the altitude envelope</h2><p>Select an aircraft and calculate.<br>SEP = 0 marks the level-flight energy boundary.</p></div></div>
+<div class="caption"><span><i class="line positive"></i> Positive SEP</span><span><i class="line zero"></i> SEP = 0</span><span><i class="line negative"></i> Negative SEP</span><span><i class="line climb"></i> <span id="guide-label">Best SEP</span></span><span id="chart-gesture">Drag to pan · scroll to zoom</span></div>
+</section>
+<div class="below-chart"><p id="summary">No calculation loaded.</p><nav class="exports" aria-label="Export diagram"><span>2D / DATA</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></nav></div>
+<section class="climb-card" aria-label="Maximum energy gain rate guide">
+<div class="climb-heading"><div><span class="eyebrow">ENERGY GAIN RATE</span><h2>Continuous best-SEP guide</h2></div><div class="guide-peak"><strong id="climb-time">—</strong><span>Peak SEP on guide</span></div></div>
+<p id="climb-summary" role="status">Calculate a plot to see the best-SEP speed schedule across its altitude range.</p>
+<div class="climb-foot"><span>Energy gain rate · full plotted altitude range · speed schedule, not a timed trajectory</span><a id="climb-download" aria-disabled="true">Guide CSV ↓</a></div>
+</section>
+<section class="inspector"><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a contour or sample</h2><div id="point-content"><p class="hint">Inspect the nearest solved point, its energy balance and trim residuals.</p></div></section>
+<details class="method"><summary>How to read this plot</summary><div class="method-grid"><div><h3>Energy balance</h3><p>Contours show native finite-step energy-height change, in m/s, at trimmed straight-flight conditions. Positive SEP means available energy; negative SEP means energy loss. The bold zero contour marks energy balance at the selected throttle.</p><p>SEP is not a simulated climb rate. These are horizontal operating points with no turn; a small bank can balance asymmetric forces. The recovered high-altitude vertical-velocity correction is included.</p></div><div><h3>Reading the boundary</h3><p>The pink line is the lower of the aircraft’s IAS and Mach limits at each altitude. Low-speed stall, control authority, and unavailable sweep positions can also exclude points. A plot-range edge is not a physical ceiling.</p><p>Blank regions can contain physical exclusions, failed trim, or unresolved interpolation. Enable Unresolved to distinguish numerical gaps. No contour is drawn across a failed sample. The highest visible zero contour is not automatically a certified absolute ceiling.</p></div><div><h3>Model &amp; sampling</h3><p>Uses the same recovered aircraft equations and acceptance tolerances as the EM solver. Altitude sampling and rendering are independent. Additional speed and altitude samples check interpolation; the selected tolerance is a measured local check, not a global accuracy guarantee.</p><p>Fuel, health, and boost supply remain fixed. Flaps remain retracted; sweep stays at the requested position. Radiators stay closed. Numerical results are experimental and have not been exhaustively validated against live flight.</p><p>The gold guide tracks high SEP continuously from the minimum plotted altitude to the maximum. SEP = d(h + V²/2g)/dt is the rate of total energy-height gain, so building speed and gaining height both count. The guide connects the strongest available SEP speeds through checked surface cells, maximizing altitude-averaged SEP on the sampled connection graph. It has no time window, target speed or minimum-climb-time objective. It is a speed schedule, not a simulated trajectory: acceleration, pitch transitions and climb-angle drag are not included. If the checked region cannot be connected across the full range, no guide is drawn.</p><p>In 3D, surface height and color both show SEP. White marks SEP = 0; the gold guide follows the surface. Rotate by dragging and zoom by scrolling. The 3D PNG saves the current view; the SVG, PNG and PDF links below the plot export the 2D envelope.</p></div></div></details>
+<footer><span>LOCAL ANALYSIS TOOL</span><span>Independent altitude calculation</span></footer>
+</main></div>
+</body></html>

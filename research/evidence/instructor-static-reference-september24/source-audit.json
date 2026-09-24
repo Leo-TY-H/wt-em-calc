@@ -1,0 +1,8 @@
+{
+  "compared": 381,
+  "differences": [],
+  "removed_candidate_modules": [
+    "instructor_reference.py",
+    "instructor_maximum.py"
+  ]
+}

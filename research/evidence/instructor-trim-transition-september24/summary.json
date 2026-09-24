@@ -1,0 +1,117 @@
+{
+  "status": "TRIM MECHANISM ESTABLISHED; GLOBAL MAXIMUM PROJECTION UNRESOLVED",
+  "production_changed": false,
+  "native_binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
+  "prescribed_transition_calls": 74,
+  "native_local_permission_checks": 44,
+  "moving_inner_cases": 12,
+  "moving_inner_trim_updates": 1363,
+  "carried_inner_calls": 7,
+  "carried_inner_trim_updates": 694,
+  "local_boundary_roots": 8,
+  "physical_scan_solves": 50,
+  "scan_trim_contexts": 100,
+  "source_audit": {
+    "unchanged": 381,
+    "changed": [],
+    "added": [],
+    "production_unchanged": true
+  },
+  "conditional_roots": [
+    {
+      "speed_kmh": 770.9,
+      "load_g": 7.1420208154101905,
+      "alpha_deg": 1.0784914795293028,
+      "autotrim_success": true,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 770.92,
+      "load_g": 7.141500031704679,
+      "alpha_deg": 1.0776243343173975,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 770.94,
+      "load_g": 7.141027722542051,
+      "alpha_deg": 1.0768194855470645,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 770.96,
+      "load_g": 7.140533638956256,
+      "alpha_deg": 1.0759747963558564,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 771.0316217800856,
+      "load_g": 7.138720505890139,
+      "alpha_deg": 1.0729288975408986,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 772.0,
+      "load_g": 7.114698125234518,
+      "alpha_deg": 1.0322584623187854,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 775.0,
+      "load_g": 7.0414681182421495,
+      "alpha_deg": 0.9074118756116094,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    },
+    {
+      "speed_kmh": 780.0,
+      "load_g": 6.923716757022501,
+      "alpha_deg": 0.7033633819308844,
+      "autotrim_success": false,
+      "trim": [
+        0.0,
+        -0.9374316930770874,
+        0.0
+      ]
+    }
+  ],
+  "symmetric_reduction_max_error": 1.7881393432617188e-07,
+  "limits": [
+    "Prescribed source sequences are not integrated flights.",
+    "Native moving inner prediction has prepared held propulsion and free-air fixture inputs.",
+    "Trim recurrence and controller outputs independently checked; no complete propeller-owner trajectory parity claim.",
+    "Local conditional roots do not prove a global maximum or retained-state reachability."
+  ]
+}

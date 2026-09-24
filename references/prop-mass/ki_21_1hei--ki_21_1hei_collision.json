@@ -1,0 +1,1274 @@
+{
+  "aircraft": "ki_21_1hei",
+  "resource": "ki_21_1hei_collision",
+  "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
+  "fm_sha256": "6941b6274e6adcec9f5b942fd8912215c7b4acb0b131b26c63d48eb733e72fab",
+  "collision_provenance": {
+    "grp_path": "/Applications/WarThunderLauncher.app/Contents/WarThunder.app/Contents/Resources/game/content/base/res/aircrafts/jp_aircraft_logic.grp",
+    "grp_sha256": "f3930f369e210c73be0e79a7b24a5477deedd3a985272b437f334cf703710b95",
+    "grp_size": 3064495,
+    "resource": "ki_21_1hei_collision",
+    "resource_class": "0xace50000",
+    "offset": 1593776,
+    "end": 1638272,
+    "packed_sha256": "5de8633f7d017a916e1923d43f02db1938cf31b27bc3c389a1a3b1105b85ae7b",
+    "packed_size": 44496,
+    "stream_sha256": "9778981d417fac79c108865d04d3c0ed9e4dc2322c9dd4e53badd7bc556fc4c8",
+    "stream_size": 83445,
+    "format": "0xace50003",
+    "fm_commit": "28e93b1b1f7f0ec30644bfbd25c7f82673106012",
+    "version_boundary": "Installed asset hashes are pinned independently; no unverified assertion that installed assets equal datamine patch 2.59.0.13.",
+    "grp_format_source": "https://raw.githubusercontent.com/GaijinEntertainment/DagorEngine/75723669297e48e200a0dc67b18c1629e0975daf/prog/engine/gameRes/grpData.h"
+  },
+  "vehicle_mapping": {
+    "aircraft": "ki_21_1hei",
+    "vehicles": [
+      {
+        "vehicle": "ki_21_1hei",
+        "sha": "6434aceda929ac8311182e7d40eef1438b5a55dc",
+        "fm": "fm/ki_21_1hei.blk",
+        "model": "ki_21_1hei"
+      }
+    ],
+    "assets": [
+      "ki_21_1hei_collision"
+    ],
+    "referenced": true
+  },
+  "extra_masses": {
+    "masses": {
+      "engine1_dm": 625.0,
+      "engine2_dm": 625.0
+    },
+    "parts": {
+      "prop0_dm": {
+        "mass": 170.0,
+        "pos": [
+          2.6500000953674316,
+          0.05000000074505806,
+          2.700000047683716
+        ]
+      },
+      "prop1_dm": {
+        "mass": 170.0,
+        "pos": [
+          2.6500000953674316,
+          0.05000000074505806,
+          -2.700000047683716
+        ]
+      }
+    }
+  },
+  "tank_capacities": [
+    375.0,
+    375.0,
+    213.75,
+    465.0,
+    22.5,
+    213.75,
+    465.0
+  ],
+  "tanks": [
+    {
+      "index": 0,
+      "capacity": 375.0,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    },
+    {
+      "index": 1,
+      "capacity": 375.0,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    },
+    {
+      "index": 2,
+      "capacity": 213.75,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    },
+    {
+      "index": 3,
+      "capacity": 465.0,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    },
+    {
+      "index": 4,
+      "capacity": 22.5,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    },
+    {
+      "index": 5,
+      "capacity": 213.75,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    },
+    {
+      "index": 6,
+      "capacity": 465.0,
+      "system": 0,
+      "priority": 0,
+      "external": false
+    }
+  ],
+  "fuel_systems": [
+    {
+      "capacity": 2130.0,
+      "external_capacity": 0.0,
+      "reservoir_capacity": 0.0,
+      "priority_count": 1
+    }
+  ],
+  "records": [
+    {
+      "name": "prop0_dm",
+      "mass": 170.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "position": [
+        2.6500000953674316,
+        0.05000000074505806,
+        2.700000047683716
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "prop1_dm",
+      "mass": 170.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "position": [
+        2.6500000953674316,
+        0.05000000074505806,
+        -2.700000047683716
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "tailcontrol_dm",
+      "mass": 10.406399726867676,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.17224261164665222,
+        11.71397590637207,
+        11.613886833190918
+      ],
+      "position": [
+        -4.1560845375061035,
+        0.09054650366306305,
+        -0.046940386295318604
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wingcontrol_r_dm",
+      "mass": 3.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        6.970917701721191,
+        6.950873374938965,
+        0.1575208604335785
+      ],
+      "position": [
+        -1.872645378112793,
+        0.31973227858543396,
+        -4.552323818206787
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wingcontrol_l_dm",
+      "mass": 3.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        6.970893859863281,
+        6.950873374938965,
+        0.1574973464012146
+      ],
+      "position": [
+        -1.872645378112793,
+        0.31980058550834656,
+        4.5523247718811035
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wing_l_dm",
+      "mass": 150.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.4597547054290771,
+        3.652390241622925,
+        2.342892646789551
+      ],
+      "position": [
+        -1.5740580558776855,
+        0.14008232951164246,
+        2.6753251552581787
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wing_r_dm",
+      "mass": 150.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.4597543478012085,
+        3.652390241622925,
+        2.342892646789551
+      ],
+      "position": [
+        -1.5740580558776855,
+        0.14008232951164246,
+        -2.6753244400024414
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "cover2_dm",
+      "mass": 69.28759765625,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.3331453204154968,
+        2.2400028705596924,
+        2.260746955871582
+      ],
+      "position": [
+        -0.07649028301239014,
+        0.006420546676963568,
+        -2.6507017612457275
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "cover1_dm",
+      "mass": 69.28759765625,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.3331453800201416,
+        2.2400028705596924,
+        2.260746955871582
+      ],
+      "position": [
+        -0.07649028301239014,
+        0.006420546676963568,
+        2.6506800651550293
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "fuse1_dm",
+      "mass": 893.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.6076134443283081,
+        1.7696056365966797,
+        1.9953396320343018
+      ],
+      "position": [
+        -2.0224061012268066,
+        0.20796990394592285,
+        8.149072527885437e-10
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "fuse2_dm",
+      "mass": 820.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.45333048701286316,
+        1.9208015203475952,
+        1.998384952545166
+      ],
+      "position": [
+        2.4319300651550293,
+        -0.013137340545654297,
+        8.149072527885437e-10
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "aileron_l_dm",
+      "mass": 8.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.9296884536743164,
+        2.0436604022979736,
+        0.19548436999320984
+      ],
+      "position": [
+        -2.137223243713379,
+        0.6704766750335693,
+        8.16177749633789
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "aileron_r_dm",
+      "mass": 8.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.9296860694885254,
+        2.043654680252075,
+        0.19547723233699799
+      ],
+      "position": [
+        -2.1372194290161133,
+        0.670476496219635,
+        -8.161797523498535
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wing1_l_dm",
+      "mass": 100.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.9293248653411865,
+        1.8781870603561401,
+        1.0391517877578735
+      ],
+      "position": [
+        -1.275947093963623,
+        0.5014513731002808,
+        6.342093467712402
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wing1_r_dm",
+      "mass": 100.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.9293248057365417,
+        1.8781869411468506,
+        1.0391517877578735
+      ],
+      "position": [
+        -1.275947093963623,
+        0.5014513731002808,
+        -6.342092514038086
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "flap_r_dm",
+      "mass": 10.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.6088106632232666,
+        1.807073950767517,
+        0.2582380771636963
+      ],
+      "position": [
+        -2.8303050994873047,
+        0.055926233530044556,
+        -3.5996663570404053
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "flap_l_dm",
+      "mass": 10.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.6088032722473145,
+        1.8070666790008545,
+        0.2582380771636963
+      ],
+      "position": [
+        -2.8303050994873047,
+        0.05592629313468933,
+        3.5996718406677246
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "spar_r_dm",
+      "mass": 82.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.3805322647094727,
+        1.662285327911377,
+        0.3945862948894501
+      ],
+      "position": [
+        -0.927490770816803,
+        0.13356465101242065,
+        -2.7238845825195312
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "spar_l_dm",
+      "mass": 82.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.3805320262908936,
+        1.6622850894927979,
+        0.3945862948894501
+      ],
+      "position": [
+        -0.927490770816803,
+        0.13356465101242065,
+        2.7238845825195312
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "fuse_dm",
+      "mass": 180.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.5380091071128845,
+        1.3357393741607666,
+        1.4962610006332397
+      ],
+      "position": [
+        -6.0534844398498535,
+        0.1447729468345642,
+        8.149072527885437e-10
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "stab2_dm",
+      "mass": 20.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.0379366874694824,
+        1.5222113132476807,
+        0.4880601167678833
+      ],
+      "position": [
+        -9.53274917602539,
+        0.38094550371170044,
+        -1.9989677667617798
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "stab1_dm",
+      "mass": 20.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        1.0379366874694824,
+        1.5222113132476807,
+        0.4880601167678833
+      ],
+      "position": [
+        -9.53274917602539,
+        0.38094550371170044,
+        1.9989675283432007
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wing2_r_dm",
+      "mass": 50.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.9160304069519043,
+        1.35359525680542,
+        0.48272669315338135
+      ],
+      "position": [
+        -1.1953659057617188,
+        0.8301044702529907,
+        -9.607931137084961
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wing2_l_dm",
+      "mass": 50.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.9160299301147461,
+        1.3535947799682617,
+        0.48272669315338135
+      ],
+      "position": [
+        -1.1953659057617188,
+        0.8301044702529907,
+        9.607932090759277
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "wingcontrol_dm",
+      "mass": 3.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.06361671537160873,
+        1.36568021774292,
+        1.3081438541412354
+      ],
+      "position": [
+        -0.34540319442749023,
+        -0.24551820755004883,
+        -0.13753463327884674
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "tail_dm",
+      "mass": 135.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.2509072422981262,
+        0.9950515627861023,
+        1.0331010818481445
+      ],
+      "position": [
+        -9.539539337158203,
+        0.3056694567203522,
+        4.76837158203125e-07
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "spar1_l_dm",
+      "mass": 70.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.917498767375946,
+        1.0773801803588867,
+        0.2292078137397766
+      ],
+      "position": [
+        -0.9345002174377441,
+        0.5056899785995483,
+        6.343868255615234
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "spar1_r_dm",
+      "mass": 70.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.9174985885620117,
+        1.0773800611495972,
+        0.2292078137397766
+      ],
+      "position": [
+        -0.9345002174377441,
+        0.5056899785995483,
+        -6.343867301940918
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "elevator1_dm",
+      "mass": 5.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.8625264167785645,
+        0.8987795114517212,
+        0.038561247289180756
+      ],
+      "position": [
+        -10.298713684082031,
+        0.38550955057144165,
+        -2.1228549480438232
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "elevator0_dm",
+      "mass": 5.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.8625261783599854,
+        0.8987792730331421,
+        0.038561247289180756
+      ],
+      "position": [
+        -10.298713684082031,
+        0.38550955057144165,
+        2.1228556632995605
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gun8_dm",
+      "mass": 0.0,
+      "weight": 0.9639955759048462,
+      "specific_inertia": [
+        0.015575294382870197,
+        0.8429111838340759,
+        0.8414890766143799
+      ],
+      "position": [
+        -9.642251968383789,
+        0.2676647901535034,
+        0.14719553291797638
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "gear_r_dm",
+      "mass": 80.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.12259771674871445,
+        0.6435796022415161,
+        0.6793596744537354
+      ],
+      "position": [
+        -0.29003894329071045,
+        -0.3422797620296478,
+        -2.6499991416931152
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gear_l_dm",
+      "mass": 80.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.1225975975394249,
+        0.6435797214508057,
+        0.6793599128723145
+      ],
+      "position": [
+        -0.2900387644767761,
+        -0.3422793745994568,
+        2.6499996185302734
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "fin_dm",
+      "mass": 50.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.48703619837760925,
+        0.20077913999557495,
+        0.6772313117980957
+      ],
+      "position": [
+        -9.219985961914062,
+        2.100221633911133,
+        2.9103830456733704e-11
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "spar2_l_dm",
+      "mass": 55.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.5719627737998962,
+        0.6455386281013489,
+        0.10957890003919601
+      ],
+      "position": [
+        -0.9449377059936523,
+        0.8283698558807373,
+        9.260420799255371
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "spar2_r_dm",
+      "mass": 55.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.5719623565673828,
+        0.6455382108688354,
+        0.10957890003919601
+      ],
+      "position": [
+        -0.9449377059936523,
+        0.8283698558807373,
+        -9.260419845581055
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "rudder_dm",
+      "mass": 30.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.47166141867637634,
+        0.16505983471870422,
+        0.6302005052566528
+      ],
+      "position": [
+        -10.207757949829102,
+        2.117278575897217,
+        0.0
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "cover4_dm",
+      "mass": 14.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.15312963724136353,
+        0.5677263736724854,
+        0.4771788716316223
+      ],
+      "position": [
+        -2.718550443649292,
+        1.2287132740020752,
+        5.7228608056902885e-06
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "cover3_dm",
+      "mass": 14.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.17795655131340027,
+        0.5348645448684692,
+        0.4250320792198181
+      ],
+      "position": [
+        1.236039161682129,
+        0.9993988275527954,
+        8.149072527885437e-10
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "engine2_dm",
+      "mass": 625.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.2992725372314453,
+        0.21743761003017426,
+        0.21268975734710693
+      ],
+      "position": [
+        2.082451343536377,
+        0.003574082627892494,
+        -2.649543523788452
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "engine1_dm",
+      "mass": 625.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.2944827973842621,
+        0.21264785528182983,
+        0.21268975734710693
+      ],
+      "position": [
+        2.082451343536377,
+        0.003574082627892494,
+        2.6495327949523926
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "tank7_dm",
+      "mass": 0.0,
+      "weight": 4.135659217834473,
+      "specific_inertia": [
+        0.08590526133775711,
+        0.2577999532222748,
+        0.23369024693965912
+      ],
+      "position": [
+        -0.914207398891449,
+        0.024063516408205032,
+        -1.8229074478149414
+      ],
+      "fuel_tank": 6,
+      "box_mass": false
+    },
+    {
+      "name": "tank4_dm",
+      "mass": 0.0,
+      "weight": 4.135655879974365,
+      "specific_inertia": [
+        0.08590573072433472,
+        0.2577998638153076,
+        0.23359273374080658
+      ],
+      "position": [
+        -0.9142073392868042,
+        0.02406369335949421,
+        1.822950005531311
+      ],
+      "fuel_tank": 3,
+      "box_mass": false
+    },
+    {
+      "name": "gunner5_dm",
+      "mass": 0.0,
+      "weight": 2.0388543605804443,
+      "specific_inertia": [
+        0.20719614624977112,
+        0.025547293946146965,
+        0.21566441655158997
+      ],
+      "position": [
+        -5.028255939483643,
+        0.3151969909667969,
+        0.15891601145267487
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "tank1_dm",
+      "mass": 0.0,
+      "weight": 4.994023323059082,
+      "specific_inertia": [
+        0.1459852010011673,
+        0.20538003742694855,
+        0.23963941633701324
+      ],
+      "position": [
+        -2.816602945327759,
+        0.34988799691200256,
+        -0.31493955850601196
+      ],
+      "fuel_tank": 0,
+      "box_mass": false
+    },
+    {
+      "name": "gunner2_dm",
+      "mass": 90.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.18322181701660156,
+        0.059211503714323044,
+        0.19720458984375
+      ],
+      "position": [
+        -4.119369983673096,
+        0.662135899066925,
+        -0.024521348997950554
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "tank6_dm",
+      "mass": 0.0,
+      "weight": 2.958247423171997,
+      "specific_inertia": [
+        0.06900681555271149,
+        0.17007187008857727,
+        0.1593579351902008
+      ],
+      "position": [
+        -1.084694266319275,
+        -0.031913407146930695,
+        -1.0817363262176514
+      ],
+      "fuel_tank": 5,
+      "box_mass": false
+    },
+    {
+      "name": "tank3_dm",
+      "mass": 0.0,
+      "weight": 2.9172840118408203,
+      "specific_inertia": [
+        0.0684371143579483,
+        0.1703193336725235,
+        0.16034622490406036
+      ],
+      "position": [
+        -1.0869147777557373,
+        -0.028585243970155716,
+        1.0858666896820068
+      ],
+      "fuel_tank": 2,
+      "box_mass": false
+    },
+    {
+      "name": "pilot_dm",
+      "mass": 90.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.11288970708847046,
+        0.09656139463186264,
+        0.15678268671035767
+      ],
+      "position": [
+        1.4342355728149414,
+        0.6002820134162903,
+        0.3026728630065918
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "tank2_dm",
+      "mass": 0.0,
+      "weight": 3.4259560108184814,
+      "specific_inertia": [
+        0.11373219639062881,
+        0.1414472609758377,
+        0.158042773604393
+      ],
+      "position": [
+        -1.4748224020004272,
+        0.674441933631897,
+        -0.3080201745033264
+      ],
+      "fuel_tank": 1,
+      "box_mass": false
+    },
+    {
+      "name": "gunner1_dm",
+      "mass": 90.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.13412868976593018,
+        0.05506047606468201,
+        0.1328040063381195
+      ],
+      "position": [
+        3.786953926086426,
+        -0.003661736845970154,
+        0.014746204018592834
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gunner6_dm",
+      "mass": 0.0,
+      "weight": 1.6682296991348267,
+      "specific_inertia": [
+        0.09364486485719681,
+        0.028216904029250145,
+        0.10398207604885101
+      ],
+      "position": [
+        -5.544394016265869,
+        -0.08950929343700409,
+        -0.0439511276781559
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "gunner4_dm",
+      "mass": 0.0,
+      "weight": 1.668233036994934,
+      "specific_inertia": [
+        0.09399375319480896,
+        0.028216861188411713,
+        0.10362575203180313
+      ],
+      "position": [
+        0.12998616695404053,
+        0.6044891476631165,
+        0.09942340850830078
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "gunner3_dm",
+      "mass": 90.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.13412833213806152,
+        0.05506042763590813,
+        0.13280360400676727
+      ],
+      "position": [
+        -6.107023239135742,
+        -0.005522832274436951,
+        -0.0016188472509384155
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gun2_dm",
+      "mass": 29.479999542236328,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.041752927005290985,
+        0.09324212372303009,
+        0.09675606340169907
+      ],
+      "position": [
+        -4.575857639312744,
+        1.3377759456634521,
+        1.4901161193847656e-08
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gun7_dm",
+      "mass": 0.0,
+      "weight": 0.2625124156475067,
+      "specific_inertia": [
+        0.06056639552116394,
+        0.05652645602822304,
+        0.005626298952847719
+      ],
+      "position": [
+        -5.518184185028076,
+        -0.19868606328964233,
+        -0.505347490310669
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "gun1_dm",
+      "mass": 13.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.052224379032850266,
+        0.05858384817838669,
+        0.10545524954795837
+      ],
+      "position": [
+        4.2632317543029785,
+        -0.24035649001598358,
+        5.73332135900273e-06
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gun3_dm",
+      "mass": 13.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.012008334510028362,
+        0.0871611088514328,
+        0.09381714463233948
+      ],
+      "position": [
+        -6.740736484527588,
+        -0.38053688406944275,
+        3.725290298461914e-09
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gun5_dm",
+      "mass": 0.0,
+      "weight": 0.2625167965888977,
+      "specific_inertia": [
+        0.05172006040811539,
+        0.059753965586423874,
+        0.011246907524764538
+      ],
+      "position": [
+        0.3855513036251068,
+        0.8749457001686096,
+        -0.49646517634391785
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "gun4_dm",
+      "mass": 0.0,
+      "weight": 0.26251333951950073,
+      "specific_inertia": [
+        0.06056574359536171,
+        0.05975222960114479,
+        0.0023997025564312935
+      ],
+      "position": [
+        0.3966294527053833,
+        0.8749443292617798,
+        0.4942086935043335
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "gun6_dm",
+      "mass": 0.0,
+      "weight": 0.26251325011253357,
+      "specific_inertia": [
+        0.0605655275285244,
+        0.059752002358436584,
+        0.0023996687959879637
+      ],
+      "position": [
+        -5.059152603149414,
+        0.10860009491443634,
+        0.552564799785614
+      ],
+      "fuel_tank": null,
+      "box_mass": false
+    },
+    {
+      "name": "oil4_dm",
+      "mass": 30.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.04351482540369034,
+        0.060321688652038574,
+        0.04831915348768234
+      ],
+      "position": [
+        0.22191239893436432,
+        0.26515328884124756,
+        -3.8663747310638428
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "oil2_dm",
+      "mass": 30.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.04351478070020676,
+        0.06032165139913559,
+        0.04831915348768234
+      ],
+      "position": [
+        0.22191238403320312,
+        0.26515328884124756,
+        3.8663744926452637
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "gear_c_dm",
+      "mass": 15.0,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.035569168627262115,
+        0.01892247423529625,
+        0.04791135713458061
+      ],
+      "position": [
+        -10.21968936920166,
+        -0.1786932349205017,
+        -7.450580596923828e-09
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "tank5_dm",
+      "mass": 0.0,
+      "weight": 0.653053343296051,
+      "specific_inertia": [
+        0.02994031459093094,
+        0.026877716183662415,
+        0.02519855834543705
+      ],
+      "position": [
+        -0.30589690804481506,
+        -0.021230660378932953,
+        1.0825018882751465
+      ],
+      "fuel_tank": 4,
+      "box_mass": false
+    },
+    {
+      "name": "oil1_dm",
+      "mass": 2.5,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.008065016940236092,
+        0.009198740124702454,
+        0.005721161141991615
+      ],
+      "position": [
+        1.3970789909362793,
+        0.583238959312439,
+        2.6501283645629883
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    },
+    {
+      "name": "oil3_dm",
+      "mass": 2.5,
+      "weight": 0.0,
+      "specific_inertia": [
+        0.00806497409939766,
+        0.009198697283864021,
+        0.005721161141991615
+      ],
+      "position": [
+        1.3970789909362793,
+        0.583238959312439,
+        -2.65012788772583
+      ],
+      "fuel_tank": null,
+      "box_mass": true
+    }
+  ],
+  "damage_records": [],
+  "consumer_checks": 4,
+  "scope": "Original collision decoder, complete mass-property loader and geometry producer; independent native-priority fuel allocation and intact mass consumer. Four initial internal fuel selections. Default authored intact pose. No weapon ammunition or payload. Installed geometry and FM patch pins remain separate."
+}

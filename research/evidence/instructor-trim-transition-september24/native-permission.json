@@ -1,0 +1,1915 @@
+{
+  "scope": "Native local balanced permission with separate requested and actual trim.\n\nController plus one actuator/delivery update, prescribed physical source. Does\nnot certify a preceding flight, moving inner prediction or a global maximum.\n",
+  "binary_sha256": "820fee4a55601ffa459e2635da4ce1436cfc7adcc703a7c799380c95d136ebd5",
+  "retained_event_trim": -0.9374316930770874,
+  "rows": [
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": 0.0,
+      "actual_trim_after": -0.0026041667442768812,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.6345762014389038,
+      "pitch_command_allowed": 0.6345762014389038,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30375832319259644,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.0026041667442768812,
+        0.48017871379852295
+      ],
+      "mechanical_bounds": [
+        -0.48287907242774963,
+        0.48017871379852295
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 0.17642036080360413,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.509676312818865e-06,
+      "applied_angular_error": 3.4512013657534077e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.10000000149011612,
+      "actual_trim_after": -0.10260416567325592,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.7653703689575195,
+      "pitch_command_allowed": 0.7653703689575195,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30375832319259644,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.10260416567325592,
+        0.4283316135406494
+      ],
+      "mechanical_bounds": [
+        -0.5347262024879456,
+        0.4283316135406494
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 0.12457326054573059,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.509676312818865e-06,
+      "applied_angular_error": 3.4512013657534077e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.20000000298023224,
+      "actual_trim_after": -0.20260417461395264,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.8744127750396729,
+      "pitch_command_allowed": 0.8744127750396729,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.3037583827972412,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.20260417461395264,
+        0.3764845132827759
+      ],
+      "mechanical_bounds": [
+        -0.5865733027458191,
+        0.3764845132827759
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 0.07272616028785706,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.617827968704382e-06,
+      "applied_angular_error": 2.831124182939392e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.30000001192092896,
+      "actual_trim_after": -0.30260416865348816,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.9667128920555115,
+      "pitch_command_allowed": 0.9667128920555115,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.3037583529949188,
+      "delivery_error": 9.778887033462524e-09,
+      "protected_bounds": [
+        -0.30260416865348816,
+        0.32463738322257996
+      ],
+      "mechanical_bounds": [
+        -0.6384204030036926,
+        0.32463738322257996
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 0.020879030227661133,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.574443086086811e-06,
+      "applied_angular_error": 2.8435168572898136e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.33000001311302185,
+      "actual_trim_after": -0.33260416984558105,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.9917017221450806,
+      "pitch_command_allowed": 0.9917017221450806,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.3037583827972412,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.33260416984558105,
+        0.3090832829475403
+      ],
+      "mechanical_bounds": [
+        -0.6539745330810547,
+        0.3090832829475403
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 0.00532492995262146,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.617827968704382e-06,
+      "applied_angular_error": 2.831124182939392e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.3400000035762787,
+      "actual_trim_after": -0.3426041603088379,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.9997831583023071,
+      "pitch_command_allowed": 0.9997831583023071,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30375832319259644,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.3426041603088379,
+        0.30389857292175293
+      ],
+      "mechanical_bounds": [
+        -0.6591593027114868,
+        0.30389857292175293
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 0.00014021992683410645,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.509676312818865e-06,
+      "applied_angular_error": 3.4512013657534077e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.3499999940395355,
+      "actual_trim_after": -0.3526041507720947,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.3015955090522766,
+      "delivery_error": 0.002162843942642212,
+      "protected_bounds": [
+        -0.3526041507720947,
+        0.2987138628959656
+      ],
+      "mechanical_bounds": [
+        -0.6643439531326294,
+        0.2987138628959656
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": -0.005044490098953247,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.005216782350963725,
+      "applied_angular_error": 0.04051256458440547,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.5,
+      "actual_trim_after": -0.5026041865348816,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.27788662910461426,
+      "delivery_error": 0.025871723890304565,
+      "protected_bounds": [
+        -0.5026041865348816,
+        0.22094321250915527
+      ],
+      "mechanical_bounds": [
+        -0.7421146631240845,
+        0.22094321250915527
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": -0.08281514048576355,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.062459244744298925,
+      "applied_angular_error": 0.48471378671264825,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.20915822684764862,
+      "delivery_error": 0.0946001261472702,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.004502296447753906
+      ],
+      "mechanical_bounds": [
+        -0.9675601720809937,
+        -0.004502296447753906
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.004502325557385944
+      ],
+      "permission_margin": -0.30826064944267273,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.22868265750231495,
+      "applied_angular_error": 1.7736990739769354,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": 0.0,
+      "requested_trim_after": 0.0,
+      "actual_trim_before": 0.0,
+      "actual_trim_after": 0.0,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.6308205723762512,
+      "pitch_command_allowed": 0.6308205723762512,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30375829339027405,
+      "delivery_error": 5.960464477539063e-08,
+      "protected_bounds": [
+        0.0,
+        0.3037591278553009
+      ],
+      "mechanical_bounds": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "symmetric_formula_bounds": [
+        0.0,
+        0.30375906825065613
+      ],
+      "permission_margin": 7.748603820800781e-07,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.509676312818865e-06,
+      "applied_angular_error": 3.4512013657534077e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.20000000298023224,
+      "requested_trim_after": -0.20000000298023224,
+      "actual_trim_before": -0.20000000298023224,
+      "actual_trim_after": -0.20000000298023224,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.8718035817146301,
+      "pitch_command_allowed": 0.8718035817146301,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30375832319259644,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.20000000298023224,
+        0.3037590980529785
+      ],
+      "mechanical_bounds": [
+        -0.5852231383323669,
+        0.3778347373008728
+      ],
+      "symmetric_formula_bounds": [
+        -0.20000000298023224,
+        0.30375906825065613
+      ],
+      "permission_margin": 7.450580596923828e-07,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.509676312818865e-06,
+      "applied_angular_error": 3.4512013657534077e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.30000001192092896,
+      "requested_trim_after": -0.30000001192092896,
+      "actual_trim_before": -0.30000001192092896,
+      "actual_trim_after": -0.30000001192092896,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 0.9644893407821655,
+      "pitch_command_allowed": 0.9644893407821655,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30375832319259644,
+      "delivery_error": 2.9802322387695312e-08,
+      "protected_bounds": [
+        -0.30000001192092896,
+        0.30375903844833374
+      ],
+      "mechanical_bounds": [
+        -0.6370702385902405,
+        0.3259875178337097
+      ],
+      "symmetric_formula_bounds": [
+        -0.30000001192092896,
+        0.30375906825065613
+      ],
+      "permission_margin": 6.854534149169922e-07,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 2.509676312818865e-06,
+      "applied_angular_error": 3.4512013657534077e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.5,
+      "requested_trim_after": -0.5,
+      "actual_trim_before": -0.5,
+      "actual_trim_after": -0.5,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.2782982587814331,
+      "delivery_error": 0.025460094213485718,
+      "protected_bounds": [
+        -0.5,
+        0.22229337692260742
+      ],
+      "mechanical_bounds": [
+        -0.7407644391059875,
+        0.22229337692260742
+      ],
+      "symmetric_formula_bounds": [
+        -0.5,
+        0.22229336202144623
+      ],
+      "permission_margin": -0.0814649760723114,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.06146501221215209,
+      "applied_angular_error": 0.4769995658133799,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.20915822684764862,
+      "delivery_error": 0.0946001261472702,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.004502296447753906
+      ],
+      "mechanical_bounds": [
+        -0.9675601720809937,
+        -0.004502296447753906
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.004502325557385944
+      ],
+      "permission_margin": -0.30826064944267273,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.22868265750231495,
+      "applied_angular_error": 1.7736990739769354,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9333413243293762,
+      "requested_trim_after": -0.9333413243293762,
+      "actual_trim_before": -0.3489581346511841,
+      "actual_trim_after": -0.3515622913837433,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.30176016688346863,
+      "delivery_error": 0.0019981861114501953,
+      "protected_bounds": [
+        -0.3515622913837433,
+        0.29925402998924255
+      ],
+      "mechanical_bounds": [
+        -0.6638038158416748,
+        0.29925402998924255
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": -0.0045043230056762695,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.0048194726831467805,
+      "applied_angular_error": 0.03742874236280064,
+      "balanced_after_delivery": false,
+      "actual_trim_source": "native inner carried tick 1"
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 11.342130726793684,
+      "alpha_deg": 7.148767084757519,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9333413243293762,
+      "requested_trim_after": -0.9333413243293762,
+      "actual_trim_before": -0.9333413243293762,
+      "actual_trim_after": -0.9333413243293762,
+      "native_equal": true,
+      "predictor_pitch": [
+        0.1757710725069046,
+        0.30375906825065613
+      ],
+      "ranges": [
+        -0.4815289080142975,
+        0.4815289080142975
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": 0.3037583529949188,
+      "actual_pitch": 0.2098047286272049,
+      "delivery_error": 0.09395362436771393,
+      "protected_bounds": [
+        -0.9333413243293762,
+        -0.002381622791290283
+      ],
+      "mechanical_bounds": [
+        -0.9654393792152405,
+        -0.002381622791290283
+      ],
+      "symmetric_formula_bounds": [
+        -0.9333413243293762,
+        -0.0023815876061359376
+      ],
+      "permission_margin": -0.3061399757862091,
+      "recovery_active": false,
+      "source_force_error_g": 2.574443086086811e-06,
+      "source_angular_error": 2.890609019846396e-06,
+      "applied_force_error_g": 0.2271171708936688,
+      "applied_angular_error": 1.7615657793630397,
+      "balanced_after_delivery": false,
+      "actual_trim_source": "native inner carried tick 5"
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.9,
+      "load_g": 7.1420208154101905,
+      "alpha_deg": 1.0784914795293028,
+      "autotrim_success": true,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.1593644618988037,
+        0.06507645547389984
+      ],
+      "ranges": [
+        -0.476173460483551,
+        0.476173460483551
+      ],
+      "pitch_command_requested": 0.9999999403953552,
+      "pitch_command_allowed": 0.9999999403953552,
+      "required_pitch": -0.014878220856189728,
+      "actual_pitch": -0.014878153800964355,
+      "delivery_error": 6.705522537231445e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014878153800964355
+      ],
+      "mechanical_bounds": [
+        -0.9672250747680664,
+        -0.014878153800964355
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014878139334065565
+      ],
+      "permission_margin": 6.705522537231445e-08,
+      "recovery_active": false,
+      "source_force_error_g": 1.825586659696913e-06,
+      "source_angular_error": 1.571455535094925e-05,
+      "applied_force_error_g": 2.6551974213136744e-06,
+      "applied_angular_error": 1.6864810791537767e-05,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.9,
+      "load_g": 7.14102081541019,
+      "alpha_deg": 1.0773946893551432,
+      "autotrim_success": true,
+      "requested_trim_before": -0.9374317526817322,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374317526817322,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15942838788032532,
+        0.06503485143184662
+      ],
+      "ranges": [
+        -0.47617319226264954,
+        0.47617319226264954
+      ],
+      "pitch_command_requested": 0.9999291300773621,
+      "pitch_command_allowed": 0.9999291300773621,
+      "required_pitch": -0.014944084919989109,
+      "actual_pitch": -0.014944016933441162,
+      "delivery_error": 6.798654794692993e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014878630638122559
+      ],
+      "mechanical_bounds": [
+        -0.9672250151634216,
+        -0.014878630638122559
+      ],
+      "symmetric_formula_bounds": null,
+      "permission_margin": 6.545428186655045e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.1953064625130525e-06,
+      "source_angular_error": 7.342870332761958e-07,
+      "applied_force_error_g": 1.1953064625130525e-06,
+      "applied_angular_error": 1.8845424738647124e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.9,
+      "load_g": 7.143020815410191,
+      "alpha_deg": 1.0795953768829123,
+      "autotrim_success": true,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15929916501045227,
+        0.06511905044317245
+      ],
+      "ranges": [
+        -0.4761737585067749,
+        0.4761737585067749
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.01481188740581274,
+      "actual_pitch": -0.014877557754516602,
+      "delivery_error": 6.567034870386124e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014877557754516602
+      ],
+      "mechanical_bounds": [
+        -0.9672250747680664,
+        -0.014877557754516602
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014877561934426353
+      ],
+      "permission_margin": -6.567034870386124e-05,
+      "recovery_active": false,
+      "source_force_error_g": 5.031996524820888e-06,
+      "source_angular_error": 1.7528243043551727e-05,
+      "applied_force_error_g": 0.00014271961242895437,
+      "applied_angular_error": 0.0010372559952353771,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.92,
+      "load_g": 7.141500031704679,
+      "alpha_deg": 1.0776243343173975,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15938891470432281,
+        0.06505075097084045
+      ],
+      "ranges": [
+        -0.47615474462509155,
+        0.47615474462509155
+      ],
+      "pitch_command_requested": 0.9999979138374329,
+      "pitch_command_allowed": 0.9999979138374329,
+      "required_pitch": -0.014916317537426949,
+      "actual_pitch": -0.01491636037826538,
+      "delivery_error": 4.284083843231201e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014914393424987793
+      ],
+      "mechanical_bounds": [
+        -0.9672238826751709,
+        -0.014914393424987793
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014914400031408093
+      ],
+      "permission_margin": 1.9241124391555786e-06,
+      "recovery_active": false,
+      "source_force_error_g": 1.071222214678029e-06,
+      "source_angular_error": 1.8409585802704958e-05,
+      "applied_force_error_g": 1.071222214678029e-06,
+      "applied_angular_error": 1.9176422763097303e-05,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.92,
+      "load_g": 7.140500031704678,
+      "alpha_deg": 1.0765280310232335,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15945382416248322,
+        0.06500838696956635
+      ],
+      "ranges": [
+        -0.47615447640419006,
+        0.47615447640419006
+      ],
+      "pitch_command_requested": 0.99992835521698,
+      "pitch_command_allowed": 0.99992835521698,
+      "required_pitch": -0.014981009066104889,
+      "actual_pitch": -0.014980971813201904,
+      "delivery_error": 3.725290298461914e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014914929866790771
+      ],
+      "mechanical_bounds": [
+        -0.9672238826751709,
+        -0.014914929866790771
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014914919691083384
+      ],
+      "permission_margin": 6.607919931411743e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.4563478770512858e-06,
+      "source_angular_error": 7.701708156248913e-06,
+      "applied_force_error_g": 1.4563478770512858e-06,
+      "applied_angular_error": 7.788043787614792e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.92,
+      "load_g": 7.142500031704679,
+      "alpha_deg": 1.0787290167200911,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.159323588013649,
+        0.06509330123662949
+      ],
+      "ranges": [
+        -0.47615495324134827,
+        0.47615495324134827
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.014848826453089714,
+      "actual_pitch": -0.014913976192474365,
+      "delivery_error": 6.514973938465118e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014913976192474365
+      ],
+      "mechanical_bounds": [
+        -0.9672238826751709,
+        -0.014913976192474365
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014913995851660644
+      ],
+      "permission_margin": -6.514973938465118e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.2305710668529683e-06,
+      "source_angular_error": 8.5619308640014e-06,
+      "applied_force_error_g": 0.00013682284946057066,
+      "applied_angular_error": 0.0010451791368698406,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.94,
+      "load_g": 7.141027722542051,
+      "alpha_deg": 1.0768194855470645,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15941306948661804,
+        0.06502462923526764
+      ],
+      "ranges": [
+        -0.4761359691619873,
+        0.4761359691619873
+      ],
+      "pitch_command_requested": 0.9999987483024597,
+      "pitch_command_allowed": 0.9999987483024597,
+      "required_pitch": -0.014951957389712334,
+      "actual_pitch": -0.014951944351196289,
+      "delivery_error": 1.909211277961731e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014950752258300781
+      ],
+      "mechanical_bounds": [
+        -0.9672226905822754,
+        -0.014950752258300781
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014950776208678462
+      ],
+      "permission_margin": 1.2051314115524292e-06,
+      "recovery_active": false,
+      "source_force_error_g": 8.222876187305336e-06,
+      "source_angular_error": 1.7592741805292838e-05,
+      "applied_force_error_g": 8.222876187305336e-06,
+      "applied_angular_error": 1.7273226403353004e-05,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.94,
+      "load_g": 7.140027722542051,
+      "alpha_deg": 1.075712341561187,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15947853028774261,
+        0.06498193740844727
+      ],
+      "ranges": [
+        -0.4761357009410858,
+        0.4761357009410858
+      ],
+      "pitch_command_requested": 0.9999282360076904,
+      "pitch_command_allowed": 0.9999282360076904,
+      "required_pitch": -0.015017510391771793,
+      "actual_pitch": -0.015017449855804443,
+      "delivery_error": 6.05359673500061e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.01495128870010376
+      ],
+      "mechanical_bounds": [
+        -0.9672226905822754,
+        -0.01495128870010376
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014951295868353753
+      ],
+      "permission_margin": 6.62216916680336e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.0618534139060125e-06,
+      "source_angular_error": 4.524347852086732e-06,
+      "applied_force_error_g": 1.0618534139060125e-06,
+      "applied_angular_error": 3.5323977702649494e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.94,
+      "load_g": 7.142027722542052,
+      "alpha_deg": 1.0779137162811039,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15934830904006958,
+        0.06506690382957458
+      ],
+      "ranges": [
+        -0.4761362671852112,
+        0.4761362671852112
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.01488462183624506,
+      "actual_pitch": -0.014950215816497803,
+      "delivery_error": 6.559398025274277e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014950215816497803
+      ],
+      "mechanical_bounds": [
+        -0.9672227501869202,
+        -0.014950215816497803
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.01495019880903925
+      ],
+      "permission_margin": -6.559398025274277e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.3669572928539906e-06,
+      "source_angular_error": 7.964558857546102e-06,
+      "applied_force_error_g": 0.0001372045388396023,
+      "applied_angular_error": 0.00104565344821123,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.96,
+      "load_g": 7.140533638956256,
+      "alpha_deg": 1.0759747963558564,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15943805873394012,
+        0.06499820202589035
+      ],
+      "ranges": [
+        -0.47611719369888306,
+        0.47611719369888306
+      ],
+      "pitch_command_requested": 0.9999997615814209,
+      "pitch_command_allowed": 0.9999997615814209,
+      "required_pitch": -0.014987381175160408,
+      "actual_pitch": -0.014987409114837646,
+      "delivery_error": 2.7939677238464355e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014987170696258545
+      ],
+      "mechanical_bounds": [
+        -0.9672215580940247,
+        -0.014987170696258545
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014987152385948832
+      ],
+      "permission_margin": 2.1047890186309814e-07,
+      "recovery_active": false,
+      "source_force_error_g": 8.799184147919368e-07,
+      "source_angular_error": 1.798153520273581e-06,
+      "applied_force_error_g": 8.799184147919368e-07,
+      "applied_angular_error": 1.8216996015570766e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.96,
+      "load_g": 7.139533638956256,
+      "alpha_deg": 1.0748735060138628,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15950335562229156,
+        0.06495540589094162
+      ],
+      "ranges": [
+        -0.4761170446872711,
+        0.4761170446872711
+      ],
+      "pitch_command_requested": 0.99992835521698,
+      "pitch_command_allowed": 0.99992835521698,
+      "required_pitch": -0.015053516253829002,
+      "actual_pitch": -0.015053510665893555,
+      "delivery_error": 1.0710209608078003e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.014987468719482422
+      ],
+      "mechanical_bounds": [
+        -0.9672215580940247,
+        -0.014987468719482422
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014987441085768438
+      ],
+      "permission_margin": 6.60475343465805e-05,
+      "recovery_active": false,
+      "source_force_error_g": 2.7046859425879325e-06,
+      "source_angular_error": 5.807025535308383e-06,
+      "applied_force_error_g": 2.7046859425879325e-06,
+      "applied_angular_error": 5.846269004112474e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 770.96,
+      "load_g": 7.141533638956257,
+      "alpha_deg": 1.0770775286484475,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15937289595603943,
+        0.06504034250974655
+      ],
+      "ranges": [
+        -0.4761175513267517,
+        0.4761175513267517
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.01492124143987894,
+      "actual_pitch": -0.01498645544052124,
+      "delivery_error": 6.521400064229965e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.01498645544052124
+      ],
+      "mechanical_bounds": [
+        -0.9672215580940247,
+        -0.01498645544052124
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.014986459506381777
+      ],
+      "permission_margin": -6.521400064229965e-05,
+      "recovery_active": false,
+      "source_force_error_g": 4.447710078644409e-06,
+      "source_angular_error": 4.204179701472713e-06,
+      "applied_force_error_g": 0.00014130587911626488,
+      "applied_angular_error": 0.0010479075555088154,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 7.138720505890139,
+      "alpha_deg": 1.0729288975408986,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15952721238136292,
+        0.06490366905927658
+      ],
+      "ranges": [
+        -0.47605016827583313,
+        0.47605016827583313
+      ],
+      "pitch_command_requested": 0.9999992847442627,
+      "pitch_command_allowed": 0.9999992847442627,
+      "required_pitch": -0.015117679722607136,
+      "actual_pitch": -0.01511770486831665,
+      "delivery_error": 2.514570951461792e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.015116989612579346
+      ],
+      "mechanical_bounds": [
+        -0.9672173261642456,
+        -0.015116989612579346
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.01511700956480766
+      ],
+      "permission_margin": 6.901100277900696e-07,
+      "recovery_active": false,
+      "source_force_error_g": 7.561431403935103e-07,
+      "source_angular_error": 1.4614333832831908e-06,
+      "applied_force_error_g": 7.561431403935103e-07,
+      "applied_angular_error": 1.512449892731632e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 7.1377205058901385,
+      "alpha_deg": 1.0718278351498272,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15959236025810242,
+        0.06486111134290695
+      ],
+      "ranges": [
+        -0.47604990005493164,
+        0.47604990005493164
+      ],
+      "pitch_command_requested": 0.9999281167984009,
+      "pitch_command_allowed": 0.9999281167984009,
+      "required_pitch": -0.015183812938630581,
+      "actual_pitch": -0.015183806419372559,
+      "delivery_error": 6.51925802230835e-09,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.015117526054382324
+      ],
+      "mechanical_bounds": [
+        -0.9672173261642456,
+        -0.015117526054382324
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.01511752922448295
+      ],
+      "permission_margin": 6.628688424825668e-05,
+      "recovery_active": false,
+      "source_force_error_g": 2.8308657220481532e-06,
+      "source_angular_error": 9.781749022757092e-06,
+      "applied_force_error_g": 2.8308657220481532e-06,
+      "applied_angular_error": 9.797446410282893e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 771.0316217800856,
+      "load_g": 7.139720505890139,
+      "alpha_deg": 1.0740323145895703,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.15946197509765625,
+        0.06494629383087158
+      ],
+      "ranges": [
+        -0.476050466299057,
+        0.476050466299057
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.015051379799842834,
+      "actual_pitch": -0.015116453170776367,
+      "delivery_error": 6.507337093353271e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.015116453170776367
+      ],
+      "mechanical_bounds": [
+        -0.9672173857688904,
+        -0.015116453170776367
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.015116432165168447
+      ],
+      "permission_margin": -6.507337093353271e-05,
+      "recovery_active": false,
+      "source_force_error_g": 3.4719812856614135e-06,
+      "source_angular_error": 2.796949927288555e-06,
+      "applied_force_error_g": 0.00013950073649716762,
+      "applied_angular_error": 0.0010447110428908907,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 772.0,
+      "load_g": 7.114698125234518,
+      "alpha_deg": 1.0322584623187854,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.16072341799736023,
+        0.06363175064325333
+      ],
+      "ranges": [
+        -0.47514528036117554,
+        0.47514528036117554
+      ],
+      "pitch_command_requested": 0.9999997019767761,
+      "pitch_command_allowed": 0.9999997019767761,
+      "required_pitch": -0.016870416700839996,
+      "actual_pitch": -0.01687037944793701,
+      "delivery_error": 3.725290298461914e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.01687014102935791
+      ],
+      "mechanical_bounds": [
+        -0.967160701751709,
+        -0.01687014102935791
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.016870168089347715
+      ],
+      "permission_margin": 2.7567148208618164e-07,
+      "recovery_active": false,
+      "source_force_error_g": 3.967137183533662e-07,
+      "source_angular_error": 1.9284232790120836e-05,
+      "applied_force_error_g": 3.967137183533662e-07,
+      "applied_angular_error": 1.8645201991570238e-05,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 772.0,
+      "load_g": 7.113698125234517,
+      "alpha_deg": 1.031161284285695,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.1607898771762848,
+        0.06358826160430908
+      ],
+      "ranges": [
+        -0.47514528036117554,
+        0.47514528036117554
+      ],
+      "pitch_command_requested": 0.9999263286590576,
+      "pitch_command_allowed": 0.9999263286590576,
+      "required_pitch": -0.016938012093305588,
+      "actual_pitch": -0.016937971115112305,
+      "delivery_error": 4.0978193283081055e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.01687014102935791
+      ],
+      "mechanical_bounds": [
+        -0.967160701751709,
+        -0.01687014102935791
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.016870168089347715
+      ],
+      "permission_margin": 6.787106394767761e-05,
+      "recovery_active": false,
+      "source_force_error_g": 6.369150438141344e-07,
+      "source_angular_error": 2.4059475768732202e-05,
+      "applied_force_error_g": 1.4665332907110034e-06,
+      "applied_angular_error": 2.33884934283889e-05,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 772.0,
+      "load_g": 7.115698125234518,
+      "alpha_deg": 1.0333522809711226,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.1606617271900177,
+        0.06367150694131851
+      ],
+      "ranges": [
+        -0.4751456379890442,
+        0.4751456379890442
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.016806570813059807,
+      "actual_pitch": -0.01686948537826538,
+      "delivery_error": 6.291456520557404e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.01686948537826538
+      ],
+      "mechanical_bounds": [
+        -0.9671607613563538,
+        -0.01686948537826538
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.01686947520978066
+      ],
+      "permission_margin": -6.291456520557404e-05,
+      "recovery_active": false,
+      "source_force_error_g": 7.936455906952873e-07,
+      "source_angular_error": 1.9432854673061444e-06,
+      "applied_force_error_g": 0.0001310896210138737,
+      "applied_angular_error": 0.0010134915565725912,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 775.0,
+      "load_g": 7.0414681182421495,
+      "alpha_deg": 0.9074118756116094,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.16441304981708527,
+        0.05970556288957596
+      ],
+      "ranges": [
+        -0.47236308455467224,
+        0.47236308455467224
+      ],
+      "pitch_command_requested": 0.9999997019767761,
+      "pitch_command_allowed": 0.9999997019767761,
+      "required_pitch": -0.022260747849941254,
+      "actual_pitch": -0.022260725498199463,
+      "delivery_error": 2.2351741790771484e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.02226048707962036
+      ],
+      "mechanical_bounds": [
+        -0.9669866561889648,
+        -0.02226048707962036
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.022260482421213368
+      ],
+      "permission_margin": 2.60770320892334e-07,
+      "recovery_active": false,
+      "source_force_error_g": 3.613428917806023e-06,
+      "source_angular_error": 1.4559451849885596e-05,
+      "applied_force_error_g": 3.613428917806023e-06,
+      "applied_angular_error": 1.4942870330081769e-05,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 775.0,
+      "load_g": 7.040468118242149,
+      "alpha_deg": 0.9063179345955914,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.16447965800762177,
+        0.05966174975037575
+      ],
+      "ranges": [
+        -0.4723629355430603,
+        0.4723629355430603
+      ],
+      "pitch_command_requested": 0.9999252557754517,
+      "pitch_command_allowed": 0.9999252557754517,
+      "required_pitch": -0.02232920005917549,
+      "actual_pitch": -0.02232915163040161,
+      "delivery_error": 4.842877388000488e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.02226078510284424
+      ],
+      "mechanical_bounds": [
+        -0.9669866561889648,
+        -0.02226078510284424
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.022260771121032974
+      ],
+      "permission_margin": 6.841495633125305e-05,
+      "recovery_active": false,
+      "source_force_error_g": 2.5499433055678426e-07,
+      "source_angular_error": 2.540658684199407e-06,
+      "applied_force_error_g": 2.5499433055678426e-07,
+      "applied_angular_error": 2.6191456218023853e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 775.0,
+      "load_g": 7.04246811824215,
+      "alpha_deg": 0.908520768800698,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.16434423625469208,
+        0.05975151062011719
+      ],
+      "ranges": [
+        -0.47236329317092896,
+        0.47236329317092896
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.022191820666193962,
+      "actual_pitch": -0.022260069847106934,
+      "delivery_error": 6.82491809129715e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.022260069847106934
+      ],
+      "mechanical_bounds": [
+        -0.9669866561889648,
+        -0.022260069847106934
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.02226007824146592
+      ],
+      "permission_margin": -6.82491809129715e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.2256651820236495e-06,
+      "source_angular_error": 1.798860758052078e-06,
+      "applied_force_error_g": 0.00014555807339998716,
+      "applied_angular_error": 0.0011059298550605517,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 780.0,
+      "load_g": 6.923716757022501,
+      "alpha_deg": 0.7033633819308844,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.16995781660079956,
+        0.05322742834687233
+      ],
+      "ranges": [
+        -0.467793345451355,
+        0.467793345451355
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.031113872304558754,
+      "actual_pitch": -0.031114041805267334,
+      "delivery_error": 1.695007085800171e-07,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.031114041805267334
+      ],
+      "mechanical_bounds": [
+        -0.9667007327079773,
+        -0.031114041805267334
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.0311140397890739
+      ],
+      "permission_margin": -1.695007085800171e-07,
+      "recovery_active": false,
+      "source_force_error_g": 6.260837750155354e-06,
+      "source_angular_error": 5.001817816078752e-06,
+      "applied_force_error_g": 5.846009753147105e-06,
+      "applied_angular_error": 2.9088324968271736e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 780.0,
+      "load_g": 6.922716757022501,
+      "alpha_deg": 0.7022702117770059,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.17000889778137207,
+        0.05318354070186615
+      ],
+      "ranges": [
+        -0.46779313683509827,
+        0.46779313683509827
+      ],
+      "pitch_command_requested": 0.9999263286590576,
+      "pitch_command_allowed": 0.9999263286590576,
+      "required_pitch": -0.031181199476122856,
+      "actual_pitch": -0.0311812162399292,
+      "delivery_error": 2.1420419216156006e-08,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.03111445903778076
+      ],
+      "mechanical_bounds": [
+        -0.9667007327079773,
+        -0.03111445903778076
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.031114443968821348
+      ],
+      "permission_margin": 6.674043834209442e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.7394398754168757e-06,
+      "source_angular_error": 3.453746996690818e-06,
+      "applied_force_error_g": 1.7394398754168757e-06,
+      "applied_angular_error": 3.547931321819596e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "j6k1",
+      "speed_kmh": 780.0,
+      "load_g": 6.924716757022502,
+      "alpha_deg": 0.7044799045182113,
+      "autotrim_success": false,
+      "requested_trim_before": -0.9374316930770874,
+      "requested_trim_after": -0.9374316930770874,
+      "actual_trim_before": -0.9374316930770874,
+      "actual_trim_after": -0.9374316930770874,
+      "native_equal": true,
+      "predictor_pitch": [
+        -0.1699039191007614,
+        0.053273458033800125
+      ],
+      "ranges": [
+        -0.46779340505599976,
+        0.46779340505599976
+      ],
+      "pitch_command_requested": 1.0,
+      "pitch_command_allowed": 1.0,
+      "required_pitch": -0.031044645234942436,
+      "actual_pitch": -0.031113922595977783,
+      "delivery_error": 6.927736103534698e-05,
+      "protected_bounds": [
+        -0.9374316930770874,
+        -0.031113922595977783
+      ],
+      "mechanical_bounds": [
+        -0.9667007327079773,
+        -0.031113922595977783
+      ],
+      "symmetric_formula_bounds": [
+        -0.9374316930770874,
+        -0.031113924309146057
+      ],
+      "permission_margin": -6.927736103534698e-05,
+      "recovery_active": false,
+      "source_force_error_g": 1.3265467435883693e-05,
+      "source_angular_error": 8.789890513281244e-06,
+      "applied_force_error_g": 0.000161757354582428,
+      "applied_angular_error": 0.0011473191151173258,
+      "balanced_after_delivery": false
+    },
+    {
+      "aircraft": "f_14b",
+      "speed_kmh": 195.91328244946658,
+      "load_g": 1.0,
+      "alpha_deg": 21.77174952298232,
+      "autotrim_success": false,
+      "requested_trim_before": -0.8999999761581421,
+      "requested_trim_after": -0.8999999761581421,
+      "actual_trim_before": -0.8999999761581421,
+      "actual_trim_after": -0.8999999761581421,
+      "native_equal": true,
+      "predictor_pitch": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "ranges": [
+        -1.0,
+        1.0
+      ],
+      "pitch_command_requested": 0.8459024429321289,
+      "pitch_command_allowed": 0.8459024429321289,
+      "required_pitch": 0.7072145938873291,
+      "actual_pitch": 0.7072145938873291,
+      "delivery_error": 3.2566784165922015e-15,
+      "protected_bounds": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "mechanical_bounds": [
+        -1.0,
+        1.0
+      ],
+      "symmetric_formula_bounds": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "permission_margin": 0.06735658645629883,
+      "recovery_active": false,
+      "source_force_error_g": 0.00016640467763484333,
+      "source_angular_error": 4.384563001034443e-06,
+      "applied_force_error_g": 0.00016640467763484333,
+      "applied_angular_error": 4.384563001034443e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "f_14b",
+      "speed_kmh": 195.91328244946658,
+      "load_g": 1.0,
+      "alpha_deg": 21.77174952298232,
+      "autotrim_success": false,
+      "requested_trim_before": -0.30000001192092896,
+      "requested_trim_after": -0.30000001192092896,
+      "actual_trim_before": -0.30000001192092896,
+      "actual_trim_after": -0.30000001192092896,
+      "native_equal": true,
+      "predictor_pitch": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "ranges": [
+        -1.0,
+        1.0
+      ],
+      "pitch_command_requested": 0.7747804522514343,
+      "pitch_command_allowed": 0.7747804522514343,
+      "required_pitch": 0.7072145938873291,
+      "actual_pitch": 0.7072146534919739,
+      "delivery_error": 5.960464477539063e-08,
+      "protected_bounds": [
+        -1.0,
+        0.7745710015296936
+      ],
+      "mechanical_bounds": [
+        -1.0,
+        0.9999999403953552
+      ],
+      "symmetric_formula_bounds": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "permission_margin": 0.0673564076423645,
+      "recovery_active": false,
+      "source_force_error_g": 0.00016640467763484333,
+      "source_angular_error": 4.384563001034443e-06,
+      "applied_force_error_g": 0.00016640467763484333,
+      "applied_angular_error": 4.3172807043433775e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "f_14b",
+      "speed_kmh": 195.91328244946658,
+      "load_g": 1.0,
+      "alpha_deg": 21.77174952298232,
+      "autotrim_success": false,
+      "requested_trim_before": 0.0,
+      "requested_trim_after": 0.0,
+      "actual_trim_before": 0.0,
+      "actual_trim_after": 0.0,
+      "native_equal": true,
+      "predictor_pitch": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "ranges": [
+        -1.0,
+        1.0
+      ],
+      "pitch_command_requested": 0.7072145938873291,
+      "pitch_command_allowed": 0.7072145938873291,
+      "required_pitch": 0.7072145938873291,
+      "actual_pitch": 0.7072145938873291,
+      "delivery_error": 3.2566784165922015e-15,
+      "protected_bounds": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "mechanical_bounds": [
+        -1.0,
+        1.0
+      ],
+      "symmetric_formula_bounds": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "permission_margin": 0.06735658645629883,
+      "recovery_active": false,
+      "source_force_error_g": 0.00016640467763484333,
+      "source_angular_error": 4.384563001034443e-06,
+      "applied_force_error_g": 0.00016640467763484333,
+      "applied_angular_error": 4.384563001034443e-06,
+      "balanced_after_delivery": true
+    },
+    {
+      "aircraft": "f_14b",
+      "speed_kmh": 195.91328244946658,
+      "load_g": 1.0,
+      "alpha_deg": 21.77174952298232,
+      "autotrim_success": false,
+      "requested_trim_before": 0.30000001192092896,
+      "requested_trim_after": 0.30000001192092896,
+      "actual_trim_before": 0.30000001192092896,
+      "actual_trim_after": 0.30000001192092896,
+      "native_equal": true,
+      "predictor_pitch": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "ranges": [
+        -1.0,
+        1.0
+      ],
+      "pitch_command_requested": 0.5817351341247559,
+      "pitch_command_allowed": 0.5817351341247559,
+      "required_pitch": 0.7072145938873291,
+      "actual_pitch": 0.7072145938873291,
+      "delivery_error": 3.2566784165922015e-15,
+      "protected_bounds": [
+        -0.9999999403953552,
+        0.7745711803436279
+      ],
+      "mechanical_bounds": [
+        -0.9999999403953552,
+        1.0
+      ],
+      "symmetric_formula_bounds": [
+        -1.0,
+        0.7745711803436279
+      ],
+      "permission_margin": 0.06735658645629883,
+      "recovery_active": false,
+      "source_force_error_g": 0.00016640467763484333,
+      "source_angular_error": 4.384563001034443e-06,
+      "applied_force_error_g": 0.00016640467763484333,
+      "applied_angular_error": 4.384563001034443e-06,
+      "balanced_after_delivery": true
+    }
+  ]
+}
