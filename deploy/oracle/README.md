@@ -24,3 +24,7 @@ python deploy/oracle/deploy.py --host YOUR_PUBLIC_IP --key C:\path\to\oracle_pri
 ```
 
 Saved calculations and downloaded aircraft references live under `/opt/wt-em/shared` on the VM. They survive app updates. The script does not delete old results automatically; check disk usage periodically. To inspect the data timer, run `sudo systemctl status wt-em-sync.timer` on the VM.
+
+The Cloudflare Pages frontend at `https://neothunderism.pages.dev` calls this VM's HTTPS API. The Pages hostname is included in `WT_EM_ALLOWED_ORIGINS` when this deployment script runs. The `app/config.js` file selects the VM API only on that production Pages hostname; local and Oracle-hosted copies keep using their own origin.
+
+The Pages project uses Cloudflare Direct Upload. After a frontend change, publish the `app` directory with `npx wrangler pages deploy app --project-name neothunderism --branch main` from the repository root while logged in to Cloudflare with Wrangler. This uploads only the interface. The Oracle data-sync timer refreshes the flight-model data independently, so data updates do not require a Pages deployment.
