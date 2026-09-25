@@ -27,7 +27,8 @@ const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??state.meta.defaults[k]]));
 // Old saved combinations remain unchanged in results. Editing selects the
 // paired mode matching their Instructor setting, including inactive entries.
-const modeConditions=c=>{const values=conditionsFrom(c);return {...values,instructor_model:'steady',torque_gyro:!values.instructor};};
+const modeConditions=c=>{const values=conditionsFrom(c);return {...values,instructor_model:'steady',engine_control_mode:'automatic',torque_gyro:!values.instructor};};
+const aircraftConditions=(name,c)=>{const values=modeConditions(c);if(!state.meta.aircraft[name].has_flaps)values.flaps_percent=0;return values;};
 const flightModeLabel=c=>c.instructor!==c.torque_gyro?(c.instructor?'RB':'SB'):
   `Instructor ${c.instructor?'on':'off'} · torque/gyro ${c.torque_gyro?'on':'off'}`;
 const resultConditions=a=>({torque_gyro:true,...(a.settings||{...state.data.settings,...state.data.settings.aircraft_settings?.[a.id]})});
@@ -37,15 +38,17 @@ function saveCondition(){
   if(!state.editing)return;
   state.conditions[state.editing]={...state.conditions[state.editing],
     ...Object.fromEntries(Object.entries(conditionFields).map(([id,k])=>[k,+$(id).value])),
-    engine_control_mode:$('engine-control-mode').value,instructor_model:$('instructor-model').value,
+    engine_control_mode:'automatic',instructor_model:$('instructor-model').value,
     throttle:+$('throttle').value/100,afterburner:+$('throttle').value>100,
     instructor:$('flight-mode-rb').checked,torque_gyro:$('flight-mode-sb').checked};
+  if(!state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id].has_flaps)state.conditions[state.editing].flaps_percent=0;
 }
 function showCondition(id){
   state.editing=id||null;
   const c=id?(state.conditions[id]??=conditionsFrom(state.meta.defaults)):state.meta.defaults;
+  if(id&&!state.meta.aircraft[state.entries.find(e=>e.id===id).aircraft_id].has_flaps)c.flaps_percent=0;
   for(const [field,key] of Object.entries(conditionFields))$(field).value=c[key];
-  $('engine-control-mode').value=c.engine_control_mode;
+  $('engine-control-mode').value='automatic';
   $('instructor-model').value='steady';
   $('throttle').value=c.throttle*100;
   $('flight-mode-rb').checked=c.instructor;$('flight-mode-sb').checked=!c.instructor;
@@ -54,7 +57,7 @@ function showCondition(id){
 function configEntries(c){
   if(c.entries)return c.entries.map(e=>({...e,settings:{torque_gyro:true,...e.settings}}));
   const entries=c.aircraft.map((name,i)=>({id:`entry_${i+1}`,aircraft_id:name,
-    settings:conditionsFrom({engine_control_mode:'optimized',torque_gyro:true,...c,...c.aircraft_settings?.[name]})}));
+    settings:aircraftConditions(name,{engine_control_mode:'automatic',torque_gyro:true,...c,...c.aircraft_settings?.[name]})}));
   if(c.compare_instructor&&entries.length===1)return [false,true].map((enabled,i)=>({...entries[0],id:`entry_${i+1}`,settings:{...entries[0].settings,instructor:enabled}}));
   return entries;
 }
@@ -87,7 +90,7 @@ function addEntry(name,condition){
   saveCondition();
   let id;do{id=`entry_${state.nextEntry++}`;}while(state.entries.some(e=>e.id===id));
   state.entries.push({id,aircraft_id:name});
-  state.conditions[id]=structuredClone(modeConditions(condition||state.meta.defaults));
+  state.conditions[id]=structuredClone(aircraftConditions(name,condition||state.meta.defaults));
   showCondition(id);renderEntries();syncLabels();
 }
 function readConfig() {
@@ -100,7 +103,7 @@ function readConfig() {
 }
 function populate(c) {
   state.conditions={};state.editing=null;
-  state.entries=configEntries(c).map(e=>{state.conditions[e.id]=modeConditions(e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
+  state.entries=configEntries(c).map(e=>{state.conditions[e.id]=aircraftConditions(e.aircraft_id,e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
   $('speed-min').value=c.speed_min_kmh;$('speed-max').value=c.speed_max_kmh;
   let selected=Object.keys(quality).find(k=>quality[k][2]===c.sep_tolerance_mps&&c.sampling==='adaptive') ||
     Object.keys(quality).find(k=>quality[k][0]===c.speed_samples&&quality[k][1]===c.load_samples&&quality[k][2]===c.sep_tolerance_mps);
@@ -123,9 +126,11 @@ function syncLabels(){
   const aircraft=state.meta?.aircraft[state.entries.find(e=>e.id===state.editing)?.aircraft_id];
   $('propeller-hint').hidden=!aircraft||!aircraft.propulsion||aircraft.propulsion==='jet';
   $('engine-control-field').hidden=$('propeller-hint').hidden;
-  $('flaps').disabled=!aircraft;
+  $('flaps-field').hidden=!aircraft||!aircraft.has_flaps;
+  $('flaps').disabled=!aircraft||!aircraft.has_flaps;
+  if(aircraft&&!aircraft.has_flaps)$('flaps').value=0;
   $('flaps-label').textContent=$('flaps').value+'%';
-  $('flaps-hint').textContent='The selected flap percentage is held at every speed and assumed achievable.';
+  $('flaps-hint').textContent=aircraft&&!aircraft.has_flaps?'This aircraft has no pilot flap control. Flaps remain at 0%.':'The selected flap percentage is held at every speed and assumed achievable.';
   $('instructor-hint').hidden=!$('flight-mode-rb').checked;
   $('instructor-model-field').hidden=!$('flight-mode-rb').checked;
   $('instructor-hint').textContent='Static AoA schedule with automatic trim calculated independently at each speed. Retains elevator compression and physical limits; omits transient effects and control history. Unresolved speeds remain blank.';
@@ -197,7 +202,8 @@ async function loadData(id,populateForm=false,preview=false){
   const cfg=data.settings;const usable=data.aircraft.reduce((sum,a)=>sum+a.valid_points,0);const total=data.aircraft.reduce((sum,a)=>sum+a.points.length,0);
   $('condition-summary').textContent=data.aircraft.map(a=>{
     const c=resultConditions(a);
-    return `${a.name}: ${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · throttle ${fmt(c.throttle*100,0)}% · flaps ${fmt(c.flaps_percent??0,0)}%${a.has_sweep?' · sweep '+fmt(c.sweep_percent??0,0)+'%':''} · ${flightModeLabel(c)}${c.instructor?' · Experimental Instructor':''} · ${fmt(c.timestep_hz,0)} Hz`;
+    const flaps=state.meta.aircraft[a.aircraft_id||a.id]?.has_flaps?` · flaps ${fmt(c.flaps_percent??0,0)}%`:'';
+    return `${a.name}: ${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · throttle ${fmt(c.throttle*100,0)}%${flaps}${a.has_sweep?' · sweep '+fmt(c.sweep_percent??0,0)+'%':''} · ${flightModeLabel(c)}${c.instructor?' · Experimental Instructor':''} · ${fmt(c.timestep_hz,0)} Hz`;
   }).join('\n')+`\n${usable} / ${total} samples plotted · full available aerodynamic trim`;
   $('condition-summary').style.whiteSpace='pre-line';
   for(const link of document.querySelectorAll('[data-export]')){
@@ -214,19 +220,20 @@ async function loadData(id,populateForm=false,preview=false){
   }
 }
 function rgba(hex,opacity){return `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${opacity})`;}
-function flapHover(aircraft){
-  return `Flaps ${fmt(resultConditions(aircraft).flaps_percent??0,1)}%`;
-}
 function sustainedCurve(aircraft,data){
   if(!data.preview)return aircraft.sustained_curve;
   // Both preview and completed curves follow the checked SEP surface.
   const paths=aircraft.contours.filter(c=>c.level===0);
   return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null])}:aircraft.sustained_curve;
 }
-function contourLabels(aircraft,data){
+function envelopeTop(aircraft){
+  const peak=Math.max(0,...aircraft.flatMap(a=>(a.boundary||[]).map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
+  return Math.max(10,Math.ceil(peak*1.05+1));
+}
+function contourLabels(aircraft,data,ymax){
   const annotations=[],span=data.settings.speed_max_kmh-data.settings.speed_min_kmh;
   const xPixels=Math.max(1,$('chart').clientWidth-82)/span;
-  const yPixels=Math.max(1,$('chart').clientHeight-82)/data.plot_max_turn;
+  const yPixels=Math.max(1,$('chart').clientHeight-82)/ymax;
   const distance=(a,b)=>Math.hypot((b[0]-a[0])*xPixels,(b[1]-a[1])*yPixels);
   aircraft.forEach((a,aircraftIndex)=>{
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
@@ -249,7 +256,7 @@ function contourLabels(aircraft,data){
             if(distance>=total*fraction)break;
           }
           const [x,y]=run[j];
-          if(x<data.settings.speed_min_kmh+.07*span||x>data.settings.speed_max_kmh-.07*span||y<2||y>data.plot_max_turn-2)continue;
+          if(x<data.settings.speed_min_kmh+.07*span||x>data.settings.speed_max_kmh-.07*span||y<2||y>ymax-2)continue;
           if(annotations.some(p=>Math.abs(p.x-x)*xPixels<112&&Math.abs(p.y-y)*yPixels<30))continue;
           const lo=run[Math.max(0,j-3)],hi=run[Math.min(run.length-1,j+3)];
           let angle=Math.atan2(-(hi[1]-lo[1])*yPixels,(hi[0]-lo[0])*xPixels)*180/Math.PI;
@@ -273,7 +280,7 @@ function renderChart(){
       colorscale:[[0,'#98633d'],[.33,'#54453b'],[.5,'#1b2c3d'],[.67,'#245867'],[1,'#399f9a']],
       zsmooth:false,connectgaps:false,hoverongaps:false,name:a.name,meta:a.id,
       colorbar:{title:{text:'Ps · m/s',side:'right',font:{size:10}},x:.995,xanchor:'right',thickness:9,len:.55,tickfont:{size:10},outlinewidth:0},
-      hovertemplate:`%{x:.0f} km/h · %{y:.2f}°/s<br>Interpolated Ps %{z:.1f} m/s<br>${flapHover(a)}<extra></extra>`});
+      hovertemplate:`%{x:.0f} km/h · %{y:.2f}°/s<br>Interpolated Ps %{z:.1f} m/s<extra></extra>`});
   }
   for(const n of [2,4,6,9,12,16]){
     if(n>(data.plot_max_load_g||data.settings.max_load_g))continue;
@@ -286,15 +293,13 @@ function renderChart(){
       const x=[],y=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);}
       traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · Ps ${level}`,meta:a.id,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?2:1,dash:'dash'},
-        text:x.map((v,i)=>turnRadius(v,y[i])+'<br>'+flapHover(a)),
+        text:x.map((v,i)=>turnRadius(v,y[i])),
         hovertemplate:`${a.name}<br>Ps ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
       name:a.name+' boundary',meta:a.id,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.85),width:1.8,dash:'solid'},
-      customdata:a.boundary.map(p=>[p.edge_kind|| (p.at_plot_ceiling?'Diagnostic sampling cutoff':resultConditions(a).instructor?(a.instructor_approximation?.kind==='steady AoA schedule'?'Steady AoA and physical limits':a.instructor_approximation?.kind==='effective AoA limiter'?'Effective AoA and physical limits':a.instructor_approximation?.kind==='stationary full-pull Instructor reference'?'Stationary full-pull reference · full capability unresolved':'Refined boundary · experimental Instructor'):'Refined physical limit'),
-        Number.isFinite(p.ps_mps)?fmt(p.ps_mps,1)+' m/s':'unavailable',turnRadius(p.speed_kmh,p.turn_dps),
-        p.ps_interpolated?'Boundary Ps (interpolated)':'Boundary Ps',flapHover(a),escapeText(instructorEvidence(a))]),
-      hovertemplate:`${a.name}<br>%{customdata[0]}<br>%{customdata[3]} %{customdata[1]}<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{customdata[2]}<br>%{customdata[4]}${instructorEvidence(a)?'<br>%{customdata[5]}':''}<extra></extra>`});
+      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps)]),
+      hovertemplate:`${a.name}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
       traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,marker:{size:8,symbol:'x',color:'#f6be6d'},
@@ -312,28 +317,28 @@ function renderChart(){
       traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:curve?.x||data.speeds_kmh,y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
         name:a.name+' Ps = 0',meta:a.id,connectgaps:false,line:{color:a.color,width:3,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
-        text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate)+'<br>'+flapHover(a);}),
+        text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate);}),
         hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} Ps = 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
     }
     const valid=a.points.map((p,i)=>({p,i})).filter(r=>r.p.valid);
     if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>r.p.speed_kmh),y:valid.map(r=>r.p.turn_dps),
       marker:{size:showSamples?5:9,color:showSamples?rgba(a.color,.5):'rgba(0,0,0,0)'},name:a.name,meta:a.id,showlegend:false,
-      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${a.name} · ${fmt(r.p.load_g,2)} g<br>Ps ${fmt(r.p.ps_mps,1)} m/s<br>${flapHover(a)}`),
+      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${a.name} · ${fmt(r.p.load_g,2)} g<br>Ps ${fmt(r.p.ps_mps,1)} m/s`),
       hovertemplate:'%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>'});
     if(showRejected){
       const rejected=a.points.map((p,i)=>({p,i})).filter(r=>!r.p.valid);
       traces.push({type:'scatter',mode:'markers',x:rejected.map(r=>r.p.speed_kmh),y:rejected.map(r=>r.p.turn_dps),
         marker:{size:5,symbol:'x',color:rgba(a.color,.33)},name:a.name+' rejected',meta:a.id,showlegend:false,
-        customdata:rejected.map(r=>[a.id,'grid',r.i]),text:rejected.map(r=>r.p.reasons.join(', ')+'<br>'+flapHover(a)),
+        customdata:rejected.map(r=>[a.id,'grid',r.i]),text:rejected.map(r=>r.p.reasons.join(', ')),
         hovertemplate:`${a.name} · rejected<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
   }
-  const ymax=showRejected?Math.max(data.plot_max_turn,Math.min(65,...displayed.map(a=>Math.max(...a.points.map(p=>p.turn_dps))))):data.plot_max_turn;
+  const ymax=envelopeTop(displayed);
   const layout={paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
     margin:{l:52,r:18,t:Math.max(38,displayed.length*20),b:46},hovermode:'closest',hoverlabel:{bgcolor:'#202e40',bordercolor:'#40536b',font:{color:'#eff7ff',size:11}},
     xaxis:{title:{text:'True airspeed · km/h',standoff:6,font:{size:11}},range:[data.settings.speed_min_kmh,data.settings.speed_max_kmh],gridcolor:'#253144',zeroline:false,dtick:100,tickfont:{size:10},constrain:'domain'},
     yaxis:{title:{text:'Turn rate · °/s',standoff:6,font:{size:11}},range:[0,ymax],gridcolor:'#253144',zeroline:false,dtick:5,tickfont:{size:10}},
-    annotations:contourLabels(displayed,data),
+    annotations:contourLabels(displayed,data,ymax),
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:10},bgcolor:'rgba(0,0,0,0)',traceorder:'normal'},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
@@ -375,7 +380,7 @@ async function inspect(a,p){
       ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
       ['Compressor stage',(p.propulsion.compressor_stages??p.propulsion.controls.gears).map(v=>v+1).join(' / ')],
       ['Radiators','Closed'],['Landing gear',p.gear_percent===100?'Fixed · deployed':'Retracted']]:[]),
-    ['Flaps',fmt(p.flaps_percent??0,1)+'%'],
+    ...(state.meta.aircraft[a.aircraft_id||a.id]?.has_flaps?[['Flaps',fmt(p.flaps_percent??0,1)+'%']]:[]),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(instructorEvidence(a)?[['Instructor evidence',escapeText(instructorEvidence(a))]]:[]),
@@ -387,7 +392,7 @@ async function inspect(a,p){
     ...(p.propulsion?[
       ['Propulsion settling',p.propulsion.period_frames?`${p.propulsion.period_frames}-frame cycle`:p.propulsion.stationarity?`${p.propulsion.sample_frames}-frame stable output cycle`:'Unresolved'],
       ['Mean trim',p.propulsion.phase_check?.checked?'Complete aircraft outputs averaged':'Not certified'],
-      ['Engine management',p.propulsion.engine_control_mode==='automatic'?'Automatic':`Idealized manual · ${p.propulsion.optimization?.evaluated??0} re-trimmed settings`]]:[]),
+      ['Engine management','Automatic']]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
     ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div><div class="point-note">${p.reasons.length?'Excluded: '+escapeText(p.reasons.join('; '))+'. ':''}Gravity is separate from the force total. The same aerodynamic equilibrium produces the same performance regardless of its internal stick/trim allocation. ${p.altitude_correction?'The recovered altitude velocity correction was active.':''}</div>`;
 }
@@ -434,7 +439,7 @@ $('chart-tabs').addEventListener('click',event=>{
   state.view=button.dataset.view;document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b===button));renderChart();
 });
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-$('reset-zoom').addEventListener('click',()=>{if(state.data)Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,state.data.settings.speed_max_kmh],'yaxis.range':[0,state.data.plot_max_turn]});});
+$('reset-zoom').addEventListener('click',()=>{if(state.data)Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,state.data.settings.speed_max_kmh],'yaxis.range':[0,envelopeTop(state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view))]});});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
 (async()=>{try{
   [state.meta]=await Promise.all([api('/api/meta'),document.fonts.load('14px WTSymbols','▄')]);

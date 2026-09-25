@@ -197,16 +197,27 @@ def smooth_surface(data,aircraft):
                              z=nullable_grid(z))
 
 
+def plot_turn_ceiling(aircraft):
+    """Use the displayed upper envelope, never an outlying grid sample."""
+    def edge_points(row):
+        return (row.get('boundary') or
+                [c['boundary'] for c in row.get('columns',[]) if c.get('boundary')] or
+                [p for p in row['points'] if p['valid']])
+    max_turn=max((p['turn_dps'] for row in aircraft for p in edge_points(row)
+                  if p.get('turn_dps') is not None and math.isfinite(p['turn_dps'])),default=0.)
+    return max(10.,float(math.ceil(max_turn*1.05+1.)))
+
+
 def enrich(data):
     """Contour only adjacent valid cells; never bridge a rejected trim point."""
-    max_turn=max((p['turn_dps'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=20.)
-    max_turn=max(max_turn,max((p['turn_dps'] for a in data['aircraft']
-                              for p in a.get('continuous_pull_boundary',[]) if p['turn_dps'] is not None),default=0.))
     data['plot_max_load_g']=max(1.1,max((p['load_g'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=1.1))
-    data['plot_max_turn']=max(10.,math.ceil((max_turn+1)/5)*5.)
-    regular_y=np.linspace(0.,data['plot_max_turn'],161 if data.get('preview') else 401)
     for aircraft in data['aircraft']:
         if 'columns' in aircraft:smooth_surface(data,aircraft)
+    # Interior/rejected diagnostic samples may sit far above the actual
+    # envelope. Scale the chart from its visible, verified upper edge.
+    data['plot_max_turn']=plot_turn_ceiling(data['aircraft'])
+    regular_y=np.linspace(0.,data['plot_max_turn'],161 if data.get('preview') else 401)
+    for aircraft in data['aircraft']:
         x,y,z=matrices(data,aircraft); paths=[]
         if z.count()>3 and np.ma.max(z)>np.ma.min(z):
             # Matplotlib uses this same contour engine. Interactive results
@@ -250,6 +261,7 @@ def preview_payload(data):
     chart={k:v for k,v in data.items() if k!='aircraft'}
     chart['aircraft']=[{k:v for k,v in a.items() if k not in ('columns','surface','boundary_columns')}
                        for a in data['aircraft']]
+    add_boundary_hover(chart,data)
     return chart
 
 
@@ -344,7 +356,7 @@ def export_figure(data, path, selected=None):
 
 
 def add_boundary_hover(chart, data):
-    """Presentation-only Ps along the existing refined boundary coordinates.
+    """Interpolate Ps and AoA along existing refined boundary coordinates.
 
     Use the saved boundary equilibria and the same contiguous column groups as
     smooth_surface. No equilibrium is solved, no boundary coordinate changes,
@@ -367,22 +379,30 @@ def add_boundary_hover(chart, data):
                 if run:groups.append(run)
                 run=[]
         for point in aircraft['boundary']:
-            point['ps_mps']=None;point['ps_interpolated']=False
+            point['ps_mps']=None;point['ps_interpolated']=False;point['alpha_deg']=None
             if point.get('vertical_edge') and point['turn_dps']==0.:
                 column=next((c for c in outline if c['speed_kmh']==point.get('sample_speed_kmh',point['speed_kmh'])),None)
                 level=next((p for p in column['points'] if p['valid'] and p['load_g']==1.),None) if column else None
-                if level:point['ps_mps']=level['ps_mps']
+                if level:
+                    point['ps_mps']=level['ps_mps']
+                    point['alpha_deg']=level['alpha_deg']
         for group in groups:
             speeds=[c['speed_kmh'] for c in group]
             powers=[c['boundary']['ps_mps'] for c in group]
+            angles=[c['boundary']['alpha_deg'] for c in group]
             exact=dict(zip(speeds,powers))
             curve=PchipInterpolator(speeds,powers,extrapolate=False) if len(group)>1 else None
+            angle_exact=dict(zip(speeds,angles))
+            angle_curve=PchipInterpolator(speeds,angles,extrapolate=False) if len(group)>1 else None
             for point in aircraft['boundary']:
                 speed=point.get('sample_speed_kmh',point['speed_kmh'])
                 if point.get('vertical_edge') and point['turn_dps']==0.:continue
                 if point['turn_dps'] is None or not speeds[0]<=speed<=speeds[-1]:continue
                 value=exact.get(speed)
                 if value is None and curve is not None:value=float(curve(speed))
+                angle=angle_exact.get(speed)
+                if angle is None and angle_curve is not None:angle=float(angle_curve(speed))
+                if angle is not None and np.isfinite(angle):point['alpha_deg']=float(angle)
                 if value is not None and np.isfinite(value):
                     point['ps_mps']=value;point['ps_interpolated']=speed not in exact
                     near=min(group,key=lambda c:abs(c['speed_kmh']-speed))

@@ -10,11 +10,16 @@ from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from em_solver import TrimSolver,settings
-from em_plot import write_exports
+from em_plot import write_exports,plot_turn_ceiling
 from instructor_steady_aoa import controller_limits,REVISION
 
 
 class SteadyScheduleTests(unittest.TestCase):
+    def test_plot_height_uses_envelope_instead_of_outlying_sample(self):
+        aircraft=[dict(boundary=[dict(turn_dps=41.),dict(turn_dps=43.)],
+                       points=[dict(valid=True,turn_dps=300.)])]
+        self.assertEqual(plot_turn_ceiling(aircraft),47.)
+
     def test_physical_limits_cannot_be_disabled(self):
         direct=settings(dict(aircraft=['f_16xl'],structural_limits=False))
         self.assertTrue(direct['structural_limits'])
@@ -22,6 +27,17 @@ class SteadyScheduleTests(unittest.TestCase):
             dict(id='entry_1',aircraft_id='f_16xl',settings=dict(structural_limits=False))]))
         self.assertTrue(entries['structural_limits'])
         self.assertTrue(entries['entries'][0]['settings']['structural_limits'])
+
+    def test_unavailable_flaps_and_manual_engine_mode_are_ignored(self):
+        f16=settings(dict(aircraft=['f_16xl'],flaps_percent=100.,engine_control_mode='optimized'))
+        self.assertEqual(f16['flaps_percent'],0.)
+        self.assertEqual(f16['engine_control_mode'],'automatic')
+        f18=settings(dict(aircraft=['fa_18e_block_2'],flaps_percent=50.))
+        self.assertEqual(f18['flaps_percent'],50.)
+        entries=settings(dict(aircraft=['f_16xl'],entries=[
+            dict(id='entry_1',aircraft_id='f_16xl',settings=dict(flaps_percent=100.,engine_control_mode='optimized'))]))
+        self.assertEqual(entries['entries'][0]['settings']['flaps_percent'],0.)
+        self.assertEqual(entries['entries'][0]['settings']['engine_control_mode'],'automatic')
 
     @classmethod
     def setUpClass(cls):

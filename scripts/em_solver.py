@@ -98,6 +98,7 @@ def settings(values=None):
     if result['compare_instructor'] and len(result['aircraft'])!=1:
         raise ValueError('Select one aircraft to compare Instructor on/off')
     if result['engine_control_mode'] not in ('automatic','optimized'):raise ValueError('Unknown engine control mode')
+    result['engine_control_mode']='automatic'
     if result['instructor_model']!='steady':raise ValueError('Only the static Instructor boundary is supported')
     if result['trim_mode'] not in ('optimized','fixed'): raise ValueError('Unknown trim mode')
     if result['sampling'] not in ('adaptive','regular'):raise ValueError('Unknown sampling mode')
@@ -117,6 +118,8 @@ def settings(values=None):
         resolved=settings(dict(result,**dict(conditions,aircraft=[name],aircraft_settings={})))
         normalized[name]={key:resolved[key] for key in sorted(AIRCRAFT_SETTINGS)}
     result['aircraft_settings']=normalized
+    if len(result['aircraft'])==1 and not AIRCRAFT[result['aircraft'][0]].get('has_flaps',False):
+        result['flaps_percent']=0.
     for name in result['aircraft']:
         condition=dict(result,**normalized.get(name,{}))
         if (condition['instructor'] or result['compare_instructor']) and condition['extra_mass_kg']:
