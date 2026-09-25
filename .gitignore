@@ -19,3 +19,8 @@
 !/.github/
 !/.github/workflows/
 !/.github/workflows/*.yml
+!/deploy/
+!/deploy/oracle/
+!/deploy/oracle/*.py
+!/deploy/oracle/*.sh
+!/deploy/oracle/*.md

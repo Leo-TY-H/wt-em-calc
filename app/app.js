@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const runtimeConfig=window.EM_CONFIG||{};
 const apiBase=String(runtimeConfig.apiBase||'').replace(/\/$/,'');
+const remoteSite=!['localhost','127.0.0.1',''].includes(location.hostname);
 const state = {data:null, dataJob:null, activeJob:null, view:'compare', meta:null, running:false, conditions:{}, entries:[], nextEntry:1, editing:null, hiddenVehicles:new Set(), contourLevels:[100,0,-100,-200,-400], contourRequest:0};
 // Accuracy drives refinement; all presets start with a small speed stencil.
 const quality = {quick:[9,7,1.], standard:[9,9,.5], fine:[9,13,.15]};
@@ -193,7 +194,7 @@ async function loadData(id,populateForm=false,preview=false){
   updateContourAvailability();
   const unresolved=data.aircraft.reduce((sum,a)=>sum+(a.numerical_boundaries?.length||0),0);
   const gaps=data.aircraft.reduce((sum,a)=>sum+(a.numerical_gaps?.length||0),0);
-  $('footer-status').textContent=preview?'Preview · solved samples only · gaps, contours and endpoints are still being refined':`Calculated in ${fmt(data.elapsed_s,1)} s · Saved locally${unresolved?' · '+unresolved+' unresolved boundary points':''}${gaps?' · '+gaps+' equilibrium gaps':''}${unresolved||gaps?' · Enable Rejected for details':''}`;
+  $('footer-status').textContent=preview?'Preview · solved samples only · gaps, contours and endpoints are still being refined':`Calculated in ${fmt(data.elapsed_s,1)} s · Saved ${remoteSite?'on the server':'locally'}${unresolved?' · '+unresolved+' unresolved boundary points':''}${gaps?' · '+gaps+' equilibrium gaps':''}${unresolved||gaps?' · Enable Rejected for details':''}`;
   if(!sameResult){
     const hasPoints=data.aircraft.some(a=>a.points.some(p=>p.valid));
     $('point-title').textContent=hasPoints?'Select a point on the diagram':'No valid operating points';
@@ -512,5 +513,9 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
     $('runtime-footer').textContent='PUBLIC PREVIEW';
     $('footer-status').textContent='Calculations currently run in the local application.';
     $('calculate').disabled=true;$('calculate').textContent='Calculations require local app';
+  }else if(remoteSite){
+    $('runtime-label').innerHTML='<i></i> LIVE TEST';
+    $('runtime-footer').textContent='LIVE TEST';
+    $('footer-status').textContent='Calculations run on the server.';
   }
 }catch(e){error('Could not load the plotter: '+e.message);}})();

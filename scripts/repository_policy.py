@@ -11,6 +11,8 @@ def is_source(name):
     if len(path.parts)==1:return name in ROOT_FILES or path.suffix=='.cmd'
     if path.parts[0] in ('scripts','tests'):return len(path.parts)==2 and path.suffix=='.py'
     if path.parts[0]=='app':return path.suffix in ('.js','.css','.html') and len(path.parts)<=3
+    if path.parts[:2]==('deploy','oracle'):
+        return len(path.parts)==3 and path.suffix in ('.py','.sh','.md')
     return path.parts[:2]==('.github','workflows') and len(path.parts)==3 and path.suffix in ('.yml','.yaml')
 
 
