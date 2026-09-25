@@ -32,9 +32,7 @@ function catalog() {
 function aircraftChanged() {
   const a=state.meta?.aircraft[$('aircraft').value];
   $('calculate').disabled=state.busy || !a;
-  $('aircraft-info').textContent=a?a.name:'Select an aircraft to begin.';
   $('sweep-field').hidden=!a?.has_sweep;
-  $('prop-hint').hidden=!(a?.propeller_count>0);
 }
 function markStale() { if(state.chart) $('stale').hidden=JSON.stringify(readConfig())===JSON.stringify(state.config); }
 function busy(value) {
@@ -83,7 +81,7 @@ async function loadResult(id, config=null) {
   const c=data.settings;
   showRoute();
   $('summary').textContent=`${data.aircraft_name} · ${fmt(c.conditions.fuel_percent,0)}% fuel · ${fmt(c.conditions.throttle*100,0)}% throttle · ${fmt(c.altitude_min_m,0)}–${fmt(c.altitude_max_m,0)} m. ${unresolved} intervals remain unresolved.`;
-  $('point-title').textContent='Select a contour or sample'; $('point-content').innerHTML='<p class="hint">Inspect the nearest solved point, its energy balance and trim residuals.</p>';
+  $('point-title').textContent='Select a contour or sample'; $('point-content').innerHTML='';
   await render(true); markStale();
 }
 function populate(config) {

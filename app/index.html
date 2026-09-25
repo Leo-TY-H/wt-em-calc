@@ -19,50 +19,49 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <p id="catalog-status" class="hint"></p>
 </fieldset>
 <div class="section-heading"><span class="eyebrow">ADDED AIRCRAFT</span><span id="entry-count" class="hint">0 / 8</span></div>
-<p id="entries-empty" class="hint">Search above and add an aircraft to configure it. You can add the same aircraft more than once.</p>
+<p id="entries-empty" class="hint">No aircraft added.</p>
 <div id="selected-aircraft" aria-label="Added aircraft"></div>
-<p class="hint">To compare RB and SB, duplicate an entry and change its flight mode.</p>
+
 <div id="condition-home" hidden><fieldset id="aircraft-condition" disabled>
-<div id="sweep-field" hidden><label class="field">Wing sweep <output id="sweep-label">0%</output><input id="sweep" type="range" min="0" max="100" step="1" value="0"></label><p class="hint">Fixed wing position: 0% forward, 100% aft. Applies to this aircraft. Conditions outside the aircraft’s available sweep range are excluded.</p></div>
+<div id="sweep-field" hidden><label class="field">Wing sweep <output id="sweep-label">0%</output><input id="sweep" type="range" min="0" max="100" step="1" value="0"></label></div>
 <label class="field">Altitude <div class="input-unit"><input id="altitude" type="number" min="0" max="18000" step="100" value="0" required><span>m</span></div></label>
 <label class="field">Fuel load <output id="fuel-label">30%</output><input id="fuel" type="range" min="1" max="100" step="1" value="30"></label>
 <label class="field">Throttle <output id="throttle-label">110%</output><input id="throttle" type="range" min="0" max="110" step="1" value="110"></label>
-<p id="throttle-mode" class="hint">Afterburner / WEP requested where supported.</p>
+
 <label id="engine-control-field" class="field" hidden>Engine management<select id="engine-control-mode" disabled><option value="automatic">Automatic</option></select></label>
-<p id="propeller-hint" class="hint" hidden>Experimental propeller model. Native automatic propeller, mixture and supercharger controls are used at the requested power. Radiators stay closed; fuel, boost supply and engine health are held constant. See the model assumptions below.</p>
+
 <label id="flaps-field" class="field">Flaps <output id="flaps-label">0%</output><input id="flaps" type="range" min="0" max="100" step="1" value="0"></label>
-<p id="flaps-hint" class="hint">The selected flap percentage is held at every speed and assumed achievable.</p>
+
 <div class="divider"></div>
-<p class="hint performance-assumption">Available aerodynamic trim is included automatically. Native control-authority limits are retained.</p>
-<div class="field">Flight mode<div class="mode-switch" role="radiogroup" aria-label="Flight mode" aria-describedby="flight-mode-hint"><label><input id="flight-mode-rb" type="radio" name="flight-mode" value="rb" checked><span>RB (experimental)</span></label><label><input id="flight-mode-sb" type="radio" name="flight-mode" value="sb"><span>SB</span></label></div></div>
-<p id="flight-mode-hint" class="hint">Realistic · Experimental Instructor · Propeller torque &amp; gyro off.</p>
+
+<div class="field">Flight mode<div class="mode-switch" role="radiogroup" aria-label="Flight mode"><label><input id="flight-mode-rb" type="radio" name="flight-mode" value="rb" checked><span>RB (experimental)</span></label><label><input id="flight-mode-sb" type="radio" name="flight-mode" value="sb"><span>SB</span></label></div></div>
+
 <label id="instructor-model-field" class="field">Instructor boundary<select id="instructor-model"><option value="steady">Static AoA · bounded automatic trim</option></select></label>
-<p id="instructor-hint" class="hint" hidden>Static AoA schedule with automatic trim calculated independently at each speed. No transient effects or control history.</p>
+
 <div class="divider"></div>
-<details><summary>Additional settings</summary><label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="10" value="0"><span>kg</span></div></label><p class="hint">Ammunition and equipment masses are not inferred. Zero means no additional payload.</p><label class="field">Simulation rate<div class="input-unit"><input id="timestep" type="number" min="30" max="120" step="1" value="48"><span>Hz</span></div></label></details>
+<details><summary>Additional settings</summary><label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="10" value="0"><span>kg</span></div></label><label class="field">Simulation rate<div class="input-unit"><input id="timestep" type="number" min="30" max="120" step="1" value="48"><span>Hz</span></div></label></details>
 <div class="apply-settings"><button id="apply-settings-to-all" type="button">Apply these settings to all added aircraft</button><span id="apply-settings-status" class="hint" role="status" aria-live="polite"></span></div>
 </fieldset></div>
 <span class="eyebrow">SHARED PLOT SETTINGS</span>
 <div class="field-label">True airspeed range <span>km/h</span></div><div class="two-inputs"><input id="speed-min" aria-label="Minimum true airspeed" type="number" min="100" max="2500" step="10" value="100" required><span>→</span><input id="speed-max" aria-label="Maximum true airspeed" type="number" min="200" max="2600" step="10" value="1300" required></div>
 <label class="field">Sampling<select id="quality"><option value="quick">Preview · 1 m/s / 0.04°/s</option><option value="standard" selected>Smooth · 0.5 m/s / 0.02°/s</option><option value="fine">Detailed · 0.15 m/s / 0.01°/s</option></select></label>
-<p id="sampling-hint" class="hint">Adds samples where SEP or contour position needs refinement.</p>
+
 <button id="calculate" class="primary-button" type="submit">Calculate diagram <span>↗</span></button><button id="cancel" type="button" class="secondary-button" hidden>Cancel calculation</button>
-<p class="baseline">Fully upgraded aircraft · full control authority<br>Constant fuel · intact aircraft · still air</p>
+
 </form></aside>
 <main>
-<div class="page-heading"><div><span class="eyebrow">AIRCRAFT PERFORMANCE</span><h1>Energy–maneuverability</h1><p>Specific excess power and feasible turns from component forces and moments.</p></div><span class="status-badge">RECONSTRUCTION</span></div>
+<div class="page-heading"><div><span class="eyebrow">AIRCRAFT PERFORMANCE</span><h1>Energy–maneuverability</h1></div><span class="status-badge">RECONSTRUCTION</span></div>
 <div id="hosting-notice" class="hosting-notice" hidden><strong>Public preview</strong><span>The interface and aircraft catalog are online. Calculations still require the local application while a compute backend is being prepared.</span></div>
 <div id="error" class="error" role="alert" hidden></div>
 <div id="progress" class="progress-panel" aria-live="polite" hidden><div><span class="spinner"></span><strong id="progress-label">Preparing calculation…</strong><span id="progress-count"></span></div><div class="progress-track"><div id="progress-fill"></div></div></div>
 <div id="stale" class="notice" hidden>Settings have changed. Calculate to update the diagram.</div>
 <section class="chart-card">
 <div class="chart-toolbar"><div id="chart-tabs" class="tabs" role="group" aria-label="Chart view"><button type="button" data-view="compare" class="active">Compare</button></div><div class="chart-actions"><label><input id="show-samples" type="checkbox"> Samples</label><label><input id="show-rejected" type="checkbox"> Rejected</label><button id="reset-zoom" class="text-button" type="button">Reset view</button></div></div>
-<div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Ready to calculate</h2><p>Choose a flight condition and calculate a diagram.<br>Only balanced points within the chart limits enter the contours.</p></div></div>
-<div class="chart-caption"><div><span class="legend-line"></span><span>Refined feasible boundary</span><span class="legend-line dashed"></span><span>Ps contours · bold at Ps = 0</span></div><span>Drag to pan · scroll to zoom · radius in m</span></div>
+<div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Ready to calculate</h2></div></div>
 </section>
-<div class="below-chart"><p id="condition-summary">No calculation loaded.</p><div class="exports"><span>EXPORT</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></div></div>
-<section class="inspector"><div class="inspector-heading"><div><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"><p class="muted">Click a contour or sample to inspect the nearest solved point, convergence and component forces.</p></div></section>
-<details class="method"><summary>How to read this diagram <span>+</span></summary><div class="method-grid"><div><h3>Energy balance</h3><p>The dashed contours use energy-height change over one recovered simulation step. Ps = 0 holds speed and height for the trimmed turn to numerical tolerance. Positive Ps is available energy; negative Ps means energy loss. Continuous force-projection Ps is also shown in the inspector.</p></div><div><h3>What is solved</h3><p>Angle of attack, bank and aerodynamic control deflections balance transverse forces and the discrete angular-rate update. Supported manual trim has its full configured range; native control-power loss and unavailable trim axes are retained. Stick/trim allocation is internal and does not change the forces at a given equilibrium. Settled engine states are averaged. Propeller aircraft use native automatic engine controls by default. Both include propwash; reaction torque, swirl effects and gyroscopic moments follow the flight mode (RB: Instructor on, torque/gyro off; SB: Instructor off, torque/gyro on). Complete aircraft outputs are averaged across resolved propulsion phases. Unresolved cycles remain masked; a periodic aircraft trajectory is not certified. Turns remain below the positive critical wing angle and out of ground effect. Negative-AoA stall is not a chart exclusion; its aerodynamic effects remain in the model. Zero sideslip is preferred; where it cannot balance, the solver searches for small sideslip (up to 2°) while keeping the same force and moment tolerances. The solved angle is shown in the inspector. This is a near-coordinated-flight assumption, not a measured game limit or minimum-drag optimization. Turns use retracted airbrakes and retractable gear; fixed gear retains its drag. Propeller radiators are closed. Fuel, boost supply and engine health are frozen, with no ammunition or external stores. The selected flap percentage is held at every speed and assumed achievable. Flaps and engines remain intact; actuator travel time and damage are not simulated.</p></div><div><h3>Limits and evidence</h3><p>The solid boundary follows directly solved stall, control-authority and wing-force limits. A vertical speed boundary uses the lower of the configured VNE (IAS converted to TAS at the selected altitude) and Mach redline, at the selected sweep. No equilibria are solved beyond that chart limit. This total-speed VNE mask is separate from the native longitudinal-IAS check at each equilibrium. An explicit vertical line closes the low-speed edge; its hover distinguishes a refined stall/feasibility edge from the selected speed-range cutoff. The line itself does not fill unsolved performance. Numerical failures are marked separately and remain masked. Smooth contours use interpolation checked against additional solved samples. Instructor mode uses a fast steady AoA schedule derived from the flight model’s Mach, flap and sweep angle targets, with native rate feedback and reduced moment balance. Balanced aircraft solves retain elevator compression, pitch response, stall, strength and speed limits. The same limits constrain the outline, power contours and interior samples. Automatic trim is solved independently from the native one-g predictor at each condition and limits available elevator authority; it is not freely optimized for the turn. This approximation omits transient overshoot, delay and overload history. It does not simulate a maneuver or depend on the selected upper speed as an entry condition. Live-game behavior remains unvalidated. Contour interpolation is checked against additional balanced aircraft solves, using the reported SEP and position tolerances.</p></div></div></details>
+<div class="below-chart"><div class="exports"><span>EXPORT</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></div></div>
+<section class="inspector"><div class="inspector-heading"><div><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
+
 <footer><span id="runtime-footer">LOCAL ANALYSIS TOOL</span><span id="footer-status">All calculations run on this computer.</span></footer>
 </main></div>
 </body></html>

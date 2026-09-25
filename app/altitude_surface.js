@@ -3,7 +3,6 @@
 async function renderSurface(reset=false) {
   const id=state.resultId, token=++state.surfaceToken;
   if(reset)state.camera=null;
-  $('view-description').textContent='Loading checked surface…';
   if(!state.surface) {
     state.surfacePromise ??= request(base(id)+'/surface.json');
     let surface;
@@ -67,7 +66,6 @@ async function renderSurface(reset=false) {
       camera:reset?defaultCamera():state.camera || defaultCamera()}};
   await Plotly.react($('chart'),traces,layout,{responsive:true,scrollZoom:true,displaylogo:false,modeBarButtonsToRemove:['toImage']});
   if(token!==state.surfaceToken || state.view!=='3d')return;
-  $('view-description').textContent='Height + color = SEP · white line = zero';
   $('chart').removeAllListeners('plotly_relayout');
   $('chart').on('plotly_relayout',event=>{if(event['scene.camera'])state.camera=event['scene.camera'];});
   $('chart').removeAllListeners('plotly_click');
@@ -93,8 +91,6 @@ async function changeView(view) {
   state.view=view;state.surfaceToken++;
   const url=new URL(location.href);if(view==='3d')url.searchParams.set('view','3d');else url.searchParams.delete('view');history.replaceState(null,'',url);
   for(const mode of ['2d','3d'])$('view-'+mode).setAttribute('aria-pressed',String(mode===view));
-  $('view-description').textContent=view==='3d'?'Height + color = SEP · white line = zero':'Speed × altitude · SEP contours';
-  $('chart-gesture').textContent=view==='3d'?'Drag to rotate · scroll to zoom':'Drag to pan · scroll to zoom';
   $('chart').setAttribute('aria-label',view==='3d'?'3D surface: airspeed, altitude and specific excess power':'Speed versus altitude with specific excess power contours');
   $('surface-download').hidden=view!=='3d' || !state.chart;
   try {await render();}catch(error){showError(error);}

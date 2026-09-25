@@ -5,7 +5,6 @@ import json
 import orjson
 import math
 import time
-import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -299,9 +298,8 @@ def export_figure(data, path, selected=None):
     # keep those shapes portable without requiring the font on the viewer's PC.
     with plt.rc_context({'font.family':[SYMBOL_FAMILY,'DejaVu Sans'],
                          'font.size':10,'svg.fonttype':'path'}):
-        height=7+max(0,len(aircraft)-2)*.35
-        fig,ax=plt.subplots(figsize=(11,height))
-        fig.subplots_adjust(left=.09,right=.97,bottom=1.05/height,top=1-(.98+max(0,len(aircraft)-2)*.35)/height)
+        fig,ax=plt.subplots(figsize=(11,7))
+        fig.subplots_adjust(left=.09,right=.97,bottom=.10,top=.87 if len(aircraft)>4 else .90)
         for a in aircraft:
             color={'f_16a_block_15_adf':'#007f92','f_16xl':'#007f92','j6k1':'#bd581c','saab_jas39c':'#bd581c'}.get(a['id'],a['color'])
             x,y,z=matrices(data,a)
@@ -309,49 +307,35 @@ def export_figure(data, path, selected=None):
                 if len(aircraft)==1:
                     fill_levels=np.arange(-50,51,5) if propeller_plot(a) else np.arange(-400,401,25)
                     filled=ax.contourf(x,y,z,levels=fill_levels,cmap='RdYlBu',extend='both',alpha=.78,corner_mask=False)
-                    fig.colorbar(filled,ax=ax,label='Specific excess power, native step (m/s)')
-                contour=ax.contour(x,y,z,levels=[n for n in contour_levels(a) if n!=0],colors=color if len(aircraft)>1 else '#526174',linewidths=.7,linestyles='dashed',corner_mask=False)
-                ax.clabel(contour,inline=True,fontsize=7,fmt=lambda v:f'SEP {v:g} m/s')
+                    fig.colorbar(filled,ax=ax,label='Ps (m/s)')
+                contour=ax.contour(x,y,z,levels=[n for n in contour_levels(a) if n!=0],colors=color if len(aircraft)>1 else '#526174',linewidths=1.5,linestyles='dashed',corner_mask=False)
+                ax.clabel(contour,inline=True,fontsize=8,fmt=lambda v:f'{v:g}')
             boundary=a['boundary']
-            prefix='' if len(aircraft)==1 and a.get('continuous_pull_boundary') else a['name']+' '
             ax.plot([p['speed_kmh'] for p in boundary],[np.nan if p['turn_dps'] is None else p['turn_dps'] for p in boundary],
-                    '-',color=color,lw=1.5,zorder=3.5,clip_on=False,label=prefix+('Full-pitch Instructor pull (experimental)' if a.get('continuous_pull_boundary') else 'experimental Instructor boundary' if a.get('settings',data['settings']).get('instructor') else 'verified feasible boundary'))
+                    '-',color=color,lw=2.8,zorder=3.5,clip_on=False,label=a['name'])
             if data.get('show_numerical_diagnostics') and a.get('numerical_boundaries'):
                 ax.scatter([p['speed_kmh'] for p in a['numerical_boundaries']],[p['turn_dps'] for p in a['numerical_boundaries']],
-                           marker='x',color='#b45a12',s=22,label=a['name']+' unresolved numerical boundary')
+                           marker='x',color='#b45a12',s=22,label='_nolegend_')
             if data.get('show_numerical_diagnostics') and a.get('numerical_gaps'):
                 ax.scatter([p['speed_kmh'] for p in a['numerical_gaps']],[p['turn_dps'] for p in a['numerical_gaps']],
-                           marker='o',facecolors='none',edgecolors='#b45a12',s=16,label=a['name']+' local equilibrium gaps')
+                           marker='o',facecolors='none',edgecolors='#b45a12',s=16,label='_nolegend_')
             # None at missing speeds prevents an apparent sustained segment
             # through unvalidated/invalid grid columns.
             roots={p['speed_kmh']:p for p in a.get('sustained',[])}
             root_curve=a.get('sustained_curve',dict(x=data['speeds_kmh'],y=[roots[v]['turn_dps'] if v in roots else np.nan for v in data['speeds_kmh']]))
             ax.plot(root_curve['x'],root_curve['y'],
-                    color=color,lw=2.8,linestyle='--',label=prefix+'Ps = 0')
+                    color=color,lw=4,linestyle='--',label='_nolegend_')
         for n in [2,4,6,9,12,16]:
             if n>data['plot_max_load_g']:continue
             v=np.array(data['speeds_kmh']); rate=np.degrees(9.8100004196167*np.sqrt(n*n-1)/(v/3.6))
             ax.plot(v,rate,color='#999999',alpha=.2,lw=.6)
         cfg=data['settings']
-        conditions=[]
-        for a in aircraft:
-            c=a.get('settings',cfg)
-            sweep=f" · sweep {c.get('sweep_percent',0):g}%" if a.get('has_sweep') else ''
-            mode=('Instructor steady AoA (approximation)' if a.get('instructor_approximation',{}).get('kind')=='steady AoA schedule'
-                  else 'Instructor experimental') if c.get('instructor') else 'Instructor off'
-            if propeller_plot(a):mode+=' · experimental propeller · '+('automatic engines' if c.get('engine_control_mode')=='automatic' else 'idealized manual engines')+' · radiators closed · torque/gyro '+('on' if c.get('torque_gyro',True) else 'off (RB)')
-            conditions.append(textwrap.fill(f"{a['name']}: {c['altitude_m']:g} m · {c['fuel_percent']:g}% fuel · throttle {c['throttle']*100:g}% · requested flaps {c.get('flaps_percent',0):g}%{sweep} · {mode}",width=145,break_long_words=False))
-        ax.set_aspect('auto' if any(a.get('continuous_pull_boundary') for a in aircraft) else 20.,adjustable='box')
+        ax.set_aspect('auto')
         ax.set(xlim=(cfg['speed_min_kmh'],cfg['speed_max_kmh']),ylim=(0,data['plot_max_turn']),
                xlabel='True airspeed (km/h)',ylabel='Turn rate (°/s)')
-        # The fixed engineering aspect can make the axes narrow and move
-        # their center next to the colorbar. Center long configuration labels
-        # on the whole figure so the approximation label is never clipped.
-        fig.suptitle('War Thunder · reconstructed EM diagram · Ps (m/s)\n'+'\n'.join(conditions),
-                     x=.5,y=.98,fontsize=9)
-        ax.grid(alpha=.15);ax.legend(loc='upper left' if any(a.get('continuous_pull_boundary') for a in aircraft) else 'upper right',fontsize=8)
-        fig.text(.5,.05,'Ps: native-step energy rate · per-aircraft conditions above · fixed fuel / intact aircraft · positive-AoA stall limit',ha='center',fontsize=7,color='#596273')
-        fig.text(.5,.025,'Numerical reconstruction; selected original-code checks pass; no live-flight validation.',ha='center',fontsize=7,color='#596273')
+        fig.suptitle('Energy–maneuverability',x=.5,y=.98,fontsize=12)
+        ax.grid(alpha=.15)
+        fig.legend(loc='upper center',bbox_to_anchor=(.5,.945),ncol=min(4,len(aircraft)),frameon=False,fontsize=9)
         fig.savefig(path,dpi=180);plt.close(fig)
 
 

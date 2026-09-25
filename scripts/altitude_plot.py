@@ -70,12 +70,12 @@ def export_csv(data):
 
 def export_figure(data, path):
     fig = Figure(figsize=(12, 8), layout='constrained')
-    fig.get_layout_engine().set(rect=(0., .045, 1., .955))
+    fig.get_layout_engine().set(rect=(0., 0., 1., .955))
     ax = fig.subplots()
     for contour in data['contours']:
         level = contour['sep_mps']; paths = contour['paths']
         color = '#076b79' if level > 0 else '#a55132' if level < 0 else '#142b40'
-        ax.add_collection(LineCollection(paths, colors=color, linewidths=2.4 if level == 0 else .85,
+        ax.add_collection(LineCollection(paths, colors=color, linewidths=3.6 if level == 0 else 1.5,
                                         linestyles='solid' if level >= 0 else 'dashed'))
         for line in paths:
             if len(line) > 6:
@@ -98,8 +98,5 @@ def export_figure(data, path):
            xlabel='True airspeed (km/h)', ylabel='Altitude (m)',
            title=data['aircraft_name']+'\nSpeed–altitude · SEP contours (m/s) · bold at zero')
     ax.grid(alpha=.18)
-    fig.text(.02, .005, f"Clean configuration · Fuel {c['conditions']['fuel_percent']:g}% · Throttle {100*c['conditions']['throttle']:g}% · "
-             f"Checked interpolation {data['sampling']['tolerance_mps']:g} m/s. "
-             'Blank areas include unresolved trim/interpolation. Frozen fuel/health.', fontsize=8)
     fig.savefig(path, dpi=180)
     fig.clear()
