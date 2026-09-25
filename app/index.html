@@ -45,6 +45,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <span class="eyebrow">SHARED PLOT SETTINGS</span>
 <div class="field-label">True airspeed range <span>km/h</span></div><div class="two-inputs"><input id="speed-min" aria-label="Minimum true airspeed" type="number" min="100" max="2500" step="10" value="100" required><span>→</span><input id="speed-max" aria-label="Maximum true airspeed" type="number" min="200" max="2600" step="10" value="1300" required></div>
 <label class="field">Sampling<select id="quality"><option value="quick">Preview · 1 m/s / 0.04°/s</option><option value="standard" selected>Smooth · 0.5 m/s / 0.02°/s</option><option value="fine">Detailed · 0.15 m/s / 0.01°/s</option></select></label>
+<div class="field contour-settings"><span>SEP contours · m/s</span><div id="contour-levels" class="contour-levels"></div><div class="contour-add"><input id="contour-input" type="number" min="-2000" max="2000" step="any" aria-label="New SEP contour in meters per second" placeholder="New level"><button id="contour-add" type="button">Add</button></div><span id="contour-status" class="hint" role="status"></span></div>
 
 <button id="calculate" class="primary-button" type="submit">Calculate diagram <span>↗</span></button><button id="cancel" type="button" class="secondary-button" hidden>Cancel calculation</button>
 

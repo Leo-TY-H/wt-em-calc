@@ -1147,8 +1147,10 @@ def _sample_column(task,boundary_only=False):
                             if left['alpha_deg']+.1*angle_span<angle<right['alpha_deg']-.1*angle_span)
                     delta_ps=right['ps_mps']-left['ps_mps']
                     if delta_ps:
-                        visible=np.clip(sorted(((-300.-left['ps_mps'])/delta_ps,
-                                                (300.-left['ps_mps'])/delta_ps)),0.,1.)
+                        from em_accuracy import visible_range
+                        low_ps,high_ps=visible_range(cfg)
+                        visible=np.clip(sorted(((low_ps-left['ps_mps'])/delta_ps,
+                                                (high_ps-left['ps_mps'])/delta_ps)),0.,1.)
                         if 0.<visible[1]-visible[0]<1.:
                             extra_fractions.extend(float(visible[0]+t*(visible[1]-visible[0]))
                                                    for t in (.25,.75))
@@ -1175,7 +1177,7 @@ def _sample_column(task,boundary_only=False):
                     query=neighboring_loads(speed,np.array([mid]),turn_tolerance(tol))[0]
                     query=np.clip(query,good[0]['load_g'],good[-1]['load_g'])
                     geometric=bool(within_contour_band(p['ps_mps'],curve(load_coordinate(query,top)),tol))
-                    refine=error>tol and not geometric and hi-lo>.0002 and visible_error(p['ps_mps'],float(curve(u)))
+                    refine=error>tol and not geometric and hi-lo>.0002 and visible_error(p['ps_mps'],float(curve(u)),cfg)
                     checks[-1]['within_contour_tolerance']=geometric
                     checks[-1]['native_transition']=transition
                     if refine:
@@ -1190,7 +1192,7 @@ def _sample_column(task,boundary_only=False):
                     error=abs(actual-curve(load_coordinate(ns,top)))
                     query=np.clip(neighboring_loads(speed,ns,turn_tolerance(tol)),good[0]['load_g'],good[-1]['load_g'])
                     geometry=within_contour_band(actual,curve(load_coordinate(query,top)),tol)
-                    for i in np.flatnonzero((error>tol)&~geometry&visible_error(actual,curve(load_coordinate(ns,top)))):
+                    for i in np.flatnonzero((error>tol)&~geometry&visible_error(actual,curve(load_coordinate(ns,top)),cfg)):
                         n=float(ns[i]);insert.append(n)
                         k=int(np.searchsorted([p['load_g'] for p in good],n))
                         remaining.append((good[k-1]['load_g'],good[k]['load_g']))
@@ -1753,7 +1755,9 @@ def sample_speed_probe(task):
     for left,right in zip(ordered,ordered[1:]):
         delta=right['ps_mps']-left['ps_mps']
         if not delta:continue
-        visible=np.clip(sorted(((-300.-left['ps_mps'])/delta,(300.-left['ps_mps'])/delta)),0.,1.)
+        from em_accuracy import visible_range
+        low_ps,high_ps=visible_range(solver.config)
+        visible=np.clip(sorted(((low_ps-left['ps_mps'])/delta,(high_ps-left['ps_mps'])/delta)),0.,1.)
         if not 0.<visible[1]-visible[0]<1.:continue
         for t in (.25,.75):
             fraction=float(visible[0]+t*(visible[1]-visible[0]))
@@ -1767,7 +1771,7 @@ def sample_speed_probe(task):
         # interpolation error sits just before saturation. Locate that native
         # SEP value with a few safeguarded secants, rather than densifying the
         # entire speed/load grid or certifying it from invisible samples.
-        for edge in (-300.,300.):
+        for edge in (low_ps,high_ps):
             target=edge-math.copysign(.1*solver.config['sep_tolerance_mps'],edge)
             if not min(left['ps_mps'],right['ps_mps'])<target<max(left['ps_mps'],right['ps_mps']):continue
             lo,hi=left,right
@@ -1813,7 +1817,7 @@ def sample_interior_speed_probe(task):
 
 def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     import json
-    from em_accuracy import turn_tolerance,speed_tolerance
+    from em_accuracy import turn_tolerance,speed_tolerance,visible_range
     from em_solver import AIRCRAFT,BACKEND,aircraft_settings
     from instructor_envelope import profile
     from aircraft_catalog import load
@@ -2136,7 +2140,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             if len(candidates):
                 box=surface_band_values(source,mid,query[candidates],config)
                 geometric[candidates]|=within_contour_band(actual[candidates],box,config['sep_tolerance_mps'])
-            failed=finite&(abs(actual-pred)>config['sep_tolerance_mps'])&~geometric&visible_error(actual,pred)
+            failed=finite&(abs(actual-pred)>config['sep_tolerance_mps'])&~geometric&visible_error(actual,pred,config)
             # Do not let a broad speed cell spend its entire position budget
             # on a large SEP error. Refine until the two interpolation stages
             # meet their combined scalar budget, or the remaining speed cell
@@ -2144,7 +2148,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             # the position test: inserting speeds cannot cure an endpoint
             # load curve's already accepted geometric interpolation error.
             if hi-lo>4.*speed_tolerance(config):
-                failed|=finite&(abs(actual-pred)>2.*config['sep_tolerance_mps'])&visible_error(actual,pred)
+                failed|=finite&(abs(actual-pred)>2.*config['sep_tolerance_mps'])&visible_error(actual,pred,config)
             caps=[c['boundary']['load_g'] if c['boundary'] else 0. for c in (left,column,right)]
             if np.isfinite(predicted_limits[1]):predicted_cap=predicted_limits[1]
             # A numerical stopping load is not a physical envelope value.
@@ -2517,7 +2521,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 speed_limit=redlines[name],
                 sustained=[p for col in ordered for p in col['sustained']],mass=ordered[0]['mass'],engine=ordered[0]['engine'],
                 valid_points=sum(p['valid'] for p in points),converged_points=sum(p['converged'] for p in points),
-                interpolation=dict(target_mps=config['sep_tolerance_mps'],target_contour_dps=turn_tolerance(config['sep_tolerance_mps']),target_speed_kmh=speed_tolerance(config),checked_sep_range_mps=[-300.,300.],speed_checks=checks,
+                interpolation=dict(target_mps=config['sep_tolerance_mps'],target_contour_dps=turn_tolerance(config['sep_tolerance_mps']),target_speed_kmh=speed_tolerance(config),checked_sep_range_mps=list(visible_range(config)),speed_checks=checks,
                                    unresolved_speed_intervals=intervals[name]+terminal_speed_intervals[name],boundary_checks=boundary_checks[name],
                                    certified_speed_interiors=seam_interiors[name],
                                    boundary_refinement_intervals=spans[name],load_checks=sum(len(c['load_checks']) for c in ordered))))

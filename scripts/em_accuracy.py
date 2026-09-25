@@ -2,14 +2,18 @@
 import numpy as np
 
 
-def visible_error(actual,predicted):
+def visible_range(config=None):
+    levels=(config or {}).get('sep_contour_levels_mps',[])
+    return min([-300.,*levels]),max([300.,*levels])
+
+
+def visible_error(actual,predicted,config=None):
     """Whether an error can affect any displayed SEP contour or heat color.
 
-    Outside the outermost levels (-300, +300 m/s), both the contour set and
-    saturated heatmap are constant. Native boundary/feasibility checks remain
-    active there; exported raw equilibria are never modified.
+    Include the requested contour levels as well as the heatmap color range.
     """
-    return (np.maximum(actual,predicted)>=-300.)&(np.minimum(actual,predicted)<=300.)
+    low,high=visible_range(config)
+    return (np.maximum(actual,predicted)>=low)&(np.minimum(actual,predicted)<=high)
 
 
 def turn_tolerance(sep_tolerance):
@@ -76,7 +80,7 @@ def contour_check_points(columns,low,high,speed,loads,actual,predicted,config,lo
     tolerance=config['sep_tolerance_mps']
     if high-low<=4*speed_tolerance(config):return []
     candidates=np.flatnonzero(np.isfinite(actual)&np.isfinite(predicted)&
-        (abs(actual-predicted)>tolerance)&visible_error(actual,predicted))
+        (abs(actual-predicted)>tolerance)&visible_error(actual,predicted,config))
     if not len(candidates):return []
     boxes=surface_band_values(columns,speed,np.asarray(loads)[candidates],config)
     budget=np.max(abs(boxes-np.asarray(predicted)[candidates,None]),axis=1)+tolerance
@@ -85,7 +89,8 @@ def contour_check_points(columns,low,high,speed,loads,actual,predicted,config,lo
     index=int(np.argmax(ratios))
     if ratios[index]<.65:return []
     chosen=candidates[index]
-    target=float(np.clip(actual[chosen],-300.+.1*tolerance,300.-.1*tolerance))
+    low,high=visible_range(config)
+    target=float(np.clip(actual[chosen],low+.1*tolerance,high-.1*tolerance))
     floor,cap=envelope_limits(columns,[speed])[0]
     if not np.isfinite([floor,cap]).all() or cap<=floor:return []
     fraction=float(np.clip((loads[chosen]-floor)/(cap-floor),0.,1.))

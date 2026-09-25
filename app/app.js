@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const runtimeConfig=window.EM_CONFIG||{};
 const apiBase=String(runtimeConfig.apiBase||'').replace(/\/$/,'');
-const state = {data:null, dataJob:null, activeJob:null, view:'compare', meta:null, running:false, conditions:{}, entries:[], nextEntry:1, editing:null, hiddenVehicles:new Set()};
+const state = {data:null, dataJob:null, activeJob:null, view:'compare', meta:null, running:false, conditions:{}, entries:[], nextEntry:1, editing:null, hiddenVehicles:new Set(), contourLevels:[100,0,-100,-200,-400], contourRequest:0};
 // Accuracy drives refinement; all presets start with a small speed stencil.
 const quality = {quick:[9,7,1.], standard:[9,9,.5], fine:[9,13,.15]};
 const fmt = (v,d=1) => Number.isFinite(v) ? v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
@@ -99,10 +99,12 @@ function readConfig() {
   return {...state.meta.defaults,aircraft:[...new Set(state.entries.map(e=>e.aircraft_id))],compare_instructor:false,aircraft_settings:{},
     entries:state.entries.map(e=>({...e,settings:{...state.conditions[e.id],structural_limits:true}})),
     speed_min_kmh:+$('speed-min').value,speed_max_kmh:+$('speed-max').value,max_load_g:null,
-    speed_samples:grid[0],load_samples:grid[1],sampling:'adaptive',sep_tolerance_mps:grid[2],surface_resolution:601};
+    speed_samples:grid[0],load_samples:grid[1],sampling:'adaptive',sep_tolerance_mps:grid[2],surface_resolution:601,
+    sep_contour_levels_mps:[...state.contourLevels]};
 }
 function populate(c) {
   state.conditions={};state.editing=null;
+  state.contourLevels=[...(c.sep_contour_levels_mps||[100,0,-100,-200,-400])];renderContourControls();
   state.entries=configEntries(c).map(e=>{state.conditions[e.id]=aircraftConditions(e.aircraft_id,e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
   $('speed-min').value=c.speed_min_kmh;$('speed-max').value=c.speed_max_kmh;
   let selected=Object.keys(quality).find(k=>quality[k][2]===c.sep_tolerance_mps&&c.sampling==='adaptive') ||
@@ -113,7 +115,7 @@ function populate(c) {
 function signature(c){
   const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?
     Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-  const shared=Object.fromEntries(Object.entries(c).filter(([k])=>!conditionKeys.includes(k)&&!['aircraft','aircraft_settings','compare_instructor','entries'].includes(k)));
+  const shared=Object.fromEntries(Object.entries(c).filter(([k])=>!conditionKeys.includes(k)&&!['aircraft','aircraft_settings','compare_instructor','entries','sep_contour_levels_mps'].includes(k)));
   // Instance IDs identify exports/inspection, not physical conditions. Preserve
   // list order and duplicate multiplicity so colors and entries match the plot.
   shared.entries=configEntries(c).map(e=>({aircraft_id:e.aircraft_id,settings:conditionsFrom(e.settings)}));
@@ -187,9 +189,7 @@ async function loadData(id,populateForm=false,preview=false){
     button.classList.toggle('active',button.dataset.view===state.view);
   }
   renderChart();syncLabels();
-  for(const link of document.querySelectorAll('[data-export]')){
-    link.href=preview?'#':apiUrl(`/api/jobs/${id}/${link.dataset.export}`);link.download=`WT-EM-${data.aircraft.map(a=>a.id).join("-vs-")}-${link.dataset.export}`;link.setAttribute('aria-disabled',preview?'true':'false');
-  }
+  updateContourAvailability();
   const unresolved=data.aircraft.reduce((sum,a)=>sum+(a.numerical_boundaries?.length||0),0);
   const gaps=data.aircraft.reduce((sum,a)=>sum+(a.numerical_gaps?.length||0),0);
   $('footer-status').textContent=preview?'Preview · solved samples only · gaps, contours and endpoints are still being refined':`Calculated in ${fmt(data.elapsed_s,1)} s · Saved locally${unresolved?' · '+unresolved+' unresolved boundary points':''}${gaps?' · '+gaps+' equilibrium gaps':''}${unresolved||gaps?' · Enable Rejected for details':''}`;
@@ -199,17 +199,104 @@ async function loadData(id,populateForm=false,preview=false){
     $('point-content').innerHTML=hasPoints?'':'<p class="muted">No valid operating points in this range.</p>';
     $('point-status').textContent='';
   }
+  if(!preview&&JSON.stringify([...state.contourLevels].sort((a,b)=>a-b))!==
+      JSON.stringify([...(data.settings.sep_contour_levels_mps||[])].sort((a,b)=>a-b)))await refreshContours();
 }
 function rgba(hex,opacity){return `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${opacity})`;}
+function renderContourControls(){
+  $('contour-levels').innerHTML=state.contourLevels.map(level=>`<button type="button" data-contour-remove="${level}" aria-label="Remove SEP ${level} m/s">${level>0?'+':''}${level} ×</button>`).join('');
+}
+function supportedContourLevels(){
+  if(!state.data)return [];
+  return state.contourLevels.filter(level=>state.data.aircraft.every(a=>{
+    const [low,high]=a.interpolation?.checked_sep_range_mps||[-300,300];return low<=level&&level<=high;
+  }));
+}
+function updateContourAvailability(){
+  const missing=state.data?state.contourLevels.filter(level=>!supportedContourLevels().includes(level)):[];
+  $('contour-status').textContent=missing.length?`Calculate to validate ${missing.map(v=>`${v>0?'+':''}${v}`).join(', ')} m/s.`:'';
+  if(!state.data)return;
+  for(const link of document.querySelectorAll('[data-export]')){
+    const figure=link.dataset.export.startsWith('diagram.');
+    const disabled=state.data.preview||(figure&&missing.length>0);
+    const query=figure?'?levels='+encodeURIComponent(state.contourLevels.join(',')):'';
+    link.href=disabled?'#':apiUrl(`/api/jobs/${state.dataJob}/${link.dataset.export}${query}`);
+    link.download=`WT-EM-${state.data.aircraft.map(a=>a.id).join('-vs-')}-${link.dataset.export}`;
+    link.setAttribute('aria-disabled',disabled?'true':'false');
+  }
+}
+async function refreshContours(){
+  const token=++state.contourRequest,data=state.data;
+  updateContourAvailability();
+  if(!data)return;
+  if(data.preview){renderChart();return;}
+  const levels=supportedContourLevels();
+  try{
+    const payload=await api(`/api/jobs/${state.dataJob}/contours.json?levels=${encodeURIComponent(levels.join(','))}`);
+    if(token!==state.contourRequest||data!==state.data)return;
+    for(const a of data.aircraft)a.contours=payload.contours[a.id]||[];
+    renderChart();
+  }catch(e){if(token===state.contourRequest)error(e.message);}
+}
 function sustainedCurve(aircraft,data){
-  if(!data.preview)return aircraft.sustained_curve;
-  // Both preview and completed curves follow the checked SEP surface.
+  // Both preview and completed curves follow the currently selected contour.
   const paths=aircraft.contours.filter(c=>c.level===0);
   return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null])}:aircraft.sustained_curve;
 }
 function envelopeTop(aircraft){
   const peak=Math.max(0,...aircraft.flatMap(a=>(a.boundary||[]).map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
   return Math.max(10,Math.ceil(peak*1.05+1));
+}
+function contourLabelTrace(a,data){
+  const x=[],y=[],labels=[],levels=[];
+  const xmin=data.settings.speed_min_kmh,xmax=data.settings.speed_max_kmh;
+  const ymax=envelopeTop([a]);
+  for(const level of state.contourLevels){
+    const paths=a.contours.filter(path=>path.level===level&&path.x.length>2);
+    let best=null;
+    for(const path of paths){
+      let length=0;for(let i=1;i<path.x.length;i++)length+=Math.hypot((path.x[i]-path.x[i-1])/(xmax-xmin),(path.y[i]-path.y[i-1])/ymax);
+      if(!best||length>best.length)best={path,length};
+    }
+    if(!best||best.length<.06)continue;
+    let progress=0;const target=best.length*(data.aircraft.indexOf(a)%2?.65:.42);
+    for(let i=1;i<best.path.x.length;i++){
+      const step=Math.hypot((best.path.x[i]-best.path.x[i-1])/(xmax-xmin),(best.path.y[i]-best.path.y[i-1])/ymax);
+      if(progress+step>=target){const t=step?(target-progress)/step:0;
+        x.push(best.path.x[i-1]+t*(best.path.x[i]-best.path.x[i-1]));
+        y.push(best.path.y[i-1]+t*(best.path.y[i]-best.path.y[i-1]));
+        labels.push(`SEP ${level>0?'+':''}${level}`);levels.push(level);break;
+      }progress+=step;
+    }
+  }
+  return {type:'scatter',mode:'markers+text',x,y,text:labels,customdata:levels,textposition:'middle center',
+    textfont:{color:a.color,size:11,family:'WTSymbols, Segoe UI, sans-serif'},marker:{size:12,color:'rgba(0,0,0,0)'},
+    meta:{id:a.id,kind:'contour-label'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+    hovertemplate:`${a.name}<br>SEP %{customdata} m/s<extra></extra>`};
+}
+function projectedContourPoint(event,a,level){
+  const chart=$('chart'),rect=chart.getBoundingClientRect(),plot=chart._fullLayout._size;
+  const [xmin,xmax]=chart._fullLayout.xaxis.range,[ymin,ymax]=chart._fullLayout.yaxis.range;
+  const cursor=[(event.event.clientX-rect.left-plot.l)/plot.w,1-(event.event.clientY-rect.top-plot.t)/plot.h];
+  let best=null;
+  for(const path of a.contours.filter(path=>path.level===level))for(let i=1;i<path.x.length;i++){
+    const start=[(path.x[i-1]-xmin)/(xmax-xmin),(path.y[i-1]-ymin)/(ymax-ymin)];
+    const end=[(path.x[i]-xmin)/(xmax-xmin),(path.y[i]-ymin)/(ymax-ymin)];
+    const dx=end[0]-start[0],dy=end[1]-start[1],length=dx*dx+dy*dy;
+    const t=length?Math.max(0,Math.min(1,((cursor[0]-start[0])*dx+(cursor[1]-start[1])*dy)/length)):0;
+    const distance=(cursor[0]-start[0]-t*dx)**2+(cursor[1]-start[1]-t*dy)**2;
+    if(!best||distance<best.distance)best={distance,speed:path.x[i-1]+t*(path.x[i]-path.x[i-1]),rate:path.y[i-1]+t*(path.y[i]-path.y[i-1])};
+  }
+  return best;
+}
+function inspectContour(a,level,point){
+  const load=Math.hypot(1,(point.speed/3.6)*(point.rate*Math.PI/180)/9.8100004196167);
+  $('point-title').textContent=`${a.name} · ${fmt(point.speed,1)} km/h · ${fmt(load,2)} g`;
+  $('point-status').innerHTML='<span class="point-pill">Interpolated contour</span>';
+  $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3><dl>
+    <dt>Native-step Ps</dt><dd>${fmt(level,1)} m/s</dd><dt>Turn rate</dt><dd>${fmt(point.rate,3)} °/s</dd>
+    <dt>Turn radius</dt><dd>${turnRadius(point.speed,point.rate)}</dd><dt>True airspeed</dt><dd>${fmt(point.speed,1)} km/h</dd>
+    <dt>Load</dt><dd>${fmt(load,3)} g</dd></dl></div></div>`;
 }
 function renderChart(){
   if(!state.data)return;
@@ -229,9 +316,10 @@ function renderChart(){
   }
   for(const a of displayed){
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
+      if(!state.contourLevels.includes(level))continue;
       if(level===0&&a.sustained?.length>1)continue;
       const x=[],y=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);}
-      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · Ps ${level}`,meta:a.id,legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · Ps ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
         text:x.map((v,i)=>turnRadius(v,y[i])),
         hovertemplate:`${a.name}<br>Ps ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
@@ -251,11 +339,11 @@ function renderChart(){
         marker:{size:7,symbol:'circle-open',color:'#f6be6d',line:{width:1.5}},
         hovertemplate:'Unresolved local equilibrium<br>Valid solutions bracket %{customdata[0]:.5f}–%{customdata[1]:.5f} g<br>This narrow interval remains masked<extra></extra>'});
     }
-    if(a.sustained?.length){
+    if(state.contourLevels.includes(0)&&a.sustained?.length){
       const roots=new Map(a.sustained.map((p,i)=>[p.speed_kmh,{p,i}]));
       const curve=sustainedCurve(a,data);
       traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:curve?.x||data.speeds_kmh,y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
-        name:a.name+' Ps = 0',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
+        name:a.name+' Ps = 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
         text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate);}),
         hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} Ps = 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
@@ -272,6 +360,7 @@ function renderChart(){
         customdata:rejected.map(r=>[a.id,'grid',r.i]),text:rejected.map(r=>r.p.reasons.join(', ')),
         hovertemplate:`${a.name} · rejected<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
+    traces.push(contourLabelTrace(a,data));
   }
   const ymax=envelopeTop(displayed);
   const layout={paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
@@ -294,10 +383,16 @@ function renderChart(){
   $('chart').removeAllListeners?.('plotly_click');
   $('chart').on('plotly_click', event=>{
     const p=event.points?.[0];if(!p)return;
+    if(p.data.meta?.kind==='contour'||p.data.meta?.kind==='contour-label'){
+      const a=data.aircraft.find(a=>a.id===p.data.meta.id);
+      const level=p.data.meta.kind==='contour'?p.data.meta.level:p.customdata;
+      const position=a&&projectedContourPoint(event,a,level);
+      if(position)return inspectContour(a,level,position);
+    }
     if(Array.isArray(p.customdata)&&p.customdata.length===3){
       const [id,kind,index]=p.customdata,a=data.aircraft.find(a=>a.id===id);if(a)return inspect(a,(kind==='root'?a.sustained:a.points)[index]);
     }
-    const candidates=displayed.filter(a=>!p.data.meta||a.id===p.data.meta);let best=null;
+    const candidates=displayed.filter(a=>!p.data.meta||a.id===(p.data.meta.id||p.data.meta));let best=null;
     for(const a of candidates)for(const point of a.points){
       if(!point.valid&&!showRejected)continue;
       const d=((point.speed_kmh-p.x)/(data.settings.speed_max_kmh-data.settings.speed_min_kmh))**2+((point.turn_dps-p.y)/ymax)**2;
@@ -386,6 +481,20 @@ $('chart-tabs').addEventListener('click',event=>{
   const button=event.target.closest('[data-view]');if(!button)return;
   state.view=button.dataset.view;document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b===button));renderChart();
 });
+$('contour-levels').addEventListener('click',event=>{
+  const button=event.target.closest('[data-contour-remove]');if(!button)return;
+  state.contourLevels=state.contourLevels.filter(level=>level!==Number(button.dataset.contourRemove));
+  renderContourControls();syncLabels();refreshContours();
+});
+$('contour-add').addEventListener('click',()=>{
+  const input=$('contour-input'),level=Number(input.value);
+  if(!input.value.trim()||!Number.isFinite(level)||Math.abs(level)>2000||state.contourLevels.includes(level)||state.contourLevels.length>=16){
+    $('contour-status').textContent='Enter a unique level from -2000 to 2000 m/s (up to 16).';return;
+  }
+  state.contourLevels.push(level);state.contourLevels.sort((a,b)=>b-a);input.value='';
+  renderContourControls();syncLabels();refreshContours();
+});
+$('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
 $('reset-zoom').addEventListener('click',()=>{if(state.data)Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,state.data.settings.speed_max_kmh],'yaxis.range':[0,envelopeTop(state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view))]});});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));

@@ -28,6 +28,8 @@
 main{padding:18px 14px 22px}
 .sidebar{padding:18px 16px}
 .page-heading{margin-bottom:16px}
+.contour-settings{display:block}.contour-levels{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.contour-levels button{border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);padding:4px 8px;font-size:12px}.contour-levels button:hover{border-color:var(--cyan)}.contour-add{display:flex;gap:7px}.contour-add input{width:100%;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:5px;color:var(--text);padding:7px}.contour-add button{border:0;border-radius:5px;background:var(--cyan);color:#0c111a;padding:7px 12px;font-weight:700}.contour-settings .hint{display:block;min-height:0;margin-top:5px}
+#chart .textpoint text{paint-order:stroke;stroke:#121925;stroke-width:4px;stroke-linejoin:round}
 @media(min-width:1600px){.workspace{grid-template-columns:300px minmax(0,1fr)}main{padding-inline:14px}}
 @media(max-width:1150px){.workspace{grid-template-columns:254px minmax(0,1fr)}main{padding-inline:12px}}
 @media(max-width:760px){.workspace{display:flex;flex-direction:column}.topbar{padding-inline:12px}main{padding:14px 8px}.sidebar{padding:14px 10px}}

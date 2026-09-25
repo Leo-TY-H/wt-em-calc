@@ -16,13 +16,13 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from functools import lru_cache
-from urllib.parse import urlparse
+from urllib.parse import urlparse,parse_qs
 from urllib.request import urlopen
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
-from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute
+from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute, contour_levels as validate_contour_levels
 from em_entries import ENTRY_ID
 from em_sampling import column_curve
 from aircraft_catalog import source,asset_sources
@@ -30,7 +30,7 @@ if current_process().name=='MainProcess':
     # Windows spawn imports this entry module in every numerical worker.
     # Plotting belongs to the server; loading Matplotlib in twelve workers
     # delays the first numerical results and duplicates its font/cache state.
-    from em_plot import add_boundary_hover,write_exports,export_figure,preview_payload
+    from em_plot import add_boundary_hover,write_exports,export_figure,preview_payload,contour_paths
 from vehicle_names import refresh_result_names, SOURCE as NAME_SOURCE
 
 APP=ROOT/'app'; OUTPUT=Path(os.environ.get('WT_EM_OUTPUT_DIR',ROOT/'outputs/em')); OUTPUT.mkdir(parents=True,exist_ok=True)
@@ -40,6 +40,7 @@ PREVIEW_WORKER=ThreadPoolExecutor(max_workers=1)
 PREVIEWS={}
 NAME_REVISION=hashlib.sha256(NAME_SOURCE.read_bytes()+
     (APP/'fonts/wt-symbols.ttf').read_bytes()+b'symbol-export-v1-torque-mode-v1').hexdigest()[:12]
+FIGURE_REVISION=hashlib.sha256((ROOT/'scripts/em_plot.py').read_bytes()).hexdigest()[:12]
 ALLOWED_ORIGINS={origin.strip().rstrip('/') for origin in os.environ.get('WT_EM_ALLOWED_ORIGINS','').split(',') if origin.strip()}
 MAX_PENDING_JOBS=max(1,int(os.environ.get('WT_EM_MAX_PENDING_JOBS','2')))
 
@@ -63,18 +64,45 @@ def named_export(key,name):
     return path
 
 
-def figure_export(key,name):
+def figure_export(key,name,levels=None):
     """Render a requested download without delaying the interactive chart."""
-    path=OUTPUT/key/(NAME_REVISION+'-'+name)
+    suffix=('-'+hashlib.sha256(orjson.dumps(levels)).hexdigest()[:12]) if levels is not None else ''
+    path=OUTPUT/key/(NAME_REVISION+'-'+FIGURE_REVISION+suffix+'-'+name)
     if path.exists():return path
     # Matplotlib is process-global. Serialize export requests, and expose each
     # completed file atomically so concurrent downloads never see a partial PDF.
     with FIGURE_LOCK:
         if not path.exists():
             data=named_data(key)
+            validate_contour_coverage(data,levels)
             temporary=path.with_name(path.stem+'.tmp'+path.suffix)
-            export_figure(data,temporary);temporary.replace(path)
+            export_figure(data,temporary,levels=levels);temporary.replace(path)
     return path
+
+
+@lru_cache(maxsize=4)
+def requested_contours(key,levels):
+    data=named_data(key)
+    validate_contour_coverage(data,levels)
+    return contour_paths(data,levels)
+
+
+def validate_contour_coverage(data,levels):
+    if levels is None:return
+    for aircraft in data['aircraft']:
+        low,high=aircraft.get('interpolation',{}).get('checked_sep_range_mps',[-300.,300.])
+        if any(level<low or level>high for level in levels):
+            raise ValueError('Requested SEP contour lies outside the checked range; calculate again with these levels')
+
+
+def query_contour_levels(url):
+    params=parse_qs(urlparse(url).query,keep_blank_values=True)
+    if 'levels' not in params:return None
+    if len(params['levels'])!=1:raise ValueError('Specify one SEP contour list')
+    raw=params['levels'][0]
+    try:values=[] if not raw else [float(item) for item in raw.split(',')]
+    except ValueError as error:raise ValueError('Invalid SEP contour value') from error
+    return tuple(validate_contour_levels(values))
 
 
 @lru_cache(maxsize=16)
@@ -240,12 +268,20 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts)==5 and parts[4]=='preview.json':
                 with LOCK:chart=PREVIEWS.get(key)
                 return self.respond(chart) if chart else self.respond(dict(error='Preview not ready'),404)
+            if len(parts)==5 and parts[4]=='contours.json':
+                try:
+                    levels=query_contour_levels(self.path)
+                    if levels is None:raise ValueError('SEP contour levels required')
+                    return self.respond(dict(contours=requested_contours(key,levels)))
+                except ValueError as error:return self.respond(dict(error=str(error)),400)
+                except OSError:return self.respond(dict(error='Not found'),404)
             if len(parts)==5 and parts[4] in ('data.json','chart.json','samples.csv','diagram.png','diagram.svg','diagram.pdf'):
                 if parts[4]=='chart.json':
                     try:return self.respond(chart_payload(key))
                     except OSError:return self.respond(dict(error='Not found'),404)
                 if parts[4].startswith('diagram.'):
-                    try:return self.file(figure_export(key,parts[4]))
+                    try:return self.file(figure_export(key,parts[4],query_contour_levels(self.path)))
+                    except ValueError as error:return self.respond(dict(error=str(error)),400)
                     except FileNotFoundError:return self.respond(dict(error='Not found'),404)
                 try:return self.file(named_export(key,parts[4]))
                 except FileNotFoundError:return self.respond(dict(error='Not found'),404)

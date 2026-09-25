@@ -15,8 +15,7 @@ import numpy as np
 import contourpy
 from scipy.interpolate import PchipInterpolator
 
-LEVELS=[-300.,-200.,-100.,-50.,0.,50.,100.,200.,300.]
-PROP_LEVELS=[-300.,-200.,-100.,-75.,*map(float,range(-50,51,5)),75.,100.,200.,300.]
+LEVELS=[-400.,-200.,-100.,0.,100.]
 SYMBOL_FONT=Path(__file__).resolve().parents[1]/'app/fonts/wt-symbols.ttf'
 font_manager.fontManager.addfont(SYMBOL_FONT)
 SYMBOL_FAMILY=font_manager.FontProperties(fname=SYMBOL_FONT).get_name()
@@ -33,8 +32,22 @@ def propeller_plot(aircraft):
     return aircraft.get('propulsion') in ('piston','turboprop','mixed')
 
 
-def contour_levels(aircraft):
-    return PROP_LEVELS if propeller_plot(aircraft) else LEVELS
+def contour_levels(aircraft,data=None):
+    return sorted((data or {}).get('settings',{}).get('sep_contour_levels_mps',LEVELS))
+
+
+def contour_paths(data,levels=None):
+    """Extract requested levels from the saved surface without a new flight solve."""
+    output={}
+    for aircraft in data['aircraft']:
+        x,y,z=matrices(data,aircraft);paths=[]
+        if z.count()>3 and np.ma.max(z)>np.ma.min(z):
+            contour=contourpy.contour_generator(x=x,y=y,z=z,name='mpl2014',corner_mask=False)
+            for level in levels if levels is not None else contour_levels(aircraft,data):
+                for segment in contour.lines(level)[0]:
+                    if len(segment)>1:paths.append(dict(level=float(level),x=segment[:,0].tolist(),y=segment[:,1].tolist()))
+        output[aircraft['id']]=paths
+    return output
 
 
 def heatmap_column(y,z,valid,grid):
@@ -216,15 +229,9 @@ def enrich(data):
     # envelope. Scale the chart from its visible, verified upper edge.
     data['plot_max_turn']=plot_turn_ceiling(data['aircraft'])
     regular_y=np.linspace(0.,data['plot_max_turn'],161 if data.get('preview') else 401)
+    paths_by_aircraft=contour_paths(data)
     for aircraft in data['aircraft']:
-        x,y,z=matrices(data,aircraft); paths=[]
-        if z.count()>3 and np.ma.max(z)>np.ma.min(z):
-            # Matplotlib uses this same contour engine. Interactive results
-            # need its paths, not a temporary figure, axes or text layout.
-            contour=contourpy.contour_generator(x=x,y=y,z=z,name='mpl2014',corner_mask=False)
-            for level in contour_levels(aircraft):
-                for segment in contour.lines(level)[0]:
-                    if len(segment)>1:paths.append(dict(level=float(level),x=segment[:,0].tolist(),y=segment[:,1].tolist()))
+        x,y,z=matrices(data,aircraft); paths=paths_by_aircraft[aircraft['id']]
         heat=np.full((len(regular_y),x.shape[1]),np.nan)
         boundary=[];mask=np.ma.getmaskarray(z)
         for i in range(x.shape[1]):
@@ -290,8 +297,9 @@ def export_csv(data):
     return out.getvalue()
 
 
-def export_figure(data, path, selected=None):
+def export_figure(data, path, selected=None, levels=None):
     """Curvilinear native samples; SVG, PNG and PDF use the same scientific plot."""
+    if levels is not None:data=dict(data,settings=dict(data['settings'],sep_contour_levels_mps=list(levels)))
     aircraft=[a for a in data['aircraft'] if selected is None or a['id']==selected]
     # Symbols must precede DejaVu: many are ordinary Unicode block characters
     # that the game's font deliberately draws as national insignia. SVG paths
@@ -308,8 +316,10 @@ def export_figure(data, path, selected=None):
                     fill_levels=np.arange(-50,51,5) if propeller_plot(a) else np.arange(-400,401,25)
                     filled=ax.contourf(x,y,z,levels=fill_levels,cmap='RdYlBu',extend='both',alpha=.78,corner_mask=False)
                     fig.colorbar(filled,ax=ax,label='Ps (m/s)')
-                contour=ax.contour(x,y,z,levels=[n for n in contour_levels(a) if n!=0],colors=color if len(aircraft)>1 else '#526174',linewidths=1.5,linestyles='dashed',corner_mask=False)
-                ax.clabel(contour,inline=True,fontsize=8,fmt=lambda v:f'{v:g}')
+                levels_to_draw=[n for n in contour_levels(a,data) if n!=0]
+                if levels_to_draw:
+                    contour=ax.contour(x,y,z,levels=levels_to_draw,colors=color if len(aircraft)>1 else '#526174',linewidths=1.5,linestyles='dashed',corner_mask=False)
+                    ax.clabel(contour,inline=True,fontsize=8,fmt=lambda v:f'SEP {v:g}')
             boundary=a['boundary']
             ax.plot([p['speed_kmh'] for p in boundary],[np.nan if p['turn_dps'] is None else p['turn_dps'] for p in boundary],
                     '-',color=color,lw=2.8,zorder=3.5,clip_on=False,label=a['name'])
@@ -323,8 +333,14 @@ def export_figure(data, path, selected=None):
             # through unvalidated/invalid grid columns.
             roots={p['speed_kmh']:p for p in a.get('sustained',[])}
             root_curve=a.get('sustained_curve',dict(x=data['speeds_kmh'],y=[roots[v]['turn_dps'] if v in roots else np.nan for v in data['speeds_kmh']]))
-            ax.plot(root_curve['x'],root_curve['y'],
-                    color=color,lw=4,linestyle='--',label='_nolegend_')
+            if 0. in contour_levels(a,data):
+                ax.plot(root_curve['x'],root_curve['y'],
+                        color=color,lw=4,linestyle='--',label='_nolegend_')
+                visible=[(x,y) for x,y in zip(root_curve['x'],root_curve['y']) if x is not None and y is not None and np.isfinite(y)]
+                if visible:
+                    px,py=visible[len(visible)//2]
+                    ax.text(px,py,'SEP 0',color=color,fontsize=8,ha='center',va='center',
+                            bbox=dict(facecolor='white',edgecolor='none',alpha=.8,pad=.8))
         for n in [2,4,6,9,12,16]:
             if n>data['plot_max_load_g']:continue
             v=np.array(data['speeds_kmh']); rate=np.degrees(9.8100004196167*np.sqrt(n*n-1)/(v/3.6))
