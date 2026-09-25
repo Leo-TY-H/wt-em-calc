@@ -48,13 +48,13 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
                 extra_mass_kg=0., speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,heatmap=False,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
-                aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady')
+                aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',roll_leveling=False)
 
 # Axes and sampling belong to the comparison; all physical conditions belong
 # to an aircraft. Legacy configurations without overrides still apply to all.
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
     'trim_mode','trim_limit','fixed_trim','extra_mass_kg','structural_limits',
-    'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','engine_control_mode','torque_gyro'))
+    'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','engine_control_mode','torque_gyro','roll_leveling'))
 
 
 def contour_levels(values):
@@ -101,7 +101,7 @@ def settings(values=None):
         result[key]=int(result[key])
     result['sep_contour_levels_mps']=contour_levels(result['sep_contour_levels_mps'])
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
-    for key in ['afterburner','structural_limits','instructor','compare_instructor','torque_gyro','heatmap']:
+    for key in ['afterburner','structural_limits','instructor','compare_instructor','torque_gyro','heatmap','roll_leveling']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
     if result['compare_instructor'] and len(result['aircraft'])!=1:
         raise ValueError('Select one aircraft to compare Instructor on/off')
@@ -339,7 +339,9 @@ class TrimSolver:
 
     def __init__(self, name, config):
         self.name=name; self.config=aircraft_settings(settings(config),name)
-        self.fm=load_aircraft(name)
+        # Apply this calculation's control-helper choice to a private FM copy.
+        # Catalog aircraft are cached and must not change between jobs.
+        self.fm=dict(load_aircraft(name),RollLeveling=self.config['roll_leveling'])
         self.flaps=f32(self.config['flaps_percent']/100.)
         self.instructor_profile=instructor_profile(self.fm)
         self.model=at_sweep(prepare(self.fm),self.config['sweep_percent']/100.); self.controls=control_properties(self.fm)

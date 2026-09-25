@@ -57,6 +57,17 @@ cdef inline double _math_atan2(double y, double x):
 # These declarations preserve the readable equations and every explicit f32
 # rounding operation. Keep Python math calls and disable contraction/fast-math.
 SCALARS={
+    'instructor_aoa_balance':{
+        'required_acceleration(model, ip, state, delivered_pitch)':
+            ('def required_acceleration(model, ip, state, double delivered_pitch)',
+             'working, sn, cs, vx, vy, axial, swirl, qvx, wash, k, spin, dynamic, taq, '
+             'center, positive, negative, command, a, e, cladd, bias, angle, vstab_drag, '
+             'other, extra, flow, td, required, tail_cl, tail_force, lever, acceleration'),
+    },
+    'windows_instructor_source':{
+        'fixed_source(model, state)':('def fixed_source(model, state)',
+                                    'distance, denominator, slope, numerator'),
+    },
     'piston_model':{
         'div(a, b)':('cpdef double div(double a, double b)', ''),
         'pressure_at_height(height, pressure0=101300.0, ceiling=18300.0)':

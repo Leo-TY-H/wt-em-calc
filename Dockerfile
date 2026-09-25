@@ -14,6 +14,9 @@ RUN python scripts/build_em_backend.py
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
     WT_EM_HOST=0.0.0.0 \
     PORT=8080 \
     WT_EM_OUTPUT_DIR=/data/em \

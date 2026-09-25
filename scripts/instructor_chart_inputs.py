@@ -1,6 +1,6 @@
 """Native controller inputs shared by the experimental chart approximation."""
 import json
-from pathlib import Path
+from em_backend import ROOT
 from tail_model import aircraft_secondary_properties
 from component_assembly import f32
 from control_mixer import curve
@@ -10,7 +10,7 @@ from polar_runtime import flap_polar
 from jet_catalog import engines as installed_engines
 from body_dynamics import realistic_engine_scale
 
-GAMEPLAY=json.loads((Path(__file__).resolve().parents[1]/'references/body-gameplay.blkx').read_text())['instructor']
+GAMEPLAY=json.loads((ROOT/'references/body-gameplay.blkx').read_text())['instructor']
 
 
 def source_state(solver,value,*,constant_cache=None):

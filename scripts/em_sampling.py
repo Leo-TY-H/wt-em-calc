@@ -382,7 +382,37 @@ def sample_level_started_column(task,provisional=False):
 
 
 def sample_boundary_column(task):
-    return _sample_boundary_column(task)
+    started=time.monotonic()
+    column=_sample_boundary_column(task)
+    column=_check_roll_leveling_boundary(task,column,boundary_only=True)
+    column['elapsed_s']=time.monotonic()-started
+    return column
+
+
+def _check_roll_leveling_boundary(task,column,boundary_only):
+    """Accept the first physical limit when a fast root crosses a native switch."""
+    if column.get('_roll_leveling_switch_checked'):return column
+    column['_roll_leveling_switch_checked']=True
+    candidate=column.get('boundary')
+    if (not candidate or not candidate.get('envelope_limit') or
+            -12.<candidate['alpha_deg']<12.):return column
+    name,config_json,speed,seed=task
+    solver=worker_solver(name,config_json)
+    if not solver.fm.get('RollLeveling',True):return column
+    level=next((p for p in column.get('points',[]) if p['valid'] and p['load_g']==1.
+                and p['speed_kmh']==speed),None)
+    if level is None:
+        level=next((p for p in seed or [] if p['valid'] and p['load_g']==1.
+                    and p['speed_kmh']==speed),None)
+    if level is None:level=solve_level(solver,speed)
+    from em_branch_limit import first_roll_leveling_limit
+    first=first_roll_leveling_limit(solver,speed,level,candidate)
+    if first is None:return column
+    first['_checked_probe_boundary']=True
+    corrected=_sample_column((name,config_json,speed,[level,first]),boundary_only=boundary_only)
+    corrected['_roll_leveling_switch_checked']=True
+    corrected.setdefault('branch_search_points',[]).append(candidate)
+    return corrected
 
 
 def _sample_boundary_column(task):
@@ -583,7 +613,11 @@ def predict_limit(solver,speed,level,seed):
 
 
 def sample_column(task,boundary_only=False):
-    return _sample_column(task,boundary_only)
+    started=time.monotonic()
+    column=_sample_column(task,boundary_only)
+    column=_check_roll_leveling_boundary(task,column,boundary_only)
+    column['elapsed_s']=time.monotonic()-started
+    return column
 
 
 def _sample_column(task,boundary_only=False):
@@ -2495,7 +2529,8 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
         # interior of an entire speed column. Check the common load range in
         # fixed physical coordinates, without the uncertain cap's slopes.
         from em_speed_seam import check_interior
-        seam_interiors={name:[] for name in results};seam_futures={}
+        from em_boundary_seam import check_boundary,boundary_intervals
+        seam_interiors={name:[] for name in results};seam_boundaries={name:[] for name in results};seam_futures={}
         for name,columns in results.items():
             for lo,hi in sorted(set(intervals[name]+terminal_speed_intervals[name])):
                 if hi-lo>2.*speed_tolerance(config):continue
@@ -2505,15 +2540,21 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 support=[{k:c[k] for k in ('speed_kmh','points','boundary','lower_boundary','boundary_status','boundary_reason')} for c in pair]
                 task=(name,json.dumps(conditions[name],sort_keys=True),(lo+hi)*.5,support)
                 future=pool.submit(sample_with_history,check_interior,task,dict(entry_histories[name]))
-                seam_futures[future]=name
+                seam_futures[future]=(name,False)
+            for lo,hi in boundary_intervals(intervals[name]+terminal_speed_intervals[name],2.*speed_tolerance(config)):
+                pair=[columns[v] for v in (lo,hi)]
+                support=[{k:c[k] for k in ('speed_kmh','points','boundary','lower_boundary','boundary_status','boundary_reason')} for c in pair]
+                task=(name,json.dumps(conditions[name],sort_keys=True),(lo+hi)*.5,support)
+                future=pool.submit(sample_with_history,check_boundary,task,dict(entry_histories[name]))
+                seam_futures[future]=(name,True)
         if seam_futures and progress:progress(dict(phase='Checking interiors below uncertain boundary transitions',
             done=0,total=len(seam_futures),elapsed_s=time.monotonic()-start))
         while seam_futures:
             check_cancel()
             done,_=wait(set(seam_futures),timeout=.25,return_when=FIRST_COMPLETED)
             for future in done:
-                name=seam_futures.pop(future);certificate,history=future.result()
-                if certificate:seam_interiors[name].append(certificate)
+                name,is_boundary=seam_futures.pop(future);certificate,history=future.result()
+                if certificate:(seam_boundaries if is_boundary else seam_interiors)[name].append(certificate)
                 for speed,entry in history.items():entry_histories[name].setdefault(speed,entry)
         # End every speculative task inside this request's clock. Usually
         # all were adopted above; unused queued jobs can be cancelled safely.
@@ -2537,6 +2578,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             points.extend(p for col in probes for p in col['points'])
             points.extend(p for _,col in checked_probes[name].values() for p in col['points'])
             for certificate in seam_interiors[name]:points.extend(certificate.pop('points'))
+            for certificate in seam_boundaries[name]:points.extend(certificate['points'])
             checks=speed_checks[name]
             metadata=dict(AIRCRAFT[name],color=['#38c9d7','#ffa66b'][index])
             output['aircraft'].append(dict(id=name,**metadata,settings=conditions[name],points=points,columns=ordered,
@@ -2552,6 +2594,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 interpolation=dict(target_mps=config['sep_tolerance_mps'],target_contour_dps=turn_tolerance(config['sep_tolerance_mps']),target_speed_kmh=speed_tolerance(config),**coverage(config),speed_checks=checks,
                                    unresolved_speed_intervals=intervals[name]+terminal_speed_intervals[name],boundary_checks=boundary_checks[name],
                                    certified_speed_interiors=seam_interiors[name],
+                                   certified_boundary_intervals=seam_boundaries[name],
                                    boundary_refinement_intervals=spans[name],load_checks=sum(len(c['load_checks']) for c in ordered))))
     output['speeds_kmh']=sorted(set(v for cols in results.values() for v in cols))
     output['elapsed_s']=time.monotonic()-start

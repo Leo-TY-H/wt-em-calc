@@ -4,6 +4,10 @@ import numpy as np
 from scipy.optimize import least_squares
 from em_pitch_response import PHYSICAL_REASONS, KINDS
 
+# Stay on the incoming float32 branch without omitting a resolvable band of
+# rejected angles immediately below the native +/-12 degree switch.
+ROLL_LEVELING_PROBE_OFFSET=1e-5
+
 
 def fixed_alpha(solver,speed,alpha,seed,canonical=False):
     if canonical and solver.is_prop and solver.engine.automatic:
@@ -47,6 +51,45 @@ def fixed_alpha(solver,speed,alpha,seed,canonical=False):
     p=solver.solve(speed,math.hypot(1.,z[4]),[alpha,*z[:4]],exhaustive=False,quick=True)
     if not p['converged'] or abs(p['alpha_deg']-alpha)>.001:return None
     return p
+
+
+def first_roll_leveling_limit(solver,speed,level,candidate):
+    """Find a physical rejection hidden before a crossed roll-helper switch.
+
+    An active-constraint root beyond the switch is locally valid, but does not
+    prove that the level-flight component reaches it. Test the incoming side
+    with a separately balanced state before accepting that root. This applies
+    to every aircraft with the native helper, regardless of its wing layout.
+    """
+    if (not solver.fm.get('RollLeveling',True) or not level or not level['valid']
+            or not candidate or not candidate.get('envelope_limit')
+            or candidate['load_g']<=level['load_g']):return None
+    # These fixed-angle probes use the column's ordinary zero-sideslip trim.
+    # A recovered sideslip root needs its own continuation certificate.
+    if (level.get('sideslip_attitude_deg',0.)!=0. or
+            candidate.get('sideslip_attitude_deg',0.)!=0.):return None
+    start,end=level['alpha_deg'],candidate['alpha_deg']
+    if start<12.<=end:incoming=12.-ROLL_LEVELING_PROBE_OFFSET
+    elif end<=-12.<start:incoming=-12.+ROLL_LEVELING_PROBE_OFFSET
+    else:return None
+    if not min(start,end)<incoming<max(start,end):return None
+
+    # A post-switch boundary is a good numerical seed, but only a fresh
+    # pre-switch equilibrium can establish the sign of the physical margins.
+    probe=(fixed_alpha(solver,speed,incoming,candidate) or
+           fixed_alpha(solver,speed,incoming,level) or
+           fixed_alpha(solver,speed,incoming,candidate,canonical=True))
+    if (probe is None or not probe['converged'] or
+            probe.get('roll_leveling_branch')!=0 or
+            not level['load_g']<probe['load_g']<candidate['load_g']):return None
+    if probe['valid'] or not probe['reasons'] or not set(probe['reasons'])<=PHYSICAL_REASONS:return None
+
+    from em_constraint_bracket import refine
+    first=refine(solver,speed,level,probe)
+    if first is None or first['load_g']>=candidate['load_g']:return None
+    first['envelope_limit']['selection']='First balanced rejection before native roll-leveling switch'
+    first['envelope_limit']['roll_leveling_switch_deg']=12. if incoming>0. else -12.
+    return first
 
 
 def turning_limit(solver,speed,low,high):

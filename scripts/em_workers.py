@@ -12,7 +12,53 @@ _lock=RLock()
 _pool=None
 _cancel=None
 _depth=0
-WORKERS=max(1,min(int(os.environ.get('WT_EM_WORKERS','12')),(os.cpu_count() or 2)-1))
+def cpu_budget():
+    """Available CPUs, including affinity and Linux container bandwidth limits."""
+    import math
+    limits=[os.cpu_count() or 1]
+    if hasattr(os,'sched_getaffinity'):
+        try:limits.append(len(os.sched_getaffinity(0)))
+        except OSError:pass
+    # Containers normally expose their cgroup at this root. Include ancestor
+    # quotas when the process belongs to a nested cgroup within the mount.
+    root=Path('/sys/fs/cgroup')
+    locations=[root]
+    legacy=[root/'cpu',root/'cpu,cpuacct',root]
+    def ancestors(mount,path):
+        child=mount/path.lstrip('/')
+        return [] if '..' in child.parts else [child,*[p for p in child.parents if mount in p.parents]]
+    try:
+        for line in Path('/proc/self/cgroup').read_text().splitlines():
+            _,controllers,path=line.split(':',2)
+            if not controllers:
+                locations.extend(ancestors(root,path))
+            elif 'cpu' in controllers.split(','):
+                for mount in (root/'cpu',root/'cpu,cpuacct'):
+                    legacy.extend(ancestors(mount,path))
+    except (OSError,ValueError):pass
+    for directory in locations:
+        try:
+            quota,period=(directory/'cpu.max').read_text().split()
+            if quota!='max':limits.append(int(quota)/int(period))
+        except (OSError,ValueError,ZeroDivisionError):pass
+    for directory in legacy:
+        try:
+            quota=int((directory/'cpu.cfs_quota_us').read_text())
+            period=int((directory/'cpu.cfs_period_us').read_text())
+            if quota>0:limits.append(quota/period)
+        except (OSError,ValueError,ZeroDivisionError):pass
+    return max(1,math.floor(min(limits)))
+
+
+def worker_count():
+    budget=cpu_budget()
+    requested=os.environ.get('WT_EM_WORKERS')
+    # Desktop defaults retain one CPU for the interface. An explicit count
+    # may use the full budget on a dedicated server.
+    return max(1,min(int(requested),budget)) if requested is not None else max(1,min(12,budget-1))
+
+
+WORKERS=worker_count()
 START_METHOD=os.environ.get('WT_EM_PROCESS_START',
     'forkserver' if 'forkserver' in multiprocessing.get_all_start_methods() else 'spawn')
 

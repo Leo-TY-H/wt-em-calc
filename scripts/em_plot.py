@@ -199,7 +199,8 @@ def smooth_surface(data,aircraft):
                 common=dict(speed_kmh=redline['speed_kmh'],sample_speed_kmh=sample,
                     at_plot_ceiling=False,vertical_edge=True,edge_kind=redline['kind']+' speed boundary')
                 boundary[at+1:at+1]=[dict(common,turn_dps=column['boundary']['turn_dps']),dict(common,turn_dps=0.)]
-    aircraft['boundary']=boundary
+    from em_boundary_seam import apply_outline
+    aircraft['boundary']=apply_outline(boundary,aircraft.get('interpolation',{}).get('certified_boundary_intervals',[]))
     aircraft['numerical_boundaries']=[dict(speed_kmh=c['speed_kmh'],turn_dps=c['boundary']['turn_dps'],load_g=c['boundary']['load_g'])
         for c in outline if c['boundary'] and c['boundary_status']=='unresolved numerical boundary']
     aircraft['numerical_gaps']=[dict(speed_kmh=c['speed_kmh'],**gap,
@@ -409,6 +410,15 @@ def add_boundary_hover(chart, data):
                     near=min(group,key=lambda c:abs(c['speed_kmh']-speed))
                     if near.get('boundary_reason')=='trim fold' and not point.get('vertical_edge'):
                         point['edge_kind']='Trim limit · maximum load on the connected equilibrium branch'
+        # Seam certificates carry their own freshly solved boundary states.
+        # In particular, the two sides of a vertical native jump have distinct
+        # sample speeds; interpolating hover data across the jump is incorrect.
+        measured={p['speed_kmh']:p for certificate in source.get('interpolation',{}).get('certified_boundary_intervals',[])
+                  for p in certificate['points']}
+        for point in aircraft['boundary']:
+            sample=measured.get(point.get('sample_speed_kmh',point['speed_kmh']))
+            if sample and point['turn_dps']==sample['turn_dps']:
+                point.update(ps_mps=sample['ps_mps'],alpha_deg=sample['alpha_deg'],ps_interpolated=False)
     return chart
 
 

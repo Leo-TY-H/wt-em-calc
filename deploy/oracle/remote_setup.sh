@@ -66,6 +66,7 @@ sudo docker network inspect wt-em-net >/dev/null 2>&1 || sudo docker network cre
 sudo docker rm -f wt-em-app >/dev/null 2>&1 || true
 sudo docker run -d --name wt-em-app --restart unless-stopped --network wt-em-net \
   -e PORT=8080 -e WT_EM_HOST=0.0.0.0 -e WT_EM_OUTPUT_DIR=/data/em \
+  -e WT_EM_WORKERS=2 -e OPENBLAS_NUM_THREADS=1 -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e WT_EM_MAX_PENDING_JOBS=2 -e "WT_EM_ALLOWED_ORIGINS=https://${site_host},https://neothunderism.pages.dev" \
   -v "${base}/shared/references:/srv/wt-em/references" \
   -v "${base}/shared/data-sync:/srv/wt-em/.data-sync" \

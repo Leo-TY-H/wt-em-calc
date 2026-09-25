@@ -7,6 +7,8 @@ import json
 import orjson
 import mimetypes
 import os
+import subprocess
+import sys
 from multiprocessing import current_process
 import threading
 import time
@@ -38,6 +40,7 @@ JOBS={}; LOCK=threading.Lock(); WORKER=ThreadPoolExecutor(max_workers=1)
 FIGURE_LOCK=threading.Lock()
 PREVIEW_WORKER=ThreadPoolExecutor(max_workers=1)
 PREVIEWS={}
+RESTART_REQUESTED=threading.Event()
 NAME_REVISION=hashlib.sha256(NAME_SOURCE.read_bytes()+
     (APP/'fonts/wt-symbols.ttf').read_bytes()+b'symbol-export-v1-torque-mode-v1').hexdigest()[:12]
 FIGURE_REVISION=hashlib.sha256((ROOT/'scripts/em_plot.py').read_bytes()).hexdigest()[:12]
@@ -167,6 +170,10 @@ def fingerprint():
 RUNTIME_FINGERPRINT=fingerprint() if current_process().name=='MainProcess' else None
 
 
+class RestartRequired(Exception):
+    """The imported equations no longer match the files on disk."""
+
+
 def key_for(config):
     return hashlib.sha256((RUNTIME_FINGERPRINT+json.dumps(config,sort_keys=True)).encode()).hexdigest()[:20]
 
@@ -215,7 +222,7 @@ def run_job(key,config,event):
 
 def start_job(config):
     if fingerprint()!=RUNTIME_FINGERPRINT:
-        raise ValueError('Equation files changed. Restart the plotter before calculating with the new equations.')
+        raise RestartRequired('Equation files changed; restarting the calculator with the new equations.')
     config=settings(config);key=key_for(config)
     with LOCK:
         if key in JOBS and JOBS[key]['status'] in ('queued','running','exporting','complete'):return key
@@ -328,6 +335,11 @@ class Handler(BaseHTTPRequestHandler):
                         if job['status']=='queued':job['status']='cancelled'
                 return self.respond(dict(cancelled=bool(job)))
             return self.respond(dict(error='Not found'),404)
+        except RestartRequired as error:
+            self.respond(dict(error=str(error),code='server_restarting'),503)
+            if not RESTART_REQUESTED.is_set():
+                RESTART_REQUESTED.set()
+                threading.Thread(target=self.server.shutdown,daemon=True).start()
         except (ValueError,TypeError,KeyError) as error:return self.respond(dict(error=str(error)),400)
     def do_OPTIONS(self):
         if not self.allowed_origin():return self.respond(dict(error='Origin not allowed'),403)
@@ -368,6 +380,14 @@ def main():
         for job in list(JOBS.values()):
             if 'cancel' in job:job['cancel'].set()
         server.server_close();WORKER.shutdown(wait=False,cancel_futures=True)
+    if RESTART_REQUESTED.is_set():
+        command=[sys.executable,*sys.argv]
+        print('Equation files changed; restarting EM plotter.',flush=True)
+        if os.name=='nt':
+            subprocess.Popen(command,cwd=ROOT,creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            os._exit(0)
+        else:
+            os.execv(sys.executable,command)
 
 
 if __name__=='__main__':main()

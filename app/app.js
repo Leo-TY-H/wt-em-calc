@@ -14,15 +14,29 @@ const apiUrl=path=>path.startsWith('/api/')?(apiBase?apiBase+path:'.'+path):path
 async function api(path, options={}) {
   // Relative API paths work both at localhost / and at a GitHub Pages project
   // path such as /repository-name/.
-  const response=await fetch(apiUrl(path), options); const body=await response.json();
-  if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
-  return body;
+  const jobSubmission=path==='/api/jobs'&&options.method==='POST';
+  let restarting=false;
+  for(let attempt=0;attempt<(jobSubmission?300:1);attempt++){
+    let response;
+    try{response=await fetch(apiUrl(path),options);}
+    catch(error){if(!restarting)throw error;await new Promise(resolve=>setTimeout(resolve,2000));continue;}
+    if(restarting&&[502,503,504].includes(response.status)){
+      await new Promise(resolve=>setTimeout(resolve,2000));continue;
+    }
+    const body=await response.json();
+    if(response.status===503&&body.code==='server_restarting'&&jobSubmission){
+      restarting=true;$('progress-label').textContent='Updating equations and restarting calculator…';
+    }else if(!response.ok)throw new Error(body.error||`Request failed (${response.status})`);
+    else return body;
+    await new Promise(resolve=>setTimeout(resolve,2000));
+  }
+  throw new Error('Calculator restart took too long. Please try again.');
 }
 function error(message) {$('error').textContent=message;$('error').hidden=!message;}
 const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'extra_mass_kg',
   timestep:'timestep_hz',sweep:'sweep_percent',flaps:'flaps_percent'};
 const conditionKeys=[...Object.values(conditionFields),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','instructor','instructor_model','engine_control_mode','torque_gyro'];
+  'fixed_trim','instructor','instructor_model','engine_control_mode','torque_gyro','roll_leveling'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??state.meta.defaults[k]]));
