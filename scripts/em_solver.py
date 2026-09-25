@@ -48,13 +48,13 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
                 extra_mass_kg=0., speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sweep_percent=0.,flaps_percent=0.,instructor=True,
-                aircraft_settings={},compare_instructor=False,entries=None)
+                aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady')
 
 # Axes and sampling belong to the comparison; all physical conditions belong
 # to an aircraft. Legacy configurations without overrides still apply to all.
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
     'trim_mode','trim_limit','fixed_trim','extra_mass_kg','structural_limits',
-    'timestep_hz','sweep_percent','flaps_percent','instructor','engine_control_mode','torque_gyro'))
+    'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','engine_control_mode','torque_gyro'))
 
 
 def aircraft_settings(config, name):
@@ -97,6 +97,7 @@ def settings(values=None):
     if result['compare_instructor'] and len(result['aircraft'])!=1:
         raise ValueError('Select one aircraft to compare Instructor on/off')
     if result['engine_control_mode'] not in ('automatic','optimized'):raise ValueError('Unknown engine control mode')
+    if result['instructor_model']!='steady':raise ValueError('Only the static Instructor boundary is supported')
     if result['trim_mode'] not in ('optimized','fixed'): raise ValueError('Unknown trim mode')
     if result['sampling'] not in ('adaptive','regular'):raise ValueError('Unknown sampling mode')
     if result['sampling']=='regular' and result['max_load_g'] is None:raise ValueError('Regular diagnostic sampling requires a load range; use adaptive for the automatic envelope')
@@ -1138,7 +1139,8 @@ class TrimSolver:
                    negative_stall_margin_deg=float(final['negative_stall_margin']),
                    wing_load_ratios=ratios,commands=final['allocation']['commands'],
                    control_bounds=control_bounds,authority_margin=min(min(d-lo,hi-d) for d,(lo,hi) in zip(final['allocation']['commands'],control_bounds)),
-                   sticks=final['allocation']['sticks'],trim=final['allocation']['trim'],
+                   sticks=instructor.get('sticks',final['allocation']['sticks']) if instructor else final['allocation']['sticks'],
+                   trim=instructor['auto_trim'] if instructor else final['allocation']['trim'],
                    ias_kmh=aero['air']['ias_u']*3.6,mach=aero['air']['mach'],
                    sweep_percent=self.config['sweep_percent'] if self.has_sweep else None,
                    flaps_percent=final['flaps']*100.,flaps_requested_percent=self.config['flaps_percent'],
@@ -1177,6 +1179,7 @@ class TrimSolver:
                 global_optimum_certified=False,radiators_closed=True)
         if (self.config['instructor'] and not refine and not getattr(self,'_instructor_rounding_search',False) and point['converged']
                 and point['reasons']==['Instructor pitch limit']
+                and point['instructor'].get('pitch_predictor_recheck',True)
                 and point['instructor']['pitch_margin']<-2e-7):
             # Native nested pitch predictors can switch to zero delivery for
             # the last few rounded bits of a barely closed aircraft state.
@@ -1320,7 +1323,7 @@ def compute_regular(config=None, progress=None, cancelled=None):
                 assumptions=['Full-real manual aerodynamic trim','Full pilot authority; aerodynamic control-power loss retained',
                              'Constant fuel and intact components','Positive-AoA stall enforced; negative-AoA stall not an exclusion; native aerodynamics unchanged','Still air; out of ground effect; retracted gear/brake',
                              'Requested flap percentage held at every operating point, assumed achievable; intact flaps, no travel time or damage',
-                             'Experimental settled keyboard Instructor; moving owner look-ahead not replayed' if config['instructor'] else 'Instructor off',
+                             'Steady Instructor AoA schedule approximation; transient overshoot, delay and control history omitted' if config['instructor'] else 'Instructor off',
                              'Extra mass is a point mass at configured CG; ammunition is not inferred'],
                 validation='Reconstructed kernels have native-code comparisons; this EM solver has not been validated against live flight.')
     total=len(speeds)*len(loads)*len(config['aircraft']); done=0
@@ -1373,6 +1376,7 @@ def compute_regular(config=None, progress=None, cancelled=None):
         valid=[p for p in points if p['valid']]
         metadata=dict(AIRCRAFT[name],color=['#38c9d7','#ffa66b'][index])
         output['aircraft'].append(dict(id=name,**metadata,settings=solver.config,mass=solver.mass,engine=solver.engine.summary,points=points,
+                                       instructor_approximation=instructor_profile(solver.fm) if solver.config['instructor'] else None,
                                        sustained=sustained,valid_points=len(valid),converged_points=sum(p['converged'] for p in points)))
     output['elapsed_s']=time.monotonic()-start
     return output

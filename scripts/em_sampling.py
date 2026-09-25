@@ -1829,7 +1829,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                      'Propellers: automatic or idealized manual engine management selected per aircraft; closed radiators and frozen boost supply; complete aircraft phase outputs averaged; manual global optimum and periodic flight trajectory not certified',
                      'Zero sideslip preferred; failed interior equilibria may use solved sideslip up to 2 degrees, with unchanged force/moment closure; not a minimum-drag sideslip optimization',
                      'Requested flap percentage held at every operating point, assumed achievable; intact flaps, no travel time or damage',
-                     'EXPERIMENTAL Instructor: static effective AoA approximation with native rate feedback and reduced predictor moment balance; same constraint at boundary and interior. Free trim allocation; retained-trim permission is unvalidated. Positive stall, strength and control authority retained. Transient overload reserve/release is not simulated',
+                     'Steady Instructor AoA schedule approximation: native Mach/flap/sweep angle targets, settled wing-angle adjustments, native rate feedback and reduced moment balance, with full physical trim and control-power loss. Same constraint at boundary and interior. Transient overshoot, delay, retained trim and overload reserve/release are omitted',
                      'Manual fixed sweep; native reachability limits retained; 0% forward, 100% aft',
                      'VTOL, reverse and thrust-vectoring commands zero; rocket boosters off',
                      'Normal controllable flight: native pitch response must retain the normal elevator direction',
@@ -1854,6 +1854,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             first=next(iter(cols.values()),None)
             snapshot['aircraft'].append(dict(AIRCRAFT[name],id=name,color=['#38c9d7','#ffa66b'][index],
                 settings=conditions[name],columns=ordered,points=points,
+                instructor_approximation=profile(load(name)) if conditions[name]['instructor'] else None,
                 boundary_columns=[outline_column(c) for c in sorted(
                     {**boundary_probes[name],**{c['speed_kmh']:c for c in ordered}}.values(),key=lambda c:c['speed_kmh'])],
                 sustained=[p for c in ordered for p in c['sustained']],
@@ -2332,7 +2333,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 good=[c for c in columns.values() if c['boundary_status']=='verified limit']
                 for speed,column in columns.items():
                     if column['boundary_status'] not in ('Instructor boundary unresolved','unresolved numerical boundary') or not good:continue
-                    if column.get('boundary',{}).get('native_branch_search'):continue
+                    if (column.get('boundary') or {}).get('native_branch_search'):continue
                     nearby=sorted(good,key=lambda c:abs(c['speed_kmh']-speed))[:2]
                     if column['boundary_status']=='unresolved numerical boundary' and (
                             len(nearby)<2 or max(abs(c['speed_kmh']-speed) for c in nearby)>max(2.,speed*.02)):continue

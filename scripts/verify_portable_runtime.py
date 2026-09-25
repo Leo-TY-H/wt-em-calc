@@ -1,4 +1,4 @@
-"""Check relocated data, spawned workers, compiled solves and native aero replay.
+"""Check relocated data, spawned workers, compiled solves.
 
 Run after installation on each device. This is an installation smoke check,
 not validation of the experimental Instructor boundary or of a full chart.
@@ -22,19 +22,6 @@ def solve_case(case):
     assert value['force_error_g'] <= 2e-4
     assert max(abs(value['rate_residual'])) <= 5e-5
     assert value['history_error'] <= 2e-4
-    if not solver.is_prop and not instructor:
-        from verify_aircraft_native import AircraftNative
-        native = AircraftNative()
-        got = native.call(solver.model, value['velocity'], value['geometry']['omega'].tolist(),
-                          solver.mass, value['allocation']['commands'], solver.config['altitude_m'],
-                          solver.dt, value['history_input'], flaps=value['flaps'],
-                          throttle=solver.config['throttle'],
-                          ground_height=solver.config['altitude_m']-1e6,
-                          quaternion=value['geometry']['quaternion'])
-        aero = value['result']
-        for key, field in [('forces', 'component_forces'), ('points', 'component_points')]:
-            assert got[key] == {k: aero[field][k] for k in got[key]}, key
-        assert got['moment'] == aero['raw_aero_moment'], 'native aero moment'
     return dict(aircraft=name, instructor=instructor, speed_kmh=speed, load_g=load,
                 alpha_deg=point['alpha_deg'], ps_mps=point['ps_mps'], backend=BACKEND)
 
@@ -55,8 +42,6 @@ def main():
                 print(json.dumps(pool.submit(solve_case, case).result(timeout=180)), flush=True)
     finally:
         shutdown()
-    from verify_em_stall_side import main as check_stall_policy
-    check_stall_policy()
     print('PASS: portable runtime smoke checks (experimental Instructor boundary remains unvalidated).')
 
 

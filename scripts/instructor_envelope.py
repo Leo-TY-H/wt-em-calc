@@ -2,19 +2,18 @@
 
 
 def profile(fm):
-    return dict(experimental=True, kind='effective AoA limiter',
+    return dict(experimental=True, kind='steady AoA schedule',
         input='native critical-angle targets and established adjusted wing AoA',
-        correction='native rate feedback and reduced predictor force/moment balance at delivered elevator',
+        correction='native settled wing-angle adjustment, rate feedback and reduced forward moment balance; full aircraft trim enforces control authority',
         branch='aircraft equilibrium below positive stall; same AoA constraint at boundary and interior',
-        trim='free trim allocation; native retained-trim permission is not reproduced',
+        trim='Independent native one-g auto-trim solve at each condition; fixed trim bounds pilot authority',
         power='selected engine power; native thrust force, moment and propwash retained',
         history='static schedule; transient overload reserve/release omitted',
         physical_limits='positive-AoA stall, strength, control authority and configured speed limits retained',
-        capability_status='EXPERIMENTAL: static AoA approximation; boundary and interior permission unvalidated',
+        capability_status='Algebraic steady effective AoA schedule (approximation). Native rate feedback, elevator compression and physical limits retained; transient overshoot, delay and control history omitted.',
         validated_live=False)
 
 
 def controller_limits(solver,value,speed=None):
-    from instructor_aoa import controller_limits as effective_limits
-    return effective_limits(solver,value,speed)
-
+    from instructor_steady_aoa import controller_limits as schedule_limits
+    return schedule_limits(solver,value,speed)

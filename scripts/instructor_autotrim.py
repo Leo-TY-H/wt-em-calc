@@ -1,9 +1,6 @@
-"""Mode-0 Instructor equilibrium research, original 101a5cac0.
+"""Symmetric intact one-g Instructor equilibrium using native nested iteration.
 
-The symmetric intact one-g branch is independently reconstructed. Asymmetric
-roll balance executes the pinned original kernel through an explicit offline
-machine-code backend; it is not approximated as zero roll. This
-uses the native nested iteration and the reduced model, not the EM solver.
+Asymmetric roll balance is unsupported by this portable implementation.
 """
 import math
 from component_assembly import f32,add,sub,mul
@@ -13,14 +10,19 @@ from instructor_reduced import inverse_rotated_cl,tail_command,control_iteration
 from polar_f32 import calc_c
 
 
-def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None):
+def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None,*,
+                       lift_relaxation=1.,lift_iterations=10):
+    """Native iteration by default; optional static numerical stabilization.
+
+    Relaxation changes only the nonlinear lift solver's update, never a
+    physical time constant. The default path retains native arithmetic.
+    """
     if ip[0]!=0 or ip[4]!=1. or ip[0x30]!=1. or ip[0x34]!=0.:
         raise ValueError('Mode-0 one-g horizontal auto trim only')
     c=prepare_geometry(model,ip,state);f=state['f'];flags=state['flags'];g=c['geometry']
     areas=[add(add(s[1],s[0]),s[2]) for s in g['areas']];area=add(areas[0],areas[1])
     if abs(ip[0x5c])>f32(.01) or abs(sub(*areas))>mul(area,f32(.01)) or abs(sub(*c['tail_areas']))>mul(c['tail_area'],f32(.01)) or abs(f.get(0x5328,0.))>f32(.1):
-        from instructor_native_autotrim import predict
-        return predict(model,ip,state,history)
+        raise ValueError('Asymmetric one-g auto trim is not supported by the portable solver')
     convert=flags[0x7c0a];invert=flags[0x7c54];ail=model['controls']['Ailerons'];elev=model['controls']['Elevator']
     angle,tail_force=history[:2];current=0.;unmet=0.;axial=swirl=0.
     rates=c['limits']['Elevator'][1];center=rates[1];positive=sub(rates[0],center);negative=sub(rates[2],center)
@@ -58,7 +60,7 @@ def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None):
                mul(ip[0x78] if flags[0x7fa3] else 1.,f[0x7ca8]),mul(ip[0x80],f[0x7cb4]),mul(ip[0x84],f[0x7cb8])]
         other_drag=add(add(extra[3],extra[1]),add(extra[2],extra[0]))
         for moment_index in range(10):
-            for lift_index in range(10):
+            for lift_index in range(lift_iterations):
                 working,sn,cs,dynamic=flow(angle);taq=mul(dynamic,c['tail_area'])
                 vstab_drag=mul(dynamic,c['vstab_drag_factor'])
                 required,tail_ok=inverse_rotated_cl(c['tail'],divide(tail_force,taq),0.,convert)
@@ -76,7 +78,9 @@ def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None):
                 wings=[add(drag[1],drag[0]),add(lift[1],lift[0])]
                 error=sub(required_wing,mul(add(mul(sn,wings[0]),mul(cs,wings[1])),ip[0x30]))
                 target=sub(divide(add(required_wing,mul(error,f32(.01)) if abs(error)>=20. else 0.),mul(mul(c['cos_dihedral'],sum_q_area),ip[0x30])),cladd)
-                wing_angle,wing_ok=inverse_cl(c['polars'][0],target)
+                next_wing,wing_ok=inverse_cl(c['polars'][0],target)
+                wing_angle=(next_wing if lift_relaxation==1. else
+                            add(wing_angle,mul(sub(next_wing,wing_angle),f32(lift_relaxation))))
                 angle=sub(wing_angle,bias)
                 if abs(error)<20.:break
             # Native mode-0 moment grouping differs from the mode-1 rearrangement.
@@ -130,4 +134,5 @@ def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None):
     engine=[sub(mul(cs,ip[0x50]),mul(sn,ip[0x54])),add(mul(cs,ip[0x54]),mul(sn,ip[0x50])),0.]
     ok=wing_ok and tail_ok and tail_final_ok and abs(unmet)<20. and not cmd['saturated']
     return dict(output=[working,current,0.,*aero,*engine,mul(ip[0x2c],-ip[0x34]),mul(ip[0x2c],-c['flight_path_cos']),0.,unmet],
+                equilibrium=dict(lift_error_n=error,moment_error_nm=unmet),
                 success=ok,history=[angle,tail_force,True] if ok else list(history))

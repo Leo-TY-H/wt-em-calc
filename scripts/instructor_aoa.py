@@ -9,25 +9,28 @@ zero even in a steady turn. Evaluate its forward balance algebraically; do not
 solve a controller history or fit an aircraft-specific angle correction.
 
 Native critical-angle/Mach/flap/sweep targets, rate feedback and available
-automatic trim authority are retained with free trim allocation. Native retained-trim
-permission is unresolved. Transient overload reserve/release is omitted;
+automatic trim authority are retained with independently solved one-g auto trim.
+No freely optimized turn trim is permitted. Transient overload reserve/release is omitted;
 the aircraft solver independently retains stall, strength and actuator limits.
 This static chart model does not simulate the live controller's transients.
 """
 from instructor_chart_inputs import source_state
-from instructor_keyboard import fixed_source
+from windows_instructor_source import fixed_source
 from instructor_protection import angle_targets, predicted_wing_angles, pitch_demands
 from instructor_settings import trim_retained
 from instructor_predictor_inputs import pack_pitch_inputs
 from instructor_pitch_predictor import unpack_inputs
 from instructor_aoa_balance import required_acceleration
+from instructor_static_trim import static_trim, trim_independent_authority
 
 
 def controller_limits(solver, value, speed=None):
     from em_solver import command_allocation
     if value.get('instructor') is not None:
         return value['instructor']
-    state = source_state(solver, value)
+    if not hasattr(solver, '_effective_aoa_constants'):
+        solver._effective_aoa_constants = {}
+    state = source_state(solver, value, constant_cache=solver._effective_aoa_constants)
     fixed = fixed_source(solver.model, state)
     adjusted = predicted_wing_angles(state['wing_angles'], [0., 0.],
         state['delivered'][0], state['delivered'][1], fixed['sensitivity'],
@@ -54,16 +57,26 @@ def controller_limits(solver, value, speed=None):
               for axis in ('Aileron', 'Elevator', 'Rudder')]
     controls = dict(solver.controls, trim_available=trim_retained(
         solver.controls['trim_available'], ground, 1, True))
-    allocation = command_allocation(controls, state['delivered'], fixed['ranges'], solver.config)
+    auto = static_trim(solver, state, fixed)
+    independent = trim_independent_authority(controls, fixed['ranges'])
+    # A failed one-g inverse solve cannot remove a point when every possible
+    # bounded trim gives exactly the same control interval. Use neutral trim
+    # only to evaluate that invariant interval, never as a reported trim root.
+    allocation_trim = auto['trim'] if auto['success'] else [0., 0., 0.]
+    allocation = command_allocation(controls, state['delivered'], fixed['ranges'],
+        dict(solver.config, trim_mode='fixed', fixed_trim=allocation_trim))
     mechanical = min(min(x-lo, hi-x) for x, (lo, hi) in zip(state['delivered'], allocation['bounds']))
     angle_margin = min(margins_angle) / 10.
     margins = {'Instructor effective AoA': angle_margin,
                'control authority with auto trim': mechanical}
     effective = [min(adjusted)-margins_angle[0], max(adjusted)+margins_angle[1]]
-    out = dict(converged=True, margin=min(margins.values()), margins=margins,
+    out = dict(converged=auto['success'] or independent, margin=min(margins.values()), margins=margins,
         envelope_margin=angle_margin, pitch_margin=angle_margin, angle_margin=angle_margin,
         limiting=min(margins, key=margins.get), control_bounds=allocation['bounds'],
-        auto_trim=allocation['trim'], delivered_pitch=state['delivered'][1],
+        auto_trim=allocation['trim'] if auto['success'] else None,
+        sticks=allocation['sticks'] if auto['success'] else None, static_trim=auto,
+        control_authority_trim_independent=independent,
+        delivered_pitch=state['delivered'][1],
         required_pitch=state['delivered'][1], angle_limits_deg=targets['angle_limits'],
         effective_angle_limits_deg=effective, adjusted_wing_angles_deg=adjusted,
         native_angle_rate_rad_s=fixed['rate'], model='effective AoA schedule with reduced moment balance',
@@ -71,4 +84,3 @@ def controller_limits(solver, value, speed=None):
         overload_policy='transient reserve omitted; physical strength retained')
     value['instructor'] = out
     return out
-

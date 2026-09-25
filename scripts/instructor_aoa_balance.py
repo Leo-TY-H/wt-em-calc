@@ -15,7 +15,7 @@ from instructor_reduced import pitch_balance, tail_flow, legacy_wake_factor
 def required_acceleration(model, ip, state, delivered_pitch):
     c = prepare_mode1(model, ip, state)
     f, flags, g = state['f'], state['flags'], c['geometry']
-    convert, invert = flags[0x7c0a], flags[0x7c54]
+    convert = flags[0x7c0a]
     ail, elev = model['controls']['Ailerons'], model['controls']['Elevator']
     working = sub(ip[4], g['incidence'])
     sn, cs = f32(math.sin(mul(working, RAD))), f32(math.cos(mul(working, RAD)))
@@ -36,7 +36,10 @@ def required_acceleration(model, ip, state, delivered_pitch):
     taq = mul(dynamic, c['tail_area'])
     rates = c['limits']['Elevator'][1]
     center, positive, negative = rates[1], sub(rates[0], rates[1]), sub(rates[2], rates[1])
-    command = -f32(delivered_pitch) if invert else f32(delivered_pitch)
+    # Delivered pitch has already passed the primary-control inversion. The
+    # inverse predictor flips its *stick-space* iterate before this stage;
+    # applying that flip again here reverses canard elevator deflection.
+    command = f32(delivered_pitch)
     a = deflection([0., command, 0.], [True, False, False], c['limits']['Ailerons'])
     e = deflection([0., command, 0.], [True, False, False], c['limits']['Elevator'])
     cladd = mul(mul(a, c['ail_sens']), ail['cl'][int(a < 0.)])

@@ -13,15 +13,28 @@ from body_dynamics import realistic_engine_scale
 GAMEPLAY=json.loads((Path(__file__).resolve().parents[1]/'references/body-gameplay.blkx').read_text())['instructor']
 
 
-def source_state(solver,value):
+def source_state(solver,value,*,constant_cache=None):
     """Build original controller source fields from the detailed operating point.
 
     Clean intact aircraft, no payload, gear/airbrake/radiators retracted. All
     inputs are derived independently; executable memory is only a test oracle.
+    An optional cache belongs to one immutable prepared solver; its polar
+    objects must be treated as read-only. Research callers get fresh objects.
     """
     model=solver.model;fm=model['fm'];ad=fm['Aerodynamics'];g=model['geometry'];mass=solver.mass
     tp=aircraft_secondary_properties(fm,{});air=value['result']['air'];flaps=value['flaps']
     mapped=curve(model['flaps'],f32(flaps),4) if model['flaps'] else [f32(flaps),f32(flaps),0.,0.]
+    if constant_cache is None:
+        wing_runtime=flap_polar(model['polars']['WingPlane'],mapped[0])
+        reference_speed=gain_reference_speed(fm['Mass'].get('Takeoff',0.),flap_polar(model['wing_family'][0][1]['polars'],0.))
+    else:
+        if 'reference_speed' not in constant_cache:
+            constant_cache['reference_speed']=gain_reference_speed(fm['Mass'].get('Takeoff',0.),flap_polar(model['wing_family'][0][1]['polars'],0.))
+        polars=constant_cache.setdefault('wing_polars',{})
+        if mapped[0] not in polars:
+            if len(polars)>=64:polars.clear()
+            polars[mapped[0]]=flap_polar(model['polars']['WingPlane'],mapped[0])
+        wing_runtime=polars[mapped[0]];reference_speed=constant_cache['reference_speed']
     f={0x18a0:1.,0x18d4:1.,0x18d8:1.,0x8448:0.}
     for off,v in zip([0x5320,0x5324,0x5328],mass['cog']):f[off]=f32(v)
     for off,v in zip([0x6f20,0x6f24,0x6f28],tp['arms']['hstab']):f[off]=f32(v)
@@ -57,11 +70,10 @@ def source_state(solver,value):
         asymmetric_authority=False,elevator_state=snapshot[1],delivered=list(commands),wing_angles=value['result']['history']['wing_aoa'],
         # 106c5cadf..cb46 writes FM8218 from the mapped flap blend (healthy
         # left/right mean), not from the raw device position.
-        wing_runtime=flap_polar(model['polars']['WingPlane'],mapped[0]),wing_area=g['area'],dihedral=g['dihedral'],strength=g['strength']['force'],
+        wing_runtime=wing_runtime,wing_area=g['area'],dihedral=g['dihedral'],strength=g['strength']['force'],
         tail_area_pair=[f32(ad['HorStabPlane']['Areas'][k]) for k in ['Main','Elevator']],overload_enabled=True,
         force_advanced=bool(props.get('MouseAim',{}).get('forceAdvanced',False)),world_velocity=[float(value['speed']),0.,0.],
         world_acceleration=value['kinematic']['world_acceleration'],quaternion=value['geometry']['quaternion'],
         pitch_rate=float(value['geometry']['omega'][2]),stored_yaw_rate=float(value['geometry']['omega'][1]),
-        reference_speed=gain_reference_speed(fm['Mass'].get('Takeoff',0.),flap_polar(model['wing_family'][0][1]['polars'],0.)),
+        reference_speed=reference_speed,
         requested=[0.,1.,0.],command_cache_enabled=True,recovery_enabled=True,recovery_suppressed=False)
-

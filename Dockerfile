@@ -8,7 +8,7 @@ COPY requirements.txt requirements-plotter.txt ./
 RUN python -m pip install -r requirements-plotter.txt
 COPY scripts ./scripts
 COPY app ./app
-COPY references ./references
+RUN python scripts/bootstrap_runtime.py
 RUN python scripts/build_em_backend.py
 
 FROM python:3.11-slim

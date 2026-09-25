@@ -61,7 +61,12 @@ def prepare_geometry(model,ip,state):
     if g['downwash_type'] not in (0,1,2):raise ValueError('Unknown reduced downwash type')
     flap=ip[0x6c] if flags[0x7fa6] else 0.
     factor=state['balance_multiplier'] if flags[0x7c08] else 1.
-    runtime=flap_polar(wing['polars'],flap)
+    flap_key=(ip[0x74],flap)
+    flap_cache=model.setdefault('_predictor_flap_cache',{})
+    if flap_key not in flap_cache:
+        if len(flap_cache)>=64:flap_cache.clear()
+        flap_cache[flap_key]=flap_polar(wing['polars'],flap)
+    runtime=flap_cache[flap_key]
     polars=[mach_polar(runtime,ip[0x40],factor) for _ in range(2)]
     for p,off in zip(polars,[0x843c,0x8440]):p['indCoeff']=mul(divide(1.,f[off]),p['indCoeff'])
     tail=mach_polar(model['polars']['HorStabPlane'][0][1],ip[0x40])

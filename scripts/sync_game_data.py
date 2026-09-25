@@ -264,6 +264,8 @@ def main():
     parser.add_argument('--force', action='store_true', help='Check now, ignoring the six-hour check cache')
     parser.add_argument('--offline-ok', action='store_true', help='Launch with cached data only when the network is unavailable')
     args = parser.parse_args()
+    from bootstrap_runtime import ensure
+    ensure(ROOT)
     try:
         sync(force=args.force)
     except (HTTPError, URLError, TimeoutError) as error:

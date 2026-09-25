@@ -5,6 +5,7 @@ import json
 import orjson
 import math
 import time
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -57,16 +58,18 @@ def heatmap_column(y,z,valid,grid):
 
 
 def matrices(data, aircraft):
+    from em_continuous_boundary import mask_surface
     if 'surface' in aircraft:
         s=aircraft['surface'];x,y=np.meshgrid(s['x'],s['fraction'])
-        return x,np.array(s['turn_dps']),np.ma.masked_invalid(np.array(s['z'],dtype=float))
+        y=np.array(s['turn_dps']);z=np.ma.masked_invalid(np.array(s['z'],dtype=float))
+        return x,y,mask_surface(aircraft,x,y,z)
     nx=len(data['speeds_kmh']); ny=len(data['loads_g'])
     points=aircraft['points']
     x=np.array([p['speed_kmh'] for p in points]).reshape(ny,nx)
     y=np.array([p['turn_dps'] for p in points]).reshape(ny,nx)
     z=np.ma.array(np.array([p['ps_mps'] for p in points]).reshape(ny,nx),
                   mask=np.array([not p['valid'] for p in points]).reshape(ny,nx))
-    return x,y,z
+    return x,y,mask_surface(aircraft,x,y,z)
 
 
 def smooth_surface(data,aircraft):
@@ -197,6 +200,8 @@ def smooth_surface(data,aircraft):
 def enrich(data):
     """Contour only adjacent valid cells; never bridge a rejected trim point."""
     max_turn=max((p['turn_dps'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=20.)
+    max_turn=max(max_turn,max((p['turn_dps'] for a in data['aircraft']
+                              for p in a.get('continuous_pull_boundary',[]) if p['turn_dps'] is not None),default=0.))
     data['plot_max_load_g']=max(1.1,max((p['load_g'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=1.1))
     data['plot_max_turn']=max(10.,math.ceil((max_turn+1)/5)*5.)
     regular_y=np.linspace(0.,data['plot_max_turn'],161 if data.get('preview') else 401)
@@ -233,7 +238,9 @@ def enrich(data):
                 x=[x for p in zeros for x in [*p['x'],None]],
                 y=[y for p in zeros for y in [*p['y'],None]])
         aircraft['ps_color_limit_mps']=50. if propeller_plot(aircraft) else 300.
-        if 'surface' not in aircraft:aircraft['boundary']=boundary
+        if aircraft.get('continuous_pull_boundary'):
+            aircraft['boundary']=aircraft['continuous_pull_boundary']
+        elif 'surface' not in aircraft:aircraft['boundary']=boundary
         aircraft['heatmap']=dict(x=x[0,:].tolist(),y=regular_y.tolist(),z=nullable_grid(heat))
         if aircraft.get('sustained'):
             best=max(aircraft['sustained'],key=lambda p:p['turn_dps'])
@@ -260,12 +267,16 @@ def export_csv(data):
           'flaps_requested_percent','flaps_percent','gear_percent','instructor_enabled','instructor','prolonged_pull','propulsion']
     writer=csv.DictWriter(out,fieldnames=fields);writer.writeheader()
     for aircraft in data['aircraft']:
-        for kind,points in [('grid',aircraft['points']),('Ps=0 refined',aircraft.get('sustained',[]))]:
+        for kind,points in [('grid',aircraft['points']),('Ps=0 refined',aircraft.get('sustained',[])),
+                            ('Instructor boundary',aircraft.get('continuous_pull_boundary',[]))]:
             for p in points:
                 row={key:p.get(key,'') for key in fields}
                 row.update(aircraft=aircraft['id'],aircraft_id=aircraft.get('aircraft_id',aircraft['id']),
                            aircraft_name=aircraft.get('name',aircraft['id']),kind=kind)
                 cfg=aircraft.get('settings',data['settings'])
+                if kind=='Instructor boundary':
+                    row.update(valid=p['turn_dps'] is not None,instructor_enabled=True,
+                               reasons=p.get('edge_kind',''),flaps_percent=cfg['flaps_percent'])
                 row.update({k:cfg.get(k,'optimized') if k=='engine_control_mode' else cfg.get(k,True) if k=='torque_gyro' else cfg[k] for k in condition_fields})
                 for key,value in row.items():
                     if isinstance(value,(list,dict)):row[key]=json.dumps(value,separators=(',',':'))
@@ -285,7 +296,7 @@ def export_figure(data, path, selected=None):
         fig,ax=plt.subplots(figsize=(11,height))
         fig.subplots_adjust(left=.09,right=.97,bottom=1.05/height,top=1-(.98+max(0,len(aircraft)-2)*.35)/height)
         for a in aircraft:
-            color={'f_16a_block_15_adf':'#007f92','saab_jas39c':'#bd581c'}.get(a['id'],a['color'])
+            color={'f_16a_block_15_adf':'#007f92','f_16xl':'#007f92','j6k1':'#bd581c','saab_jas39c':'#bd581c'}.get(a['id'],a['color'])
             x,y,z=matrices(data,a)
             if z.count()>3 and np.ma.max(z)>np.ma.min(z):
                 if len(aircraft)==1:
@@ -295,8 +306,9 @@ def export_figure(data, path, selected=None):
                 contour=ax.contour(x,y,z,levels=[n for n in contour_levels(a) if n!=0],colors=color if len(aircraft)>1 else '#526174',linewidths=.7,linestyles='dashed',corner_mask=False)
                 ax.clabel(contour,inline=True,fontsize=7,fmt=lambda v:f'SEP {v:g} m/s')
             boundary=a['boundary']
+            prefix='' if len(aircraft)==1 and a.get('continuous_pull_boundary') else a['name']+' '
             ax.plot([p['speed_kmh'] for p in boundary],[np.nan if p['turn_dps'] is None else p['turn_dps'] for p in boundary],
-                    '-',color=color,lw=1.2,zorder=3.5,clip_on=False,label=a['name']+(' experimental Instructor boundary' if a.get('settings',data['settings']).get('instructor') else ' verified feasible boundary'))
+                    '-',color=color,lw=1.5,zorder=3.5,clip_on=False,label=prefix+('Full-pitch Instructor pull (experimental)' if a.get('continuous_pull_boundary') else 'experimental Instructor boundary' if a.get('settings',data['settings']).get('instructor') else 'verified feasible boundary'))
             if data.get('show_numerical_diagnostics') and a.get('numerical_boundaries'):
                 ax.scatter([p['speed_kmh'] for p in a['numerical_boundaries']],[p['turn_dps'] for p in a['numerical_boundaries']],
                            marker='x',color='#b45a12',s=22,label=a['name']+' unresolved numerical boundary')
@@ -308,7 +320,7 @@ def export_figure(data, path, selected=None):
             roots={p['speed_kmh']:p for p in a.get('sustained',[])}
             root_curve=a.get('sustained_curve',dict(x=data['speeds_kmh'],y=[roots[v]['turn_dps'] if v in roots else np.nan for v in data['speeds_kmh']]))
             ax.plot(root_curve['x'],root_curve['y'],
-                    color=color,lw=2.8,linestyle='--',label=a['name']+' refined Ps = 0')
+                    color=color,lw=2.8,linestyle='--',label=prefix+'Ps = 0')
         for n in [2,4,6,9,12,16]:
             if n>data['plot_max_load_g']:continue
             v=np.array(data['speeds_kmh']); rate=np.degrees(9.8100004196167*np.sqrt(n*n-1)/(v/3.6))
@@ -318,15 +330,19 @@ def export_figure(data, path, selected=None):
         for a in aircraft:
             c=a.get('settings',cfg)
             sweep=f" · sweep {c.get('sweep_percent',0):g}%" if a.get('has_sweep') else ''
-            mode='Instructor experimental' if c.get('instructor') else 'Instructor off'
+            mode=('Instructor steady AoA (approximation)' if a.get('instructor_approximation',{}).get('kind')=='steady AoA schedule'
+                  else 'Instructor experimental') if c.get('instructor') else 'Instructor off'
             if propeller_plot(a):mode+=' · experimental propeller · '+('automatic engines' if c.get('engine_control_mode')=='automatic' else 'idealized manual engines')+' · radiators closed · torque/gyro '+('on' if c.get('torque_gyro',True) else 'off (RB)')
-            conditions.append(f"{a['name']}: {c['altitude_m']:g} m · {c['fuel_percent']:g}% fuel · throttle {c['throttle']*100:g}% · requested flaps {c.get('flaps_percent',0):g}%{sweep} · {mode}")
-        ax.set_aspect(20.,adjustable='box')
+            conditions.append(textwrap.fill(f"{a['name']}: {c['altitude_m']:g} m · {c['fuel_percent']:g}% fuel · throttle {c['throttle']*100:g}% · requested flaps {c.get('flaps_percent',0):g}%{sweep} · {mode}",width=145,break_long_words=False))
+        ax.set_aspect('auto' if any(a.get('continuous_pull_boundary') for a in aircraft) else 20.,adjustable='box')
         ax.set(xlim=(cfg['speed_min_kmh'],cfg['speed_max_kmh']),ylim=(0,data['plot_max_turn']),
-               xlabel='True airspeed (km/h)',ylabel='Turn rate (°/s)',
-               title='War Thunder · reconstructed EM diagram · Ps (m/s)\n'+'\n'.join(conditions))
-        ax.title.set_fontsize(9)
-        ax.grid(alpha=.15);ax.legend(loc='upper right',fontsize=8)
+               xlabel='True airspeed (km/h)',ylabel='Turn rate (°/s)')
+        # The fixed engineering aspect can make the axes narrow and move
+        # their center next to the colorbar. Center long configuration labels
+        # on the whole figure so the approximation label is never clipped.
+        fig.suptitle('War Thunder · reconstructed EM diagram · Ps (m/s)\n'+'\n'.join(conditions),
+                     x=.5,y=.98,fontsize=9)
+        ax.grid(alpha=.15);ax.legend(loc='upper left' if any(a.get('continuous_pull_boundary') for a in aircraft) else 'upper right',fontsize=8)
         fig.text(.5,.05,'Ps: native-step energy rate · per-aircraft conditions above · fixed fuel / intact aircraft · positive-AoA stall limit',ha='center',fontsize=7,color='#596273')
         fig.text(.5,.025,'Numerical reconstruction; selected original-code checks pass; no live-flight validation.',ha='center',fontsize=7,color='#596273')
         fig.savefig(path,dpi=180);plt.close(fig)
@@ -343,6 +359,10 @@ def add_boundary_hover(chart, data):
     sources={a['id']:a for a in data['aircraft']}
     for aircraft in chart['aircraft']:
         source=sources[aircraft['id']]
+        if source.get('continuous_pull_boundary'):
+            for point in aircraft['boundary']:
+                point['ps_mps']=None;point['ps_interpolated']=False
+            continue
         groups=[];run=[]
         outline=source.get('boundary_columns',source.get('columns',[]))
         for column in outline+[None]:
@@ -415,7 +435,7 @@ def write_exports(data, directory, *, figures=True, started_at=None):
         with (directory/(aircraft['id']+'-points.jsonl')).open('wb') as out:
             for point in all_points:
                 offsets.append(out.tell());out.write(orjson.dumps(performance_only(point),option=orjson.OPT_APPEND_NEWLINE|orjson.OPT_SERIALIZE_NUMPY))
-        (directory/(aircraft['id']+'-offsets.json')).write_text(json.dumps(offsets,separators=(',',':')))
+        (directory/(aircraft['id']+'-offsets.json')).write_text(json.dumps(offsets,separators=(',',':')),encoding='utf-8')
         def brief(point,index):
             return dict({k:point[k] for k in ['speed_kmh','load_g','turn_dps','valid','ps_mps','reasons','flaps_percent','flaps_requested_percent']},detail_index=index)
         item['points']=[brief(p,i) for i,p in enumerate(aircraft['points'])]
@@ -423,10 +443,10 @@ def write_exports(data, directory, *, figures=True, started_at=None):
         chart['aircraft'].append(item)
     add_boundary_hover(chart,data);chart['boundary_hover_ready']=True
     (directory/'chart.json').write_bytes(orjson.dumps(chart,option=orjson.OPT_APPEND_NEWLINE|orjson.OPT_SERIALIZE_NUMPY))
-    (directory/'samples.csv').write_text(export_csv(data))
+    (directory/'samples.csv').write_text(export_csv(data),encoding='utf-8')
     if figures:
         for extension in ['svg','png','pdf']:export_figure(data,directory/f'diagram.{extension}')
     marker=directory/'ready.json.tmp'
     timing=dict(interactive=True,figures=figures)
     if started_at is not None:timing['total_elapsed_s']=time.monotonic()-started_at
-    marker.write_text(json.dumps(timing)+'\n');marker.replace(ready)
+    marker.write_text(json.dumps(timing)+'\n',encoding='utf-8');marker.replace(ready)

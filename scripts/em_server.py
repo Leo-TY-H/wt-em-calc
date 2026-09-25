@@ -26,7 +26,11 @@ from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute
 from em_entries import ENTRY_ID
 from em_sampling import column_curve
 from aircraft_catalog import source,asset_sources
-from em_plot import add_boundary_hover,write_exports,export_figure,preview_payload
+if current_process().name=='MainProcess':
+    # Windows spawn imports this entry module in every numerical worker.
+    # Plotting belongs to the server; loading Matplotlib in twelve workers
+    # delays the first numerical results and duplicates its font/cache state.
+    from em_plot import add_boundary_hover,write_exports,export_figure,preview_payload
 from vehicle_names import refresh_result_names, SOURCE as NAME_SOURCE
 
 APP=ROOT/'app'; OUTPUT=Path(os.environ.get('WT_EM_OUTPUT_DIR',ROOT/'outputs/em')); OUTPUT.mkdir(parents=True,exist_ok=True)

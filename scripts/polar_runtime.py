@@ -1,21 +1,14 @@
 """Runtime polar preparation and independent float32 evaluation.
 
 Mach cubic coefficients retain the original matrix construction and global-Mach
-power basis. Pass a PolarMachine instance to use the original executable as an
-oracle; default preparation and evaluation operate without the binary.
+power basis. Preparation and evaluation operate without a game binary.
 """
-import hashlib
 import math
 import struct
-from functools import lru_cache
-from unicorn import Uc, UC_ARCH_X86, UC_MODE_64, UC_HOOK_CODE
-from unicorn.x86_const import *
 from component_assembly import f32, add, sub, mul
 from control_mixer import prepare_rows, curve
-from macho_scan import MachO
 from polar_model import FIELDS
 from mach_cubic import all_coefficients
-from verify_polar_machine_code import EXPECTED_BINARY_SHA256
 
 DATA=0x220000000; STACK=0x220010000; STOP=0x220020000
 CONST_KEYS=['lineClCoeff','AfterCritParabAngle','AfterCritDeclineCoeff',
@@ -24,69 +17,6 @@ CONST_KEYS=['lineClCoeff','AfterCritParabAngle','AfterCritDeclineCoeff',
             'ClCritHigh','ClCritLow','CdMin']
 
 
-class PolarMachine:
-    def __init__(self):
-        m=MachO();self.sha=hashlib.sha256(m.data).hexdigest()
-        if self.sha!=EXPECTED_BINARY_SHA256:raise ValueError('Remap changed binary first')
-        self.u=Uc(UC_ARCH_X86,UC_MODE_64)
-        for va,size in [(0x10198c000,0x4000),(0x10022f000,0x1000),(0x1019e2000,0x1000),(0x106e61000,0x1000),
-                        (0x1071e4000,0x30000)]:
-            self.u.mem_map(va,size);self.u.mem_write(va,m.read(va,size))
-        for va,size in [(DATA,0x10000),(STACK,0x10000),(STOP,0x1000)]:self.u.mem_map(va,size)
-        self.u.hook_add(UC_HOOK_CODE,self.memory_copy,begin=0x106e618c1,end=0x106e618c7)
-    def memory_copy(self,u,address,size,data):
-        if address not in (0x106e618c1,0x106e618c7):raise RuntimeError('Unexpected libc hook')
-        dst,src,n=[u.reg_read(r) for r in (UC_X86_REG_RDI,UC_X86_REG_RSI,UC_X86_REG_RDX)]
-        u.mem_write(dst,bytes(u.mem_read(src,n)));u.reg_write(UC_X86_REG_RAX,dst)
-        sp=u.reg_read(UC_X86_REG_RSP);ret=struct.unpack('<Q',u.mem_read(sp,8))[0]
-        u.reg_write(UC_X86_REG_RSP,sp+8);u.reg_write(UC_X86_REG_RIP,ret)
-    def run(self,entry,args=()):
-        sp=STACK+0xfff8;self.u.mem_write(sp,struct.pack('<Q',STOP))
-        self.u.reg_write(UC_X86_REG_RSP,sp);self.u.reg_write(UC_X86_REG_RDI,DATA)
-        self.u.reg_write(UC_X86_REG_RSI,DATA+0x1000)
-        for i,x in enumerate(args):self.u.reg_write(UC_X86_REG_XMM0+i,int.from_bytes(struct.pack('<f',x),'little'))
-        self.u.emu_start(entry,STOP,count=30000)
-        if self.u.reg_read(UC_X86_REG_RIP)!=STOP:raise RuntimeError('Polar function did not return')
-    def coefficients(self,runtime):
-        self.u.mem_write(DATA,pack_runtime(runtime))
-        self.run(0x10198d5d0)
-        return [list(struct.unpack('<4f',self.u.mem_read(DATA+0x58+36*i,16))) for i in range(7)]
-    def evaluate(self,runtime,mach,cy_mult=1.0):
-        if runtime['mode'] not in (0,3):raise ValueError('Machine oracle currently maps modes 0/3 only')
-        self.u.mem_write(DATA,pack_runtime(runtime))
-        self.run(0x10198f3d0,[cy_mult,mach])
-        return dict(zip(FIELDS,struct.unpack('<24f',self.u.mem_read(DATA+0x1000,96))))
-
-    def interpolate(self,a,b,k):
-        for address,r in [(DATA,a),(DATA+0x2000,b),(DATA+0x4000,a)]:
-            self.u.mem_write(address,pack_runtime(r,address))
-        sp=STACK+0xfff8;self.u.mem_write(sp,struct.pack('<Q',STOP))
-        self.u.reg_write(UC_X86_REG_RSP,sp)
-        for reg,address in [(UC_X86_REG_RDI,DATA),(UC_X86_REG_RSI,DATA+0x2000),(UC_X86_REG_RDX,DATA+0x4000)]:
-            self.u.reg_write(reg,address)
-        self.u.reg_write(UC_X86_REG_XMM0,int.from_bytes(struct.pack('<f',k),'little'))
-        self.u.emu_start(0x10198e450,STOP,count=30000)
-        if self.u.reg_read(UC_X86_REG_RIP)!=STOP:raise RuntimeError('Interpolation failed')
-        return unpack_runtime(bytes(self.u.mem_read(DATA+0x4000,0x1e0)),DATA+0x4000)
-
-    def flap(self,properties,flaps):
-        for i,(_,r) in enumerate(properties):
-            address=DATA+0x2000+i*0x1e0;self.u.mem_write(address,pack_runtime(r,address))
-        self.u.mem_write(DATA,bytes(0x200))
-        self.u.mem_write(DATA+0xa8,struct.pack('<Q',DATA+0x1000))
-        self.u.mem_write(DATA+0xb8,struct.pack('<I',len(properties)))
-        self.u.mem_write(DATA+0xc0,struct.pack('<Q',DATA+0x2000))
-        self.u.mem_write(DATA+0xd0,struct.pack('<I',len(properties)))
-        for i,(x,_) in enumerate(properties):
-            inv=f32(1/sub(properties[i+1][0],x)) if i+1<len(properties) else 0.
-            self.u.mem_write(DATA+0x1000+12*i,struct.pack('<ffI',x,inv,i))
-        out=DATA+0x5000;self.u.mem_write(out,pack_runtime(properties[0][1],out))
-        sp=STACK+0xfff8;self.u.mem_write(sp,struct.pack('<Q',STOP));self.u.reg_write(UC_X86_REG_RSP,sp)
-        self.u.reg_write(UC_X86_REG_RDI,DATA);self.u.reg_write(UC_X86_REG_RSI,out)
-        self.u.reg_write(UC_X86_REG_XMM0,int.from_bytes(struct.pack('<f',flaps),'little'))
-        self.u.emu_start(0x1019e20d0,STOP,count=30000)
-        if self.u.reg_read(UC_X86_REG_RIP)!=STOP:raise RuntimeError('Flap selector failed')
-        return unpack_runtime(bytes(self.u.mem_read(out,0x1e0)),out)
 
 
 def pack_runtime(r,address=DATA):
@@ -133,8 +63,6 @@ def make_runtime(props,span,area,machine=None):
     return runtime
 
 
-@lru_cache(maxsize=1)
-def default_machine():return PolarMachine()
 
 
 def interpolate(a,b,k,machine=None):

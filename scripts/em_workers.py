@@ -12,7 +12,7 @@ _lock=RLock()
 _pool=None
 _cancel=None
 _depth=0
-WORKERS=max(1,min(12,(os.cpu_count() or 2)-1))
+WORKERS=max(1,min(int(os.environ.get('WT_EM_WORKERS','12')),(os.cpu_count() or 2)-1))
 START_METHOD=os.environ.get('WT_EM_PROCESS_START',
     'forkserver' if 'forkserver' in multiprocessing.get_all_start_methods() else 'spawn')
 

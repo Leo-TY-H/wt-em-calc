@@ -21,21 +21,23 @@ function error(message) {$('error').textContent=message;$('error').hidden=!messa
 const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'extra_mass_kg',
   timestep:'timestep_hz',sweep:'sweep_percent',flaps:'flaps_percent'};
 const conditionKeys=[...Object.values(conditionFields),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','structural_limits','instructor','engine_control_mode','torque_gyro'];
+  'fixed_trim','structural_limits','instructor','instructor_model','engine_control_mode','torque_gyro'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??state.meta.defaults[k]]));
 // Old saved combinations remain unchanged in results. Editing selects the
 // paired mode matching their Instructor setting, including inactive entries.
-const modeConditions=c=>{const values=conditionsFrom(c);return {...values,torque_gyro:!values.instructor};};
+const modeConditions=c=>{const values=conditionsFrom(c);return {...values,instructor_model:'steady',torque_gyro:!values.instructor};};
 const flightModeLabel=c=>c.instructor!==c.torque_gyro?(c.instructor?'RB':'SB'):
   `Instructor ${c.instructor?'on':'off'} · torque/gyro ${c.torque_gyro?'on':'off'}`;
 const resultConditions=a=>({torque_gyro:true,...(a.settings||{...state.data.settings,...state.data.settings.aircraft_settings?.[a.id]})});
+const instructorEvidence=a=>resultConditions(a).instructor?
+  a.instructor_approximation?.capability_status||'Experimental Instructor boundary; see the calculation method.':'';
 function saveCondition(){
   if(!state.editing)return;
   state.conditions[state.editing]={...state.conditions[state.editing],
     ...Object.fromEntries(Object.entries(conditionFields).map(([id,k])=>[k,+$(id).value])),
-    engine_control_mode:$('engine-control-mode').value,
+    engine_control_mode:$('engine-control-mode').value,instructor_model:$('instructor-model').value,
     throttle:+$('throttle').value/100,afterburner:+$('throttle').value>100,
     structural_limits:$('limits').checked,instructor:$('flight-mode-rb').checked,torque_gyro:$('flight-mode-sb').checked};
 }
@@ -44,6 +46,7 @@ function showCondition(id){
   const c=id?(state.conditions[id]??=conditionsFrom(state.meta.defaults)):state.meta.defaults;
   for(const [field,key] of Object.entries(conditionFields))$(field).value=c[key];
   $('engine-control-mode').value=c.engine_control_mode;
+  $('instructor-model').value='steady';
   $('throttle').value=c.throttle*100;$('limits').checked=c.structural_limits;
   $('flight-mode-rb').checked=c.instructor;$('flight-mode-sb').checked=!c.instructor;
   $('aircraft-condition').disabled=!id;
@@ -124,6 +127,8 @@ function syncLabels(){
   $('flaps-label').textContent=$('flaps').value+'%';
   $('flaps-hint').textContent='The selected flap percentage is held at every speed and assumed achievable.';
   $('instructor-hint').hidden=!$('flight-mode-rb').checked;
+  $('instructor-model-field').hidden=!$('flight-mode-rb').checked;
+  $('instructor-hint').textContent='Static AoA schedule with automatic trim calculated independently at each speed. Retains elevator compression and physical limits; omits transient effects and control history. Unresolved speeds remain blank.';
   $('flight-mode-hint').textContent=$('flight-mode-rb').checked?
     'Realistic · Experimental Instructor · Propeller torque & gyro off.':
     'Simulator · Instructor off · Propeller torque & gyro on.';
@@ -210,8 +215,9 @@ function renderMetrics(){
     const best=a.best_sustained;
     const sweepNote=a.sweep_excluded_speeds_kmh?.length?`<div class="metric-description">Selected sweep unavailable at ${a.sweep_excluded_speeds_kmh.map(([lo,hi])=>fmt(lo,1)+'–'+fmt(hi,1)).join(', ')} km/h.</div>`:'';
     const instructorNote=a.instructor_unresolved_speeds_kmh?.length?`<div class="metric-description">Instructor boundary unresolved at ${a.instructor_unresolved_speeds_kmh.length} sampled speeds; those columns are omitted, not declared physically impossible.</div>`:'';
+    const evidenceNote=instructorEvidence(a)?`<div class="metric-description">${escapeText(instructorEvidence(a))}</div>`:'';
     const speedNote=a.speed_limit?`<div class="metric-description">${a.speed_limit.kind}: ${fmt(a.speed_limit.speed_kmh,1)} km/h TAS${a.speed_limit.enforced?' · Speed boundary enforced':' · Reference only; limits disabled'}.</div>`:'';
-    return `<article class="metric"><div class="metric-top"><i style="background:${a.color}"></i><span>${escapeText(a.name)}</span><small>BEST SAMPLED Ps = 0</small></div><div class="metric-main"><strong>${best?fmt(best.turn_dps,2):'—'}</strong><span>${best?'°/s at '+fmt(best.speed_kmh,0)+' km/h':'No Ps = 0 crossing in range'}</span></div><div class="metric-description">${best?fmt(best.load_g,2)+' g · ':''}${fmt(a.mass.mass,0)} kg · ${a.valid_points} valid samples · ${escapeText(a.engine.policy)}</div>${speedNote}${sweepNote}${instructorNote}</article>`;
+    return `<article class="metric"><div class="metric-top"><i style="background:${a.color}"></i><span>${escapeText(a.name)}</span><small>BEST SAMPLED Ps = 0</small></div><div class="metric-main"><strong>${best?fmt(best.turn_dps,2):'—'}</strong><span>${best?'°/s at '+fmt(best.speed_kmh,0)+' km/h':'No Ps = 0 crossing in range'}</span></div><div class="metric-description">${best?fmt(best.load_g,2)+' g · ':''}${fmt(a.mass.mass,0)} kg · ${a.valid_points} valid samples · ${escapeText(a.engine.policy)}</div>${speedNote}${sweepNote}${instructorNote}${evidenceNote}</article>`;
   }).join('');
 }
 function rgba(hex,opacity){return `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${opacity})`;}
@@ -292,10 +298,10 @@ function renderChart(){
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
       name:a.name+' boundary',meta:a.id,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.85),width:1.8,dash:'solid'},
-      customdata:a.boundary.map(p=>[p.edge_kind|| (p.at_plot_ceiling?'Diagnostic sampling cutoff':resultConditions(a).instructor?(a.instructor_approximation?.kind==='effective AoA limiter'?'Effective AoA and physical limits':a.instructor_approximation?.kind==='stationary full-pull Instructor reference'?'Stationary full-pull reference · full capability unresolved':'Refined boundary · experimental Instructor'):'Refined physical limit'),
+      customdata:a.boundary.map(p=>[p.edge_kind|| (p.at_plot_ceiling?'Diagnostic sampling cutoff':resultConditions(a).instructor?(a.instructor_approximation?.kind==='steady AoA schedule'?'Steady AoA and physical limits':a.instructor_approximation?.kind==='effective AoA limiter'?'Effective AoA and physical limits':a.instructor_approximation?.kind==='stationary full-pull Instructor reference'?'Stationary full-pull reference · full capability unresolved':'Refined boundary · experimental Instructor'):'Refined physical limit'),
         Number.isFinite(p.ps_mps)?fmt(p.ps_mps,1)+' m/s':'unavailable',turnRadius(p.speed_kmh,p.turn_dps),
-        p.ps_interpolated?'Boundary Ps (interpolated)':'Boundary Ps',flapHover(a)]),
-      hovertemplate:`${a.name}<br>%{customdata[0]}<br>%{customdata[3]} %{customdata[1]}<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{customdata[2]}<br>%{customdata[4]}<extra></extra>`});
+        p.ps_interpolated?'Boundary Ps (interpolated)':'Boundary Ps',flapHover(a),escapeText(instructorEvidence(a))]),
+      hovertemplate:`${a.name}<br>%{customdata[0]}<br>%{customdata[3]} %{customdata[1]}<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{customdata[2]}<br>%{customdata[4]}${instructorEvidence(a)?'<br>%{customdata[5]}':''}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
       traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,marker:{size:8,symbol:'x',color:'#f6be6d'},
@@ -379,8 +385,9 @@ async function inspect(a,p){
     ['Flaps',fmt(p.flaps_percent??0,1)+'%'],
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
+    ...(instructorEvidence(a)?[['Instructor evidence',escapeText(instructorEvidence(a))]]:[]),
     ...(p.prolonged_pull?[['Boundary definition','Stationary full-pull reference · selected power'],['Full-pull check',escapeText(p.prolonged_pull.status)],['Full capability',escapeText(p.prolonged_pull.capability_status||'Not certified by the stationary check')],['Native overload timer',fmt(p.prolonged_pull.overload_timer,4)]]:[]),
-    ...(p.instructor_enabled&&p.instructor?.history_independent?[['Instructor','Effective AoA limiter'],['Effective upper wing-AoA limit',fmt(p.instructor.effective_angle_limits_deg[1],3)+'°'],['Adjusted wing AoA',p.instructor.adjusted_wing_angles_deg.map(v=>fmt(v,3)+'°').join(' / ')],['Instructor limiting constraint',escapeText(p.instructor.limiting)]]:[]),
+    ...(p.instructor_enabled&&p.instructor?.history_independent?[['Instructor','Steady AoA schedule'],['Effective upper wing-AoA limit',fmt(p.instructor.effective_angle_limits_deg[1],3)+'°'],['Adjusted wing AoA',p.instructor.adjusted_wing_angles_deg.map(v=>fmt(v,3)+'°').join(' / ')],['Instructor limiting constraint',escapeText(p.instructor.limiting)]]:[]),
     ...(p.instructor_enabled&&!p.instructor?.history_independent?[['Instructor',p.instructor?.delivered_pitch!==undefined?'Experimental recovered pitch limiter':escapeText(p.instructor?.model??'Experimental Instructor')],...(p.instructor?.delivered_pitch!==undefined?[['Required elevator',fmt(p.instructor.required_pitch*100,2)+'%'],[p.instructor.required_pilot?'Delivered elevator':'Full-pull available elevator',fmt(p.instructor.delivered_pitch*100,2)+'%']]:[]),['Instructor limiting constraint',escapeText(p.instructor?.limiting??'Not evaluated: aircraft balance or physical limit rejected this point')],...(p.instructor?.angle_limits_deg?[['Instructor upper wing-AoA target',fmt(p.instructor.angle_limits_deg[1],3)+'°'],['Adjusted wing AoA',p.instructor.adjusted_wing_angles_deg?.map(v=>fmt(v,3)+'°').join(' / ')??'—']]:[])]:[]),
     ['Force residual',p.force_error_g.toExponential(2)+' g'],['Angular residual',p.angular_error_rad_s2.toExponential(2)+' rad/s²'],
     ['History residual',p.history_error.toExponential(2)],['Stall margin',fmt(p.stall_margin_deg,2)+'°'],

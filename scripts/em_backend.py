@@ -15,7 +15,7 @@ MODULES=['component_assembly','component_stages','control_mixer','polar_f32','ma
          'primary_controls','jet_model','mass_model','kinematics','engine_supply',
          'structural_limits','jet_nozzle','wing_sweep','aero_helpers','aircraft_model',
          'instructor_reduced','instructor_protection','instructor_pitch_predictor',
-         'instructor_autotrim','instructor_predictor_inputs','instructor_keyboard','instructor_settle',
+         'instructor_autotrim','instructor_predictor_inputs','instructor_keyboard',
          'piston_model','piston_compressor','piston_general','propeller_model','propeller_step',
          'propeller_general','turbine_general','rocket_general','propulsion_general','fuel_loading',
          'advanced_mass','prop_steady','em_operating']

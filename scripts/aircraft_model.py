@@ -64,7 +64,13 @@ def condition_properties(model,mach,flaps):
     if key not in memo:
         if len(memo)>=256:memo.clear()
         values=curve(model['flaps'],key[1],4) if model['flaps'] else [key[1],key[1],0.,0.]
-        wing_runtime=flap_polar(model['polars']['WingPlane'],values[0])
+        # Flap preparation does not depend on Mach or flight history. Reuse the
+        # immutable source polar across moving-flight ticks at fixed configuration.
+        flap_cache=model.setdefault('_condition_flap_cache',{})
+        if values[0] not in flap_cache:
+            if len(flap_cache)>=64:flap_cache.clear()
+            flap_cache[values[0]]=flap_polar(model['polars']['WingPlane'],values[0])
+        wing_runtime=flap_cache[values[0]]
         wing=mach_polar(wing_runtime,mach)
         secondary={n:mach_polar(model['polars'][k][0][1],mach) for n,k in
                    [('hstab','HorStabPlane'),('vstab','VerStabPlane'),('fuselage','FuselagePlane')]}
