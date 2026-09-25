@@ -161,7 +161,18 @@ def check_local_edits(root, old, new):
 
 
 def publish(root, stage, names, removed):
-    """Roll back replacements if publication fails. Stage is on the same volume."""
+    """Publish atomically even when staging and references use different mounts."""
+    def replace_from(source, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix='.' + target.name + '.sync-', dir=target.parent)
+        os.close(fd)
+        temporary = Path(name)
+        try:
+            shutil.copy2(source, temporary)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     backups = stage / '_backup'
     completed = []
     try:
@@ -176,14 +187,13 @@ def publish(root, stage, names, removed):
                 shutil.copy2(target, backup)
             completed.append((target, backup, existed))
             if source.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                source.replace(target)
+                replace_from(source, target)
             elif existed:
                 target.unlink()
     except BaseException:
         for target, backup, existed in reversed(completed):
             if existed:
-                backup.replace(target)
+                replace_from(backup, target)
             elif target.exists():
                 target.unlink()
         raise

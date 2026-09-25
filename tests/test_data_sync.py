@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import shutil
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from sync_game_data import GLOBALS, blob_sha, json_bytes, publish, sync
@@ -106,16 +107,29 @@ class DataSyncTests(unittest.TestCase):
         for name in ('a', 'b'):
             (self.root / name).write_text('old')
             (stage / name).write_text('new')
-        replace = Path.replace
-        def fail_second(path, target):
+        copy = shutil.copy2
+        def fail_second(path, target, *args, **kwargs):
             if path == stage / 'b':
                 raise OSError('simulated write failure')
-            return replace(path, target)
-        with patch.object(Path, 'replace', fail_second):
+            return copy(path, target, *args, **kwargs)
+        with patch('sync_game_data.shutil.copy2', fail_second):
             with self.assertRaises(OSError):
                 publish(self.root, stage, ['a', 'b'], [])
         for name in ('a', 'b'):
             self.assertEqual((self.root / name).read_text(), 'old')
+
+    def test_publish_does_not_rename_across_mounts(self):
+        stage = self.root / 'stage'
+        stage.mkdir()
+        (stage / 'a').write_text('new')
+        original = Path.replace
+        def reject_cross_mount(path, target):
+            if path.is_relative_to(stage):
+                raise OSError(18, 'Invalid cross-device link')
+            return original(path, target)
+        with patch.object(Path, 'replace', reject_cross_mount):
+            publish(self.root, stage, ['a'], [])
+        self.assertEqual((self.root / 'a').read_text(), 'new')
 
     def test_stale_prop_assets_are_unavailable(self):
         raw = b'{"fm":1}'
