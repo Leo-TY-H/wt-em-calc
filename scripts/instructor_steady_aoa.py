@@ -8,7 +8,7 @@ Transient history remains outside this model.
 """
 from instructor_aoa import controller_limits as effective_limits
 
-REVISION = 'steady-effective-aoa-fixed-autotrim-v5'
+REVISION = 'steady-effective-aoa-fixed-autotrim-v6'
 
 
 def controller_limits(solver, value, speed=None):

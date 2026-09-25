@@ -62,6 +62,10 @@ def static_trim(solver, state, fixed):
                     lift_relaxation=relaxation,lift_iterations=iterations)
                 method='relaxed algebraic lift solve'
                 if equilibrium_valid(auto):break
+        if not equilibrium_valid(auto):
+            auto=autotrim_predictor(solver.model,ip,predictor,(0.,0.,False),
+                lift_iterations=64,lift_bisection=True)
+            method='bracketed algebraic lift solve'
         success=bool(equilibrium_valid(auto))
         result = dict(success=success,method=method,equilibrium=auto['equilibrium'],
             trim=[auto['output'][2], auto['output'][1], fixed['rudder_trim']],

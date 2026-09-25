@@ -60,7 +60,7 @@ class CanardInstructorTests(unittest.TestCase):
             self.assertFalse(trim_independent_authority(controls,
                              [[-.4, .4], [-.999, 1.], [-1., 1.]]))
 
-    def test_low_speed_columns_remain_balanced_when_auto_trim_is_unresolved(self):
+    def test_low_speed_columns_remain_balanced_across_auto_trim_gaps(self):
         for name, speeds in (('j_10a', (110., 140., 150.)),
                              ('saab_jas39c', (130., 140.)),
                              ('ef_2000_block_10', (140., 180., 200.))):
@@ -77,9 +77,21 @@ class CanardInstructorTests(unittest.TestCase):
                     result = point['instructor']
                     self.assertTrue(result['converged'])
                     self.assertTrue(result['control_authority_trim_independent'])
-                    self.assertFalse(result['static_trim']['success'])
-                    self.assertIsNone(point['trim'])
-                    self.assertIsNone(point['sticks'])
+                    # Direct lift closure now recovers some formerly failed
+                    # inverse-CL roots. The remaining gaps must still use the
+                    # trim-independent authority certificate.
+                    recovered = ((name == 'j_10a' and speed == 150.) or
+                                 (name == 'ef_2000_block_10' and speed in (140., 180., 200.)))
+                    auto = result['static_trim']
+                    self.assertEqual(auto['success'], recovered)
+                    if recovered:
+                        self.assertLess(abs(auto['equilibrium']['lift_error_n']), 20.)
+                        self.assertLess(abs(auto['equilibrium']['moment_error_nm']), 20.)
+                        self.assertIsNotNone(point['trim'])
+                        self.assertIsNotNone(point['sticks'])
+                    else:
+                        self.assertIsNone(point['trim'])
+                        self.assertIsNone(point['sticks'])
 
     def test_high_speed_ten_g_is_not_rejected_by_reversed_canard(self):
         for name in ('j_10a', 'saab_jas39c'):

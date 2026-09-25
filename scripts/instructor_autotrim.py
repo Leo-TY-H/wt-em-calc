@@ -11,7 +11,7 @@ from polar_f32 import calc_c
 
 
 def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None,*,
-                       lift_relaxation=1.,lift_iterations=10):
+                       lift_relaxation=1.,lift_iterations=10,lift_bisection=False):
     """Native iteration by default; optional static numerical stabilization.
 
     Relaxation changes only the nonlinear lift solver's update, never a
@@ -60,6 +60,10 @@ def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None,*,
                mul(ip[0x78] if flags[0x7fa3] else 1.,f[0x7ca8]),mul(ip[0x80],f[0x7cb4]),mul(ip[0x84],f[0x7cb8])]
         other_drag=add(add(extra[3],extra[1]),add(extra[2],extra[0]))
         for moment_index in range(10):
+            if lift_bisection:
+                low=max(p['aoaCritL'] for p in c['polars'])
+                high=min(p['aoaCritH'] for p in c['polars'])
+                wing_angle=low;angle=sub(wing_angle,bias);wing_ok=False
             for lift_index in range(lift_iterations):
                 working,sn,cs,dynamic=flow(angle);taq=mul(dynamic,c['tail_area'])
                 vstab_drag=mul(dynamic,c['vstab_drag_factor'])
@@ -77,6 +81,24 @@ def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None,*,
                     lift.append(mul(mul(c['q_area'][side],cls[side]),c['cos_dihedral']))
                 wings=[add(drag[1],drag[0]),add(lift[1],lift[0])]
                 error=sub(required_wing,mul(add(mul(sn,wings[0]),mul(cs,wings[1])),ip[0x30]))
+                if lift_bisection:
+                    # Close the actual rotated force equation, including drag
+                    # and tail/engine lift. The native inverse-CL update can
+                    # have a nonzero residual even at its fixed point.
+                    if abs(error)<20.:
+                        wing_ok=True
+                        break
+                    if lift_index==0:
+                        low_error=error;wing_angle=high
+                    elif lift_index==1:
+                        if low_error*error>0.:break
+                        wing_angle=f32((low+high)*.5)
+                    else:
+                        if low_error*error>0.:low=wing_angle;low_error=error
+                        else:high=wing_angle
+                        wing_angle=f32((low+high)*.5)
+                    angle=sub(wing_angle,bias)
+                    continue
                 target=sub(divide(add(required_wing,mul(error,f32(.01)) if abs(error)>=20. else 0.),mul(mul(c['cos_dihedral'],sum_q_area),ip[0x30])),cladd)
                 next_wing,wing_ok=inverse_cl(c['polars'][0],target)
                 wing_angle=(next_wing if lift_relaxation==1. else
