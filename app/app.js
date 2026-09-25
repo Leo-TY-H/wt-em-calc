@@ -100,11 +100,12 @@ function readConfig() {
     entries:state.entries.map(e=>({...e,settings:{...state.conditions[e.id],structural_limits:true}})),
     speed_min_kmh:+$('speed-min').value,speed_max_kmh:+$('speed-max').value,max_load_g:null,
     speed_samples:grid[0],load_samples:grid[1],sampling:'adaptive',sep_tolerance_mps:grid[2],surface_resolution:601,
-    sep_contour_levels_mps:[...state.contourLevels]};
+    sep_contour_levels_mps:[...state.contourLevels],heatmap:$('show-heatmap').checked};
 }
 function populate(c) {
   state.conditions={};state.editing=null;
   state.contourLevels=[...(c.sep_contour_levels_mps||[100,0,-100,-200,-400])];renderContourControls();
+  $('show-heatmap').checked=c.heatmap??false;
   state.entries=configEntries(c).map(e=>{state.conditions[e.id]=aircraftConditions(e.aircraft_id,e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
   $('speed-min').value=c.speed_min_kmh;$('speed-max').value=c.speed_max_kmh;
   let selected=Object.keys(quality).find(k=>quality[k][2]===c.sep_tolerance_mps&&c.sampling==='adaptive') ||
@@ -115,7 +116,7 @@ function populate(c) {
 function signature(c){
   const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?
     Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-  const shared=Object.fromEntries(Object.entries(c).filter(([k])=>!conditionKeys.includes(k)&&!['aircraft','aircraft_settings','compare_instructor','entries','sep_contour_levels_mps'].includes(k)));
+  const shared=Object.fromEntries(Object.entries(c).filter(([k])=>!conditionKeys.includes(k)&&!['aircraft','aircraft_settings','compare_instructor','entries','sep_contour_levels_mps','heatmap'].includes(k)));
   // Instance IDs identify exports/inspection, not physical conditions. Preserve
   // list order and duplicate multiplicity so colors and entries match the plot.
   shared.entries=configEntries(c).map(e=>({aircraft_id:e.aircraft_id,settings:conditionsFrom(e.settings)}));
@@ -134,7 +135,7 @@ function syncLabels(){
   $('sweep-field').hidden=!aircraft?.has_sweep;
   syncAircraftMenu();
   const config=readConfig();refreshEntrySummaries();
-  $('stale').hidden=!state.data||signature(config)===signature(state.data.settings);
+  $('stale').hidden=!state.data||(signature(config)===signature(state.data.settings)&&!needsHeatmap());
 }
 function syncAircraftMenu(){
   const normalizeSearch=value=>value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g,'');
@@ -209,17 +210,19 @@ function renderContourControls(){
 function supportedContourLevels(){
   if(!state.data)return [];
   return state.contourLevels.filter(level=>state.data.aircraft.every(a=>{
+    if(a.interpolation?.scope==='contours')return a.interpolation.checked_sep_levels_mps.includes(level);
     const [low,high]=a.interpolation?.checked_sep_range_mps||[-300,300];return low<=level&&level<=high;
   }));
 }
+function needsHeatmap(){return !!state.data&&$('show-heatmap').checked&&state.data.settings.heatmap===false;}
 function updateContourAvailability(){
   const missing=state.data?state.contourLevels.filter(level=>!supportedContourLevels().includes(level)):[];
-  $('contour-status').textContent=missing.length?`Calculate to validate ${missing.map(v=>`${v>0?'+':''}${v}`).join(', ')} m/s.`:'';
+  $('contour-status').textContent=[missing.length?`Calculate to validate ${missing.map(v=>`${v>0?'+':''}${v}`).join(', ')} m/s.`:'',needsHeatmap()?'Calculate to add the heatmap.':''].filter(Boolean).join(' ');
   if(!state.data)return;
   for(const link of document.querySelectorAll('[data-export]')){
     const figure=link.dataset.export.startsWith('diagram.');
-    const disabled=state.data.preview||(figure&&missing.length>0);
-    const query=figure?'?levels='+encodeURIComponent(state.contourLevels.join(',')):'';
+    const disabled=state.data.preview||(figure&&(missing.length>0||needsHeatmap()));
+    const query=figure?'?levels='+encodeURIComponent(state.contourLevels.join(','))+'&heatmap='+($('show-heatmap').checked?'1':'0'):'';
     link.href=disabled?'#':apiUrl(`/api/jobs/${state.dataJob}/${link.dataset.export}${query}`);
     link.download=`WT-EM-${state.data.aircraft.map(a=>a.id).join('-vs-')}-${link.dataset.export}`;
     link.setAttribute('aria-disabled',disabled?'true':'false');
@@ -302,7 +305,7 @@ function renderChart(){
   if(!state.data)return;
   const data=state.data,displayed=data.aircraft.filter(a=>state.view==='compare'||a.id===state.view),traces=[];
   const showSamples=$('show-samples').checked,showRejected=$('show-rejected').checked;
-  if(displayed.length===1){
+  if($('show-heatmap').checked&&displayed.length===1&&displayed[0].heatmap){
     const a=displayed[0],limit=a.ps_color_limit_mps||300;traces.push({type:'heatmap',x:a.heatmap.x||data.speeds_kmh,y:a.heatmap.y,z:a.heatmap.z,zmin:-limit,zmax:limit,
       colorscale:[[0,'#98633d'],[.33,'#54453b'],[.5,'#1b2c3d'],[.67,'#245867'],[1,'#399f9a']],
       zsmooth:false,connectgaps:false,hoverongaps:false,name:a.name,meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
@@ -496,6 +499,7 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
+$('show-heatmap').addEventListener('change',()=>{syncLabels();updateContourAvailability();renderChart();});
 $('reset-zoom').addEventListener('click',()=>{if(state.data)Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,state.data.settings.speed_max_kmh],'yaxis.range':[0,envelopeTop(state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view))]});});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
 (async()=>{try{

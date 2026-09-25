@@ -232,7 +232,7 @@ def enrich(data):
     paths_by_aircraft=contour_paths(data)
     for aircraft in data['aircraft']:
         x,y,z=matrices(data,aircraft); paths=paths_by_aircraft[aircraft['id']]
-        heat=np.full((len(regular_y),x.shape[1]),np.nan)
+        heat=np.full((len(regular_y),x.shape[1]),np.nan) if data['settings'].get('heatmap',True) else None
         boundary=[];mask=np.ma.getmaskarray(z)
         for i in range(x.shape[1]):
             valid=np.where(~mask[:,i])[0]
@@ -243,7 +243,7 @@ def enrich(data):
                                      at_plot_ceiling=bool(j==x.shape[0]-1)))
                 boundary[-1]['turn_dps']=max(boundary[-1]['turn_dps'],root_turn)
             else:boundary.append(dict(speed_kmh=float(x[0,i]),turn_dps=None,at_plot_ceiling=False))
-            heat[:,i]=heatmap_column(y[:,i],z.data[:,i],valid,regular_y)
+            if heat is not None:heat[:,i]=heatmap_column(y[:,i],z.data[:,i],valid,regular_y)
         aircraft['contours']=paths
         if 'surface' in aircraft:
             # Every displayed isoline uses the same checked surface and edge
@@ -257,7 +257,7 @@ def enrich(data):
         if aircraft.get('continuous_pull_boundary'):
             aircraft['boundary']=aircraft['continuous_pull_boundary']
         elif 'surface' not in aircraft:aircraft['boundary']=boundary
-        aircraft['heatmap']=dict(x=x[0,:].tolist(),y=regular_y.tolist(),z=nullable_grid(heat))
+        aircraft['heatmap']=(dict(x=x[0,:].tolist(),y=regular_y.tolist(),z=nullable_grid(heat)) if heat is not None else None)
     return data
 
 
@@ -297,9 +297,10 @@ def export_csv(data):
     return out.getvalue()
 
 
-def export_figure(data, path, selected=None, levels=None):
+def export_figure(data, path, selected=None, levels=None, heatmap=None):
     """Curvilinear native samples; SVG, PNG and PDF use the same scientific plot."""
     if levels is not None:data=dict(data,settings=dict(data['settings'],sep_contour_levels_mps=list(levels)))
+    if heatmap is not None:data=dict(data,settings=dict(data['settings'],heatmap=heatmap))
     aircraft=[a for a in data['aircraft'] if selected is None or a['id']==selected]
     # Symbols must precede DejaVu: many are ordinary Unicode block characters
     # that the game's font deliberately draws as national insignia. SVG paths
@@ -312,7 +313,7 @@ def export_figure(data, path, selected=None, levels=None):
             color={'f_16a_block_15_adf':'#007f92','f_16xl':'#007f92','j6k1':'#bd581c','saab_jas39c':'#bd581c'}.get(a['id'],a['color'])
             x,y,z=matrices(data,a)
             if z.count()>3 and np.ma.max(z)>np.ma.min(z):
-                if len(aircraft)==1:
+                if len(aircraft)==1 and data['settings'].get('heatmap',True):
                     fill_levels=np.arange(-50,51,5) if propeller_plot(a) else np.arange(-400,401,25)
                     filled=ax.contourf(x,y,z,levels=fill_levels,cmap='RdYlBu',extend='both',alpha=.78,corner_mask=False)
                     fig.colorbar(filled,ax=ax,label='Ps (m/s)')

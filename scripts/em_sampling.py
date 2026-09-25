@@ -1113,11 +1113,29 @@ def _sample_column(task,boundary_only=False):
                 if len(ux)<2:continue
                 from em_surface import prepare_curve
                 curve=prepare_curve(good,top)
+                if not cfg.get('heatmap',True):
+                    # Check the drawn targets themselves, independently of
+                    # the fit, on every refinement pass. Base midpoint checks
+                    # below still explore the whole connected load branch.
+                    coordinates=np.unique(np.concatenate([np.linspace(a,b,9) for a,b in zip(ux,ux[1:])]))
+                    values=curve(coordinates)
+                    for level in cfg['sep_contour_levels_mps']:
+                        for i in range(len(coordinates)-1):
+                            a,b=values[i:i+2]
+                            if not np.isfinite([a,b]).all() or not min(a,b)<=level<=max(a,b) or a==b:continue
+                            target=brentq(lambda u:float(curve(u))-level,coordinates[i],coordinates[i+1],xtol=1e-12)
+                            n=float(coordinate_load(target,top))
+                            if n in surface_loads:continue
+                            solve(n);holdout_loads.add(n)
                 for left,right in zip(good,good[1:]):
                     lo,hi=left['load_g'],right['load_g']
                     u=float((load_coordinate(lo,top)+load_coordinate(hi,top))*.5)
                     mid=float(coordinate_load(u,top))
                     if not lo<mid<hi:continue
+                    if not cfg.get('heatmap',True) and depth>0 and left.get('roll_leveling_branch')==right.get('roll_leveling_branch'):
+                        from em_accuracy import visible_error
+                        values=curve(np.linspace(float(load_coordinate(lo,top)),float(load_coordinate(hi,top)),9))
+                        if not visible_error(np.min(values),np.max(values),cfg):continue
                     key=(left['load_g'],right['load_g'])
                     if key not in alpha_holdouts:
                         alpha_holdouts[key]=alpha_point(solver,speed,left,right)
@@ -1146,7 +1164,7 @@ def _sample_column(task,boundary_only=False):
                         extra_fractions.extend((angle-left['alpha_deg'])/angle_span for angle in polar_angles
                             if left['alpha_deg']+.1*angle_span<angle<right['alpha_deg']-.1*angle_span)
                     delta_ps=right['ps_mps']-left['ps_mps']
-                    if delta_ps:
+                    if delta_ps and cfg.get('heatmap',True):
                         from em_accuracy import visible_range
                         low_ps,high_ps=visible_range(cfg)
                         visible=np.clip(sorted(((low_ps-left['ps_mps'])/delta_ps,
@@ -1688,8 +1706,8 @@ def _speed_interpolate(columns,speeds,loads):
 
 def sample_speed_probe(task):
     """Independent boundary and interior checks, without an unused full curve."""
-    name,config_json,speed,seed=task;started=time.monotonic()
-    column=sample_boundary_column(task)
+    name,config_json,speed,seed=task[:4];started=time.monotonic()
+    column=sample_boundary_column(task[:4])
     column['speed_probe']=True
     if column.get('boundary_status')!='verified limit' or not column.get('boundary'):return column
     solver=worker_solver(name,config_json);top=column['boundary']['load_g']
@@ -1724,7 +1742,7 @@ def sample_speed_probe(task):
     if not bottom or not bottom['valid']:return column
     floor=bottom['load_g']
     if top>floor:
-        fractions=np.linspace(0.,1.,9 if solver.config['instructor'] else 7)
+        fractions=np.linspace(0.,1.,(9 if solver.config['instructor'] else 7) if solver.config.get('heatmap',True) else 5)
         # Both limits define the sampling interval. A raised lower control
         # limit is as real as the upper stall/structural limit.
         start=float(load_coordinate(floor,top))
@@ -1733,6 +1751,9 @@ def sample_speed_probe(task):
         for n in loads[1:-1]:
             n=float(n)
             if n not in samples:samples[n]=solver.solve(speed,n,initial(n),exhaustive=False,quick=True)
+        for n in task[4] if len(task)>4 else []:
+            if floor<=n<=top and n not in samples:
+                samples[n]=solver.solve(speed,n,initial(n),exhaustive=False,quick=True)
     if top-floor>.05:
         # A probe tied only to this new column's cap can move with an
         # erroneous envelope interpolant and miss the neighboring fixed-load
@@ -1752,6 +1773,7 @@ def sample_speed_probe(task):
     # full-column refinement does. No work is added to wholly visible spans.
     ordered=sorted((p for p in samples.values() if p['valid'] and floor<=p['load_g']<=top),
                    key=lambda p:p['load_g'])
+    if not solver.config.get('heatmap',True):ordered=[]
     for left,right in zip(ordered,ordered[1:]):
         delta=right['ps_mps']-left['ps_mps']
         if not delta:continue
@@ -1817,7 +1839,7 @@ def sample_interior_speed_probe(task):
 
 def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     import json
-    from em_accuracy import turn_tolerance,speed_tolerance,visible_range
+    from em_accuracy import turn_tolerance,speed_tolerance,coverage
     from em_solver import AIRCRAFT,BACKEND,aircraft_settings
     from instructor_envelope import profile
     from aircraft_catalog import load
@@ -1858,6 +1880,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             first=next(iter(cols.values()),None)
             snapshot['aircraft'].append(dict(AIRCRAFT[name],id=name,color=['#38c9d7','#ffa66b'][index],
                 settings=conditions[name],columns=ordered,points=points,
+                interpolation=coverage(config),
                 instructor_approximation=profile(load(name)) if conditions[name]['instructor'] else None,
                 boundary_columns=[outline_column(c) for c in sorted(
                     {**boundary_probes[name],**{c['speed_kmh']:c for c in ordered}}.values(),key=lambda c:c['speed_kmh'])],
@@ -1873,6 +1896,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     with process_pool() as (pool,worker_cancel):
         prefetched={};prefetch_seen=set();prefetch_used=0
         def prefetch_initial_checks():
+            if not config.get('heatmap',True):return
             # As initial neighbors finish, use idle workers for the same
             # independent midpoint job that the error checker will request.
             # Defer intervals needing a new physical corner or Ps=0 endpoint;
@@ -2087,9 +2111,13 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             if level_speeds and mid<min(level_speeds):worker=sample_level_started_column
             if point_load is not None:
                 worker=sample_interior_speed_probe;local=(*local,point_load)
+            elif worker is sample_speed_probe and not config.get('heatmap',True):
+                from em_accuracy import surface_contour_loads
+                local=(*local,surface_contour_loads([columns[v] for v in prior_speeds],mid,config))
             seed_key=[(p['load_g'],p['solution'],p.get('sideslip_attitude_deg',0.),p.get('envelope_limit'),p.get('_propulsion_seed')) for p in seed]
             key=(worker.__name__,name,local[1],mid,json.dumps(seed_key,separators=(',',':')))
             if point_load is not None:key=(*key,point_load)
+            elif len(local)>4:key=(*key,tuple(local[4]))
             scheduled_speed+=1
             if key in _COLUMN_CACHE:
                 _COLUMN_CACHE.move_to_end(key);cache_hits+=1
@@ -2136,7 +2164,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             nearby=speed_interpolate(source,[mid],band.ravel())[:,0].reshape((-1,2))
             geometric=within_contour_band(actual,nearby,config['sep_tolerance_mps'])
             from em_accuracy import surface_band_values
-            candidates=np.flatnonzero(finite & (abs(actual-pred)>config['sep_tolerance_mps']) & ~geometric)
+            candidates=np.flatnonzero(finite & (abs(actual-pred)>config['sep_tolerance_mps']) & ~geometric & visible_error(actual,pred,config))
             if len(candidates):
                 box=surface_band_values(source,mid,query[candidates],config)
                 geometric[candidates]|=within_contour_band(actual[candidates],box,config['sep_tolerance_mps'])
@@ -2521,7 +2549,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 speed_limit=redlines[name],
                 sustained=[p for col in ordered for p in col['sustained']],mass=ordered[0]['mass'],engine=ordered[0]['engine'],
                 valid_points=sum(p['valid'] for p in points),converged_points=sum(p['converged'] for p in points),
-                interpolation=dict(target_mps=config['sep_tolerance_mps'],target_contour_dps=turn_tolerance(config['sep_tolerance_mps']),target_speed_kmh=speed_tolerance(config),checked_sep_range_mps=list(visible_range(config)),speed_checks=checks,
+                interpolation=dict(target_mps=config['sep_tolerance_mps'],target_contour_dps=turn_tolerance(config['sep_tolerance_mps']),target_speed_kmh=speed_tolerance(config),**coverage(config),speed_checks=checks,
                                    unresolved_speed_intervals=intervals[name]+terminal_speed_intervals[name],boundary_checks=boundary_checks[name],
                                    certified_speed_interiors=seam_interiors[name],
                                    boundary_refinement_intervals=spans[name],load_checks=sum(len(c['load_checks']) for c in ordered))))

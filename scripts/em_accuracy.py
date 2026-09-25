@@ -12,8 +12,51 @@ def visible_error(actual,predicted,config=None):
 
     Include the requested contour levels as well as the heatmap color range.
     """
+    if config is not None and not config.get('heatmap',True):
+        # Errors crossing a target matter even when both endpoints are far
+        # from it. A small guard also keeps nearby shape changes in scope.
+        lower=np.minimum(actual,predicted);upper=np.maximum(actual,predicted)
+        guard=8.*config.get('sep_tolerance_mps',.5)
+        relevant=np.zeros(np.broadcast_shapes(np.shape(actual),np.shape(predicted)),dtype=bool)
+        for level in config['sep_contour_levels_mps']:
+            relevant|=(lower<=level+guard)&(upper>=level-guard)
+        return relevant
     low,high=visible_range(config)
     return (np.maximum(actual,predicted)>=low)&(np.minimum(actual,predicted)<=high)
+
+
+def crossing_coordinates(coordinates,values,levels):
+    """Locate every bracketed target; masked samples always separate branches.
+
+    These coordinates only request independent solves. They are never used
+    as solved knots or as evidence that a contour is accurate.
+    """
+    coordinates=np.asarray(coordinates);values=np.asarray(values)
+    result=[]
+    for level in levels:
+        for i in range(len(values)-1):
+            a,b=values[i:i+2]
+            if not np.isfinite([a,b]).all() or not min(a,b)<=level<=max(a,b):continue
+            t=(level-a)/(b-a) if b!=a else .5
+            result.append(float(coordinates[i]+t*(coordinates[i+1]-coordinates[i])))
+    return sorted(set(result))
+
+
+def surface_contour_loads(columns,speed,config):
+    from em_sampling import speed_interpolate,load_coordinate,coordinate_load
+    from em_surface import envelope_limits
+    low,high=envelope_limits(columns,[speed])[0]
+    if not np.isfinite([low,high]).all() or high<=low:return []
+    coordinates=np.linspace(float(load_coordinate(low,high)),1.,129)
+    loads=coordinate_load(coordinates,high)
+    values=speed_interpolate(columns,[speed],loads)[:,0]
+    return crossing_coordinates(loads,values,config['sep_contour_levels_mps'])
+
+
+def coverage(config):
+    return dict(scope='surface' if config.get('heatmap',True) else 'contours',
+                checked_sep_range_mps=list(visible_range(config)),
+                checked_sep_levels_mps=list(config.get('sep_contour_levels_mps',[])))
 
 
 def turn_tolerance(sep_tolerance):
@@ -89,8 +132,10 @@ def contour_check_points(columns,low,high,speed,loads,actual,predicted,config,lo
     index=int(np.argmax(ratios))
     if ratios[index]<.65:return []
     chosen=candidates[index]
-    low,high=visible_range(config)
-    target=float(np.clip(actual[chosen],low+.1*tolerance,high-.1*tolerance))
+    low_ps,high_ps=visible_range(config)
+    target=float(np.clip(actual[chosen],low_ps+.1*tolerance,high_ps-.1*tolerance))
+    if not config.get('heatmap',True):
+        target=min(config['sep_contour_levels_mps'],key=lambda level:abs(level-actual[chosen]))
     floor,cap=envelope_limits(columns,[speed])[0]
     if not np.isfinite([floor,cap]).all() or cap<=floor:return []
     fraction=float(np.clip((loads[chosen]-floor)/(cap-floor),0.,1.))

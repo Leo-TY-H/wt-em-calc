@@ -47,7 +47,7 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
                 afterburner=True, torque_gyro=False, engine_control_mode='automatic', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
                 extra_mass_kg=0., speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,
-                sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
+                sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,heatmap=False,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady')
 
 # Axes and sampling belong to the comparison; all physical conditions belong
@@ -101,7 +101,7 @@ def settings(values=None):
         result[key]=int(result[key])
     result['sep_contour_levels_mps']=contour_levels(result['sep_contour_levels_mps'])
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
-    for key in ['afterburner','structural_limits','instructor','compare_instructor','torque_gyro']:
+    for key in ['afterburner','structural_limits','instructor','compare_instructor','torque_gyro','heatmap']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
     if result['compare_instructor'] and len(result['aircraft'])!=1:
         raise ValueError('Select one aircraft to compare Instructor on/off')

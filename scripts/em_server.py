@@ -64,9 +64,9 @@ def named_export(key,name):
     return path
 
 
-def figure_export(key,name,levels=None):
+def figure_export(key,name,levels=None,heatmap=None):
     """Render a requested download without delaying the interactive chart."""
-    suffix=('-'+hashlib.sha256(orjson.dumps(levels)).hexdigest()[:12]) if levels is not None else ''
+    suffix='-'+hashlib.sha256(orjson.dumps([levels,heatmap])).hexdigest()[:12]
     path=OUTPUT/key/(NAME_REVISION+'-'+FIGURE_REVISION+suffix+'-'+name)
     if path.exists():return path
     # Matplotlib is process-global. Serialize export requests, and expose each
@@ -75,8 +75,10 @@ def figure_export(key,name,levels=None):
         if not path.exists():
             data=named_data(key)
             validate_contour_coverage(data,levels)
+            if heatmap and not data['settings'].get('heatmap',True):
+                raise ValueError('Calculate with Heatmap enabled before exporting a heatmap')
             temporary=path.with_name(path.stem+'.tmp'+path.suffix)
-            export_figure(data,temporary,levels=levels);temporary.replace(path)
+            export_figure(data,temporary,levels=levels,heatmap=heatmap);temporary.replace(path)
     return path
 
 
@@ -90,7 +92,12 @@ def requested_contours(key,levels):
 def validate_contour_coverage(data,levels):
     if levels is None:return
     for aircraft in data['aircraft']:
-        low,high=aircraft.get('interpolation',{}).get('checked_sep_range_mps',[-300.,300.])
+        checked=aircraft.get('interpolation',{})
+        if checked.get('scope')=='contours':
+            if any(level not in checked.get('checked_sep_levels_mps',[]) for level in levels):
+                raise ValueError('Calculate again to validate the newly requested SEP contours')
+            continue
+        low,high=checked.get('checked_sep_range_mps',[-300.,300.])
         if any(level<low or level>high for level in levels):
             raise ValueError('Requested SEP contour lies outside the checked range; calculate again with these levels')
 
@@ -103,6 +110,13 @@ def query_contour_levels(url):
     try:values=[] if not raw else [float(item) for item in raw.split(',')]
     except ValueError as error:raise ValueError('Invalid SEP contour value') from error
     return tuple(validate_contour_levels(values))
+
+
+def query_heatmap(url):
+    value=parse_qs(urlparse(url).query,keep_blank_values=True).get('heatmap')
+    if value is None:return None
+    if value not in (['0'],['1']):raise ValueError('Heatmap must be 0 or 1')
+    return value==['1']
 
 
 @lru_cache(maxsize=16)
@@ -280,7 +294,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:return self.respond(chart_payload(key))
                     except OSError:return self.respond(dict(error='Not found'),404)
                 if parts[4].startswith('diagram.'):
-                    try:return self.file(figure_export(key,parts[4],query_contour_levels(self.path)))
+                    try:return self.file(figure_export(key,parts[4],query_contour_levels(self.path),query_heatmap(self.path)))
                     except ValueError as error:return self.respond(dict(error=str(error)),400)
                     except FileNotFoundError:return self.respond(dict(error='Not found'),404)
                 try:return self.file(named_export(key,parts[4]))
