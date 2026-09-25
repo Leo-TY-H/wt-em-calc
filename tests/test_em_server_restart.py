@@ -1,5 +1,6 @@
 """A changed equation requests a restart before any stale job is queued."""
 import json
+import os
 import sys
 import threading
 import unittest
@@ -32,6 +33,21 @@ class EquationRestartTest(unittest.TestCase):
         finally:
             server.server_close()
             em_server.RESTART_REQUESTED.clear()
+
+    @unittest.skipUnless(os.name=='nt','Windows process replacement')
+    def test_windows_restart_replaces_process_after_closing_socket(self):
+        with patch.object(em_server,'ThreadingHTTPServer') as make_server, \
+             patch.object(em_server.WORKER,'shutdown'), \
+             patch.object(em_server.subprocess,'Popen') as launch, \
+             patch.object(em_server.os,'_exit',side_effect=SystemExit(0)), \
+             patch.object(sys,'argv',['scripts/em_server.py','--port','9876']):
+            make_server.return_value.serve_forever.side_effect=em_server.RESTART_REQUESTED.set
+            with self.assertRaises(SystemExit):em_server.main()
+            make_server.return_value.server_close.assert_called_once()
+            launch.assert_called_once()
+            self.assertEqual(launch.call_args.args[0],
+                             [sys.executable,'scripts/em_server.py','--port','9876'])
+        em_server.RESTART_REQUESTED.clear()
 
 
 if __name__=='__main__':unittest.main()
