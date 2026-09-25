@@ -69,6 +69,7 @@ def settings(values=None):
         from em_entries import entry_settings
         return entry_settings(values)
     result=dict(DEFAULTS); result.update(values or {})
+    result['structural_limits']=True  # Physical limits cannot be disabled.
     unknown=set(result)-set(DEFAULTS)
     if unknown: raise ValueError('Unknown setting: '+', '.join(sorted(unknown)))
     if not isinstance(result['aircraft'], list) or not result['aircraft'] or len(result['aircraft'])>2:

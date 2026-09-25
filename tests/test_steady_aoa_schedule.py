@@ -15,6 +15,14 @@ from instructor_steady_aoa import controller_limits,REVISION
 
 
 class SteadyScheduleTests(unittest.TestCase):
+    def test_physical_limits_cannot_be_disabled(self):
+        direct=settings(dict(aircraft=['f_16xl'],structural_limits=False))
+        self.assertTrue(direct['structural_limits'])
+        entries=settings(dict(aircraft=['f_16xl'],structural_limits=False,entries=[
+            dict(id='entry_1',aircraft_id='f_16xl',settings=dict(structural_limits=False))]))
+        self.assertTrue(entries['structural_limits'])
+        self.assertTrue(entries['entries'][0]['settings']['structural_limits'])
+
     @classmethod
     def setUpClass(cls):
         cls.solver=TrimSolver('f_16xl',settings(dict(aircraft=['f_16xl'],instructor=True)))

@@ -21,3 +21,13 @@
 .hosting-notice{display:flex;gap:12px;align-items:center;border:1px solid #725c2e;background:#2d271b;color:#d9c68f;border-radius:7px;padding:11px 14px;margin:-8px 0 18px;font-size:11px}.hosting-notice strong{color:#f0d891;white-space:nowrap}.hosting-notice span{line-height:1.5}
 @media(min-width:761px){.workspace{grid-template-columns:320px minmax(0,1fr)}.sidebar{padding-left:20px;padding-right:20px}}
 @media(max-width:760px){.sidebar form{display:block}.sidebar #aircraft-picker,.entry-editor fieldset{display:block}.aircraft-option{min-width:0}}
+
+/* Use the viewport width for the calculator and its diagram. */
+.workspace{width:100%;max-width:none;grid-template-columns:300px minmax(0,1fr)}
+.topbar{padding-inline:16px}
+main{padding:18px 14px 22px}
+.sidebar{padding:18px 16px}
+.page-heading{margin-bottom:16px}
+@media(min-width:1600px){.workspace{grid-template-columns:300px minmax(0,1fr)}main{padding-inline:14px}}
+@media(max-width:1150px){.workspace{grid-template-columns:254px minmax(0,1fr)}main{padding-inline:12px}}
+@media(max-width:760px){.workspace{display:flex;flex-direction:column}.topbar{padding-inline:12px}main{padding:14px 8px}.sidebar{padding:14px 10px}}

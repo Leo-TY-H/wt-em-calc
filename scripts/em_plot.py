@@ -232,7 +232,6 @@ def enrich(data):
             # Every displayed isoline uses the same checked surface and edge
             # vertices. Interpolating only the discrete solved Ps=0 roots cut
             # that line off at its last speed column, before the physical edge.
-            # Independently balanced roots still supply best_sustained below.
             zeros=[p for p in paths if p['level']==0.]
             aircraft['sustained_curve']=dict(
                 x=[x for p in zeros for x in [*p['x'],None]],
@@ -242,10 +241,6 @@ def enrich(data):
             aircraft['boundary']=aircraft['continuous_pull_boundary']
         elif 'surface' not in aircraft:aircraft['boundary']=boundary
         aircraft['heatmap']=dict(x=x[0,:].tolist(),y=regular_y.tolist(),z=nullable_grid(heat))
-        if aircraft.get('sustained'):
-            best=max(aircraft['sustained'],key=lambda p:p['turn_dps'])
-            aircraft['best_sustained']={k:best[k] for k in ['speed_kmh','turn_dps','load_g','ps_mps','alpha_deg']}
-        else:aircraft['best_sustained']=None
     return data
 
 
