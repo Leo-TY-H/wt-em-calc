@@ -1,4 +1,7 @@
 import struct
+from rust_backend import load as _load_rust, assembly as _rust_assembly
+
+_rust = _load_rust(__file__)
 
 def f32(x):return struct.unpack('<f',struct.pack('<f',x))[0]
 def add(a,b):return f32(a+b)
@@ -45,3 +48,25 @@ def limit_aerodynamic_force(force,mass,y_scale=1.0,allow_balance_change=True):
         scale=limit/magnitude
         return [x*scale,y*scale,z*scale]
     return [x,y,z]
+
+
+# Bind complete calls directly; the pure bodies remain reference fallbacks.
+_reference_assemble_force=assemble_force
+_reference_assemble_moment=assemble_moment
+if _rust is not None:
+    if _rust._python:
+        from rust_backend import bind_native
+        globals()['assemble_force']=bind_native(_rust,_reference_assemble_force,0)
+        globals()['assemble_moment']=bind_native(_rust,_reference_assemble_moment,1)
+    else:
+        def _portable_force(forces):
+            result=_rust_assembly(_rust,(x for n in (*NAMES,'parasite') for x in forces[n]))
+            return _reference_assemble_force(forces) if result is None else result
+        def _portable_moment(forces,positions,cog):
+            values=[x for n in NAMES for x in forces[n]]
+            values.extend(positions[n][i] for n in NAMES for i in range(3))
+            values.extend(cog)
+            result=_rust_assembly(_rust,values,moment=True)
+            return _reference_assemble_moment(forces,positions,cog) if result is None else result
+        globals()['assemble_force']=_portable_force
+        globals()['assemble_moment']=_portable_moment

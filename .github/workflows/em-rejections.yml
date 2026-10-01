@@ -1,0 +1,25 @@
+name: EM rejection audit
+on:
+  push:
+    paths: ['scripts/em_rejection_report.py', '.github/workflows/em-rejections.yml']
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python scripts/test_em_rejection_report.py
+      - run: python -m pip install -r requirements-plotter.txt
+      - run: python scripts/build_rust_backend.py
+      - run: python scripts/build_em_backend.py
+      - name: Compute F-2A and JAS39C at unmodified defaults
+        run: python scripts/em_rejection_report.py --download-data --compute-defaults
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: em-rejection-audit
+          path: .qa/rejections/*.json

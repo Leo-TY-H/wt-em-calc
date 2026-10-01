@@ -1,0 +1,146 @@
+/* Shared visual language for the three flight tools. Keep charts dark for
+   legibility, and reserve saturated color for plotted aircraft and actions. */
+:root {
+  --bg: #17191c;
+  --panel: #1d2024;
+  --panel2: #25282d;
+  --line: #393d43;
+  --text: #edf0f3;
+  --muted: #a4abb4;
+  --cyan: #94b9da;
+  --orange: #e9ac7b;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 "Segoe UI", -apple-system, BlinkMacSystemFont, "WTSymbols", sans-serif;
+}
+.topbar, body > header {
+  min-height: 64px;
+  padding: 12px 24px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-size: 18px; font-weight: 600; letter-spacing: -.4px; gap: 12px; }
+.brand-icon { width: 40px; height: 28px; object-fit: contain; }
+.local, .runtime { font-size: 12px; letter-spacing: 0; color: var(--muted); }
+.local i { background: #9eb9a2; }
+.release-links { margin-left: auto; font-size: 12px; }
+.release-links .windows-download {
+  border-color: var(--line); background: transparent; color: var(--text); border-radius: 4px;
+}
+.release-version { color: var(--muted); }
+.tool-tabs { padding: 0 24px; gap: 24px; background: var(--bg); border-color: var(--line); }
+.tool-tabs button {
+  padding: 14px 0 12px; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; font-size: 14px; color: var(--muted);
+}
+.tool-tabs button[aria-selected=true] {
+  background: transparent; border-color: var(--text); color: var(--text);
+}
+.workspace, #missile-workspace { grid-template-columns: 320px minmax(0,1fr); }
+.sidebar, .missile-sidebar, .workspace > aside {
+  background: var(--panel); padding: 24px 20px; border-right: 1px solid var(--line);
+}
+main, .missile-main { padding: 28px 32px; }
+.page-heading, .heading { margin-bottom: 24px; align-items: center; }
+h1 { font-size: 28px; font-weight: 600; letter-spacing: -.6px; margin: 5px 0 8px; }
+.page-heading p, .heading p { font-size: 14px; color: var(--muted); max-width: 65ch; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--muted); text-transform: none; }
+.section-heading, .section-title { margin-bottom: 14px; }
+legend { font-size: 14px; font-weight: 600; }
+.sidebar legend small { display: block; margin: 3px 0 0; font-size: 12px; }
+.field, .field-label, .workspace > aside label { font-size: 13px; color: #d5d9df; }
+.hint, .muted, .entry-summary, .missile-model-note { font-size: 12px; color: var(--muted); }
+input[type=number], input[type=search], select, #aircraft-search, #missile-search, .contour-add input {
+  background: var(--bg); border: 1px solid #4a5058; color: var(--text);
+  border-radius: 4px; min-height: 38px; font-size: 14px;
+}
+input[type=range], input[type=checkbox] { accent-color: var(--cyan); }
+.input-unit span { color: var(--muted); }
+.aircraft-list { max-height: 240px; scrollbar-width: thin; }
+.aircraft-option, .aircraft-list .aircraft-option {
+  background: transparent; border: 0; border-bottom: 1px solid var(--line);
+  border-radius: 0; padding: 10px 0; margin: 0;
+}
+.aircraft-option strong { font-size: 13px; font-weight: 500; }
+.aircraft-option small { font-size: 11px; color: var(--muted); }
+.aircraft-option button, .entry-actions button, .contour-levels button,
+.missile-playback button, .missile-main .chart-toolbar button {
+  background: var(--panel2); border: 1px solid #4a5058; border-radius: 4px;
+  font-size: 12px; padding: 6px 10px;
+}
+.aircraft-entry { border-radius: 4px; background: var(--bg); padding: 14px; }
+.entry-summary { line-height: 1.65; }
+.entry-editor:not(:empty) { border-color: var(--line); }
+.entry-actions { gap: 8px; }
+.mode-switch { background: var(--bg); border-radius: 4px; }
+.mode-switch input:checked + span { background: #394b5d; }
+.primary-button, .primary, .contour-add button {
+  background: #accae3; color: #17212b; border-radius: 4px;
+  font-size: 14px; font-weight: 600; padding: 12px 14px;
+}
+.primary-button:hover, .primary:hover { background: #c5dcef; }
+.primary-button span, .primary span { display: none; }
+.secondary-button, .apply-settings button { background: transparent; border-color: #4a5058; color: var(--text); font-size: 12px; }
+.text-button { font-size: 12px; color: var(--muted); }
+.chart-card, .inspector, .climb-card, .missile-flight-data, .missile-metric, .metric {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px; box-shadow: none;
+}
+.chart-toolbar, .toolbar, .view-bar, .caption, .missile-playback { border-color: var(--line); }
+.chart-toolbar, .toolbar { padding: 12px 16px; }
+.tabs, .view-switch { border: 0; background: transparent; border-radius: 0; padding: 0; gap: 4px; }
+.tabs button, .view-switch button { font-size: 12px; padding: 7px 12px; }
+.tabs button.active, .view-switch button[aria-pressed=true] { background: #363c44; color: var(--text); box-shadow: none; }
+.chart-actions, .chart-actions .text-button, .toolbar .check { font-size: 12px; }
+#chart { height: clamp(460px, 66vh, 820px); }
+.empty { padding: 32px; color: var(--muted); }
+.empty h2 { font-size: 20px; color: var(--text); font-weight: 500; }
+.empty p { max-width: 40ch; font-size: 14px; line-height: 1.6; margin: 10px 0; }
+.empty-glyph, .empty > span { display: none; }
+.empty-step { font-size: 12px; color: var(--muted); margin-top: 18px; }
+.exports { font-size: 12px; gap: 16px; flex-wrap: wrap; }
+.exports > span { color: var(--muted); font-size: 11px; letter-spacing: 0; }
+.exports a[aria-disabled=true] { opacity: .5; }
+.inspector h2, .climb-heading h2 { font-size: 18px; font-weight: 500; }
+.point-grid h3 { font-size: 12px; letter-spacing: 0; color: var(--muted); }
+.point-grid dl, .point-grid table { font-size: 12px; }
+.status-badge, .badge { letter-spacing: 0; font-size: 11px; border-color: var(--line); color: var(--muted); }
+footer { font-size: 11px; letter-spacing: 0; color: var(--muted); border-color: var(--line); }
+.missile-metric strong { font-size: 22px; }
+.missile-coordinate-guide, .missile-preview { border-color: var(--line); background: var(--panel); border-radius: 4px; }
+.missile-run-panel { background: var(--panel); border-color: var(--line); }
+.missile-presets button.active, .missile-presets button[aria-pressed=true] { background: #394b5d; border-color: #7192ad; }
+.missile-step-number { background: var(--panel2); color: var(--muted); }
+.missile-preview>.hint, .missile-setup-stats span, #missile-preset-note { font-size: 12px; }
+.missile-vector > span, .missile-view-controls label { color: var(--muted); font-size: 12px; }
+.missile-model-note { max-width: 75ch; line-height: 1.6; }
+.missile-data-grid { gap: 20px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 2px solid #b5d6f2; outline-offset: 3px;
+}
+button:disabled { cursor: default; }
+@media (min-width: 1500px) { .workspace, #missile-workspace { grid-template-columns: 350px minmax(0,1fr); } }
+@media (max-width: 1100px) {
+  .workspace, #missile-workspace { grid-template-columns: 280px minmax(0,1fr); }
+  main, .missile-main { padding: 24px 20px; }
+  .chart-toolbar { align-items: flex-start; gap: 12px; }
+  .chart-actions { flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  body > header { padding: 12px 16px; gap: 12px; }
+  .brand { font-size: 16px; }
+  .local, .runtime { display: none; }
+  .release-links { width: auto; margin-left: auto; gap: 8px; }
+  .release-links .windows-download { padding: 6px 8px; font-size: 11px; }
+  .release-version { display: none; }
+  .tool-tabs { padding: 0 16px; gap: 24px; }
+  .workspace, #missile-workspace { display: flex; flex-direction: column; }
+  .sidebar, .missile-sidebar, .workspace > aside { width: 100%; border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 16px; }
+  main, .missile-main { width: 100%; padding: 24px 12px; }
+  h1 { font-size: 24px; }
+  #chart { height: 460px; }
+  .chart-actions { gap: 12px; }
+  .below-chart { flex-direction: column; gap: 12px; }
+  .missile-metrics { grid-template-columns: 1fr; }
+}

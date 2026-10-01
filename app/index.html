@@ -12,18 +12,18 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <link rel="preload" href="./fonts/wt-symbols.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="./styles.css">
 <script src="./config.js"></script><script defer src="./vendor/plotly.min.js"></script><script defer src="./app.js"></script><script defer src="./release-links.js"></script><link rel="stylesheet" href="./release-links.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span id="runtime-label" class="local"><i></i> LOCAL WORKSPACE</span><nav id="release-links" class="release-links" aria-label="Downloads and source"><a class="windows-download" href="https://github.com/Leo-TY-H/wt-em-calc/releases/latest" target="_blank" rel="noopener noreferrer">Download for Windows</a></nav></header>
+<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span id="runtime-label" class="local"><i></i> Local workspace</span><nav id="release-links" class="release-links" aria-label="Downloads and source"><a class="windows-download" href="https://github.com/Leo-TY-H/wt-em-calc/releases/latest" target="_blank" rel="noopener noreferrer">Download for Windows</a></nav></header>
 <nav class="tool-tabs" role="tablist" aria-label="Flight tools"><button id="em-tab" type="button" role="tab" aria-selected="true" aria-controls="em-workspace">EM diagram</button><button id="missile-tab" type="button" role="tab" aria-selected="false" aria-controls="missile-workspace" tabindex="-1">Missile simulator</button></nav>
 <div class="workspace" id="em-workspace" role="tabpanel" aria-labelledby="em-tab">
 <aside class="sidebar"><form id="scenario">
-<div class="section-heading"><span class="eyebrow">FLIGHT CONDITION</span><button type="button" class="text-button" id="reset">Reset</button></div>
+<div class="section-heading"><span class="eyebrow">Flight conditions</span><button type="button" class="text-button" id="reset">Reset</button></div>
 <fieldset id="aircraft-picker"><legend>Add aircraft <small>Up to eight entries</small></legend>
 <input id="aircraft-search" type="search" placeholder="Search aircraft…" aria-label="Search aircraft">
 <div id="aircraft-list" class="aircraft-list"></div>
 <p id="search-empty" class="hint" hidden>No aircraft match your search.</p>
 <p id="catalog-status" class="hint"></p>
 </fieldset>
-<div class="section-heading"><span class="eyebrow">ADDED AIRCRAFT</span><span id="entry-count" class="hint">0 / 8</span></div>
+<div class="section-heading"><span class="eyebrow">Selected aircraft</span><span id="entry-count" class="hint">0 / 8</span></div>
 <p id="entries-empty" class="hint">No aircraft added.</p>
 <div id="selected-aircraft" aria-label="Added aircraft"></div>
 
@@ -51,7 +51,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 </details>
 <div class="apply-settings"><button id="apply-settings-to-all" type="button">Apply these settings to all added aircraft</button><span id="apply-settings-status" class="hint" role="status" aria-live="polite"></span></div>
 </fieldset></div>
-<span class="eyebrow">SHARED PLOT SETTINGS</span>
+<span class="eyebrow">Plot settings</span>
 <div class="field-label">True airspeed range <span>km/h</span></div><div class="two-inputs"><input id="speed-min" aria-label="Minimum true airspeed" type="number" min="100" max="2500" step="10" value="100" required><span>→</span><input id="speed-max" aria-label="Maximum true airspeed" type="number" min="200" max="2600" step="10" value="1300" required></div>
 <label class="field">Sampling<select id="quality"><option value="quick">Preview · 1 m/s / 0.04°/s</option><option value="standard" selected>Smooth · 0.5 m/s / 0.02°/s</option><option value="fine">Detailed · 0.15 m/s / 0.01°/s</option></select></label>
 <div class="field contour-settings"><span>SEP contours · m/s</span><div id="contour-levels" class="contour-levels"></div><div class="contour-add"><input id="contour-input" type="number" min="-2000" max="2000" step="any" aria-label="New SEP contour in meters per second" placeholder="New level"><button id="contour-add" type="button">Add</button></div><span id="contour-status" class="hint" role="status"></span></div>
@@ -60,20 +60,21 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 
 </form></aside>
 <main>
-<div class="page-heading"><div><span class="eyebrow">AIRCRAFT PERFORMANCE</span><h1>Energy–maneuverability</h1></div></div>
+<div class="page-heading"><div><span class="eyebrow">Aircraft performance</span><h1>Energy–maneuverability</h1><p>Compare turn performance and specific excess power across airspeeds.</p></div></div>
 <div id="hosting-notice" class="hosting-notice" hidden><strong>Public preview</strong><span>The interface and aircraft catalog are online. Calculations still require the local application while a compute backend is being prepared.</span></div>
 <div id="error" class="error" role="alert" hidden></div>
 <div id="progress" class="progress-panel" aria-live="polite" hidden><div><span class="spinner"></span><strong id="progress-label">Preparing calculation…</strong><span id="progress-count"></span></div><div class="progress-track"><div id="progress-fill"></div></div></div>
 <div id="stale" class="notice" hidden>Settings have changed. Calculate to update the diagram.</div>
 <section class="chart-card">
 <div class="chart-toolbar"><div id="chart-tabs" class="tabs" role="group" aria-label="Chart view"><button type="button" data-view="compare" class="active">Compare</button></div><div class="chart-actions"><label><input id="show-samples" type="checkbox"> Samples</label><label><input id="show-rejected" type="checkbox"> Rejected</label><button id="reset-zoom" class="text-button" type="button">Reset view</button></div></div>
-<div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Ready to calculate</h2></div></div>
+<div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><h2>Add an aircraft to begin</h2><p>Choose aircraft from the panel, set their flight conditions, then calculate a diagram.</p><div class="empty-step">Compare up to eight aircraft on the same axes.</div></div></div>
 </section>
-<div class="below-chart"><div class="exports"><span>EXPORT</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></div></div>
-<section class="inspector"><div class="inspector-heading"><div><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
+<div class="below-chart"><div class="exports"><span>Export</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></div></div>
+<section class="inspector"><div class="inspector-heading"><div><span class="eyebrow">Operating point</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
 
-<footer><span id="runtime-footer">LOCAL ANALYSIS TOOL</span><span id="footer-status">All calculations run on this computer.</span></footer>
+<footer><span id="runtime-footer">Flight analysis</span><span id="footer-status">All calculations run on this computer.</span></footer>
 </main></div>
 <section id="missile-workspace" role="tabpanel" aria-labelledby="missile-tab" hidden></section>
 <link rel="stylesheet" href="./missiles.css"><script defer src="./missiles.js"></script>
+<link rel="stylesheet" href="./workbench.css">
 </body></html>

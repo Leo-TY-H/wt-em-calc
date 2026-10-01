@@ -12,6 +12,36 @@ Missiles are listed as **Display name [missile_id]**, excluding DEFAULT profiles
 
 The missile solver uses optimized state handling and optional compiled helpers while preserving the original simulation results. The Windows and Docker build scripts include the helpers; a source checkout can build them with `python scripts/build_missile_backend.py` when Cython and a C compiler are available. Without them, the faster Python path runs automatically. `WT_MISSILE_BACKEND=reference` selects the original implementation for comparison, and `WT_MISSILE_WORKERS` limits concurrent jobs to 1–4.
 
+Optional Rust kernels accelerate aerodynamic polars, aircraft force/moment
+assembly, complete missile aerodynamic forces, body integration, controller
+quaternion search, acceleration-controller and shared-seeker blocks,
+propulsion/seeker vector transforms and atmosphere.
+With Rust/Cargo installed, build them using `python scripts/build_rust_backend.py`.
+The dependency-free library offers direct CPython builtins, a public Stable ABI
+interface and portable ctypes calls. CPython 3.11/3.12 enables a probed layout
+fast path. Docker builds include it; source and Windows installations can build
+it locally. No compiler runs during startup. Rebuild after editing native sources.
+
+`WT_NUMERIC_BACKEND=auto` uses verified available acceleration and falls back
+when Rust is missing or stale. `python` disables Rust; `rust` requires it.
+`WT_RUST_INTERFACE=stable` disables layout-specific access; `ctypes` selects
+portable packing. `WT_MISSILE_BACKEND=reference` retains original sessions.
+Rust also handles plain-data snapshot copying and finite-state validation while
+preserving aliases, cycles, custom-object behavior and special PID checks.
+
+The [matched Linux comparison at revision 91cee4a](https://github.com/Clippii/wt-em-calc/actions/runs/36835244800)
+measured 3.82–30.86× Rust speedups versus standalone Cython across the 12 listed
+kernels; nine exceeded 5×. Polar, force assembly and the 361-angle sweep remain
+below the requested 5× target. Later optimization commits require fresh measurements.
+Timings include Python dispatch/input/output costs and matching output checks.
+Kernel speedups are not whole-application speedups: complete flights retain
+Python orchestration, and full EM diagrams and altitude jobs have not been measured.
+The batch API is not yet used by the adaptive EM solver.
+
+Reproduce with `python scripts/test_rust_backend.py --benchmark-cython --benchmark-ablation`
+after building Rust and both Cython backends. For local Python/Rust comparisons,
+run `python scripts/test_rust_backend.py --benchmark --benchmark-flight`.
+
 For Windows 10/11 x64:
 
 1. Extract the entire Windows ZIP into a writable folder.

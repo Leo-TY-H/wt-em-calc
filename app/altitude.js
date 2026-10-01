@@ -133,7 +133,7 @@ async function draw(reset=false) {
       line:{color,width:level===0?3:1.2,dash:level<0?'dash':'solid'},connectgaps:false,
       meta:{kind:'contour',sep:level},hovertemplate:`SEP ${fmt(level)} m/s<br>TAS %{x:.1f} km/h<br>Altitude %{y:.0f} m<extra></extra>`});
     const path=contour.paths.reduce((best,p)=>p.length>best.length?p:best,[]);
-    if(path.length>5) { const p=path[Math.floor(path.length*.56)]; annotations.push({x:p[0],y:p[1],text:fmt(level,0),showarrow:false,font:{color,size:10},bgcolor:'#0e1721',borderpad:2}); }
+    if(path.length>5) { const p=path[Math.floor(path.length*.56)]; annotations.push({x:p[0],y:p[1],text:fmt(level,0),showarrow:false,font:{color,size:10},bgcolor:'#1d2024',borderpad:2}); }
   }
   if(data.settings.conditions.structural_limits) traces.push({type:'scatter',mode:'lines',name:'IAS / Mach limit',
     x:data.speed_limits.map(p=>p.speed_kmh),y:data.speed_limits.map(p=>p.altitude_m),line:{color:'#b481a6',width:1.5},
@@ -163,7 +163,7 @@ async function draw(reset=false) {
   if(!data.contours.some(c=>c.paths.length)) annotations.push({xref:'paper',yref:'paper',x:.5,y:.5,showarrow:false,
     text:data.sampling.accepted_cells?'No contour crossings in this range. Enable Samples to inspect SEP.':'No checked surface in this range. Enable Unresolved to inspect gaps.',font:{color:'#b6cad9',size:12}});
   const c=data.settings;
-  const layout={paper_bgcolor:'#0e1721',plot_bgcolor:'#0e1721',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#8ea7ba',size:11},
+  const layout={paper_bgcolor:'#1d2024',plot_bgcolor:'#1d2024',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#8ea7ba',size:11},
     margin:{l:64,r:20,t:24,b:58},showlegend:false,annotations,dragmode:'pan',hovermode:'closest',
     uirevision:reset?`${state.resultId}-${Date.now()}`:state.viewRevision,
     xaxis:{title:'True airspeed · km/h',range:state.planarRanges?.x || [c.speed_min_kmh,c.speed_max_kmh],gridcolor:'#213142',zeroline:false},

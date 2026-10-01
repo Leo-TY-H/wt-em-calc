@@ -9,12 +9,13 @@
 <link rel="stylesheet" href="./altitude.css">
 <script>if(location.protocol==='file:')location.replace('http://127.0.0.1:8766/');</script>
 <script defer src="./vendor/plotly.min.js"></script><script defer src="./altitude_surface.js"></script><script defer src="./altitude.js"></script>
-<script defer src="./release-links.js"></script><link rel="stylesheet" href="./release-links.css"></head>
+<script defer src="./release-links.js"></script><link rel="stylesheet" href="./release-links.css">
+<link rel="stylesheet" href="./workbench.css"></head>
 <body>
-<header><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span class="runtime">● &nbsp; LOCAL WORKSPACE</span><nav id="release-links" class="release-links" aria-label="Downloads and source"><a class="windows-download" href="https://github.com/Leo-TY-H/wt-em-calc/releases/latest" target="_blank" rel="noopener noreferrer">Download for Windows</a></nav></header>
+<header><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span class="runtime">● &nbsp; Local workspace</span><nav id="release-links" class="release-links" aria-label="Downloads and source"><a class="windows-download" href="https://github.com/Leo-TY-H/wt-em-calc/releases/latest" target="_blank" rel="noopener noreferrer">Download for Windows</a></nav></header>
 <div class="workspace">
 <aside><form id="scenario">
-<div class="section-title"><span class="eyebrow">AIRCRAFT &amp; CONDITIONS</span><button id="reset" type="button" class="text-button">Reset</button></div>
+<div class="section-title"><span class="eyebrow">Aircraft &amp; conditions</span><button id="reset" type="button" class="text-button">Reset</button></div>
 <label>Find aircraft<input id="search" type="search" placeholder="Search by name or vehicle ID…" autocomplete="off"></label>
 <label>Aircraft<select id="aircraft" size="6" required aria-label="Aircraft"><option value="">Loading catalog…</option></select></label>
 
@@ -22,7 +23,7 @@
 <label id="sweep-field" hidden>Fixed wing sweep <span>%</span><input id="sweep" type="number" min="0" max="100" step="1" value="0" required></label>
 
 <label class="check"><input id="limits" type="checkbox" checked> Respect wing-force, IAS and Mach limits</label>
-<div class="section-title"><span class="eyebrow">PLOT RANGE</span></div>
+<div class="section-title"><span class="eyebrow">Plot range</span></div>
 <div class="pair"><label>Minimum TAS <span>km/h</span><input id="speed-min" type="number" min="100" max="2500" step="10" value="100" required></label><label>Maximum TAS <span>km/h</span><input id="speed-max" type="number" min="200" max="2600" step="10" value="1600" required></label></div>
 <div class="pair"><label>Minimum altitude <span>m</span><input id="altitude-min" type="number" min="0" max="17900" step="100" value="0" required></label><label>Maximum altitude <span>m</span><input id="altitude-max" type="number" min="100" max="18000" step="100" value="16000" required></label></div>
 <label>Sampling<select id="quality"><option value="preview" selected>Fast · 1 m/s</option><option value="smooth">Smooth · 0.5 m/s</option><option value="detailed">Detailed · 0.15 m/s</option></select></label>
@@ -31,7 +32,7 @@
 <button id="cancel" type="button" hidden>Cancel calculation</button>
 </form></aside>
 <main>
-<div class="heading"><div><span class="eyebrow">AIRCRAFT PERFORMANCE</span><h1>Speed–altitude</h1></div><span class="badge">RECONSTRUCTION</span></div>
+<div class="heading"><div><span class="eyebrow">Aircraft performance</span><h1>Speed–altitude</h1><p>Find the flight envelope and best energy gain across altitudes.</p></div></div>
 <div id="error" class="notice error" role="alert" hidden></div>
 <div id="progress" class="notice" role="status" aria-live="polite" hidden><strong id="progress-label">Preparing aircraft…</strong><span id="progress-detail"></span><progress></progress></div>
 <div id="stale" class="notice" hidden>Settings have changed. Calculate to update the plot.</div>
@@ -39,17 +40,17 @@
 <section class="chart-card">
 <div class="view-bar"><div class="view-switch" role="group" aria-label="Plot view"><button id="view-2d" type="button" aria-pressed="true">2D envelope</button><button id="view-3d" type="button" aria-pressed="false">3D surface</button></div><button id="surface-download" type="button" class="text-button" hidden>3D PNG ↓</button></div>
 <div class="toolbar"><strong>Level-flight SEP <span>m/s</span></strong><div><label class="check"><input id="climb-visible" type="checkbox" checked> Best SEP</label><label class="check"><input id="samples" type="checkbox"> Samples</label><label class="check"><input id="gaps" type="checkbox"> Unresolved</label><button id="reset-view" class="text-button" type="button">Reset view</button></div></div>
-<div id="chart" aria-label="Speed versus altitude with specific excess power contours"><div class="empty"><span>⌁</span><h2>Explore the altitude envelope</h2></div></div>
+<div id="chart" aria-label="Speed versus altitude with specific excess power contours"><div class="empty"><h2>Choose an aircraft to begin</h2><p>Set the airspeed and altitude ranges, then calculate its flight envelope.</p></div></div>
 <div class="caption"><span><i class="line positive"></i> Positive SEP</span><span><i class="line zero"></i> SEP = 0</span><span><i class="line negative"></i> Negative SEP</span><span><i class="line climb"></i> <span id="guide-label">Best SEP</span></span></div>
 </section>
 <div class="below-chart"><p id="summary">No calculation loaded.</p><nav class="exports" aria-label="Export diagram"><span>2D / DATA</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></nav></div>
 <section class="climb-card" aria-label="Maximum energy gain rate guide">
-<div class="climb-heading"><div><span class="eyebrow">ENERGY GAIN RATE</span><h2>Continuous best-SEP guide</h2></div><div class="guide-peak"><strong id="climb-time">—</strong><span>Peak SEP on guide</span></div></div>
+<div class="climb-heading"><div><span class="eyebrow">Energy gain rate</span><h2>Continuous best-SEP guide</h2></div><div class="guide-peak"><strong id="climb-time">—</strong><span>Peak SEP on guide</span></div></div>
 <p id="climb-summary" role="status">Calculate a plot to see the best-SEP speed schedule across its altitude range.</p>
 <div class="climb-foot"><a id="climb-download" aria-disabled="true">Guide CSV ↓</a></div>
 </section>
-<section class="inspector"><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a contour or sample</h2><div id="point-content"></div></section>
+<section class="inspector"><span class="eyebrow">Operating point</span><h2 id="point-title">Select a contour or sample</h2><div id="point-content"></div></section>
 
-<footer><span>LOCAL ANALYSIS TOOL</span><span>Independent altitude calculation</span></footer>
+<footer><span>Flight analysis</span><span>Independent altitude calculation</span></footer>
 </main></div>
 </body></html>

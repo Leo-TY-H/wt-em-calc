@@ -160,7 +160,7 @@ class Handler(BaseHTTPRequestHandler):
         files = {'/': 'altitude.html', '/altitude.html': 'altitude.html', '/altitude.js': 'altitude.js',
                  '/release.json': 'release.json', '/release-links.js': 'release-links.js', '/release-links.css': 'release-links.css',
                  '/altitude_surface.js': 'altitude_surface.js',
-                 '/altitude.css': 'altitude.css', '/vendor/plotly.min.js': 'vendor/plotly.min.js',
+                 '/altitude.css': 'altitude.css', '/workbench.css': 'workbench.css', '/vendor/plotly.min.js': 'vendor/plotly.min.js',
                  '/fonts/wt-symbols.ttf': 'fonts/wt-symbols.ttf'}
         files.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
         files.update({f'/icons/neothunderism-{asset}':f'icons/neothunderism-{asset}' for asset in ('mark.svg','mark.png','app.svg','favicon.svg')})

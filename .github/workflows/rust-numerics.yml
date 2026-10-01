@@ -1,0 +1,45 @@
+name: Rust numeric parity
+on: [push, pull_request]
+jobs:
+  parity:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build native kernels
+        run: python scripts/build_rust_backend.py
+      - name: Check reference parity and full missile flights
+        env:
+          WT_NUMERIC_BACKEND: rust
+        run: python scripts/test_rust_backend.py
+      - name: Check portable ctypes fallback
+        env:
+          WT_NUMERIC_BACKEND: rust
+          WT_RUST_INTERFACE: ctypes
+        run: python scripts/test_rust_backend.py
+      - name: Check Stable ABI fallback without version-specific layouts
+        env:
+          WT_NUMERIC_BACKEND: rust
+          WT_RUST_INTERFACE: stable
+        run: python scripts/test_rust_backend.py
+
+  cython-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install Cython==3.1.4 setuptools==82.0.1
+      - run: python scripts/build_rust_backend.py
+      - run: python scripts/build_missile_backend.py
+      - run: python scripts/build_em_backend.py
+      - name: Compare exact flight outputs and benchmark Python, Cython, Rust and hybrid
+        env:
+          WT_NUMERIC_BACKEND: rust
+        run: python scripts/test_rust_backend.py --benchmark-cython --benchmark-ablation

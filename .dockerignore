@@ -1,4 +1,9 @@
 *
+!native/
+!native/Cargo.toml
+!native/Cargo.lock
+!native/src/
+!native/src/*.rs
 !requirements.txt
 !requirements-plotter.txt
 !scripts/

@@ -429,14 +429,14 @@ function renderChart(){
     traces.push(contourLabelTrace(a,data));
   }
   const ymax=envelopeTop(displayed);
-  const layout={paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
+  const layout={paper_bgcolor:'#1d2024',plot_bgcolor:'#1d2024',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
     annotations:displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
-    margin:{l:52,r:18,t:Math.max(38,displayed.length*20),b:46},hovermode:'closest',hoverlabel:{bgcolor:'#202e40',bordercolor:'#40536b',font:{color:'#eff7ff',size:11}},
-    xaxis:{title:{text:'True airspeed · km/h',standoff:6,font:{size:11}},range:[data.settings.speed_min_kmh,data.settings.speed_max_kmh],gridcolor:'#253144',zeroline:false,dtick:100,tickfont:{size:10},constrain:'domain'},
-    yaxis:{title:{text:'Turn rate · °/s',standoff:6,font:{size:11}},range:[0,ymax],gridcolor:'#253144',zeroline:false,dtick:5,tickfont:{size:10}},
+    margin:{l:52,r:18,t:Math.max(38,displayed.length*20),b:46},hovermode:'closest',hoverlabel:{bgcolor:'#25282d',bordercolor:'#40536b',font:{color:'#eff7ff',size:11}},
+    xaxis:{title:{text:'True airspeed · km/h',standoff:6,font:{size:11}},range:[data.settings.speed_min_kmh,data.settings.speed_max_kmh],gridcolor:'#393d43',zeroline:false,dtick:100,tickfont:{size:10},constrain:'domain'},
+    yaxis:{title:{text:'Turn rate · °/s',standoff:6,font:{size:11}},range:[0,ymax],gridcolor:'#393d43',zeroline:false,dtick:5,tickfont:{size:10}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:10},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
@@ -588,13 +588,13 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
   populateAircraft();populate(state.meta.defaults);
   if(state.meta.public_static){
     $('hosting-notice').hidden=false;
-    $('runtime-label').innerHTML='<i></i> PUBLIC PREVIEW';
-    $('runtime-footer').textContent='PUBLIC PREVIEW';
+    $('runtime-label').innerHTML='<i></i> Public preview';
+    $('runtime-footer').textContent='Public preview';
     $('footer-status').textContent='Calculations currently run in the local application.';
     $('calculate').disabled=true;$('calculate').textContent='Calculations require local app';
   }else if(remoteSite){
-    $('runtime-label').innerHTML='<i></i> LIVE TEST';
-    $('runtime-footer').textContent='LIVE TEST';
+    $('runtime-label').innerHTML='<i></i> Server connected';
+    $('runtime-footer').textContent='Server connected';
     $('footer-status').textContent='Calculations run on the server.';
   }
 }catch(e){error('Could not load the plotter: '+e.message);}})();

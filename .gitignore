@@ -1,4 +1,17 @@
 *
+!/native/
+!/native/Cargo.toml
+!/native/Cargo.lock
+!/native/src/
+!/native/src/*.rs
+!/scripts/rust_backend.py
+!/scripts/build_rust_backend.py
+!/scripts/test_rust_backend.py
+!/scripts/missile_copy.py
+!/app/workbench.css
+!/.github/
+!/.github/workflows/
+!/.github/workflows/rust-numerics.yml
 !/.dockerignore
 !/.gitattributes
 !/.gitignore
@@ -164,3 +177,6 @@
 !/scripts/build_missile_backend.py
 
 !/scripts/flap_model.py
+!/scripts/em_rejection_report.py
+!/scripts/test_em_rejection_report.py
+!/.github/workflows/em-rejections.yml

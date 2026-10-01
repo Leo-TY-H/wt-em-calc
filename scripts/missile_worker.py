@@ -9,6 +9,7 @@ guidance, acquisition and proximity clocks start at release, not at ignition.
 from copy import deepcopy
 import json
 import math
+import os
 from pathlib import Path
 import sys
 
@@ -29,6 +30,7 @@ from missile_fast import FastInteractionSession
 from missile_backend import activate
 
 BACKEND = activate()
+REUSE_SAMPLES = os.environ.get('WT_MISSILE_BACKEND','auto') not in ('python','reference')
 if BACKEND != 'reference':
     InteractionSession = FastInteractionSession
 
@@ -173,12 +175,14 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
                     velocity=body['velocity'][:], speed_mps=math.sqrt(sum(v*v for v in body['velocity'])),
                     quaternion=body['quaternion'][:], mach=missile_telemetry.mach(body),
                     traveled_distance_m=traveled_distance, **tracking_status)
-    rows.append(dict(sample(),telemetry=missile_telemetry.initial(frame.flight.properties)))
+    previous_sample = sample()
+    rows.append(dict(previous_sample,telemetry=missile_telemetry.initial(frame.flight.properties)))
     outcome = dict(code='time_limit', label='Time limit reached — unresolved')
     count = math.ceil(config['duration'] / STEP)
     for i in range(count):
         if cancelled(): raise InterruptedError('Simulation cancelled')
-        old = sample(); now = add(old['time_s'], STEP)
+        old = previous_sample if REUSE_SAMPLES else sample()
+        now = add(old['time_s'], STEP)
         before = deepcopy(session.frame.flight.state['body'])
         controls = session.frame.flight.state['controls'][:]
         result = session.advance(now, STEP, targets, collision_time=now, point_history=history,
@@ -191,6 +195,9 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
         endpoint = proximity_endpoint(event,old,new,target) if event else new
         traveled_distance += math.dist(old['missile'], endpoint['missile'])
         endpoint['traveled_distance_m'] = traveled_distance
+        # The next visit begins at this exact state. Snapshot before saved-row
+        # telemetry is attached, keeping the original sample contract intact.
+        previous_sample = dict(new)
         distance, fraction = closest_segment(old['missile'],endpoint['missile'],old['target'],endpoint['target'])
         if distance < best['distance_m']:
             best = dict(distance_m=distance,time_s=old['time_s']+fraction*(endpoint['time_s']-old['time_s']))

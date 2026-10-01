@@ -58,7 +58,7 @@ async function renderSurface(reset=false) {
   }
   const axis=(title,range)=>({title:{text:title,font:{size:11}},range,gridcolor:'#2c4051',zerolinecolor:'#758897',
     showbackground:true,backgroundcolor:'#101d29',tickfont:{size:10},nticks:5,showspikes:false});
-  const layout={paper_bgcolor:'#0e1721',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#8ea7ba'},
+  const layout={paper_bgcolor:'#1d2024',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#8ea7ba'},
     margin:{l:10,r:65,t:12,b:10},showlegend:false,uirevision:state.resultId+'3d',
     scene:{xaxis:axis('True airspeed · km/h',[c.speed_min_kmh,c.speed_max_kmh]),
       yaxis:axis('Altitude · m',[c.altitude_min_m,c.altitude_max_m]),zaxis:axis('SEP · m/s',[lo,hi]),
