@@ -137,8 +137,9 @@ def ammunition(vehicle, preset, read_weapon, nodes=None):
                 policy='Native default ammunition and external launcher payloads at weapon attachments; no armament modifications')
 
 
-def generate(stage, records):
+def generate(stage, records, geometry_root=None):
     references = stage / 'references'
+    geometry = Path(geometry_root or stage) / 'references/aircraft-skeletons'
 
     @lru_cache(maxsize=None)
     def read_weapon(name):
@@ -156,8 +157,11 @@ def generate(stage, records):
         try:
             selected = default_preset(vehicle)
             preset = json.loads((references / 'weapon-presets' / PurePosixPath(source_name(selected)).name).read_bytes()) if selected else {}
-            geometry = references / 'aircraft-skeletons' / (record['model'] + '.json')
-            skeleton = json.loads(geometry.read_bytes()) if geometry.exists() else None
+            model = record['model']
+            if PurePosixPath(model).name != model or '\\' in model or ':' in model:
+                raise ValueError('Unsafe aircraft geometry name')
+            path = geometry / (model + '.json')
+            skeleton = json.loads(path.read_bytes()) if path.exists() else None
             profiles[name] = ammunition(vehicle, preset, read_weapon, skeleton['nodes'] if skeleton else None)
             if skeleton:
                 profiles[name]['geometry'] = skeleton['provenance']

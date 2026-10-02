@@ -46,7 +46,8 @@ const modeConditions=c=>{const values=conditionsFrom(c);return {...values,trim_s
 const engineModelLabel=c=>c.engine_control_mode==='quasi_steady'?'Quasi-steady · ideal governor':'Dynamic propulsion';
 const aircraftModelLabel=c=>c.aircraft_trim_mode==='quasi_steady'?'Quasi-steady aircraft trim':'Discrete aircraft trim';
 const instructorAuthorityLabel=c=>c.instructor_authority_mode==='direct'?'Direct equilibrium (experimental)':'Original automatic trim';
-const aircraftConditions=(name,c)=>{const values=modeConditions(c);const ammo=state.meta.aircraft[name].ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammo?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!state.meta.aircraft[name].has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(state.meta.aircraft[name].propulsion))values.engine_control_mode='automatic';return values;};
+const ammunitionFor=(aircraft,vehicle)=>aircraft?.ammunition?.variants?.[vehicle]||aircraft?.ammunition;
+const aircraftConditions=(name,c)=>{const values=modeConditions(c);const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';return values;};
 const flightModeLabel=c=>c.instructor!==c.torque_gyro?(c.instructor?'RB':'SB'):
   `Instructor ${c.instructor?'on':'off'} · torque/gyro ${c.torque_gyro?'on':'off'}`;
 const resultConditions=a=>({torque_gyro:true,...(a.settings||{...state.data.settings,...state.data.settings.aircraft_settings?.[a.id]})});
@@ -71,7 +72,7 @@ function showCondition(id){
   const aircraft=id?state.meta.aircraft[state.entries.find(e=>e.id===id).aircraft_id]:null;
   const variants=aircraft?.ammunition?.variants;
   $('ammunition-vehicle-field').hidden=!variants||Object.keys(variants).length<2;
-  $('ammunition-vehicle').innerHTML=variants?Object.keys(variants).map(v=>`<option value="${escapeText(v)}">${escapeText(aircraft.vehicle_names?.find(n=>n.vehicle_id===v)?.display_name||v)} [${escapeText(v)}]</option>`).join(''):'';
+  $('ammunition-vehicle').innerHTML=variants?Object.keys(variants).map(v=>`<option value="${escapeText(v)}">${escapeText(aircraft.vehicle_names?.find(n=>n.vehicle_id===v)?.display_name||v)}</option>`).join(''):'';
   if(variants)$('ammunition-vehicle').value=c.ammunition_vehicle||aircraft.ammunition.vehicle_id;
   showAmmunition(aircraft);
   $('throttle').value=c.throttle*100;
@@ -80,12 +81,16 @@ function showCondition(id){
   $('aircraft-condition').disabled=!id;
 }
 function showAmmunition(aircraft){
-  const ammo=aircraft?.ammunition?.variants?.[$('ammunition-vehicle').value]||aircraft?.ammunition;
-  $('default-ammunition').disabled=!!aircraft&&!ammo?.supported;
+  const ammo=ammunitionFor(aircraft,$('ammunition-vehicle').value);
+  $('default-ammunition').disabled=!ammo?.supported;
   if(!ammo?.supported)$('default-ammunition').checked=false;
-  $('ammunition-help').textContent=ammo?.supported?`${fmt(ammo.gun_rounds,0)} gun rounds · ${fmt(ammo.countermeasures,0)} countermeasures · ${fmt(ammo.mass_kg,3)} kg at weapon positions, including CG and inertia effects. Default belts and counts; no armament modifications.`:(ammo?.reason?`Default ammunition unavailable: ${ammo.reason}`:'Default gun belts and countermeasure counts, without armament modifications. Includes their mass, CG and inertia effects.');
+  $('ammunition-help').textContent=ammo?.supported?
+    [ammo.gun_rounds?`${fmt(ammo.gun_rounds,0)} rounds`:'',ammo.countermeasures?`${fmt(ammo.countermeasures,0)} countermeasures`:''].filter(Boolean).join(' · ')||'No ammunition in the default loadout.':
+    'Default ammunition is unavailable for this aircraft.';
+  $('ammunition-status').hidden=!ammo?.supported;
+  $('ammunition-status').textContent=ammo?.supported?($('default-ammunition').checked?
+    `Adds ${fmt(ammo.mass_kg,2)} kg to aircraft mass.`:'Ammunition is excluded.'):'';
 }
-$('ammunition-vehicle').addEventListener('change',()=>showAmmunition(state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id]));
 function configEntries(c){
   if(c.entries)return c.entries.map(e=>({...e,settings:{torque_gyro:true,...e.settings}}));
   const entries=c.aircraft.map((name,i)=>({id:`entry_${i+1}`,aircraft_id:name,
@@ -161,6 +166,7 @@ function syncLabels(){
   $('fuel-label').textContent=$('fuel').value+'%';$('throttle-label').textContent=fmt(+$('throttle').value,0)+'%';
   $('sweep-label').textContent=$('sweep').value+'%';
   const aircraft=state.meta?.aircraft[state.entries.find(e=>e.id===state.editing)?.aircraft_id];
+  showAmmunition(aircraft);
   $('rocket-model-help').hidden=aircraft?.propulsion!=='rocket';
   $('flaps-field').hidden=!aircraft||!aircraft.has_flaps;
   $('flaps').disabled=!aircraft||!aircraft.has_flaps;

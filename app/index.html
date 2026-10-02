@@ -45,7 +45,15 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 
 
 <div class="divider"></div>
-<details><summary>Additional settings</summary><label class="field"><span><input id="default-ammunition" type="checkbox"> Include default ammunition and countermeasures</span><small id="ammunition-help">Default gun belts and countermeasure counts, without armament modifications. Includes their mass, CG and inertia effects.</small></label><label id="ammunition-vehicle-field" class="field" hidden>Default armament for<select id="ammunition-vehicle"></select></label><label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="any" value="0"><span>kg</span></div></label><label class="field">Simulation rate<div class="input-unit"><input id="timestep" type="number" min="30" max="120" step="1" value="48"><span>Hz</span></div></label></details>
+<details><summary>Additional settings</summary>
+<div class="ammunition-setting">
+<label class="check-row"><input id="default-ammunition" type="checkbox" aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
+<small id="ammunition-help">Standard gun belts and countermeasures.</small>
+<small id="ammunition-status" role="status" aria-live="polite"></small>
+<label id="ammunition-vehicle-field" class="field" hidden>Armament variant<select id="ammunition-vehicle"></select></label>
+</div>
+<label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="any" value="0"><span>kg</span></div></label>
+<label class="field">Simulation rate<div class="input-unit"><input id="timestep" type="number" min="30" max="120" step="1" value="48"><span>Hz</span></div></label></details>
 <details id="legacy-modes" hidden><summary>Legacy modes</summary>
 <div class="field">Flutter<div class="mode-switch" role="radiogroup" aria-label="Flutter"><label><input id="flutter-on" type="radio" name="flutter" value="on" checked><span>On</span></label><label><input id="flutter-off" type="radio" name="flutter" value="off"><span>Off</span></label></div><small>The fixed search region always respects the selected aircraft’s structural load and speed limits. Off applies only to diagnostics with that search region disabled.</small></div>
 </details>

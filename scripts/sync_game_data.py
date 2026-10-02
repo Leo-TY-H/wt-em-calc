@@ -290,7 +290,8 @@ def sync(root=ROOT, source=None, force=False, workers=8):
                     sha256=hashlib.sha256((stage / modifications).read_bytes()).hexdigest()),
                 'references/data-version.json': version_data,
             }
-            generated.update(generated_inputs(stage, inventory, records, config['repository'], commit, version))
+            generated.update(generated_inputs(stage, inventory, records, config['repository'], commit, version,
+                                              geometry_root=root))
             for name, value in generated.items():
                 target = stage / name
                 target.parent.mkdir(parents=True, exist_ok=True)

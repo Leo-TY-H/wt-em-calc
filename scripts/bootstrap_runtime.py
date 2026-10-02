@@ -1,25 +1,30 @@
 import argparse
 import hashlib
 import io
+import json
 from pathlib import Path, PurePosixPath
 import tempfile
 from urllib.request import Request, urlopen
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
-ASSET_REVISION='runtime-assets-2026.09.28.2'
-ASSET_SHA256='d6b9d374e7e523db11b6ea093256e83e1c744c9b3c0a82cbc69042e74f1fbc31'
-ASSET_URL='https://github.com/Leo-TY-H/wt-em-calc/releases/download/v2026.09.28.2/runtime-assets.zip'
+ASSET_REVISION='runtime-assets-2026.10.01.2'
+ASSET_SHA256='f969c2c3ad8c5d08a87d9c77f098a276549abaf510465de3d87c78ed14a4abcd'
+ASSET_URL='https://github.com/Leo-TY-H/wt-em-calc/releases/download/v2026.10.01.2/runtime-assets.zip'
 DIRECTORIES=('references/jet-catalog/','references/prop-mass/','references/prop-propulsion/',
-    'references/prop-vehicles/','references/aircraft-modifications/','references/vehicle-names/')
+    'references/prop-vehicles/','references/aircraft-modifications/','references/vehicle-names/',
+    'references/aircraft-skeletons/','references/weapon-sources/','references/weapon-presets/',
+    'references/missile-sources/','references/localization/')
 FILES=('references/body-gameparams.blkx','references/body-gameplay.blkx',
     'references/body-flightmodels-config.blkx','references/prop-native-config.json',
     'references/aircraft-exclusions.json','references/data-sync-config.json',
-    'references/data-version.json','app/fonts/wt-symbols.ttf')
+    'references/data-version.json','app/fonts/wt-symbols.ttf',
+    'references/aircraft-ammunition.json','references/aircraft-skeletons/manifest.json',
+    'references/missile-names.json')
 
 
 def selected(name):
-    return name in FILES or (name.startswith(DIRECTORIES) and PurePosixPath(name).suffix in ('.json','.blkx'))
+    return name in FILES or (name.startswith(DIRECTORIES) and PurePosixPath(name).suffix in ('.json','.blkx','.csv'))
 
 
 def install_archive(content,root,expected_sha=ASSET_SHA256):
@@ -58,13 +63,18 @@ def install_archive(content,root,expected_sha=ASSET_SHA256):
 
 def ensure(root=ROOT):
     root=Path(root).resolve();stamp=root/'.data-sync/runtime-assets.version'
-    if stamp.exists() and stamp.read_text().strip()==ASSET_REVISION and all((root/p).is_file() for p in FILES):
+    def complete():
+        if not all((root/p).is_file() for p in FILES):return False
+        geometry=json.loads((root/'references/aircraft-skeletons/manifest.json').read_bytes())['files']
+        return bool(geometry) and all(PurePosixPath(name).name==name and
+            (root/'references/aircraft-skeletons'/name).is_file() for name in geometry)
+    if stamp.exists() and stamp.read_text().strip()==ASSET_REVISION and complete():
         return 0
     print('Installing verified runtime assets (kept outside Git)...',flush=True)
     with urlopen(Request(ASSET_URL,headers={'User-Agent':'WT-EM-runtime-setup'}),timeout=90) as response:
         content=response.read()
     installed=install_archive(content,root)
-    if not all((root/p).is_file() for p in FILES):raise ValueError('Required runtime assets missing')
+    if not complete():raise ValueError('Required runtime assets missing')
     stamp.parent.mkdir(parents=True,exist_ok=True);stamp.write_text(ASSET_REVISION+'\n',encoding='utf-8')
     print(f'Runtime assets ready; installed {installed} missing files.',flush=True)
     return installed

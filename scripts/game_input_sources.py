@@ -47,7 +47,7 @@ def validate_source(name, content):
         raise ValueError('Expected a game data object: ' + name)
 
 
-def generated_inputs(stage, inventory, records, repository, commit, version):
+def generated_inputs(stage, inventory, records, repository, commit, version, geometry_root=None):
     """Derive display catalogs and a raw missile inventory from staged inputs."""
     generated = {}
     provenance = dict(repository=repository, commit=commit, version=version)
@@ -89,5 +89,5 @@ def generated_inputs(stage, inventory, records, repository, commit, version):
     if any(name.startswith('references/weapon-sources/') for name in inventory):
         from aircraft_ammunition import generate
         generated['references/aircraft-ammunition.json'] = dict(
-            provenance, schema=2, aircraft=generate(stage, records))
+            provenance, schema=2, aircraft=generate(stage, records, geometry_root))
     return generated
