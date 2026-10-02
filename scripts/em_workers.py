@@ -11,6 +11,8 @@ _lock=RLock()
 _pool=None
 _cancel=None
 _depth=0
+_job_epoch=None
+_seen_epoch=None
 def cpu_budget():
     import math
     limits=[os.cpu_count() or 1]
@@ -61,7 +63,7 @@ START_METHOD=os.environ.get('WT_EM_PROCESS_START',
     'forkserver' if 'forkserver' in multiprocessing.get_all_start_methods() else 'spawn')
 
 
-def initialize_worker(event,catalog):
+def initialize_worker(event,catalog,epoch):
 
 
     from em_backend import activate
@@ -69,21 +71,33 @@ def initialize_worker(event,catalog):
     initialize(event)
     from aircraft_catalog import install_worker_catalog
     install_worker_catalog(catalog)
+    global _job_epoch,_seen_epoch
+    _job_epoch=epoch;_seen_epoch=None
+    prepare_job()
+
+
+def prepare_job():
+    """Clear mutable solver history once per job in every participating worker."""
+    global _seen_epoch
+    if _job_epoch is None:return
+    epoch=_job_epoch.value
+    if epoch==_seen_epoch:return
     from em_sampling import _AIRCRAFT_CACHE,_COLUMN_CACHE,worker_solver
     _AIRCRAFT_CACHE.clear();_COLUMN_CACHE.clear();worker_solver.cache_clear()
+    _seen_epoch=epoch
 
 
 def shutdown():
-    global _pool,_cancel
+    global _pool,_cancel,_job_epoch
     if _pool is not None:
         _cancel.set()
         _pool.shutdown(wait=True,cancel_futures=True)
-        _pool=None;_cancel=None
+        _pool=None;_cancel=None;_job_epoch=None
 
 
 @contextmanager
 def process_pool():
-    global _pool,_cancel,_depth
+    global _pool,_cancel,_depth,_job_epoch
     with _lock:
         if _pool is None:
             method=START_METHOD
@@ -96,12 +110,19 @@ def process_pool():
                 os.environ['PYTHONPATH']=os.pathsep.join([directory,*[p for p in paths if p and p!=directory]])
                 context.set_forkserver_preload(['em_solver','em_sampling'])
             _cancel=context.Event()
+            _job_epoch=context.Value('q',0)
             from aircraft_catalog import catalog
             snapshot=catalog()
             _pool=ProcessPoolExecutor(max_workers=WORKERS,mp_context=context,
-                initializer=initialize_worker,initargs=(_cancel,snapshot))
+                initializer=initialize_worker,initargs=(_cancel,snapshot,_job_epoch))
+        if _depth==0:_job_epoch.value+=1
         _depth+=1
         try:yield _pool,_cancel
+        except BaseException:
+            # A failed job may leave submitted work outstanding. Never reuse
+            # those processes or clear their cancellation event for another job.
+            _cancel.set()
+            raise
         finally:
             _depth-=1
 

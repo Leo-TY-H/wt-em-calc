@@ -12,6 +12,8 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+from game_input_sources import LOCALIZATION, ROCKETS, generated_inputs, validate_source
+from aircraft_ammunition import WEAPONS, PRESETS, default_preset, source_name
 
 ROOT = Path(__file__).resolve().parents[1]
 FLIGHT = 'aces.vromfs.bin_u/gamedata/flightmodels'
@@ -105,10 +107,42 @@ class GitHubSource:
             raise ValueError('Upstream aircraft inventory is empty')
         for source, target in GLOBALS.items():
             files[target] = self.entry(commit, source)
+        for source, target in LOCALIZATION.items():
+            files[target] = self.entry(commit, source)
+        for row in self.tree(self.entry(commit, ROCKETS)['sha']):
+            path = PurePosixPath(row['path'])
+            if row['type'] != 'blob' or path.suffix != '.blkx':
+                continue
+            if len(path.parts) != 1 or '\\' in str(path) or ':' in str(path):
+                raise ValueError('Unsafe upstream missile path')
+            files['references/missile-sources/' + path.name] = dict(row, path=ROCKETS + '/' + path.name)
+        if not any(name.startswith('references/missile-sources/') for name in files):
+            raise ValueError('Upstream missile inventory is empty')
         return files
 
     def download(self, commit, path):
         return self.request(f'https://raw.githubusercontent.com/{self.repository}/{commit}/{quote(path)}')
+
+    def ammunition_inventory(self, commit, stage):
+        """Use staged vehicles to find their default presets at the same commit."""
+        files = {}
+        for row in self.tree(self.entry(commit, WEAPONS)['sha']):
+            if row['type'] == 'blob' and row['path'].endswith('.blkx'):
+                files['references/weapon-sources/' + row['path']] = dict(row, path=WEAPONS + '/' + row['path'])
+        wanted = set()
+        for path in (stage / 'references/prop-vehicles').glob('*.blkx'):
+            vehicle = read_json(path)
+            if 'helicopter' in vehicle or not vehicle.get('model'):
+                continue
+            preset = default_preset(vehicle)
+            if preset:
+                wanted.add(PurePosixPath(source_name(preset)).name)
+        tree = {row['path']: row for row in self.tree(self.entry(commit, PRESETS)['sha']) if row['type'] == 'blob'}
+        for name in sorted(wanted):
+            if name not in tree:
+                raise ValueError('Missing default weapon preset: ' + name)
+            files['references/weapon-presets/' + name] = dict(tree[name], path=PRESETS + '/' + name)
+        return files
 
 
 @contextmanager
@@ -220,8 +254,7 @@ def sync(root=ROOT, source=None, force=False, workers=8):
                     data = source.download(commit, row['path'])
                 if blob_sha(data) != row['sha']:
                     raise ValueError('Source hash mismatch: ' + name)
-                if not isinstance(json.loads(data), dict):
-                    raise ValueError('Expected a game data object: ' + name)
+                validate_source(name, data)
                 target = stage / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
@@ -229,6 +262,14 @@ def sync(root=ROOT, source=None, force=False, workers=8):
                 for count, _ in enumerate(pool.map(fetch, inventory.items()), 1):
                     if count % 500 == 0:
                         print(f'Verified {count}/{len(inventory)} source files', flush=True)
+            if hasattr(source, 'ammunition_inventory'):
+                ammunition_files = source.ammunition_inventory(commit, stage)
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    for _ in pool.map(fetch, ammunition_files.items()):
+                        pass
+                inventory.update(ammunition_files)
+                hashes = {name: row['sha'] for name, row in inventory.items()}
+                removed = set(old) - set(hashes)
             records = []
             fm_rows = []
             for name, row in sorted(inventory.items()):
@@ -249,6 +290,7 @@ def sync(root=ROOT, source=None, force=False, workers=8):
                     sha256=hashlib.sha256((stage / modifications).read_bytes()).hexdigest()),
                 'references/data-version.json': version_data,
             }
+            generated.update(generated_inputs(stage, inventory, records, config['repository'], commit, version))
             for name, value in generated.items():
                 target = stage / name
                 target.parent.mkdir(parents=True, exist_ok=True)

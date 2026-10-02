@@ -2,7 +2,7 @@ import math
 import numpy as np
 
 CONDITIONS=('altitude_m','fuel_percent','throttle','afterburner','torque_gyro',
-            'engine_control_mode','extra_mass_kg','flaps_percent','sweep_percent',
+            'engine_control_mode','extra_mass_kg','default_ammunition','ammunition_vehicle','flaps_percent','sweep_percent',
             'structural_limits','timestep_hz')
 
 

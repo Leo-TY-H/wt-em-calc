@@ -15,6 +15,7 @@
 !/scripts/aero_helpers.py
 !/scripts/air_state.py
 !/scripts/aircraft_catalog.py
+!/scripts/aircraft_ammunition.py
 !/scripts/aircraft_description.py
 !/scripts/aircraft_model.py
 !/scripts/aircraft_upgrades.py
@@ -61,6 +62,8 @@
 !/scripts/em_reference_envelope.py
 !/scripts/em_search_region_data.py
 !/scripts/em_operating.py
+!/scripts/em_numeric_core.py
+!/scripts/em_ordered_work.py
 !/scripts/em_parameter.py
 !/scripts/em_pitch_limit.py
 !/scripts/em_pitch_response.py
@@ -81,6 +84,7 @@
 !/scripts/engine_commands.py
 !/scripts/engine_supply.py
 !/scripts/fm_loader.py
+!/scripts/game_input_sources.py
 !/scripts/fuel_loading.py
 !/scripts/instructor_aoa.py
 !/scripts/instructor_aoa_balance.py
@@ -148,6 +152,7 @@
 
 !/scripts/missile_worker.py
 !/scripts/missile_service.py
+!/scripts/missile_inputs.py
 !/scripts/missile_initialization.py
 !/scripts/missile_support.py
 !/scripts/missile_tracking.py
@@ -164,3 +169,4 @@
 !/scripts/build_missile_backend.py
 
 !/scripts/flap_model.py
+!/scripts/em_aircraft_region.py

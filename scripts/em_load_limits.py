@@ -8,7 +8,7 @@ GLOBAL_LOAD_G=64.
 ANCHOR_MARGIN_G=.05
 
 
-def ceiling(solver,speed):
+def configured_ceiling(solver,speed):
     limit=solver.config.get('max_load_g') or 64.
     if not getattr(solver,'chart_search',False):return limit
     limit=min(limit,solver.config.get('global_load_cap_g',GLOBAL_LOAD_G))
@@ -25,9 +25,25 @@ def ceiling(solver,speed):
     return limit
 
 
+def ceiling(solver,speed):
+    limit=configured_ceiling(solver,speed)
+    if (getattr(solver,'chart_search',False) and solver.config.get('aircraft_search_region',False)
+            and not solver.config.get('reference_load_cap',False)):
+        from em_aircraft_region import search_ceiling
+        limit=min(limit,search_ceiling(solver,speed))
+    return limit
+
+
 def description(solver,speed):
     if not getattr(solver,'chart_search',False):return None
     limit=ceiling(solver,speed)
+    if (solver.config.get('aircraft_search_region',False) and
+            not solver.config.get('reference_load_cap',False)):
+        from em_aircraft_region import preliminary
+        region=preliminary(solver,speed)
+        if region is not None and limit<configured_ceiling(solver,speed):
+            return dict(region,load_g=limit,physical_limit=False,anchors=[],
+                global_load_cap_g=solver.config.get('global_load_cap_g',GLOBAL_LOAD_G))
     if solver.config.get('reference_load_cap',False):
         from em_reference_envelope import reference_values, TOLERANCE_G, TOLERANCE_DPS, REFERENCE_CONDITIONS
         base,reference=reference_values(speed)

@@ -25,6 +25,7 @@ from missile_initialization import optical_ready, radar_ready
 from missile_support import profile_with_support, supported_radar_step
 from missile_tracking import describe as describe_tracking
 import missile_telemetry
+from missile_inputs import directory as input_directory
 from missile_fast import FastInteractionSession
 from missile_backend import activate
 
@@ -46,7 +47,7 @@ def quaternion(angles):
 
 def validate(request):
     if not isinstance(request, dict): raise ValueError('Expected a scenario object')
-    index = json.loads((MODEL / 'launch-profiles/index.json').read_text())
+    index = json.loads((input_directory() / 'launch-profiles/index.json').read_text())
     profiles = {p['path'].removesuffix('.json'): p for p in index['profiles']}
     asset = request.get('missile')
     if not isinstance(asset, str) or asset not in profiles: raise ValueError('Select a supported missile')
@@ -142,7 +143,7 @@ def proximity_endpoint(event, old, new, target_at):
 
 def simulate(request, progress=lambda _: None, cancelled=lambda: False):
     config = validate(request)
-    profile = json.loads((MODEL / 'launch-profiles' / (config['missile']+'.json')).read_text())
+    profile = json.loads((input_directory() / 'launch-profiles' / (config['missile']+'.json')).read_text())
     launcher_aircraft = 'launcher' in config
     launch = config['launcher' if launcher_aircraft else 'launch']
     frame = initial_frame(profile, launch, config['target'], launcher_aircraft=launcher_aircraft)

@@ -59,10 +59,12 @@ def contour_levels(aircraft,data=None):
     return sorted((data or {}).get('settings',{}).get('sep_contour_levels_mps',LEVELS))
 
 
-def contour_paths(data,levels=None):
+def contour_paths(data,levels=None,*,prepared_matrices=None):
     output={}
     for aircraft in data['aircraft']:
-        x,y,z=matrices(data,aircraft);paths=[]
+        prepared=(prepared_matrices or {}).get(aircraft['id'])
+        x,y,z=prepared if prepared is not None else matrices(data,aircraft)
+        paths=[]
         if z.count()>3 and np.ma.max(z)>np.ma.min(z):
             contour=contourpy.contour_generator(x=x,y=y,z=z,name='mpl2014',corner_mask=False)
             for level in levels if levels is not None else contour_levels(aircraft,data):
@@ -75,8 +77,9 @@ def contour_paths(data,levels=None):
 def matrices(data, aircraft):
     from em_continuous_boundary import mask_surface
     if 'surface' in aircraft:
-        s=aircraft['surface'];x,y=np.meshgrid(s['x'],s['fraction'])
-        y=np.array(s['turn_dps']);z=np.ma.masked_invalid(np.array(s['z'],dtype=float))
+        s=aircraft['surface'];y=np.array(s['turn_dps'])
+        x=np.broadcast_to(np.asarray(s['x']),y.shape)
+        z=np.ma.masked_invalid(np.array(s['z'],dtype=float))
         return x,y,mask_surface(aircraft,x,y,z)
     nx=len(data['speeds_kmh']); ny=len(data['loads_g'])
     points=aircraft['points']
@@ -140,6 +143,17 @@ def smooth_surface(data,aircraft):
     lower=np.where(fitted,limits[:,0],np.where(sampled,sampled_limits[:,0],1.))
     upper=np.where(np.isfinite(caps),caps,np.where(sampled,sampled_limits[:,1],lower))
     global_cap=data['settings'].get('global_load_cap_g')
+    aircraft_cap=None
+    from em_aircraft_region import REVISION as region_revision
+    has_region=any((c.get('load_search_limit') or {}).get('revision') in
+                   (region_revision,'preliminary-forces-v1') for c in outline)
+    if data['settings'].get('aircraft_search_region',False) and has_region and len(outline)>=2:
+        # Include columns governed by the outer cap or an unavailable estimate;
+        # holding the last tight estimate there could clip a valid boundary.
+        aircraft_cap=np.interp(xs,[c['speed_kmh'] for c in outline],
+            [(c.get('load_search_limit') or {}).get('load_g',global_cap or 64.) for c in outline])
+        caps=np.minimum(caps,aircraft_cap)
+        upper=np.minimum(upper,aircraft_cap)
     reference_cap=None
     if data['settings'].get('reference_load_cap',False):
         from em_reference_envelope import reference_ceiling
@@ -190,6 +204,7 @@ def smooth_surface(data,aircraft):
         boundary.append(dict(speed_kmh=float(x),turn_dps=rate if verified else None,
                              at_plot_ceiling=bool(np.isfinite(cap) and (
                                  reference_cap is not None and abs(cap-reference_cap[i])<1e-5 or
+                                 aircraft_cap is not None and abs(cap-aircraft_cap[i])<1e-5 or
                                  global_cap is not None and abs(cap-global_cap)<1e-5 or
                                  data['settings']['max_load_g'] is not None and abs(cap-data['settings']['max_load_g'])<1e-5 or
                                  legacy_low_cap and x<300. and abs(cap-8.)<1e-5 or
@@ -238,6 +253,11 @@ def smooth_surface(data,aircraft):
                              z=nullable_grid(z))
     for column in columns:
         for key in ('_curve','_alpha_curve','_angle_map'):column.pop(key,None)
+    # Feed contours from the arrays already in memory, avoiding a round trip
+    # through millions of boxed JSON values. Public/exported surface stays lists.
+    from em_continuous_boundary import mask_surface
+    x=np.broadcast_to(xs,turn.shape)
+    return x,turn,mask_surface(aircraft,x,turn,np.ma.masked_invalid(z))
 
 
 def plot_turn_ceiling(aircraft):
@@ -252,24 +272,29 @@ def plot_turn_ceiling(aircraft):
 
 def enrich(data):
     data['plot_max_load_g']=max(1.1,max((p['load_g'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=1.1))
+    prepared={}
     for aircraft in data['aircraft']:
-        if 'columns' in aircraft:smooth_surface(data,aircraft)
+        if 'columns' in aircraft:prepared[aircraft['id']]=smooth_surface(data,aircraft)
+        else:prepared[aircraft['id']]=matrices(data,aircraft)
 
 
     data['plot_max_turn']=plot_turn_ceiling(data['aircraft'])
-    paths_by_aircraft=contour_paths(data)
+    paths_by_aircraft=contour_paths(data,prepared_matrices=prepared)
     for aircraft in data['aircraft']:
-        x,y,z=matrices(data,aircraft); paths=paths_by_aircraft[aircraft['id']]
-        boundary=[];mask=np.ma.getmaskarray(z)
-        for i in range(x.shape[1]):
-            valid=np.where(~mask[:,i])[0]
-            if len(valid):
-                j=valid[-1]
-                root_turn=max((p['turn_dps'] for p in aircraft.get('sustained',[]) if p['speed_kmh']==x[j,i]),default=0.)
-                boundary.append(dict(speed_kmh=float(x[j,i]),turn_dps=float(y[j,i]),
-                                     at_plot_ceiling=bool(j==x.shape[0]-1)))
-                boundary[-1]['turn_dps']=max(boundary[-1]['turn_dps'],root_turn)
-            else:boundary.append(dict(speed_kmh=float(x[0,i]),turn_dps=None,at_plot_ceiling=False))
+        paths=paths_by_aircraft[aircraft['id']]
+        boundary=[]
+        x,y,z=prepared[aircraft['id']]
+        if 'surface' not in aircraft:
+            mask=np.ma.getmaskarray(z)
+            for i in range(x.shape[1]):
+                valid=np.where(~mask[:,i])[0]
+                if len(valid):
+                    j=valid[-1]
+                    root_turn=max((p['turn_dps'] for p in aircraft.get('sustained',[]) if p['speed_kmh']==x[j,i]),default=0.)
+                    boundary.append(dict(speed_kmh=float(x[j,i]),turn_dps=float(y[j,i]),
+                                         at_plot_ceiling=bool(j==x.shape[0]-1)))
+                    boundary[-1]['turn_dps']=max(boundary[-1]['turn_dps'],root_turn)
+                else:boundary.append(dict(speed_kmh=float(x[0,i]),turn_dps=None,at_plot_ceiling=False))
         aircraft['contours']=paths
         if 'surface' in aircraft:
 
@@ -294,7 +319,7 @@ def preview_payload(data):
 
 
 def export_csv(data):
-    condition_fields=['torque_gyro','engine_control_mode','aircraft_trim_mode','turn_response_mode','instructor_authority_mode','trim_solver_mode','altitude_m','fuel_percent','throttle','afterburner','extra_mass_kg','structural_limits','timestep_hz']
+    condition_fields=['torque_gyro','engine_control_mode','aircraft_trim_mode','turn_response_mode','instructor_authority_mode','trim_solver_mode','altitude_m','fuel_percent','throttle','afterburner','extra_mass_kg','default_ammunition','ammunition_vehicle','structural_limits','timestep_hz']
     out=io.StringIO();fields=['aircraft','aircraft_id','aircraft_name','kind']+condition_fields+['speed_kmh','load_g','turn_dps','ps_mps','ps_continuous_mps',
           'valid','converged','reasons','alpha_deg','bank_deg','sideslip_deg','sideslip_attitude_deg','ias_kmh','mach','force_error_g',
           'angular_error_rad_s2','history_error','stall_margin_deg','vertical_step_velocity_mps',
@@ -366,10 +391,13 @@ def export_figure(data, path, selected=None, levels=None, format=None):
                     px,py=visible[len(visible)//2]
                     ax.text(px,py,'SEP 0',color=color,fontsize=8,ha='center',va='center',
                             bbox=dict(facecolor='white',edgecolor='none',alpha=.8,pad=.8))
+        # Draw the analytic guides independently of the adaptive trim columns.
+        v=np.geomspace(data['settings']['speed_min_kmh'],data['settings']['speed_max_kmh'],1201)
         for n in [2,4,6,9,12,16]:
             if n>data['plot_max_load_g']:continue
-            v=np.array(data['speeds_kmh']); rate=np.degrees(9.8100004196167*np.sqrt(n*n-1)/(v/3.6))
-            ax.plot(v,rate,color='#999999',alpha=.2,lw=.6)
+            rate=np.degrees(9.8100004196167*np.sqrt(n*n-1)/(v/3.6))
+            guide,=ax.plot(v,rate,color='#999999',alpha=.2,lw=.6)
+            guide.get_path().should_simplify=False
         cfg=data['settings']
         ax.set_aspect('auto')
         ax.set(xlim=(cfg['speed_min_kmh'],cfg['speed_max_kmh']),ylim=(0,data['plot_max_turn']),
@@ -523,11 +551,17 @@ def prepare_exports(data, *, started_at=None):
         if isinstance(value,dict):
             result={k:performance_only(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
         elif not value:result=value
-        elif isinstance(value[0],(int,float,np.number)):
+        elif value[0] is None or isinstance(value[0],(int,float,np.number)):
             try:
-                total=sum(value)
-                if not math.isfinite(total) and any(not math.isfinite(v) for v in value):
-                    raise ValueError('Nonfinite numerical export')
+                try:total=sum(value)
+                except TypeError:
+                    # Nullable surface rows are already serializable. Validate
+                    # their numbers without rebuilding every row and scalar.
+                    if any(v is not None and not math.isfinite(v) for v in value):
+                        raise ValueError('Nonfinite numerical export')
+                else:
+                    if not math.isfinite(total) and any(not math.isfinite(v) for v in value):
+                        raise ValueError('Nonfinite numerical export')
                 result=value
             except TypeError:
 

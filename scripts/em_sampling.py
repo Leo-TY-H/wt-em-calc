@@ -3,8 +3,8 @@ import os
 import time
 from em_data import clone
 from em_workers import process_pool,WORKERS
-from collections import OrderedDict,deque
-from concurrent.futures import wait,FIRST_COMPLETED
+from collections import OrderedDict
+from em_ordered_work import OrderedWork
 from functools import lru_cache
 
 import numpy as np
@@ -55,7 +55,7 @@ def compute_cached(config,progress=None,cancelled=None,preview=None):
 
 
 def outline_column(column):
-    keys=('speed_kmh','boundary','lower_boundary','boundary_status','boundary_reason','load_search_limit','mach_branch','discontinuity')
+    keys=('speed_kmh','boundary','lower_boundary','boundary_status','boundary_reason','load_search_limit','aircraft_search_region','mach_branch','discontinuity')
     return dict({k:column.get(k) for k in keys},
                 points=[p for p in column['points'] if p['load_g']==1.])
 
@@ -117,10 +117,16 @@ def worker_solver(name, config_json):
 
 
 def sample_with_history(worker,task,history):
+    from em_workers import prepare_job
+    prepare_job()
     solver=worker_solver(task[0],task[1])
     solver.chart_load_anchors=[p['_low_speed_cap_anchor'] for p in task[3]
         if isinstance(p,dict) and p.get('_low_speed_cap_anchor')] if isinstance(task[3],list) else []
     solver._sideslip_solvers={}
+    solver.instructor_boundaries={}
+    solver.instructor_trim_entries=dict(history) if solver.config['instructor'] else {}
+    for key in ('_trim_predictor','_minimum_instructor_speed','_static_instructor_trim_cache'):
+        solver.__dict__.pop(key,None)
     from numbers import Real
     from em_speed_limits import excluded_column
     if isinstance(task[2],Real):
@@ -133,8 +139,6 @@ def sample_with_history(worker,task,history):
                                   if candidates else None)
         solver.engine.reset_search()
         solver.__dict__.pop('_trim_predictor',None)
-    if solver.config['instructor']:
-        for speed,entry in history.items():solver.instructor_trim_entries.setdefault(speed,entry)
 
 
     from numbers import Real
@@ -339,8 +343,11 @@ def sample_boundary_column(task):
 
 def _sample_checked_boundary_column(task):
     started=time.monotonic()
+    from em_aircraft_region import annotate
+    solver=worker_solver(task[0],task[1])
     column=_sample_boundary_column(task)
     column=_check_roll_leveling_boundary(task,column,boundary_only=True)
+    annotate(solver,column)
     column['elapsed_s']=time.monotonic()-started
     return column
 
@@ -555,8 +562,11 @@ def sample_column(task,boundary_only=False):
 
 def _sample_checked_column(task,boundary_only=False):
     started=time.monotonic()
+    from em_aircraft_region import annotate
+    solver=worker_solver(task[0],task[1])
     column=_sample_column(task,boundary_only)
     column=_check_roll_leveling_boundary(task,column,boundary_only)
+    annotate(solver,column)
     column['elapsed_s']=time.monotonic()-started
     return column
 
@@ -629,6 +639,10 @@ def _sample_column(task,boundary_only=False):
 
                 from em_parameter import recover_fixed_load_point
                 recovered=recover_fixed_load_point(solver,speed,n,samples.values())
+                if recovered is not None:p=recovered
+            if not local and not p['converged']:
+                from em_sideslip import recover_local_sideslip
+                recovered=recover_local_sideslip(solver,speed,n,p)
                 if recovered is not None:p=recovered
             if (solver.is_prop and solver.engine.automatic and not p['converged']
                     and p['force_error_g']<.2 and p['stall_margin_deg']>1.
@@ -735,8 +749,6 @@ def _sample_column(task,boundary_only=False):
                  not solver.is_prop and any(p.get('envelope_limit') for p in (seed or [])))):
             direct=predict_limit(solver,speed,p,seed)
             if direct is None and seed:
-
-
                 direct=predict_limit(solver,speed,p,None)
             if direct:
                 samples[direct['load_g']]=direct;bottom=p;boundary=direct
@@ -1685,6 +1697,8 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     if config.get('reference_load_cap',False):
         output['assumptions'].append('Chart search ceiling is a frozen lookup table: maximum of saved I-153 M-62, BI and F-16XL SB flutter-on boundaries plus the smaller of 2 deg/s or 1 g. References: sea level, zero fuel mass, clean, supplied maximum power, torque/gyro on, structural load limits on, each clipped at its speed redline. Linear TAS lookup with endpoint holds; never recalibrated during chart calculation. This is a search-domain assumption, not a proved physical limit.')
     output['assumptions'].append(f"Additional global search ceiling: {config['global_load_cap_g']:g} g; not a proved physical limit.")
+    if config.get('aircraft_search_region',False) and not config.get('reference_load_cap',False):
+        output['assumptions'].append('Predetermined per-aircraft search region: Mach/flap-dependent wing, tail and fuselage lift, selected mass, wing strength and algebraic propulsion estimates; padded by 25 percent plus 0.25 g. No engine settling, nested solves or trim-driven cap expansion. A valid edge at the cap is a search ceiling, not a physical limit. The estimated domain is not a proved physical exclusion.')
     if any(c['turn_response_mode']=='local_acceleration' for c in conditions.values()):
         output['assumptions'].append('Local acceleration selected per aircraft: first-order constant-load, level coordinated turn; fixed sideslip; settled aerodynamic memory; no entry history. Large local changes are flagged; unavailable derivatives remain unresolved.')
     if any(AIRCRAFT[name]['propulsion']=='rocket' for name in results):
@@ -1726,7 +1740,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     with process_pool() as (pool,worker_cancel):
         def run(tasks,phase,worker=sample_column):
             nonlocal cache_hits,preview_version
-            futures={};keys={};cached=[]
+            work=OrderedWork()
             for task in tasks:
                 name=task[0]
                 local=(name,json.dumps(conditions[name],sort_keys=True),*task[2:])
@@ -1736,26 +1750,23 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                            p.get('envelope_limit'),p.get('_propulsion_seed'),p.get('_low_speed_cap_anchor')) for p in task[3]] if task[3] else None
                     key=(worker.__name__,name,local[1],task[2],json.dumps(seed,separators=(',',':')))
                 if key is not None and key in _COLUMN_CACHE:
-                    _COLUMN_CACHE.move_to_end(key);cached.append((task,clone(_COLUMN_CACHE[key])));cache_hits+=1
+                    _COLUMN_CACHE.move_to_end(key);cache_hits+=1
+                    work.submit((task,key),value=(clone(_COLUMN_CACHE[key]),{}))
                 else:
-                    future=pool.submit(sample_with_history,worker,local,dict(entry_histories[name]));futures[future]=task;keys[future]=key
-            done=0;pending=set(futures);reported=0.
+                    future=pool.submit(sample_with_history,worker,local,dict(entry_histories[name]))
+                    work.submit((task,key),future=future)
+            done=0;reported=0.
             destination=boundary_probes if worker is sample_boundary_column else results
-            for task,column in cached:
-                destination[task[0]][column['speed_kmh']]=column;done+=1
-                preview_version+=1
             publish_preview()
             try:
-                while pending:
+                while work:
                     check_cancel()
-                    ready,pending=wait(pending,timeout=.25,return_when=FIRST_COMPLETED)
-                    for future in ready:
-                        task=futures[future];column,history=future.result();done+=1
+                    for (task,key),(column,history) in work.take():
+                        done+=1
                         for speed,entry in history.items():entry_histories[task[0]].setdefault(speed,entry)
                         if column is not None:
                             destination[task[0]][column['speed_kmh']]=column
                             preview_version+=1
-                            key=keys[future]
                             if key is not None:
                                 _COLUMN_CACHE[key]=clone(column)
                                 if len(_COLUMN_CACHE)>256:_COLUMN_CACHE.popitem(last=False)
@@ -1765,7 +1776,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                         progress(dict(done=done,total=len(tasks),phase=phase,elapsed_s=time.monotonic()-start));reported=time.monotonic()
             except BaseException:
                 worker_cancel.set()
-                for f in futures:f.cancel()
+                work.cancel()
                 raise
         exclusions={name:sweep_speed_intervals(name,conditions[name]) for name in results}
         speed_grids={}
@@ -1913,7 +1924,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
         initial_intervals=intervals
         intervals={name:[] for name in results}
         physical_stall_speed_brackets={name:[] for name in results}
-        pending_speed={};ready_speed=deque();scheduled_speed=0;finished_speed=0
+        speed_work=OrderedWork();scheduled_speed=0;finished_speed=0
         checked_probes={name:{} for name in results};point_check_requests=set()
         def schedule_speed(name,lo,hi,depth,point_load=None,point_speed=None):
             nonlocal cache_hits,scheduled_speed
@@ -1954,10 +1965,10 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             scheduled_speed+=1
             if key in _COLUMN_CACHE:
                 _COLUMN_CACHE.move_to_end(key);cache_hits+=1
-                ready_speed.append((context,clone(_COLUMN_CACHE[key]),{},None))
+                speed_work.submit((context,None),value=(clone(_COLUMN_CACHE[key]),{}))
             else:
                 future=pool.submit(sample_with_history,worker,local,dict(entry_histories[name]))
-                pending_speed[future]=(context,key)
+                speed_work.submit((context,key),future=future)
         def accept_speed(context,column,history,key):
             nonlocal preview_version,finished_speed,scheduled_speed,cache_hits
             name,lo,hi,mid,depth,pred,loads,predicted_cap,prior_speeds=context
@@ -2051,7 +2062,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                     seed=[p for p in column['points'] if p['valid']]
                     local=(name,json.dumps(conditions[name],sort_keys=True),mid,seed)
                     future=pool.submit(sample_with_history,sample_column,local,dict(entry_histories[name]))
-                    pending_speed[future]=(context,None)
+                    speed_work.submit((context,None),future=future)
                     scheduled_speed+=1
                 else:
                     checked_probes[name][mid]=(context,column)
@@ -2108,16 +2119,10 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             nonlocal scheduled_speed
             try:
                 while True:
-                    while pending_speed or ready_speed:
+                    while speed_work:
                         check_cancel()
-                        if not ready_speed:
-                            completed,_=wait(set(pending_speed),timeout=.25,return_when=FIRST_COMPLETED)
-                            for future in completed:
-                                context,key=pending_speed.pop(future)
-                                column,history=future.result()
-                                ready_speed.append((context,column,history,key))
-                        while ready_speed:
-                            accept_speed(*ready_speed.popleft())
+                        for (context,key),(column,history) in speed_work.take():
+                            accept_speed(context,column,history,key)
                     for name,probes in checked_probes.items():
                         for mid,(context,column) in list(probes.items()):
                             prior=context[-1];current=tuple(sorted(results[name]))
@@ -2128,10 +2133,10 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                             context=(*context[:-1],current)
                             scheduled_speed+=1
                             accept_speed(context,column,{},None)
-                    if not pending_speed and not ready_speed:break
+                    if not speed_work:break
             except BaseException:
                 worker_cancel.set()
-                for future in pending_speed:future.cancel()
+                speed_work.cancel()
                 raise
         drain_speed_checks()
 
@@ -2314,7 +2319,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
 
         from em_speed_seam import check_interior
         from em_boundary_seam import check_boundary,boundary_intervals
-        seam_interiors={name:[] for name in results};seam_boundaries={name:[] for name in results};seam_futures={}
+        seam_interiors={name:[] for name in results};seam_boundaries={name:[] for name in results};seam_work=OrderedWork()
         for name,columns in results.items():
             for lo,hi in sorted(set(intervals[name]+terminal_speed_intervals[name]+mach_intervals[name])):
                 if overlaps(discontinuities[name],lo,hi):continue
@@ -2325,21 +2330,19 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 support=[{k:c[k] for k in ('speed_kmh','points','boundary','lower_boundary','boundary_status','boundary_reason')} for c in pair]
                 task=(name,json.dumps(conditions[name],sort_keys=True),(lo+hi)*.5,support)
                 future=pool.submit(sample_with_history,check_interior,task,dict(entry_histories[name]))
-                seam_futures[future]=(name,False)
+                seam_work.submit((name,False),future=future)
             for lo,hi in boundary_intervals(intervals[name]+terminal_speed_intervals[name]+mach_intervals[name],2.*speed_tolerance(config)):
                 if overlaps(discontinuities[name],lo,hi):continue
                 pair=[columns[v] for v in (lo,hi)]
                 support=[{k:c[k] for k in ('speed_kmh','points','boundary','lower_boundary','boundary_status','boundary_reason')} for c in pair]
                 task=(name,json.dumps(conditions[name],sort_keys=True),(lo+hi)*.5,support)
                 future=pool.submit(sample_with_history,check_boundary,task,dict(entry_histories[name]))
-                seam_futures[future]=(name,True)
-        if seam_futures and progress:progress(dict(phase='Checking interiors below uncertain boundary transitions',
-            done=0,total=len(seam_futures),elapsed_s=time.monotonic()-start))
-        while seam_futures:
+                seam_work.submit((name,True),future=future)
+        if seam_work and progress:progress(dict(phase='Checking interiors below uncertain boundary transitions',
+            done=0,total=len(seam_work),elapsed_s=time.monotonic()-start))
+        while seam_work:
             check_cancel()
-            done,_=wait(set(seam_futures),timeout=.25,return_when=FIRST_COMPLETED)
-            for future in done:
-                name,is_boundary=seam_futures.pop(future);certificate,history=future.result()
+            for (name,is_boundary),(certificate,history) in seam_work.take():
                 if certificate:(seam_boundaries if is_boundary else seam_interiors)[name].append(certificate)
                 for speed,entry in history.items():entry_histories[name].setdefault(speed,entry)
         for index,(name,columns) in enumerate(results.items()):

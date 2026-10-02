@@ -39,17 +39,20 @@ ROOT = Path(__file__).resolve().parents[1]
 AIRCRAFT = LazyCatalog()
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 afterburner=True, torque_gyro=False, engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
-                extra_mass_kg=0., speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
-                speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=True,
+                extra_mass_kg=0., default_ammunition=False, ammunition_vehicle='', speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
+                speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=False,aircraft_search_region=True,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='nested',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='native')
 
 # Backend-only opt-in: mach_curve_mode='continuous' enables the selective tanh
 # approximation; 'native' (default) keeps native arithmetic and gap handling.
+# Preliminary aircraft force estimates define the default chart search region.
+# The cap is predetermined from aircraft data; 64 g is an outer guard only.
+# The former frozen reference envelope remains an opt-in for reproduction.
 
 
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
-    'trim_mode','trim_limit','fixed_trim','extra_mass_kg','structural_limits','turn_response_mode',
+    'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','structural_limits','turn_response_mode',
     'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode'))
 
 
@@ -98,8 +101,9 @@ def settings(values=None):
         result[key]=int(result[key])
     result['sep_contour_levels_mps']=contour_levels(result['sep_contour_levels_mps'])
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
-    for key in ['afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap']:
+    for key in ['default_ammunition','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
+    if not isinstance(result['ammunition_vehicle'],str):raise ValueError('ammunition_vehicle must be a vehicle ID')
     # The frozen chart domain is always intersected with this aircraft's
     # native speed and wing-force limits, including per-aircraft overrides.
     if result['reference_load_cap']:result['structural_limits']=True
@@ -138,8 +142,9 @@ def settings(values=None):
         # Mixed batches carry shared defaults plus per-aircraft engine modes.
         if is_prop(name) and condition['engine_control_mode']!='quasi_steady':
             raise ValueError('Propeller engine mode is unavailable')
-        if (condition['instructor'] or result['compare_instructor']) and condition['extra_mass_kg']:
-            raise ValueError('Instructor integration currently requires a clean loadout (zero extra mass)')
+        if condition['default_ammunition']:
+            from aircraft_ammunition import selected_mass
+            selected_mass(name,condition['ammunition_vehicle'])
     return result
 
 
@@ -349,18 +354,37 @@ class TrimSolver:
 
 
         self.gear=1. if self.is_prop and not self.fm['AvailableControls'].get('hasGearControl',True) else 0.
-        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],self.config['extra_mass_kg'])
+        from aircraft_ammunition import selected_mass, selected_payloads, profile as ammunition_profile
+        ammunition_mass=selected_mass(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else 0.
+        added_mass=self.config['extra_mass_kg']
+        weapon_payloads=selected_payloads(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else []
+        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads)
         else:
             fuel=[f32(capacity*self.config['fuel_percent']/100.) for capacity in fuel_capacities(self.fm)]
-            payloads=[dict(mass=self.config['extra_mass_kg'],position=self.fm['Mass']['CenterOfGravity'])] if self.config['extra_mass_kg'] else []
+            payloads=[*weapon_payloads,*([dict(mass=added_mass,position=self.fm['Mass']['CenterOfGravity'])] if added_mass else [])]
             self.mass=mass_evaluate(aircraft_properties(self.fm),fuel,payloads=payloads)
             self.mass['fuel_by_system']=fuel
+        self.mass['ammunition_mass_kg']=ammunition_mass
+        self.mass['additional_mass_kg']=self.config['extra_mass_kg']
+        if self.config['default_ammunition']:
+            self.mass['ammunition']=ammunition_profile(name,self.config['ammunition_vehicle'])
+            self.mass['mass_policy']='Internal fuel and default weapon payloads at their attachments; manual additional mass at configured CG'
         self.weight=self.mass['mass']*float(G); self.dt=f32(1/self.config['timestep_hz'])
         self.engine=PropellerEnsemble(name,self.model,self.mass,self.config) if self.is_prop else EngineEnsemble(self.model,self.mass,self.config)
         self.instructor_boundaries={}
         self.instructor_trim_entries={}
         self.sideslip_attitude_deg=0.
         self._sideslip_solvers={}
+
+    @property
+    def numeric_parameters(self):
+        from em_numeric_core import TrimParameters
+        values=(self.mass['mass'],self.weight,tuple(self.mass['inertia']),self.dt)
+        previous=self.__dict__.get('_numeric_parameters')
+        if previous is None or self.__dict__['_numeric_parameter_values']!=values:
+            previous=TrimParameters(*values)
+            self._numeric_parameters=previous;self._numeric_parameter_values=values
+        return previous
 
     def at_sideslip(self,angle):
         angle=float(angle)
@@ -1327,7 +1351,7 @@ def compute_regular(config=None, progress=None, cancelled=None):
                              'Constant fuel and intact components','Positive-AoA stall enforced; negative-AoA stall not an exclusion; aircraft trim model selected per entry','Still air; out of ground effect; retracted gear/brake',
                              'Fixed flap extension; speed domain ends at the selected extension’s automatic IAS/Mach limit or intact-flap damage threshold; flap travel and damage transients omitted',
                              'Steady Instructor AoA schedule approximation; transient overshoot, delay and control history omitted' if config['instructor'] else 'Instructor off',
-                             'Extra mass is a point mass at configured CG; ammunition is not inferred'],
+                             'Manual additional mass is at configured CG; default ammunition uses native per-weapon masses and attachment positions'],
                 validation='Reconstructed kernels have native-code comparisons; this EM solver has not been validated against live flight.')
     total=len(speeds)*len(loads)*len(config['aircraft']); done=0
     for index,name in enumerate(config['aircraft']):

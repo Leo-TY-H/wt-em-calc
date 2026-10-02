@@ -7,6 +7,7 @@ from body_dynamics import angular_acceleration,G
 from component_assembly import f32
 from primary_controls import authority_ranges
 from kinematics import airborne_step,altitude_velocity_correction
+from em_numeric_core import closure
 
 
 def flight_condition(self, speed, load, x):
@@ -123,16 +124,9 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
             r[key]={k:[sum(v[key][k][i] for v in phase_results)/len(phase_results) for i in range(3)] for k in r[key]}
     force=np.asarray(r['force']); processed=np.asarray(r['omega_for_flow'])
     pass
-    acceleration=np.asarray(angular_acceleration(processed,self.mass['inertia'],r['stored_moment']))
-    rate_residual=(processed+acceleration*self.dt-geometry['omega'])/self.dt
-
-
-    tangential_acceleration=force.dot(geometry['forward'])/self.mass['mass']
-    lateral_acceleration=(speed/self.dt+tangential_acceleration)*math.tan(geometry['turn_rate']*self.dt)
-    pass
-    required=self.weight*geometry['up']+self.mass['mass']*lateral_acceleration*geometry['lateral']
-    f_error=(force-required)/self.weight
-    residual=np.array([f_error.dot(geometry['normal']),f_error.dot(geometry['side']),*(rate_residual/.1)])
+    residual,rate_residual=closure(self.numeric_parameters,speed,force,processed,r['stored_moment'],
+        geometry['omega'],geometry['forward'],geometry['up'],geometry['lateral'],
+        geometry['normal'],geometry['side'],geometry['turn_rate'])
     polar=condition_properties(self.model,air['mach'],flaps)[1]
     phase_angles=[a for phase in phase_results for a in phase['history']['wing_aoa']]
 

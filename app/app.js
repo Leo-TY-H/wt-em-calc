@@ -36,7 +36,7 @@ function error(message) {$('error').textContent=message;$('error').hidden=!messa
 const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'extra_mass_kg',
   timestep:'timestep_hz',sweep:'sweep_percent',flaps:'flaps_percent'};
 const conditionKeys=[...Object.values(conditionFields),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','structural_limits','turn_response_mode'];
+  'fixed_trim','default_ammunition','ammunition_vehicle','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','structural_limits','turn_response_mode'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??state.meta.defaults[k]]));
@@ -46,7 +46,7 @@ const modeConditions=c=>{const values=conditionsFrom(c);return {...values,trim_s
 const engineModelLabel=c=>c.engine_control_mode==='quasi_steady'?'Quasi-steady · ideal governor':'Dynamic propulsion';
 const aircraftModelLabel=c=>c.aircraft_trim_mode==='quasi_steady'?'Quasi-steady aircraft trim':'Discrete aircraft trim';
 const instructorAuthorityLabel=c=>c.instructor_authority_mode==='direct'?'Direct equilibrium (experimental)':'Original automatic trim';
-const aircraftConditions=(name,c)=>{const values=modeConditions(c);values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!state.meta.aircraft[name].has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(state.meta.aircraft[name].propulsion))values.engine_control_mode='automatic';return values;};
+const aircraftConditions=(name,c)=>{const values=modeConditions(c);const ammo=state.meta.aircraft[name].ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammo?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!state.meta.aircraft[name].has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(state.meta.aircraft[name].propulsion))values.engine_control_mode='automatic';return values;};
 const flightModeLabel=c=>c.instructor!==c.torque_gyro?(c.instructor?'RB':'SB'):
   `Instructor ${c.instructor?'on':'off'} · torque/gyro ${c.torque_gyro?'on':'off'}`;
 const resultConditions=a=>({torque_gyro:true,...(a.settings||{...state.data.settings,...state.data.settings.aircraft_settings?.[a.id]})});
@@ -56,6 +56,7 @@ function saveCondition(){
   if(!state.editing)return;
   state.conditions[state.editing]={...state.conditions[state.editing],
     ...Object.fromEntries(Object.entries(conditionFields).map(([id,k])=>[k,+$(id).value])),
+    default_ammunition:$('default-ammunition').checked,ammunition_vehicle:$('ammunition-vehicle').value,
     trim_solver_mode:'nested',structural_limits:$('flutter-on').checked,
     throttle:+$('throttle').value/100,afterburner:+$('throttle').value>100,
     instructor:$('flight-mode-rb').checked,torque_gyro:$('flight-mode-sb').checked};
@@ -66,11 +67,25 @@ function showCondition(id){
   const c=id?(state.conditions[id]??=conditionsFrom(state.meta.defaults)):state.meta.defaults;
   if(id&&!state.meta.aircraft[state.entries.find(e=>e.id===id).aircraft_id].has_flaps)c.flaps_percent=0;
   for(const [field,key] of Object.entries(conditionFields))$(field).value=c[key];
+  $('default-ammunition').checked=!!c.default_ammunition;
+  const aircraft=id?state.meta.aircraft[state.entries.find(e=>e.id===id).aircraft_id]:null;
+  const variants=aircraft?.ammunition?.variants;
+  $('ammunition-vehicle-field').hidden=!variants||Object.keys(variants).length<2;
+  $('ammunition-vehicle').innerHTML=variants?Object.keys(variants).map(v=>`<option value="${escapeText(v)}">${escapeText(aircraft.vehicle_names?.find(n=>n.vehicle_id===v)?.display_name||v)} [${escapeText(v)}]</option>`).join(''):'';
+  if(variants)$('ammunition-vehicle').value=c.ammunition_vehicle||aircraft.ammunition.vehicle_id;
+  showAmmunition(aircraft);
   $('throttle').value=c.throttle*100;
   $('flight-mode-rb').checked=c.instructor;$('flight-mode-sb').checked=!c.instructor;
   $('flutter-on').checked=c.structural_limits!==false;$('flutter-off').checked=c.structural_limits===false;
   $('aircraft-condition').disabled=!id;
 }
+function showAmmunition(aircraft){
+  const ammo=aircraft?.ammunition?.variants?.[$('ammunition-vehicle').value]||aircraft?.ammunition;
+  $('default-ammunition').disabled=!!aircraft&&!ammo?.supported;
+  if(!ammo?.supported)$('default-ammunition').checked=false;
+  $('ammunition-help').textContent=ammo?.supported?`${fmt(ammo.gun_rounds,0)} gun rounds · ${fmt(ammo.countermeasures,0)} countermeasures · ${fmt(ammo.mass_kg,3)} kg at weapon positions, including CG and inertia effects. Default belts and counts; no armament modifications.`:(ammo?.reason?`Default ammunition unavailable: ${ammo.reason}`:'Default gun belts and countermeasure counts, without armament modifications. Includes their mass, CG and inertia effects.');
+}
+$('ammunition-vehicle').addEventListener('change',()=>showAmmunition(state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id]));
 function configEntries(c){
   if(c.entries)return c.entries.map(e=>({...e,settings:{torque_gyro:true,...e.settings}}));
   const entries=c.aircraft.map((name,i)=>({id:`entry_${i+1}`,aircraft_id:name,
@@ -375,10 +390,13 @@ function renderChart(){
   if(!state.data)return;
   const data=state.data,displayed=data.aircraft.filter(a=>state.view==='compare'||a.id===state.view),traces=[];
   const showSamples=$('show-samples').checked,showRejected=$('show-rejected').checked;
+  // Analytic guides need their own drawing grid; trim columns can be sparse.
+  const guideMin=data.settings.speed_min_kmh,guideMax=data.settings.speed_max_kmh;
+  const guideSpeeds=Array.from({length:1201},(_,i)=>guideMin*Math.pow(guideMax/guideMin,i/1200));
   for(const n of [2,4,6,9,12,16]){
     if(n>(data.plot_max_load_g||data.settings.max_load_g))continue;
-    traces.push({type:'scatter',mode:'lines',x:data.speeds_kmh,y:data.speeds_kmh.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
-      line:{color:'rgba(133,158,185,.16)',width:1},hoverinfo:'skip',showlegend:false});
+    traces.push({type:'scatter',mode:'lines',x:guideSpeeds,y:guideSpeeds.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
+      line:{color:'rgba(133,158,185,.16)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
   }
   for(const a of displayed){
     for(const level of [...new Set(a.contours.map(c=>c.level))]){

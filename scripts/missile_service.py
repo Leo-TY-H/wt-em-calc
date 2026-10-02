@@ -9,7 +9,8 @@ import sys
 import threading
 import time
 import uuid
-from missile_names import NAMES
+from missile_names import display_name
+from missile_inputs import directory as input_directory
 
 ROOT = Path(__file__).resolve().parent
 LOCK = threading.Lock()
@@ -21,13 +22,14 @@ JOBS = {}
 
 @lru_cache(maxsize=1)
 def metadata():
-    index = json.loads((ROOT / 'missile_model/launch-profiles/index.json').read_text())
+    inputs=input_directory(ROOT)
+    index = json.loads((inputs / 'launch-profiles/index.json').read_text())
     entries = []
     for row in index['profiles']:
         key = row['path'].removesuffix('.json')
         if 'default' in key.lower().split('_'):
             continue
-        profile = json.loads((ROOT / 'missile_model/launch-profiles' / row['path']).read_text())
+        profile = json.loads((inputs / 'launch-profiles' / row['path']).read_text())
         rocket = profile['properties']['rocket']; guidance = profile['properties']['guidance']
         # Presentation data comes from the same exported properties used by the
         # worker. Motor delays are measured on each motor's own controlled clock;
@@ -38,7 +40,7 @@ def metadata():
                       lock_after_launch=bool(rocket['guidance'].get('lockAfterLaunch',False)),
                       warm_up_s=rocket['guidance'].get('warmUpTime',0.),
                       proximity_delay_s=rocket.get('proximityFuse',{}).get('timeOut',.3) if rocket.get('hasProximityFuse',False) else None)
-        entries.append(dict(id=key, name=NAMES.get(key, key.replace('_',' ').upper()), family=row['family'],timing=timing))
+        entries.append(dict(id=key, name=display_name(key, rocket), family=row['family'],timing=timing))
     # Keep one base configuration for each displayed name, not mounting aliases.
     # The localization also labels AIM-4D as AIM-4G; prefer the matching G profile.
     unique = {}

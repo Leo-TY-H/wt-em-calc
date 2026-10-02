@@ -163,14 +163,14 @@ def frame(p, state, velocity, height, body_omega, cg, dt, seed, nitro, torque_gy
     air,sound=fixed_air(tuple(velocity),height)
     linked=set();transmissions=[];force=[0.]*3;moment=[0.]*3;momentum=[0.]*3;wash=0.;swirl=[0.,0.]
     per_engine=[[0.]*3 for _ in engines]
-    def add(a,b):return [x+y for x,y in zip(a,b)]
+    def add_vectors(a,b):return [x+y for x,y in zip(a,b)]
     for t,shaft in zip(p['transmissions'],state['transmissions']):
         tf=[0.]*3;tm=[0.]*3;th=[0.]*3;tw=0.;ts=[0.,0.]
         for link in t['propellers']:
             i=link['index'];pp=p['propellers'][i]['properties']
             q=propeller(pp,props[i],velocity,body_omega,cg,shaft['omega']*link['ratio'],air['density'],sound,torque_gyro)
-            props[i]=q;o=q['outputs'];tf=add(tf,o[:3]);tm=add(tm,o[23:26]);th=add(th,o[26:29])
-            tm=add(tm,[v*(1. if t['correct_link'] else link['ratio']) for v in o[20:23]])
+            props[i]=q;o=q['outputs'];tf=add_vectors(tf,o[:3]);tm=add_vectors(tm,o[23:26]);th=add_vectors(th,o[26:29])
+            tm=add_vectors(tm,[v*(1. if t['correct_link'] else link['ratio']) for v in o[20:23]])
             axial=o[32]*pp['basis'][0]
             if abs(axial)>abs(tw):tw=axial
             direction=0 if pp['direction']==0 else 1
@@ -178,16 +178,16 @@ def frame(p, state, velocity, height, body_omega, cg, dt, seed, nitro, torque_gy
         for link in t['engines']:
             i=link['index'];linked.add(i)
             engines[i]=engine_output(p['engines'][i],dict(engines[i],omega=shaft['omega']*link['ratio']),velocity,height,nitro,cg)
-            tf=add(tf,engines[i]['force']);tm=add(tm,[link['ratio']*v for v in engines[i]['moment']])
+            tf=add_vectors(tf,engines[i]['force']);tm=add_vectors(tm,[link['ratio']*v for v in engines[i]['moment']])
         transmissions.append(dict(shaft,previous_omega=shaft['omega'],outputs=tf+tm+th+[tw,*ts,0.]))
-        force=add(force,tf);moment=add(moment,tm);momentum=add(momentum,th)
+        force=add_vectors(force,tf);moment=add_vectors(moment,tm);momentum=add_vectors(momentum,th)
         if abs(tw)>abs(wash):wash=tw
         swirl=[max(a,b) for a,b in zip(swirl,ts)]
-        for link in t['engines']:per_engine[link['index']]=add(per_engine[link['index']],tf)
+        for link in t['engines']:per_engine[link['index']]=add_vectors(per_engine[link['index']],tf)
     for i,e in enumerate(p['engines']):
         if i not in linked:
             engines[i]=engine_output(e,engines[i],velocity,height,nitro,cg)
-            force=add(force,engines[i]['force']);moment=add(moment,engines[i]['moment'])
+            force=add_vectors(force,engines[i]['force']);moment=add_vectors(moment,engines[i]['moment'])
     return dict(transmissions=transmissions,engines=engines,propellers=props,seed=seed,
                 aggregate_force=force,aggregate_moment=moment,engine_angular_momentum=momentum,
                 engine_wash=[wash,swirl[0]-swirl[1]],per_engine_force=per_engine)

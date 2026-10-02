@@ -1,5 +1,7 @@
 import math
 import os
+from collections import OrderedDict
+from copy import deepcopy
 import numpy as np
 from scipy.optimize import OptimizeResult, least_squares
 from component_assembly import f32
@@ -58,7 +60,7 @@ def pitch_limits(p, velocity, body_omega, shaft_omega):
     return min(lo, hi), hi
 
 
-def _regime_fit(evaluate, x, paths, bounds, blocks, targets, modes):
+def _regime_fit(evaluate, x, paths, bounds, blocks, targets, modes, full_jacobian=None):
     fixed={};omit=[]
     for j,path in enumerate(paths):
         if path[0]!='pitch':continue
@@ -77,14 +79,16 @@ def _regime_fit(evaluate, x, paths, bounds, blocks, targets, modes):
         q=base.copy();q[active]=z;return q
     def residual(z):return evaluate(expand(z))[rows]
     def derivative(z):
-        return grouped_jacobian(evaluate,expand(z),bounds,blocks,2e-5)[np.ix_(rows,active)]
+        matrix=(full_jacobian(expand(z),2e-5) if full_jacobian is not None else
+                grouped_jacobian(evaluate,expand(z),bounds,blocks,2e-5))
+        return matrix[np.ix_(rows,active)]
     fit=_fit_equilibrium(residual,np.clip(base[active],lo,hi),jac=derivative,bounds=(lo,hi),
                          max_nfev=45,ftol=1e-10,xtol=2e-10,gtol=1e-10)
     fit.x=expand(fit.x)
     return fit
 
 
-def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=True, state=None, *, _prepare_only=False):
+def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=True, state=None, *, _prepare_only=False, _retain_linearization=False):
     native_controls = dict(controls, engine_control_mode='automatic')
     seed = initial_state(p, velocity, height, nitro=nitro, **native_controls)
     if state is not None:
@@ -137,11 +141,22 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
     bounds = (np.asarray(lower), np.asarray(upper))
     calls = 0
     last = None
+    evaluations = OrderedDict()
 
     def evaluate(x):
         nonlocal calls, last
+        check_cancel()
+        # SciPy and the grouped derivative both request the base point. Only
+        # exact coordinates within this solve may reuse a deterministic frame.
+        # Prepared samplers expose mutable state, so they retain fresh frames.
+        key = None if _prepare_only else np.asarray(x, dtype=np.float64).tobytes()
+        if key is not None and key in evaluations:
+            residual, last = evaluations[key]
+            evaluations.move_to_end(key)
+            charge('engine_evaluation_reuse')
+            return residual.copy()
         charge('engine_frames')
-        check_cancel(); calls += 1
+        calls += 1
         s = dict(seed, engines=[dict(e, regulator=-1.) for e in seed['engines']],
                  transmissions=[dict(t) for t in seed['transmissions']],
                  propellers=[dict(q, flow=list(q['flow'])) for q in seed['propellers']])
@@ -202,14 +217,32 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
         for i, row in enumerate(r['transmissions']):
             row.update(omega=s['transmissions'][i]['omega'], previous_omega=s['transmissions'][i]['omega'])
         last = (r, torques, targets, fractions)
-        return np.asarray(residual)
+        residual = np.asarray(residual)
+        if key is not None:
+            evaluations[key] = residual.copy(), last
+            if len(evaluations) > 8:evaluations.popitem(last=False)
+        return residual
 
+    retained_jacobian=None
     def jacobian(x, step_size=2e-4):
-        return grouped_jacobian(evaluate, x, bounds, blocks, step_size)
+        nonlocal retained_jacobian
+        matrix=grouped_jacobian(evaluate, x, bounds, blocks, step_size)
+        if _retain_linearization:retained_jacobian=(x.copy(),matrix.copy())
+        return matrix
 
     blocks = variable_blocks(p, paths)
 
     if _prepare_only:
+        def sample_numeric(x):
+            residual=evaluate(np.asarray(x))
+            frame=last[0]
+            outputs=np.asarray(frame['aggregate_force']+frame['aggregate_moment']+
+                frame['engine_angular_momentum']+frame['engine_wash'])
+            modes=tuple('fixed pitch' if not links else 'minimum pitch' if last[3][i]<=2e-5
+                else 'maximum pitch' if last[3][i]>=1.-2e-5 else 'target RPM'
+                for i,links in enumerate(governed))
+            branch=(modes,tuple(e.get('gear',0) for e in frame['engines']))
+            return residual,outputs,branch
         def sample(x, exact=False):
             q = np.array(x, copy=True)
             residual = evaluate(q)
@@ -225,7 +258,7 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
             return residual, result
         return dict(initial=np.clip(initial, *bounds), bounds=bounds, paths=paths,
                     evaluate=evaluate, sample=sample, scales=scales, seed=seed,
-                    snapshot=lambda:last,calls=lambda:calls)
+                    snapshot=lambda:last,calls=lambda:calls,jacobian=jacobian,sample_numeric=sample_numeric)
 
     x = np.clip(initial, *bounds)
     early_stops = 0
@@ -236,7 +269,7 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
     modes={i:'target' for i,links in enumerate(governed) if links}
     for _ in range(3):
         targets=list(last[2])
-        fit=_regime_fit(evaluate,x,paths,bounds,blocks,targets,modes)
+        fit=_regime_fit(evaluate,x,paths,bounds,blocks,targets,modes,jacobian if _retain_linearization else None)
         if fit is None:break
         early_stops+=bool(getattr(fit,'residual_stop',False))
         residual=evaluate(fit.x);error=float(max(abs(residual),default=0.))
@@ -299,11 +332,24 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
                  for i,links in enumerate(governed) if links}
     if any(mode=='target' and x[paths.index(('shaft',i))]*300.!=last[2][i]
            for i,mode in final_modes.items()):
-        exact=_regime_fit(evaluate,x,paths,bounds,blocks,list(last[2]),final_modes)
+        exact=_regime_fit(evaluate,x,paths,bounds,blocks,list(last[2]),final_modes,jacobian if _retain_linearization else None)
         if exact is not None:
             x=exact.x;early_stops+=bool(getattr(exact,'residual_stop',False))
     residual = evaluate(x)
-    return _result(p, state, controls, governed, last, residual, calls, early_stops)
+    linearization=None
+    if _retain_linearization:
+        # A fitting Jacobian belongs to its exact iterate. Refresh it when the
+        # final root differs; never silently reuse a tangent from another state.
+        if retained_jacobian is None or not np.array_equal(retained_jacobian[0],x):
+            jacobian(x,2e-5)
+        residual=evaluate(x)
+        linearization=dict(coordinates=x.copy(),matrix=retained_jacobian[1],
+            bounds=tuple(b.copy() for b in bounds),paths=tuple(paths),
+            condition=np.r_[velocity,body_omega,height],
+            fixed=(tuple(cg),dt,nitro,deepcopy(controls),torque_gyro))
+    result=_result(p, state, controls, governed, last, residual, calls, early_stops)
+    if linearization is not None:result['_linearization']=linearization
+    return result
 
 
 def _result(p, state, controls, governed, last, residual, calls, early_stops):

@@ -4,6 +4,41 @@ MAX_SIDESLIP_DEG=2.
 SEARCH_ANGLES=(.001,.003,.01,.03,.1,.3,1.,1.5)
 
 
+def recover_local_sideslip(solver, speed, load, failed):
+    """Try nearby balanced branches before expensive independent restarts.
+
+    Near zero roll rate, the native wing-coupling blend can make the
+    coordinated residual poorly conditioned. A small sideslip perturbation
+    supplies a different starting branch. The quick corrector still certifies
+    the complete aircraft, propulsion and Instructor with the usual tolerances.
+    Failure here leaves the existing exhaustive recovery available.
+    """
+    if (not solver.is_prop or not solver.engine.automatic or failed['converged'] or
+            failed['force_error_g'] > .015 or failed['angular_error_rad_s2'] > .008 or
+            failed['stall_margin_deg'] <= 1. or failed['authority_margin'] <= .02 or
+            max(failed['wing_load_ratios']) >= .98):
+        return None
+    origin = failed.get('sideslip_attitude_deg', 0.)
+    attempts = 0
+    for magnitude in SEARCH_ANGLES[:4]:
+        candidates = []
+        for sign in (1., -1.):
+            angle = origin + sign*magnitude
+            if abs(angle) > MAX_SIDESLIP_DEG:continue
+            point = solver.at_sideslip(angle).solve(speed, load, failed['solution'],
+                                                   exhaustive=False, quick=True)
+            attempts += 1
+            if point['valid'] and abs(point['sideslip_deg']) <= MAX_SIDESLIP_DEG:
+                candidates.append(point)
+        if candidates:
+            point = min(candidates, key=lambda p:(abs(p['sideslip_deg']), -p['ps_mps']))
+            point['recovery_method'] = 'balanced local sideslip correction'
+            point['sideslip_recovery'] = dict(max_abs_deg=MAX_SIDESLIP_DEG, attempts=attempts,
+                policy='zero sideslip preferred; nearby fully certified correction; not a global optimum')
+            return point
+    return None
+
+
 def needs_sideslip_search(point):
     if point['valid']:return False
     if not point['converged']:return True

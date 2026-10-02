@@ -28,14 +28,21 @@ def catalog():
     if _worker_snapshot is not None:return _worker_snapshot
     census=json.loads((ROOT/'references/prop-native-config.json').read_text())
     names={r['aircraft'] for r in census['aircraft']}
+    fm_names={p.stem.casefold():p.stem for p in (ROOT/'references/jet-catalog/fm').glob('*.blkx')}
 
+    from jet_catalog import engines
     for path in (ROOT/'references/jet-catalog/fm').glob('*.blkx'):
         raw=json.loads(path.read_bytes())
-        if any(k.startswith('Propeller') and isinstance(v,dict) for k,v in raw.items()):names.add(path.stem)
+        if (any(k.startswith('Propeller') and isinstance(v,dict) for k,v in raw.items()) or
+            any(e.get('Main',{}).get('Type') in ('Radial','Inline','TurboProp') for _,e in engines(raw))):names.add(path.stem)
     vehicles=json.loads((ROOT/'references/prop-vehicles/manifest.json').read_text())['records']
     out={}
     for vehicle in vehicles:
+        if not vehicle.get('model'):continue
+        declaration=ROOT/'references/prop-vehicles'/(vehicle['vehicle']+'.blkx')
+        if declaration.exists() and 'helicopter' in json.loads(declaration.read_bytes()):continue
         fm_id=Path(vehicle['fm']).stem if vehicle['fm'] else vehicle['vehicle']
+        fm_id=fm_names.get(fm_id.casefold(),fm_id)
         if fm_id not in names:continue
         name=vehicle['vehicle']
         if not fm_source(fm_id).exists():continue
@@ -81,10 +88,10 @@ def assets(name):
     return apply_propulsion(name,propulsion['properties']),mass
 
 
-def mass_state(name,fuel_percent,extra_mass=0.):
+def mass_state(name,fuel_percent,extra_mass=0.,payloads=()):
     fm=load(name);_,asset=assets(name);p=aircraft_properties(fm)
     fill=initial(asset['tanks'],asset['fuel_systems'],fuel_percent/100.)
-    payloads=[dict(mass=extra_mass,position=fm['Mass']['CenterOfGravity'])] if extra_mass else []
+    payloads=[*payloads, *([dict(mass=extra_mass,position=fm['Mass']['CenterOfGravity'])] if extra_mass else [])]
     nitro=f32(fm['Mass'].get('MaxNitro',0.))
     kw=dict(payloads=payloads,fuel_by_tank=fill['fuel_by_tank'],nitro=nitro)
     if asset['damage_records']:raise ValueError('Explicit mass parts require separate validation')

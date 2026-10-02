@@ -8,6 +8,29 @@ their labels are formatted identifiers, without inferred missile nicknames.
 
 SOURCE_SHA256 = '9320535fc0bc76e289852a4f5790944174ec3f81593188bfac763d3ab78246c0'
 FALLBACK_IDS = ('su_9m342', 'su_pl9', 'us_fim-92b', 'cn_pf10', 'us_aim_26b', 'us_aim_54b')
+
+from functools import lru_cache
+import json
+from pathlib import Path
+
+
+def display_name(key, rocket=None, *, labels=None):
+    """Prefer the automatically synchronized game localization to the seed."""
+    if labels is None:
+        labels = synchronized_labels()
+    for candidate in dict.fromkeys([key, (rocket or {}).get('bulletName', key)]):
+        for name in ('weapons/' + candidate + '/short', candidate):
+            if labels.get(name):
+                return labels[name]
+    return NAMES.get(key, key.replace('_', ' ').upper())
+
+
+@lru_cache(maxsize=1)
+def synchronized_labels():
+    path = Path(__file__).resolve().parents[1] / 'references/missile-names.json'
+    return json.loads(path.read_text(encoding='utf-8'))['labels'] if path.exists() else {}
+
+
 NAMES = {'atam_mistral': 'Mistral',
  'atam_mistral_a129': 'Mistral',
  'br_maa_1': 'MAA-1',

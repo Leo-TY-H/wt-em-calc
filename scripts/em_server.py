@@ -32,7 +32,7 @@ if current_process().name=='MainProcess':
 
 
     from em_plot import add_boundary_hover,write_exports,prepare_exports,export_csv,export_figure,preview_payload,contour_paths
-from vehicle_names import refresh_result_names, SOURCE as NAME_SOURCE
+from vehicle_names import refresh_result_names, source_paths as name_sources
 from release_info import release_info
 
 APP=ROOT/'app'; OUTPUT=Path(os.environ.get('WT_EM_OUTPUT_DIR',ROOT/'outputs/em'))
@@ -41,7 +41,7 @@ FIGURE_LOCK=threading.Lock()
 PREVIEW_WORKER=ThreadPoolExecutor(max_workers=1)
 PREVIEWS={}
 RESTART_REQUESTED=threading.Event()
-NAME_REVISION=hashlib.sha256(NAME_SOURCE.read_bytes()+
+NAME_REVISION=hashlib.sha256(b''.join(path.read_bytes() for path in name_sources())+
     (APP/'fonts/wt-symbols.ttf').read_bytes()+b'symbol-export-v1-torque-mode-v1').hexdigest()[:12]
 FIGURE_REVISION=hashlib.sha256((ROOT/'scripts/em_plot.py').read_bytes()).hexdigest()[:12]
 ALLOWED_ORIGINS={origin.strip().rstrip('/') for origin in os.environ.get('WT_EM_ALLOWED_ORIGINS','').split(',') if origin.strip()}
@@ -192,9 +192,10 @@ def run_job(key,config,event):
 
 
 def reset_calculation():
-    from em_workers import shutdown
     from em_sampling import _AIRCRAFT_CACHE,_COLUMN_CACHE,worker_solver
-    shutdown()
+    # Healthy processes stay warm. process_pool gives each calculation a new
+    # epoch; each worker clears its mutable solver history before its first task.
+    # Cancelled or failed pools are shut down by process_pool itself.
     _AIRCRAFT_CACHE.clear();_COLUMN_CACHE.clear();worker_solver.cache_clear()
 
 

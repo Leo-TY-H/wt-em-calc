@@ -9,6 +9,7 @@ from copy import deepcopy
 from functools import lru_cache
 import json
 from pathlib import Path
+from missile_inputs import directory as input_directory
 import struct
 
 from kernels import f32, sub
@@ -28,7 +29,7 @@ from geometric_radar import measure as radar_measure, BOUND
 
 @lru_cache(maxsize=1)
 def radar_properties():
-    return json.loads((Path(__file__).with_name('missile_model') / 'radar-launch-properties.json').read_text())['properties']
+    return json.loads((input_directory() / 'radar-launch-properties.json').read_text())['properties']
 
 
 def radar_ready(asset, guidance, template, body, target):

@@ -51,6 +51,20 @@ cdef inline double _math_atan2(double y, double x):
 SCALARS = {'instructor_aoa_balance': {'required_acceleration(model, ip, state, delivered_pitch)': ('def required_acceleration(model, ip, state, double delivered_pitch)', 'working, sn, cs, vx, vy, axial, swirl, qvx, wash, k, spin, dynamic, taq, center, positive, negative, command, a, e, cladd, bias, angle, vstab_drag, other, extra, flow, td, required, tail_cl, tail_force, lever, acceleration')}, 'windows_instructor_source': {'fixed_source(model, state)': ('def fixed_source(model, state)', 'distance, denominator, slope, numerator')}, 'piston_model': {'div(a, b)': ('cpdef double div(double a, double b)', ''), 'pressure_at_height(height, pressure0=101300.0, ceiling=18300.0)': ('cpdef double pressure_at_height(double height, double pressure0=101300.0, double ceiling=18300.0)', 'h, p, c'), 'inlet_pressure(height, body_u, recovery)': ('cpdef double inlet_pressure(double height, double body_u, double recovery)', 'rho, ram'), 'rpm_torque(p, omega, throttle, torque_multiplier=1.0, afterburner=False, gear=0, nitro=0.0)': ('def rpm_torque(p, double omega, double throttle, double torque_multiplier=1.0, afterburner=False, gear=0, double nitro=0.0)', 'effective, wref, x, shape, scale, torque, tboost'), 'mixture(p, inlet, command, *, rich_accumulator=0.0, automatic=False)': ('def mixture(p, double inlet, double command, *, double rich_accumulator=0.0, automatic=False)', 'pressure, accum, supplied, limit, factor, inv')}, 'structural_limits': {'interval(x, x0, y0, x1, y1)': ('cpdef inline double interval(double x, double x0, double y0, double x1, double y1)', '')}, 'piston_compressor': {'speed_factor(p, omega)': ('cpdef double speed_factor(p, double omega)', 'x'), 'requested_pressure(p, throttle, height)': ('cpdef double requested_pressure(p, double throttle, double height)', ''), 'low_rpm(manifold, omega, inlet)': ('cpdef double low_rpm(double manifold, double omega, double inlet)', ''), 'candidate(p, s, i, speed, inlet, requested, throttle, afterburner, nitro)': ('def candidate(p, s, int i, double speed, double inlet, double requested, double throttle, afterburner, double nitro)', 'pb, flow, critical, flat, ceiling, line, scale, baseline, shape, x, potential, score, offset'), 'step(p, omega, throttle, inlet, dt, *, gear=0, old_gear=0, regulator=-1.0, afterburner=False, nitro=0.0, turbo=0.0, turbo_command=1.0, automatic_turbo=True, assisted=False, height=0.0)': ('def step(p, double omega, double throttle, double inlet, double dt, *, gear=0, old_gear=0, double regulator=-1.0, afterburner=False, double nitro=0.0, double turbo=0.0, double turbo_command=1.0, automatic_turbo=True, assisted=False, double height=0.0)', 'requested, speed, shape, base, upper, allowed, target, fraction, potential, top, ratio, manifold, line, factor, best, gain')}, 'engine_supply': {'mechanical_multiplier(p, omega, health, cylinders, previous, extra, torque, friction, dt, seed, disabled=False, enabled=True)': ('def mechanical_multiplier(p, double omega, double health, cylinders, double previous, double extra, double torque, double friction, double dt, seed, disabled=False, enabled=True)', 'rate, amplitude, loss, damage, shaft, a, b, c, u, threshold, value')}, 'polar_f32': {'sin(x)': ('cpdef inline double sin(double x)', ''), 'div(a, b)': ('cpdef inline double div(double a, double b)', ''), 'calc_cl(p, a)': ('cpdef double calc_cl(p, double a)', 's, crit, cy, after, da, x, maxang, sa, pa, h, den, coeff, local_sign, local_angle, one, two, correction, wave'), 'calc_cd(p, a)': ('cpdef double calc_cd(p, double a)', 'line, delta, cd, bound'), 'calc_c(p, a, angle, cl_add=0.0, cd_coeff=1.0)': ('def calc_c(p, double a, double angle, double cl_add=0.0, double cd_coeff=1.0)', 'cd, cl, radians, sn, cs')}, 'polar_runtime': {'mach_value(runtime, mach, index)': ('cpdef double mach_value(runtime, double mach, int index)', 'a, b, high, slope, limit, c0, c1, c2, c3, value'), 'evaluate(runtime, mach, cy_mult=1.0)': ('def evaluate(runtime, double mach, double cy_mult=1.0)', 'lam, slope, parab, decline, maxdist, cdafter, clafterl, clafterh, cl0, ah, al, ch, cl, cd, span, area, ind, focus, cm0, cm1, kq, clkq, original_cl0, mm, value, effective_slope, inv, dh, dl, lineh, low, linel, highden, lowden, ph, pl')}, 'piston_general': {'step(p, s, velocity=(100.0, 0.0, 0.0), height=0.0, dt=1 / 48, seed=12345, torque_multiplier=1.0, nitro=0.0)': ('def step(p, s, velocity=(100.0, 0.0, 0.0), double height=0.0, double dt=1 / 48, seed=12345, double torque_multiplier=1.0, double nitro=0.0)', 'omega, throttle, inlet, tq, modulation, mechanical, power, x, rate, consumption, manifold')}}
 
 
+# The steady propeller model deliberately uses binary64 polars. Keep these
+# separate from the binary32 aircraft polar kernels and retain strict FP flags.
+SCALARS['polar_model'] = {
+    'safe_div(a, b)': ('cpdef double safe_div(double a, double b)', ''),
+    'mach_multiplier(props, mach, index)': ('def mach_multiplier(props, double mach, int index)', 'low, a, b, high, slope, limit, value, t'),
+    'calc_cl(p, a)': ('cpdef double calc_cl(p, double a)', 's, crit, after, cy, max_ang, da, h, max_da, need, local_sign, local_aoa, correction'),
+    'calc_cd(p, a)': ('cpdef double calc_cd(p, double a)', 'linear, s, crit, cd'),
+}
+SCALARS['prop_quasisteady'] = {
+    'blade_forces(p, omega, pitch, axial, transverse, density, sound, angular_flow=0.0)':
+        ('def blade_forces(p, double omega, double pitch, double axial, double transverse, double density, double sound, double angular_flow=0.0)',
+         'thrust, torque, area_unit, station, twist, width, radius, tangential, phi, alpha, speed, force_unit, lift, drag'),
+}
+
 DIRECT_CALLS = {'piston_model': ('rpm_torque', 'mixture'), 'piston_compressor': ('candidate', 'step'), 'piston_general': ('step',), 'engine_supply': ('mechanical_multiplier',)}
 for module,names in DIRECT_CALLS.items():
     for header,(typed,locals_) in list(SCALARS[module].items()):
@@ -108,6 +122,8 @@ def main():
     write_source(src/'polar_f32.pxd','cpdef double calc_cl(object p, double a)\ncpdef double calc_cd(object p, double a)\n')
     write_source(src/'polar_runtime.pxd','cpdef double mach_value(object runtime, double mach, int index)\n')
     exports={
+        'polar_model': {'calc_cl':'cpdef double calc_cl(object p, double a)',
+                        'calc_cd':'cpdef double calc_cd(object p, double a)'},
         'piston_model':{'div':'cpdef double div(double a, double b)',
                         'pressure_at_height':'cpdef double pressure_at_height(double height, double pressure0=*, double ceiling=*)',
                         'inlet_pressure':'cpdef double inlet_pressure(double height, double body_u, double recovery)'},
@@ -143,6 +159,11 @@ def main():
         for module,functions in exports.items():
             if name==module:continue
             def import_scalars(match):
+                # These calls use sparse keyword arguments. Cython's C-import
+                # fallback loses the aliased name for such calls; retain the
+                # compiled function's Python wrapper instead.
+                if name=='prop_quasisteady' and module in ('piston_general','piston_compressor'):
+                    return match.group(0)
                 names=match.group(1).split(', ');direct=[n for n in names if n.split(' as ')[0] in functions]
                 if not direct:return match.group(0)
                 rest=[n for n in names if n.split(' as ')[0] not in functions]

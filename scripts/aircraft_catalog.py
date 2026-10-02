@@ -41,6 +41,9 @@ def catalog():
                 raise ValueError('Positive direct-thrust upgrade requires a validated engine consumer')
         except ValueError as error:
             row.update(supported=False,reason=str(error))
+    from aircraft_ammunition import profile as ammunition_profile
+    for name, row in result.items():
+        row['ammunition']=ammunition_profile(name)
     from vehicle_names import apply_names
     apply_names(result)
     from flap_model import profile as flap_profile
@@ -63,9 +66,10 @@ def source(name):
 def asset_sources():
     from pathlib import Path
     root=Path(__file__).resolve().parents[1]
+    from aircraft_ammunition import PROFILE
     from aircraft_upgrades import source_paths
-    from vehicle_names import SOURCE
+    from vehicle_names import source_paths as name_sources
     return (sorted((root/'references/prop-propulsion').glob('*.json'))+
             sorted((root/'references/prop-mass').glob('*.json'))+source_paths()+
-            [EXCLUSIONS,SOURCE,root/'app/fonts/wt-symbols.ttf',root/'references/prop-native-config.json',
+            name_sources()+([PROFILE] if PROFILE.exists() else [])+[EXCLUSIONS,root/'app/fonts/wt-symbols.ttf',root/'references/prop-native-config.json',
              root/'references/body-gameplay.blkx',root/'references/body-gameparams.blkx'])
