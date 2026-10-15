@@ -15,7 +15,6 @@ def description(config):
 
 def label(config):
     parts = []
-    if config.get('mach_curve_mode')=='stable':parts.append('Stable Mach arithmetic')
     if config.get('experimental_instantaneous_aero', False):parts.append('Instantaneous aero')
     lateral = config.get('experimental_lateral_trim', 'full')
     if lateral == 'zero_sideslip':parts.append('Zero sideslip')

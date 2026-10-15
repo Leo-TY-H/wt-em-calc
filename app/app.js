@@ -51,7 +51,6 @@ const requestConditions=c=>{const values={...c,...fixedSolverConditions};delete 
 // Preserve actual result settings for display and stale-result comparisons.
 // Editing or copying settings applies the fixed browser model to every entry.
 const modeConditions=c=>{const values=conditionsFrom(c);return {...values,...fixedSolverConditions,instructor_model:'steady',engine_control_mode:'quasi_steady',aircraft_trim_mode:'discrete',instructor_authority_mode:'direct',turn_response_mode:'settled',torque_gyro:!values.instructor};};
-const solverLabel=c=>({stationary:'Stationary solver',nested:'Baseline solver',off:'Correction off'}[c.trim_solver_mode]||'Stationary solver');
 const engineModelLabel=c=>c.engine_control_mode==='quasi_steady'?(c.controls?.automatic?.some(auto=>!auto)||c.manual_engine_controls&&!c.propeller_pitch_auto?'Quasi-steady · manual pitch':'Quasi-steady · ideal governor'):'Dynamic propulsion';
 const aircraftModelLabel=c=>c.aircraft_trim_mode==='quasi_steady'?'Quasi-steady aircraft trim':'Discrete aircraft trim';
 const experimentLabel=p=>{const e=p.model_experiments;return e?`${e.instantaneous_aerodynamics?'Instantaneous aerodynamics':'Retained aerodynamic history'} · ${{full:'Full trim',zero_sideslip:'Zero sideslip, full roll/yaw balance',symmetric:'Ideal symmetric, pitch trim only'}[e.lateral_trim]}`:'Retained model';};
@@ -141,7 +140,7 @@ function renderEntries(){
 function refreshEntrySummaries(){
   for(const row of $('selected-aircraft').children){
     const c=state.conditions[row.dataset.entry];
-    row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)} · ${solverLabel(c)}${c.structural_limits===false?' · Flutter off':''}`;
+    row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)}${c.structural_limits===false?' · Flutter off':''}`;
   }
 }
 function addEntry(name,condition){

@@ -65,7 +65,7 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
             mode=('RB' if condition['instructor'] else 'SB') if condition['instructor']!=condition['torque_gyro'] else (
                 f"Instructor {'on' if condition['instructor'] else 'off'} · torque/gyro {'on' if condition['torque_gyro'] else 'off'}")
             if not condition['structural_limits']:mode+=' · Flutter off'
-            mode+=' · '+('New stationary solver' if condition['trim_solver_mode']=='stationary' else 'Baseline solver')
+            if condition['trim_solver_mode']!='stationary':mode+=' · Baseline solver'
             from em_model_experiments import label
             experiment=label(condition)
             if experiment:mode+=' · '+experiment
