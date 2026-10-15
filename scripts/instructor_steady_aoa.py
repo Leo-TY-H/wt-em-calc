@@ -7,6 +7,11 @@ REVISION = 'steady-effective-aoa-fixed-autotrim-v9'
 def controller_limits(solver, value, speed=None):
     if value.get('instructor') is not None:
         return value['instructor']
+    # Boundary events can inspect a residual-only trial before admission.
+    # The Instructor needs its acceleration, so complete this record on demand.
+    if value.get('search_only', False):
+        from em_operating import complete_reporting
+        complete_reporting(solver, value)
     phases = value.get('phase_results') or [value['result']]
 
 
