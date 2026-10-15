@@ -301,6 +301,7 @@ class JointProblem:
         fit = self.corrector(initial, offset=offset, residual_scale=residual_scale).solve(
             initial[offset:], max_nfev=max_nfev, trace=trace,
             numerical_target=numerical_target, reuse_jacobian=True,
+            fast_stagnation=offset==0,
             predictor=None if previous is None else previous['predictor'])
         q = initial.copy();q[offset:] = fit.x
         # The returned sample was already evaluated, even when a derivative

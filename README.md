@@ -58,9 +58,14 @@ branch-aware differences and protected steps across native rounding jumps.
 Production correction stops at the existing componentwise closure ceilings,
 followed by the final physical checks. Boundaries and conditional history use
 their declared row requirements without an additional raw precision target.
-Stalled production trials stop unresolved after a bounded period without useful
-progress. Optimizer success alone never admits a point. Explicit research
-diagnostics can request tighter precision without imposing it on ordinary charts.
+Stalled full-aircraft trials far outside closure stop unresolved after two fresh
+linearizations without useful progress; trials within ten times the closure
+scales retain the longer six-iteration recovery window. Inner propulsion/history
+and boundary corrections retain their existing recovery window. Reusing a previous
+Jacobian does not consume the fresh-linearization allowance. Numerical closure
+and physical admission thresholds are unchanged. Optimizer success alone never
+admits a point. Explicit research diagnostics can request tighter precision
+without imposing it on ordinary charts.
 
 Accepted steps update the local Jacobian with scaled Broyden secants. Nearby
 points reuse that model as a hint, checking the actual equations and branch

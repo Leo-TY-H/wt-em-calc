@@ -28,6 +28,8 @@ SUFFICIENT_DECREASE = 1e-4
 MODEL_AGREEMENT = .1
 MERIT_ROUNDOFF = 32. * float(np.finfo(float).eps)
 PROGRESS_WINDOW = 6
+FAR_PROGRESS_WINDOW = 2
+NEAR_CLOSURE_RATIO = 10.
 PROGRESS_FRACTION = .001
 
 
@@ -122,7 +124,7 @@ class Corrector:
 
     def solve(self, initial, *, max_nfev=120, max_evaluations=None,
               max_iterations=None, numerical_target=NUMERICAL_TARGET, trace=None,
-              reuse_jacobian=False, predictor=None):
+              reuse_jacobian=False, predictor=None, fast_stagnation=False):
         """Use one Newton-first, projected trust-box correction trajectory.
 
         Significant weighted native norm improvement with model agreement of
@@ -142,10 +144,13 @@ class Corrector:
         ``numerical_target`` defaults to 1e-7; zero requests exact raw objective
         zero, for example when the evaluator supplies constraint violations.
         None uses only the supplied componentwise residual scales. Such
-        production correction stops unresolved after six linearizations without
-        a 0.1 percent improvement in its best scaled closure ratio. It need not
-        chase roundoff on an unreachable trial. Explicit diagnostic targets
-        retain their requested precision and work budget.
+        production correction with ``fast_stagnation`` stops unresolved after
+        two fresh linearizations without a 0.1 percent improvement while more
+        than ten times outside closure. Near closure, and by default for inner
+        or boundary solves, it retains the six-iteration recovery window.
+        Reusing a predictor cannot consume the fresh-linearization allowance:
+        the current equations and coordinate proposals must be checked again.
+        Explicit diagnostic targets retain their requested precision and work budget.
         Optional Jacobian reuse applies a scaled Broyden update after accepted same-branch
         steps. A poor prediction refreshes the derivative before robust recovery.
         An incoming predictor is a numerical hint, never an evaluated state.
@@ -240,7 +245,7 @@ class Corrector:
         stencil = self.steps.copy()
         recent = []
         nonmonotone_steps = 0
-        progress_ratio, progress_iteration = math.inf, 0
+        progress_ratio, progress_iteration, progress_models = math.inf, 0, 0
         message, termination = 'Correction budget exhausted', 'objective_budget'
 
         class Closed(Exception):
@@ -398,7 +403,10 @@ class Corrector:
                 if row_target:
                     if return_key[0] < progress_ratio * (1. - PROGRESS_FRACTION):
                         progress_ratio, progress_iteration = return_key[0], iterations
-                    elif iterations - progress_iteration >= PROGRESS_WINDOW:
+                        progress_models = iterations-jacobian_reuses
+                    elif (iterations - progress_iteration >= PROGRESS_WINDOW or
+                          (fast_stagnation and progress_ratio > NEAR_CLOSURE_RATIO
+                           and iterations-jacobian_reuses-progress_models >= FAR_PROGRESS_WINDOW)):
                         message = 'No useful componentwise progress; correction unresolved'
                         termination = 'stagnation'
                         break
