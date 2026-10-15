@@ -16,15 +16,35 @@ async function api(path, options={}) {
   // Relative API paths work both at localhost / and at a GitHub Pages project
   // path such as /repository-name/.
   const pageLoad=path==='/api/meta?refresh=1';
+  const readOnly=(options.method||'GET').toUpperCase()==='GET';
+  const attempts=pageLoad?300:readOnly?4:1;
   let restarting=false;
-  for(let attempt=0;attempt<(pageLoad?300:1);attempt++){
-    let response;
-    try{response=await fetch(apiUrl(path),options);}
-    catch(error){if(!restarting)throw error;await new Promise(resolve=>setTimeout(resolve,2000));continue;}
-    if(restarting&&[502,503,504].includes(response.status)){
-      await new Promise(resolve=>setTimeout(resolve,2000));continue;
+  for(let attempt=0;attempt<attempts;attempt++){
+    let response,body;
+    try{
+      response=await fetch(apiUrl(path),options);
+      // Proxy outage responses may be HTML or have no body at all.
+      if([502,503,504].includes(response.status)&&!pageLoad){
+        throw Object.assign(new Error('The calculation server is temporarily unavailable.'),{retryable:true});
+      }
+      if(restarting&&[502,503,504].includes(response.status)){
+        await new Promise(resolve=>setTimeout(resolve,2000));continue;
+      }
+      body=await response.json();
+      if([502,503,504].includes(response.status)&&!(pageLoad&&body.code==='server_restarting')){
+        throw Object.assign(new Error('The calculation server is temporarily unavailable.'),{retryable:true});
+      }
+    }catch(cause){
+      if(cause.name==='AbortError')throw cause;
+      const retryable=cause.retryable||cause instanceof TypeError||[502,503,504].includes(response?.status);
+      if(!retryable)throw cause;
+      if(readOnly&&attempt<(restarting?attempts:4)-1){
+        await new Promise(resolve=>setTimeout(resolve,Math.min(4000,1000*2**Math.min(attempt,2))));continue;
+      }
+      throw Object.assign(new Error(readOnly?
+        'Connection to the calculation server was interrupted. Please try again.':
+        'Connection to the calculation server was interrupted. The request may have reached the server; its outcome could not be confirmed.'),{retryable:true,cause});
     }
-    const body=await response.json();
     if(response.status===503&&body.code==='server_restarting'&&pageLoad){
       restarting=true;$('footer-status').textContent='Loading updated calculator…';
     }else if(!response.ok)throw new Error(body.error||`Request failed (${response.status})`);
@@ -630,7 +650,14 @@ async function poll(id){
     const percent=p.total?Math.min(99,100*p.done/p.total):0;
     $('progress-fill').style.width=percent+'%';$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
     setTimeout(()=>poll(id),900);
-  }catch(e){setRunning(false);state.activeJob=null;error(e.message);}
+  }catch(e){
+    if(state.activeJob!==id)return;
+    if(e.retryable){
+      $('progress-label').textContent='Connection interrupted · reconnecting to your calculation…';
+      setTimeout(()=>poll(id),5000);return;
+    }
+    setRunning(false);state.activeJob=null;error(e.message);
+  }
 }
 $('scenario').addEventListener('submit',async e=>{
   e.preventDefault();error('');if(state.running)return;
