@@ -5,6 +5,7 @@ import subprocess
 import sys
 import platform
 import time
+import sysconfig
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,8 +19,16 @@ MODULES=['component_assembly','component_stages','control_mixer','polar_f32','ma
          'piston_model','piston_compressor','piston_general',
          'propeller_general','turbine_general','rocket_general','propulsion_general','fuel_loading',
          'advanced_mass','prop_steady','polar_model','prop_quasisteady','em_numeric_core','em_operating',
-         'instructor_aoa_balance','windows_instructor_source','instructor_chart_inputs','instructor_aoa']
+         'instructor_aoa_balance','windows_instructor_source','instructor_chart_inputs','instructor_aoa',
+         'prop_governor_wake','prop_governor_evaluator']
 DIRECTORY=ROOT/'.native_em'
+_SESSION_BACKEND=None
+
+
+def pin_session(kind):
+    """The server's snapshot loader selects the already-validated native files."""
+    global _SESSION_BACKEND
+    _SESSION_BACKEND=kind
 
 
 @contextmanager
@@ -75,7 +84,25 @@ def signature():
     return digest.hexdigest()
 
 
+def valid_manifest(expected):
+    """A source match alone does not establish that the cached binaries work."""
+    try:
+        manifest=json.loads((DIRECTORY/'manifest.json').read_text())
+        if manifest['signature']!=expected:return None
+        library=(DIRECTORY/manifest['library']).resolve()
+        if not library.is_relative_to(DIRECTORY.resolve()):return None
+        suffix=sysconfig.get_config_var('EXT_SUFFIX')
+        binaries=manifest['binaries']
+        if set(binaries)!={name+suffix for name in MODULES}:return None
+        for name,checksum in binaries.items():
+            if hashlib.sha256((library/name).read_bytes()).hexdigest()!=checksum:return None
+        return manifest
+    except (OSError,ValueError,KeyError,TypeError):
+        return None
+
+
 def activate():
+    if _SESSION_BACKEND is not None:return _SESSION_BACKEND
     if os.environ.get('WT_EM_BACKEND')=='python':return 'python'
     portable=DIRECTORY/'portable.json'
     if portable.exists():
@@ -93,20 +120,19 @@ def activate():
         return 'compiled'
     expected=signature()
     def current():
-        try:return json.loads((DIRECTORY/'manifest.json').read_text())['signature']==expected
-        except (OSError,ValueError,KeyError):return False
+        return valid_manifest(expected) is not None
     if not current():
 
 
         with build_lock():
             if not current():
-                completed=subprocess.run([sys.executable,str(ROOT/'scripts'/'build_em_backend.py')],
+                completed=subprocess.run([sys.executable,str(ROOT/'scripts'/'build_em_backend.py'),'--lock-held'],
                     cwd=str(ROOT),stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
                 if completed.returncode:
                     raise RuntimeError('Compiled EM backend rebuild failed: '+completed.stderr[-2000:])
     try:
-        manifest=json.loads((DIRECTORY/'manifest.json').read_text())
-        if manifest['signature']!=expected:raise RuntimeError('Compiled EM backend signature mismatch after rebuild')
+        manifest=valid_manifest(expected)
+        if manifest is None:raise RuntimeError('Compiled EM backend integrity check failed after rebuild')
         path=str(DIRECTORY/manifest.get('library','lib'))
 
 

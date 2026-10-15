@@ -8,6 +8,15 @@ def sample_corner(task):
     name, config_json, left, right = task
     started = time.monotonic()
     solver = worker_solver(name, config_json)
+    if solver.config.get('trim_solver_mode') == 'stationary' and hasattr(solver,'core'):
+        point=stationary_intersection(solver,left,right)
+        if point is None:return None
+        column=sample_column((name,config_json,point['speed_kmh'],[point]))
+        column['constraint_corner']=dict(point['envelope_limit'],
+            structural_side=('right' if right['boundary_reason']=='wing force' else 'left')
+                if 'Instructor pitch' not in point['envelope_limit']['competing_constraints'] else None)
+        column['elapsed_s']=time.monotonic()-started
+        return column
     if solver.is_prop and solver.engine.automatic:
 
 
@@ -105,6 +114,53 @@ def sample_corner(task):
     column['constraint_corner'] = dict(point['envelope_limit'], structural_side=('right' if right['boundary_reason']=='wing force' else 'left'))
     column['elapsed_s'] = time.monotonic() - started
     return column
+
+
+def stationary_intersection(solver,left,right):
+    """Two physical faces, with speed/load and all joint states corrected together."""
+    from em_stationary_boundary import Curve, mark
+    points=[column['boundary'] for column in (left,right)]
+    if any(not p['valid'] or p.get('sideslip_attitude_deg',0.) for p in points):return None
+    kinds={p['envelope_limit']['kind'] for p in points}
+    if kinds!={'stall','wing force'} and not (
+            'Instructor pitch' in kinds and len(kinds)==2 and kinds & {'wing force','control'}):return None
+    speed_interval=(left['speed_kmh'],right['speed_kmh'])
+    if speed_interval[0]>=speed_interval[1]:return None
+    seed=dict(points[0],solution=np.mean([p['solution'] for p in points],axis=0).tolist(),
+        speed_kmh=sum(speed_interval)/2.,load_g=sum(p['load_g'] for p in points)/2.)
+    curve=Curve(solver,seed['speed_kmh'],speed_interval=speed_interval,free_load=True)
+    events=[]
+    ordered=['Instructor pitch' if 'Instructor pitch' in kinds else 'stall',
+             'wing force' if 'wing force' in kinds else 'control']
+    for kind in ordered:
+        if kind=='stall':
+            events.append(lambda v:(v['stall_margin']-.002)/10.)
+        elif kind=='wing force':
+            events.append(lambda v:max(v['maximum_wing_load_ratios'])-.99995)
+        elif kind=='Instructor pitch':
+            def instructor(v):
+                control=solver.instructor_at(v,v['speed'],v['equilibrium_load_g'])
+                return control['envelope_margin']-2e-6 if control['converged'] else float('nan')
+            events.append(instructor)
+        else:
+            edge=next(p for p in points if p['envelope_limit']['kind']=='control')
+            _,axis,side=min((abs(command-bound),axis,side)
+                for axis,(command,bounds) in enumerate(zip(edge['commands'],edge['control_bounds']))
+                for side,bound in enumerate(bounds))
+            def mechanical(v,axis=axis,side=side):
+                control=solver.instructor_at(v,v['speed'],v['equilibrium_load_g'])
+                if not control['converged']:return float('nan')
+                return (1. if side==0 else -1.)*(v['allocation']['commands'][axis]-
+                    control['control_bounds'][axis][side])-3e-5
+            events.append(mechanical)
+    point=curve.correct(seed,events=events,max_nfev=48,event_tolerance=5e-6)
+    if curve.unverified_candidates:
+        solver.__dict__.setdefault('stationary_boundary_evidence',[]).extend(curve.unverified_candidates)
+    if point is None or not point['valid']:return None
+    point=mark(point,ordered[0],method='shared stationary balance at intersecting physical constraints',
+        competing_constraints=ordered,speed_bracket_kmh=list(speed_interval))
+    point['_checked_probe_boundary']=True
+    return point
 
 
 def instructor_corner(task):

@@ -64,6 +64,10 @@ class FastInteractionSession(InteractionSession):
         frame = FastFrameSession.__new__(FastFrameSession)
         frame.__dict__.update(self.frame.__dict__)
         self.frame = frame
+        # FlightSession has already validated this exact layout against the
+        # profile. It is a tuple of frozen dataclasses, private to this owned
+        # flight; checkpoints still serialize the original authored properties.
+        frame.flight.properties['_motor_properties'] = frame.flight.properties['guidance']['motors']
 
     def advance(self,now,frame_dt,target_provider,*,collision_time,point_history=None,
                 illumination_provider=None,flight_step=None,surface=lambda endpoint:0.):

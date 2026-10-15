@@ -14,6 +14,7 @@ from matplotlib import font_manager
 import numpy as np
 import contourpy
 from scipy.interpolate import PchipInterpolator
+from em_stationary_baseline import presentation
 
 LEVELS=[-400.,-200.,-100.,0.,100.]
 SYMBOL_FONT=Path(__file__).resolve().parents[1]/'app/fonts/wt-symbols.ttf'
@@ -42,10 +43,18 @@ def speed_boundary_labels(aircraft, data=None):
     speed=redline.get('deployment_speed_kmh')
     if (data is not None and speed is not None
             and data['settings']['speed_min_kmh']<=speed<=data['settings']['speed_max_kmh']
-            and (not redline.get('enforced') or speed<redline['speed_kmh'])):
+            and (not redline.get('enforced') or speed<redline['speed_kmh']-.01)):
+        description='Higher speeds require prior deployment; already-deployed flaps remain usable up to the envelope limit.'
         labels.append(dict(speed_kmh=speed,turn_dps=data['plot_max_turn']/2,
             text='Flap deployment limit',dashed=True,
-            description='Further extension inhibited; higher speeds require prior deployment.'))
+            description=description))
+    for crossing in (aircraft.get('over_rev') or {}).get('crossings',[]):
+        vne=redline.get('vne_tas_kmh',(aircraft.get('over_rev') or {}).get('vne_tas_kmh',math.inf))
+        if crossing['speed_kmh']>=vne:continue
+        if data is not None and not data['settings'].get('speed_min_kmh',0.)<=crossing['speed_kmh']<=data['settings'].get('speed_max_kmh',math.inf):continue
+        labels.append(dict(speed_kmh=crossing['speed_kmh'],turn_dps=(data or {}).get('plot_max_turn',20.)/2,
+            text='Over-rev boundary',dashed=True,
+            description=f"Engine {crossing['engine_index']+1}: {crossing['rpm_limit']:.0f} RPM; over-rev on {crossing['over_rev_side']} side. Steady axial-flow estimate; turning-flight RPM can differ."))
     return labels
 
 
@@ -55,11 +64,57 @@ def nullable_grid(values):
     return out.tolist()
 
 
+def display_discontinuities(config,aircraft,xs,turn,loads,z):
+    """Draw narrow formula switches at one speed with separate one-sided limits.
+
+    Only presentation coordinates move, by less than the horizontal chart
+    tolerance. A zero-width masked column keeps contours from interpolating
+    across the jump. Physical samples and unresolved numerical gaps stay intact.
+    """
+    from em_accuracy import speed_tolerance
+    tolerance=speed_tolerance(config)
+    interpolation=aircraft.get('interpolation',{})
+    columns={c['speed_kmh']:c for c in aircraft.get('columns',())}
+    displayed=[]
+    for event in interpolation.get('native_discontinuities',()):
+        lo,hi=event['speed_interval_kmh']
+        if not 0.<hi-lo<=tolerance:continue
+        if any(a<hi and b>lo for a,b in interpolation.get('unresolved_speed_intervals',())):continue
+        sides=[columns.get(v) for v in (lo,hi)]
+        if not all(c and c.get('boundary_status')=='verified limit' and
+                   (c.get('boundary') or {}).get('valid') for c in sides):continue
+        li,ri=np.searchsorted(xs,[lo,hi])
+        if ri>=len(xs) or xs[li]!=lo or xs[ri]!=hi:continue
+        if not all(np.isfinite(z[:,i]).any() for i in (li,ri)):continue
+        outline=aircraft['boundary']
+        left=next((p for p in outline if p['speed_kmh']==lo and p['turn_dps'] is not None),None)
+        right=next((p for p in outline if p['speed_kmh']==hi and p['turn_dps'] is not None),None)
+        if left is None or right is None:continue
+        center=(lo+hi)*.5
+        indices=np.r_[np.arange(li+1),li,li,ri,np.arange(ri,len(xs))]
+        xs=xs[indices].copy();xs[li+1:li+4]=center
+        turn=turn[:,indices];loads=loads[:,indices];z=z[:,indices].copy()
+        z[:,li+2]=np.nan
+        limits=[dict(left,speed_kmh=center,sample_speed_kmh=lo,mach_discontinuity_side='left'),
+                dict(speed_kmh=center,turn_dps=None,at_plot_ceiling=False,edge_kind='Native Mach discontinuity'),
+                dict(right,speed_kmh=center,sample_speed_kmh=hi,mach_discontinuity_side='right')]
+        aircraft['boundary']=sorted([p for p in outline if not lo<p['speed_kmh']<hi]+limits,
+                                    key=lambda p:p['speed_kmh'])
+        displayed.append(dict(speed_kmh=center,sampled_speed_interval_kmh=[lo,hi],
+            method='Separate one-sided limits at chart horizontal resolution; no cross-jump interpolation'))
+    aircraft['display_discontinuities']=displayed
+    return xs,turn,loads,z
+
+
 def contour_levels(aircraft,data=None):
     return sorted((data or {}).get('settings',{}).get('sep_contour_levels_mps',LEVELS))
 
 
+@presentation
 def contour_paths(data,levels=None,*,prepared_matrices=None):
+    if data.get('stationary_full_chart'):
+        from em_stationary_surface import contours as stationary
+        return stationary(data, levels)
     output={}
     for aircraft in data['aircraft']:
         prepared=(prepared_matrices or {}).get(aircraft['id'])
@@ -74,6 +129,7 @@ def contour_paths(data,levels=None,*,prepared_matrices=None):
     return output
 
 
+@presentation
 def matrices(data, aircraft):
     from em_continuous_boundary import mask_surface
     if 'surface' in aircraft:
@@ -90,7 +146,8 @@ def matrices(data, aircraft):
     return x,y,mask_surface(aircraft,x,y,z)
 
 
-def smooth_surface(data,aircraft):
+@presentation
+def smooth_surface(data,aircraft,*,surface_format='lists'):
     from em_sampling import speed_interpolate
     from em_load_limits import LOWER_SPEED_KMH,LOWER_LOAD_G
 
@@ -249,8 +306,14 @@ def smooth_surface(data,aircraft):
     aircraft['numerical_gaps']=[dict(speed_kmh=c['speed_kmh'],**gap,
         turn_dps=math.degrees(9.8100004196167*math.sqrt(gap['load_g']**2-1.)/(c['speed_kmh']/3.6)))
         for c in columns for gap in c.get('numerical_gap_brackets',[])]
-    aircraft['surface']=dict(x=xs.tolist(),fraction=fraction.tolist(),load_g=loads.tolist(),mesh='verified boundary and uniform turn fraction',turn_dps=turn.tolist(),
-                             z=nullable_grid(z))
+    xs,turn,loads,z=display_discontinuities(data['settings'],aircraft,xs,turn,loads,z)
+    surface=dict(x=xs,fraction=fraction,load_g=loads,
+        mesh='verified boundary and uniform turn fraction',turn_dps=turn,z=z)
+    if surface_format=='lists':
+        surface={k:(nullable_grid(v) if k=='z' else v.tolist())
+                 if isinstance(v,np.ndarray) else v for k,v in surface.items()}
+    elif surface_format!='arrays':raise ValueError('Unknown surface format')
+    aircraft['surface']=surface
     for column in columns:
         for key in ('_curve','_alpha_curve','_angle_map'):column.pop(key,None)
     # Feed contours from the arrays already in memory, avoiding a round trip
@@ -270,11 +333,15 @@ def plot_turn_ceiling(aircraft):
     return max(10.,float(math.ceil(max_turn*1.05+1.)))
 
 
-def enrich(data):
+@presentation
+def enrich(data,*,surface_format='lists'):
+    if data.get('stationary_full_chart'):
+        from em_stationary_surface import enrich as stationary
+        return stationary(data)
     data['plot_max_load_g']=max(1.1,max((p['load_g'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=1.1))
     prepared={}
     for aircraft in data['aircraft']:
-        if 'columns' in aircraft:prepared[aircraft['id']]=smooth_surface(data,aircraft)
+        if 'columns' in aircraft:prepared[aircraft['id']]=smooth_surface(data,aircraft,surface_format=surface_format)
         else:prepared[aircraft['id']]=matrices(data,aircraft)
 
 
@@ -309,8 +376,10 @@ def enrich(data):
     return data
 
 
+@presentation
 def preview_payload(data):
-    enrich(data)
+    # Contours consume arrays directly; the preview does not export its surface.
+    enrich(data,surface_format='arrays')
     chart={k:v for k,v in data.items() if k!='aircraft'}
     chart['aircraft']=[{k:v for k,v in a.items() if k not in ('columns','surface','boundary_columns')}
                        for a in data['aircraft']]
@@ -320,8 +389,8 @@ def preview_payload(data):
 
 def export_csv(data):
     condition_fields=['torque_gyro','engine_control_mode','aircraft_trim_mode','turn_response_mode','instructor_authority_mode','trim_solver_mode','altitude_m','fuel_percent','throttle','afterburner','extra_mass_kg','default_ammunition','ammunition_vehicle','structural_limits','timestep_hz']
-    out=io.StringIO();fields=['aircraft','aircraft_id','aircraft_name','kind']+condition_fields+['speed_kmh','load_g','turn_dps','ps_mps','ps_continuous_mps',
-          'valid','converged','reasons','alpha_deg','bank_deg','sideslip_deg','sideslip_attitude_deg','ias_kmh','mach','force_error_g',
+    out=io.StringIO();fields=['aircraft','aircraft_id','aircraft_name','kind','calculation_status','partial_result']+condition_fields+['speed_kmh','load_g','turn_dps','ps_mps','ps_continuous_mps',
+          'valid','local_valid','status','chart_usable','chart_status','converged','reasons','alpha_deg','bank_deg','sideslip_deg','sideslip_attitude_deg','ias_kmh','mach','force_error_g',
           'angular_error_rad_s2','history_error','stall_margin_deg','vertical_step_velocity_mps',
           'commands','authority_margin','force_n','moment_nm','engine_force_n','sweep_percent','sweep_available_percent',
           'flaps_requested_percent','flaps_percent','gear_percent','instructor_enabled','instructor','prolonged_pull','propulsion','local_response']
@@ -332,7 +401,8 @@ def export_csv(data):
             for p in points:
                 row={key:p.get(key,'') for key in fields}
                 row.update(aircraft=aircraft['id'],aircraft_id=aircraft.get('aircraft_id',aircraft['id']),
-                           aircraft_name=aircraft.get('name',aircraft['id']),kind=kind)
+                           aircraft_name=aircraft.get('name',aircraft['id']),kind=kind,
+                           calculation_status=data.get('calculation_status','complete'),partial_result=bool(data.get('calculation_stopped')))
                 cfg=aircraft.get('settings',data['settings'])
                 if kind=='Instructor boundary':
                     row.update(valid=p['turn_dps'] is not None,instructor_enabled=True,
@@ -344,7 +414,11 @@ def export_csv(data):
     return out.getvalue()
 
 
+@presentation
 def export_figure(data, path, selected=None, levels=None, format=None):
+    if data.get('stationary_full_chart'):
+        from em_stationary_surface import export_figure as stationary
+        return stationary(data, path, selected, levels, format)
     if levels is not None:data=dict(data,settings=dict(data['settings'],sep_contour_levels_mps=list(levels)))
     aircraft=[a for a in data['aircraft'] if selected is None or a['id']==selected]
 
@@ -416,6 +490,7 @@ def boundary_limit_label(state, reason=None):
             limit.get('axis'),'Control surface authority')
     return {'stall':'Stall', 'Instructor pitch':'AoA limiter (Instructor)',
             'wing force':'Structure (wing load)',
+            'engine RPM':'Engine RPM limit',
             'pitch response':'Elevator effectiveness (pitch-response reversal)',
             'trim fold':'Trim equilibrium limit'}.get(kind,'Aircraft limit not identified')
 
@@ -439,7 +514,9 @@ def add_boundary_limits(aircraft, source):
         lo,hi=min(group),max(group)
         group.update({v:boundary_limit_label(p) for v,p in measured.items() if lo<=v<=hi})
     groups=[(sorted(g),g) for g in groups]
-    edges={'VNE speed boundary':'Structure (VNE speed limit)',
+    edges={'Over-rev speed boundary':'Engine RPM limit (steady axial-flow estimate)',
+           'Unresolved RPM limit speed boundary':'RPM search unresolved; calculation stopped',
+           'VNE speed boundary':'Structure (VNE speed limit)',
            'Mach limit speed boundary':'Structure (Mach speed limit)',
            'stall-speed edge':'Stall',
            'Instructor pitch minimum-speed edge':'AoA limiter (Instructor)',
@@ -536,10 +613,8 @@ def add_boundary_hover(chart, data):
     return chart
 
 
-def prepare_exports(data, *, started_at=None):
-    if 'plot_max_turn' not in data:enrich(data)
-
-
+def _public_values(value):
+    """Clean only the graph being published; dense arrays are boxed on export."""
     cleaned={}
     def performance_only(value):
         if not isinstance(value,(dict,list)):
@@ -549,7 +624,9 @@ def prepare_exports(data, *, started_at=None):
         identity=id(value)
         if identity in cleaned:return cleaned[identity]
         if isinstance(value,dict):
-            result={k:performance_only(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
+            result={k:(surface_export(v) if k=='surface' and isinstance(v,dict)
+                       and isinstance(v.get('z'),np.ndarray) else performance_only(v))
+                    for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
         elif not value:result=value
         elif value[0] is None or isinstance(value[0],(int,float,np.number)):
             try:
@@ -569,24 +646,50 @@ def prepare_exports(data, *, started_at=None):
         else:result=[performance_only(v) for v in value]
         cleaned[identity]=result
         return result
-    data=performance_only(data)
+    def surface_export(surface):
+        # Validate and box each dense array once, rather than traversing the
+        # resulting millions of Python scalars again. Public JSON stays lists
+        # with null at masked SEP cells; all other nonfinite values still fail.
+        result={}
+        for key,value in surface.items():
+            if isinstance(value,np.ndarray):
+                if key=='z':result[key]=nullable_grid(value)
+                else:
+                    if not np.isfinite(value).all():raise ValueError('Nonfinite numerical export')
+                    result[key]=value.tolist()
+            else:result[key]=performance_only(value)
+        return result
+    return performance_only(value)
+
+
+def prepare_export_data(data):
+    """Prepare downloadable data from an already displayed chart, without solving."""
+    return _public_values(data)
+
+
+@presentation
+def prepare_exports(data, *, started_at=None, include_exports=True):
+    if 'plot_max_turn' not in data:enrich(data,surface_format='arrays')
+    if include_exports:data=prepare_export_data(data)
     points={}
 
 
     chart={k:v for k,v in data.items() if k!='aircraft'};chart['aircraft']=[]
     for aircraft in data['aircraft']:
-        item={k:v for k,v in aircraft.items() if k not in ('columns','surface','points','sustained','boundary_columns')}
-        points[aircraft['id']]=[performance_only(p) for p in aircraft['points']+aircraft.get('sustained',[])]
+        item={k:v for k,v in aircraft.items() if k not in ('columns','surface','points','sustained','boundary_columns','cells')}
+        details=aircraft['points']+aircraft.get('sustained',[])
+        points[aircraft['id']]=details if include_exports else _public_values(details)
         def brief(point,index):
-            return dict({k:point[k] for k in ['speed_kmh','load_g','turn_dps','valid','ps_mps','reasons','flaps_percent','flaps_requested_percent']},detail_index=index)
+            return dict({k:point.get(k) for k in ['speed_kmh','load_g','turn_dps','valid','local_valid','status','chart_usable','chart_status','ps_mps','reasons','flaps_percent','flaps_requested_percent']},detail_index=index)
         item['points']=[brief(p,i) for i,p in enumerate(aircraft['points'])]
         item['sustained']=[brief(p,len(aircraft['points'])+i) for i,p in enumerate(aircraft.get('sustained',[]))]
         chart['aircraft'].append(item)
     add_boundary_hover(chart,data);chart['boundary_hover_ready']=True
+    if not include_exports:chart=_public_values(chart)
     if started_at is not None:
         chart['calculation_elapsed_s']=chart['elapsed_s']
         chart['elapsed_s']=time.monotonic()-started_at
-    return dict(data=data,chart=chart,points=points)
+    return dict(data=data,chart=chart,points=points,exports_ready=include_exports)
 
 
 def write_exports(data, directory, *, figures=True, started_at=None):

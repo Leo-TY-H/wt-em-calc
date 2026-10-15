@@ -13,6 +13,7 @@ def recover_local_sideslip(solver, speed, load, failed):
     the complete aircraft, propulsion and Instructor with the usual tolerances.
     Failure here leaves the existing exhaustive recovery available.
     """
+    if solver.config.get('experimental_lateral_trim','full')!='full':return None
     if (not solver.is_prop or not solver.engine.automatic or failed['converged'] or
             failed['force_error_g'] > .015 or failed['angular_error_rad_s2'] > .008 or
             failed['stall_margin_deg'] <= 1. or failed['authority_margin'] <= .02 or
@@ -40,6 +41,7 @@ def recover_local_sideslip(solver, speed, load, failed):
 
 
 def needs_sideslip_search(point):
+    if point.get('model_experiments',{}).get('lateral_trim','full')!='full':return False
     if point['valid']:return False
     if not point['converged']:return True
     if set(point['reasons'])=={'control authority'}:return True
@@ -48,10 +50,88 @@ def needs_sideslip_search(point):
                 ctl['converged'] and ctl['limiting']=='control authority with auto trim')
 
 
+def _stationary_fixed_alpha(solver,speed,load,failed,starts):
+    """Discover fixed-alpha/free-beta candidates with the shared joint method.
+
+    Sideslip is an added coordinate, replacing the prescribed alpha coordinate.
+    Histories and shafts remain explicit joint unknowns. Search starts are
+    proposals only; the common evaluator admits every returned aircraft state.
+    """
+    import itertools
+    import numpy as np
+    from em_cancellation import check as check_cancel
+    from em_stationary import JointProblem, prepare
+    from em_stationary_corrector import Corrector
+    if solver.config.get('trim_solver_mode') == 'off':
+        raise ValueError('Correction is off; sideslip correction is unavailable')
+    candidates=[];attempts=[]
+    for alpha,beta in starts:
+        check_cancel()
+        view=solver.core() if hasattr(solver,'core') else copy.copy(solver)
+        view.sideslip_attitude_deg=beta
+        view._sideslip_solvers={}
+        attitude=list(failed['solution']);attitude[0]=alpha
+        try:
+            requests=prepare(view,speed/3.6,load,attitude)[1] if view.is_prop else []
+            branches=itertools.product(*[range(len(r['candidates'])) if r['governed'] else [0]
+                                         for r in requests])
+            for branch in branches:
+                check_cancel()
+                problem=JointProblem(view,speed,load,attitude,branch)
+                initial=problem.initial.copy()
+                if (failed.get('stationary_coordinate_names')==problem.coordinate_names
+                        and tuple(failed.get('stationary_request_indices',()))==branch):
+                    initial=np.asarray(failed['stationary_coordinates'],dtype=float).copy()
+                    initial[:problem.history_start]=np.asarray(attitude)[problem.attitude_indices]
+                initial[0]=alpha
+                def expand(z):
+                    view.sideslip_attitude_deg=float(z[-1])
+                    q=initial.copy();q[1:]=z[:-1]
+                    return q
+                def sample(z):return problem.sample(expand(z))
+                def project(z,base):
+                    q=problem.project(expand(z),base)
+                    return np.r_[q[1:],z[-1]]
+                correction=Corrector(sample,
+                    (np.r_[problem.lower[1:],-1.95],np.r_[problem.upper[1:],1.95]),
+                    np.r_[problem.steps[1:],.002],branch=problem.derivative_branch,
+                    project=project,scale=np.r_[problem.correction_scales[1:],.2],
+                    step_limit=np.r_[problem.correction_step_limits[1:],.2],
+                    residual_scale=problem.correction_residual_scales)
+                fit=correction.solve(np.r_[initial[1:],beta],max_nfev=80)
+                point=problem.finish(expand(fit.x))
+                point['numerical_message']=fit.message
+                candidates.append(point)
+                attempts.append(dict(alpha=alpha,sideslip=beta,requests=list(branch),
+                    local_valid=point['local_valid'],termination=fit.termination,
+                    nfev=fit.nfev,evaluations=fit.evaluations))
+                if not point['local_valid'] or abs(point['sideslip_deg'])>MAX_SIDESLIP_DEG:continue
+                result=dict(point,stationary_candidates=list(candidates),stationary_attempts=list(attempts),
+                    selected_candidates=[],recovery_method='shared fixed-alpha sideslip correction',
+                    sideslip_recovery=dict(max_abs_deg=MAX_SIDESLIP_DEG,attempts=len(attempts),
+                        policy='Finite fixed-alpha/free-beta candidate search; selection and coverage unresolved'))
+                return solver.sample(result) if hasattr(solver,'sample') else result
+        except (ValueError,ArithmeticError,np.linalg.LinAlgError) as error:
+            attempts.append(dict(alpha=alpha,sideslip=beta,error=str(error)))
+    # Preserve unsuccessful discovery evidence without promoting it to absence.
+    failed.setdefault('stationary_sideslip_candidates',[]).extend(candidates)
+    failed.setdefault('stationary_sideslip_attempts',[]).extend(attempts)
+    return None
+
+
 def recover_fixed_alpha(solver,speed_kmh,load,failed):
+    if solver.config.get('trim_solver_mode') == 'off':
+        raise ValueError('Correction is off; sideslip correction is unavailable')
+    if solver.config.get('experimental_lateral_trim','full')!='full':return None
     import numpy as np
     from scipy.optimize import least_squares
     if failed['converged'] or failed['force_error_g']>.015 or failed['angular_error_rad_s2']>.008:return None
+    if solver.config.get('trim_solver_mode') == 'stationary':
+        alpha=failed['solution'][0]
+        return _stationary_fixed_alpha(solver,speed_kmh,load,failed,
+            ((alpha,0.),(alpha,.2),(alpha,-.2),
+             (round(alpha,2)+.0001,.2),(round(alpha,2)-.0001,-.2),
+             (round(alpha,2)+.0001,1.),(round(alpha,2)-.0001,-1.)))
     alpha=failed['solution'][0];view=copy.copy(solver)
     view.instructor_boundaries={};view.instructor_trim_entries={};view._sideslip_solvers={}
     def value(z,frozen=None):
@@ -91,10 +171,19 @@ def recover_fixed_alpha(solver,speed_kmh,load,failed):
 
 
 def recover_scalar_sideslip(solver,speed,load,failed):
+    if solver.config.get('trim_solver_mode') == 'off':
+        raise ValueError('Correction is off; sideslip correction is unavailable')
+    if solver.config.get('experimental_lateral_trim','full')!='full':return None
     import math
     import numpy as np
     from scipy.optimize import brentq
     if failed['converged'] or failed['force_error_g']>.05 or failed['angular_error_rad_s2']>.02:return None
+    if solver.config.get('trim_solver_mode') == 'stationary':
+        alpha=failed['solution'][0]
+        # Beta is corrected jointly rather than solving another inner system
+        # at every scalar bracket probe. Nearby alpha seeds remain discovery.
+        return _stationary_fixed_alpha(solver,speed,load,failed,
+            ((alpha,0.),(round(alpha,2)+.0001,.03),(round(alpha,2)-.0001,-.03)))
     view=copy.copy(solver)
     for alpha in (failed['solution'][0],round(failed['solution'][0],2)+.0001,round(failed['solution'][0],2)-.0001):
         known={};accepted=None;root_search=False;checked=set()
@@ -160,6 +249,7 @@ def recover_scalar_sideslip(solver,speed,load,failed):
 
 
 def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
+    if solver.config.get('experimental_lateral_trim','full')!='full':return None
     if not needs_sideslip_search(failed):
         return None
 
@@ -234,6 +324,7 @@ def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
 
 
 def recover_sideslip_boundary(solver,speed_kmh,low,high):
+    if solver.config.get('experimental_lateral_trim','full')!='full':return None
     for magnitude in SEARCH_ANGLES:
         candidates=[]
         for sign in (1.,-1.):

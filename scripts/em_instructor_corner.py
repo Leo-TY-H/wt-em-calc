@@ -8,6 +8,9 @@ def solve_corner(solver, left, right):
     kinds = {point['envelope_limit']['kind'] for point in points}
     if 'Instructor pitch' not in kinds or not kinds & {'wing force', 'control'}:
         return None
+    if solver.config.get('trim_solver_mode') == 'stationary' and hasattr(solver,'core'):
+        from em_corner import stationary_intersection
+        return stationary_intersection(solver,left,right)
     physical = next(kind for kind in kinds if kind != 'Instructor pitch')
     if physical == 'control':
         edge = next(point for point in points if point['envelope_limit']['kind'] == physical)

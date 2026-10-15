@@ -12,10 +12,19 @@ def safe_div(a, b):
 
 
 def mach_multiplier(props, mach, index):
+    return mach_factor(mach_curve(props,index),mach)
+
+
+def mach_curve(props, index):
     low = 0.0 if index == 6 else 1.0
     a, b = props[f'MachCrit{index}'], props[f'MachMax{index}']
     high = props[f'MultMachMax{index}']
     slope, limit = props[f'MultLineCoeff{index}'], props[f'MultLimit{index}']
+    return low,a,b,high,slope,limit
+
+
+def mach_factor(row, mach):
+    low,a,b,high,slope,limit=row
     if mach < a:
         return low
     if mach > b:
@@ -40,7 +49,8 @@ def table_value(props, mach):
     return points[-1][1:]
 
 
-def make_polar(props, span, area, mach=0.0, cy_mult=1.0):
+def prepare_polar(props, span, area, cy_mult=1.0):
+    """Prepare only Mach-independent coefficients; never retain output buffers."""
     cl=props['Cl0']; ind=safe_div(1.0,math.pi*props['OswaldsEfficiencyNumber']*safe_div(span*span,area))
     p=dict(cl0=cl,cd0=props['CdMin'],indCoeff=ind,clLineCoeff=props['lineClCoeff'],
            cyCritH=props['ClCritHigh']*cy_mult,cyCritL=props['ClCritLow']*cy_mult,
@@ -50,12 +60,24 @@ def make_polar(props, span, area, mach=0.0, cy_mult=1.0):
            maxDistAng=props['AfterCritMaxDistanceAngle'],cdAfterCoeff=props['CxAfterCoeff'],
            clAfterCritL=props['ClAfterCritLow'],clAfterCritH=props['ClAfterCritHigh'],kq=1.0,clKq=1.0,cyMult=cy_mult)
     mode=props.get('MachFactor',0)
+    rows=tuple(mach_curve(props,i) for i in range(1,8)) if mode==3 else ()
+    # Modes 0/1/2 change only compressibility factors, not the stall shape.
+    # Prepare those coefficients once with the identical arithmetic order.
+    if mode in (0,1,2):_stall_shape(p,cy_mult)
+    return props,p,mode,rows
+
+
+def evaluate_polar(prepared, mach, p, f, moments=True):
+    """Write one exact polar into caller-owned storage, resetting every field."""
+    props,base,mode,rows=prepared
+    p.update(base)
+    cl=base['cl0'];ind=base['indCoeff'];cy_mult=base['cyMult']
     if mode == 3:
-        f={i:mach_multiplier(props,mach,i) for i in range(1,8)}
+        for i in range(1,8):f[i]=mach_factor(rows[i-1],mach)
         p.update(cd0=p['cd0']*f[1],clLineCoeff=p['clLineCoeff']*((1+f[1]-f[2]) if props.get('CombinedCl',True) else f[2]),
                  cl0=cl*f[7],cyCritH=cl+(p['cyCritH']-cl*f[7])*f[3],cyCritL=cl+(p['cyCritL']-cl*f[7])*f[3],
                  aoaCritH=p['aoaCritH']*f[4],aoaCritL=p['aoaCritL']*f[4],indCoeff=ind*f[5],aerCenterOffset=f[6])
-        p['clToCm0'],p['clToCm1']=table_value(props,mach)
+        if moments:p['clToCm0'],p['clToCm1']=table_value(props,mach)
     elif mode in [1,2]:
         mm=min(mach,0.9) if mode==1 else mach
         x=abs(1-mm*mm)
@@ -63,13 +85,21 @@ def make_polar(props, span, area, mach=0.0, cy_mult=1.0):
         p['kq']=1/max(x**0.3,0.2);p['clKq']=math.sqrt(p['kq'])
     elif mode != 0:
         raise ValueError(f'Unknown MachFactor {mode}')
+    if mode==3:_stall_shape(p,cy_mult)
+    return p
+
+
+def _stall_shape(p,cy_mult):
     p['aoaLineH']=2*safe_div(p['cyCritH']-p['cl0'],p['clLineCoeff']*cy_mult)-p['aoaCritH']
     p['aoaLineL']=2*safe_div(p['cyCritL']-p['cl0'],p['clLineCoeff']*cy_mult)-p['aoaCritL']
     if p['aoaLineL'] > p['aoaLineH']:
         p['aoaLineL']=p['aoaLineH']=0.5*(p['aoaLineL']+p['aoaLineH'])
     p['parabCyCoeffH']=safe_div(p['cyCritH']-(p['cl0']+p['aoaLineH']*p['clLineCoeff']*cy_mult),(p['aoaCritH']-p['aoaLineH'])**2)
     p['parabCyCoeffL']=safe_div(-p['cyCritL']+(p['cl0']+p['aoaLineL']*p['clLineCoeff']*cy_mult),(p['aoaCritL']-p['aoaLineL'])**2)
-    return p
+
+
+def make_polar(props, span, area, mach=0.0, cy_mult=1.0, *, moments=True):
+    return evaluate_polar(prepare_polar(props,span,area,cy_mult),mach,{},[0.]*8,moments)
 
 
 def calc_cl(p,a):

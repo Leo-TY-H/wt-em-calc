@@ -90,8 +90,14 @@ def validate_flight_numbers(state):
 
 
 def signature():
-    return hashlib.sha256((SOURCE + sys.implementation.cache_tag + sys.platform +
-                           platform.machine().lower()).encode()).hexdigest()
+    from missile_numeric_build import MODULES
+    digest = hashlib.sha256((SOURCE + sys.implementation.cache_tag + sys.platform +
+                            platform.machine().lower()).encode())
+    digest.update((ROOT / 'scripts/missile_numeric_build.py').read_bytes())
+    digest.update(Path(__file__).read_bytes())
+    for name in MODULES:
+        digest.update((ROOT / 'scripts/missile_model' / (name + '.py')).read_bytes())
+    return digest.hexdigest()
 
 
 def build():
@@ -102,14 +108,21 @@ def build():
     source.write_text(SOURCE, encoding='utf-8')
     library = DIRECTORY / ('lib-' + signature()[:16])
     flags = ['/O2', '/fp:strict'] if os.name == 'nt' else ['-O3', '-ffp-contract=off', '-fno-fast-math']
-    extensions = cythonize([Extension('_missile_accel', [str(source)], extra_compile_args=flags)],
+    from missile_numeric_build import MODULES, source as numeric_source
+    model = ROOT / 'scripts/missile_model'
+    specifications = [Extension('_missile_accel', [str(source)], extra_compile_args=flags)]
+    for name in MODULES:
+        target = DIRECTORY / ('_missile_numeric_' + name + '.pyx')
+        target.write_text(numeric_source(name, model), encoding='utf-8')
+        specifications.append(Extension('_missile_numeric_' + name, [str(target)], extra_compile_args=flags))
+    extensions = cythonize(specifications,
                           compiler_directives={'language_level': 3, 'infer_types': False})
     setup(name='missile-exact-helpers', ext_modules=extensions,
           script_args=['build_ext', '--build-lib', str(library), '--build-temp', str(DIRECTORY/'objects')])
     binaries = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in library.iterdir() if p.suffix in ('.pyd', '.so')}
-    if len(binaries) != 1:
-        raise RuntimeError('Expected one compiled helper extension')
+    if len(binaries) != 1 + len(MODULES):
+        raise RuntimeError('Missing compiled missile extensions')
     manifest = dict(signature=signature(), library=library.name, binaries=binaries,
                     compiler_flags=flags)
     temporary = DIRECTORY / 'manifest.tmp'

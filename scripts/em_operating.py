@@ -7,28 +7,38 @@ from body_dynamics import angular_acceleration,G
 from component_assembly import f32
 from primary_controls import authority_ranges
 from kinematics import airborne_step,altitude_velocity_correction
-from em_numeric_core import closure
+from em_numeric_core import closure,turn_quaternion
 
 
 def flight_condition(self, speed, load, x):
     from em_solver import turn_geometry
-    alpha,bank=x[:2]; a=math.radians(alpha)
-    steady=self.config.get('aircraft_trim_mode','discrete')=='quasi_steady'
     evaluation_dt=self.dt
-    velocity=[f32(speed*math.cos(a)),f32(-speed*math.sin(a)),0.]
-    air=cache(velocity,self.config['altitude_m'])
-    geometry=turn_geometry(alpha,bank,speed,load,self.dt,air['ias_u'],self.sideslip_attitude_deg)
-
-    velocity=world_to_body_air(geometry['quaternion'],[speed,0.,0.])
+    alpha,bank=x[:2]
+    # The first former turn_geometry call supplied only its attitude. Building
+    # force directions, angular rate and a provisional air cache there was dead
+    # work: attitude does not depend on its provisional IAS or angular rate.
+    quaternion=turn_quaternion(alpha,bank,self.sideslip_attitude_deg)
+    velocity=world_to_body_air(quaternion,[speed,0.,0.])
+    if self.config.get('experimental_lateral_trim','full')!='full':
+        if self.sideslip_attitude_deg!=0.:raise ValueError('Experimental trim requires zero sideslip')
+        # Remove quaternion-rounding leakage from the explicitly zero-beta input.
+        velocity[2]=0.
     air=cache(velocity,self.config['altitude_m'])
     geometry=turn_geometry(alpha,bank,speed,load,self.dt,air['ias_u'],self.sideslip_attitude_deg)
     return velocity,air,geometry,evaluation_dt
 
 
-def operating_point(self, speed, load, x, propulsion_override=None,canonical_propulsion=False,cycle_seconds=60.,certify_stationary=False,phase_certificate=False,propulsion_sample=None,*,_search=False,_steady_history=False):
+def operating_point(self, speed, load, x, propulsion_override=None,canonical_propulsion=False,cycle_seconds=60.,certify_stationary=False,phase_certificate=False,propulsion_sample=None,*,_search=False,_steady_history=False,stationary_angles=None,_evaluation_cache=None):
     from em_solver import turn_geometry,command_allocation,DEFAULTS
     check_cancel()
-    velocity,air,geometry,evaluation_dt=flight_condition(self,speed,load,x)
+    symmetric=self.config.get('experimental_lateral_trim')=='symmetric'
+    if symmetric:
+        x=[x[0],x[1],0.,x[3],0.]
+    # The caller owns this exact-condition cache: speed, load, sideslip and all
+    # aircraft coordinates must agree. History and propulsion remain variable.
+    condition = _evaluation_cache if _evaluation_cache is not None else {}
+    if 'flight' not in condition:condition['flight']=flight_condition(self,speed,load,x)
+    velocity,air,geometry,evaluation_dt=condition['flight']
     steady=self.config.get('aircraft_trim_mode','discrete')=='quasi_steady'
     ranges=authority_ranges(self.controls,air['ias_u'])
     flaps=self.flaps
@@ -36,7 +46,13 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
 
     canonical=command_allocation(self.controls,x[2:],ranges,DEFAULTS)
     commands=canonical['allocated_commands'] if canonical['reachable'] else list(map(f32,x[2:]))
-    allocation=command_allocation(self.controls,commands,ranges,self.config)
+    if (self.config['trim_mode']==DEFAULTS['trim_mode'] and
+            self.config['trim_limit']==DEFAULTS['trim_limit'] and commands==canonical['commands']):
+        # Exactly the same controls, ranges and allocation policy; no second
+        # inversion or rounding is needed. Fixed/limited trim still evaluates.
+        allocation=canonical
+    else:
+        allocation=command_allocation(self.controls,commands,ranges,self.config)
     propulsion=(propulsion_override if propulsion_override is not None else propulsion_sample if propulsion_sample is not None else
                 self.engine.condition(tuple(velocity),tuple(geometry['omega']),flaps,speed,canonical_propulsion,
                     cycle_seconds,certify_stationary,phase_certificate)) if self.is_prop else None
@@ -47,9 +63,22 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
     history_error=math.inf
     phases=propulsion.get('cycle_samples') if propulsion is not None and propulsion_override is None else None
     phases=phases or [None]
+    instantaneous=self.config.get('experimental_instantaneous_aero',False)
+    if instantaneous and stationary_angles is not None:
+        raise ValueError('Instantaneous aerodynamics has no stationary history coordinates')
+    explicit_history=stationary_angles is not None
+    if explicit_history:
+        if steady or len(phases)!=1:
+            raise ValueError('Explicit stationary angles require one discrete propulsion state')
+        if len(stationary_angles)!=2 or not all(math.isfinite(float(a)) for a in stationary_angles):
+            raise ValueError('Two finite stationary wing-angle coordinates are required')
+        history['wing_aoa']=list(map(float,stationary_angles))
 
 
-    phase_aero={};aircraft_condition={}
+    phase_aero={};aircraft_condition=condition.setdefault('aircraft',{})
+    # History-dependent wing positions have their own exact keys. Bound their
+    # storage when many trial histories share one fixed aircraft condition.
+    if len(aircraft_condition.get('wing',{}))>64:aircraft_condition.pop('wing')
     def evaluate_phase(phase,history,seed_only=False):
 
 
@@ -61,12 +90,12 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
             r=replay_propulsion(self.model,phase_aero[phase_key],self.mass,(phase[:3],phase[3:6]),phase[6:9],torque_gyro=self.config['torque_gyro'])
         else:
             r=evaluate(self.model,velocity,geometry['omega'].tolist(),self.mass,allocation['commands'],
-                self.config['altitude_m'],evaluation_dt,history,oil_radiator=0.,flaps=flaps,gear=self.gear,throttle=self.config['throttle'],
+                self.config['altitude_m'],evaluation_dt,history,oil_radiator=self.oil_radiator,radiator=self.radiator,flaps=flaps,gear=self.gear,throttle=self.config['throttle'],
                 height_agl=1e6,engine_vectors=(phase[:3],phase[3:6]) if phase is not None else vectors,
                 engine_spin_factor=f32(self.config['throttle']),quaternion=geometry['quaternion'],torque_gyro=self.config['torque_gyro'],
                 engine_wash=phase[9:] if phase is not None else engine_flow,
                 engine_angular_momentum=phase[6:9] if phase is not None else engine_momentum,
-                _condition_cache=aircraft_condition,_history_seed_only=seed_only,_air_state=(None))
+                _condition_cache=aircraft_condition,_history_seed_only=seed_only,_air_state=air)
             if not seed_only and phase_key is not None:
                 if len(phase_aero)>=max(256,len(phases)):phase_aero.pop(next(iter(phase_aero)))
                 phase_aero[phase_key]=r
@@ -78,10 +107,17 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
     def finite_memory(h):
         return h['spin']==0. and all(polar['aoaCritL']<=angle<=polar['aoaCritH'] for angle in h['wing_aoa'])
     constant_geometry=not shifts or all(y==shifts[0][1] for _,y in shifts)
-    direct_history=not steady and len(phases)>16 and constant_geometry and finite_memory(history)
+    direct_history=not instantaneous and not explicit_history and not steady and len(phases)>16 and constant_geometry and finite_memory(history)
     initial_history=history
-    steady_attempt=not steady and _steady_history and len(phases)==1 and constant_geometry and finite_memory(history)
+    steady_attempt=not instantaneous and not explicit_history and not steady and _steady_history and len(phases)==1 and constant_geometry and finite_memory(history)
     steady_used=False
+    if explicit_history:
+        # The wing-angle coordinates stay independent. Only overwritten CL/body
+        # histories are substituted before evaluating the discrete force law.
+        # Spin zero is the retained pre-positive-stall substitution; a returned
+        # nonzero spin remains a closure error and the physical stall guard stays.
+        seed=evaluate_phase(phases[0],history,seed_only=True)['history']
+        history=dict(history,wing_cl=seed['wing_cl'],body_angles=seed['body_angles'])
     if steady_attempt:
         seed=evaluate_phase(phases[0],history,seed_only=True)['history']
         if finite_memory(seed):
@@ -95,7 +131,7 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
         if finite_memory(seed):history=seed
         else:direct_history=False
     iteration=0
-    while iteration<12:
+    while iteration<(1 if explicit_history or instantaneous else 12):
         cycle_input=history;phase_results=[];branch_ok=True
         for phase in phases:
             r=replay if steady_used else evaluate_phase(phase,history)
@@ -109,6 +145,9 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
         pass
         history_error=max(abs(new[k][i]-cycle_input[k][i]) for k in ['wing_aoa','wing_cl','body_angles'] for i in range(2))
         history_error=max(history_error,abs(new['spin']-cycle_input['spin']))
+        if instantaneous:
+            history_error=0. # No history closure equation exists in this model.
+            break
         if history_error<1e-6:break
 
 
@@ -122,6 +161,9 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
             r[key]=[sum(v[key][i] for v in phase_results)/len(phase_results) for i in range(3)]
         for key in ['component_forces','component_points']:
             r[key]={k:[sum(v[key][k][i] for v in phase_results)/len(phase_results) for i in range(3)] for k in r[key]}
+    if symmetric:
+        from em_model_experiments import symmetric_result
+        r=symmetric_result(r,self.mass,geometry['omega'],evaluation_dt)
     force=np.asarray(r['force']); processed=np.asarray(r['omega_for_flow'])
     pass
     residual,rate_residual=closure(self.numeric_parameters,speed,force,processed,r['stored_moment'],
@@ -162,8 +204,12 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
                 allocation=allocation,velocity=velocity,stall_margin=stall_margin,
                 negative_stall_margin=negative_stall_margin,flaps=flaps,gear=self.gear,instructor=None,propulsion=propulsion,
                 ps=None,ps_continuous=None,
-                kinematic=None,altitude_correction=None,history_iterations=min(iteration+1,12),
+                kinematic=None,altitude_correction=None,history_iterations=0 if instantaneous else 1 if explicit_history else min(iteration+1,12),
+                history_closure_required=not instantaneous,
                 search_only=_search,steady_history_attempted=steady_attempt,steady_history_used=steady_used)
+    if explicit_history:
+        value['stationary_angle_residual']=np.asarray(stationary_angles)-np.asarray(history['wing_aoa'])
+        value['explicit_stationary_history']=True
     return value if _search else complete_reporting(self,value)
 
 

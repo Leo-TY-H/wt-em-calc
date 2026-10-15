@@ -9,13 +9,19 @@ class TrimCurve:
 
     scale = np.array([10., 30., .3, .3, .3, 10.])
     difference = np.array([.002, .002, .0002, .0002, .0002, .0002]) / scale
+    # Numerical placement of a chart section in scaled coordinates. This is
+    # not an equilibrium equation or a physical boundary.
+    stationary_plane_tolerance = 1e-5
 
     def __init__(self, solver, speed, seed=None):
         self.solver = solver
         self.speed = float(speed)
+        self.stationary = (solver.config.get('trim_solver_mode') == 'stationary'
+                           and hasattr(solver, 'core'))
+        self._stationary_seed = seed
 
 
-        if solver.is_prop and solver.engine.automatic:
+        if not self.stationary and solver.is_prop and solver.engine.automatic:
             self.solver = solver.with_prop_controls(
                 solver.engine.fixed_controls or solver.engine.automatic_controls)
             from em_data import clone
@@ -142,6 +148,10 @@ class TrimCurve:
         if not length or not self.inside(predicted):
             return None
         normal = normal / length
+        if self.stationary:
+            return self._stationary_correct(predicted, normal, event=event,
+                event_tolerance=event_tolerance, max_iterations=max_iterations,
+                max_evaluations=max_evaluations, prescribed_load=prescribed_load)
         self.full_phase = not self.solver.is_prop
         if self.solver.is_prop:
             self.solver.engine.force_canonical = False
@@ -259,6 +269,48 @@ class TrimCurve:
             if not advanced:
                 matrix = None
         return None
+
+    def _stationary_correct(self, predicted, normal, *, event, event_tolerance,
+                            max_iterations, max_evaluations, prescribed_load):
+        """Retain the baseline continuation plane, share joint correction.
+
+        The six-coordinate chart parameterization is a sampling policy. Its
+        history/shaft unknowns stay in JointProblem, and it must not invoke
+        the legacy continuation's frozen governor, Broyden or settling paths.
+        """
+        from em_stationary_boundary import Curve
+        attitude, load = self.decode(predicted)
+        seed = dict(self._stationary_seed or {}, solution=attitude.tolist(),
+                    load_g=load, speed_kmh=self.speed)
+        if event is None:
+            def constraint(value):
+                state = self.encode(value['equilibrium_coordinates'],
+                                    value['equilibrium_load_g'])
+                return float(normal.dot(state-predicted))
+            constraint.stationary_plane_normal=np.asarray(normal)
+            constraint.stationary_plane_scale=self.scale
+            tolerance = self.stationary_plane_tolerance
+        else:
+            constraint, tolerance = event, event_tolerance
+        curve = getattr(self, '_stationary_curve', None)
+        if curve is None:
+            curve = self._stationary_curve = Curve(self.solver, self.speed)
+        previous_calls = curve.calls
+        curve.unverified_candidates.clear()
+        point = curve.correct(seed, load=prescribed_load,
+            event=constraint if prescribed_load is None else None,
+            max_nfev=max(1, 4*max_iterations), max_evaluations=max_evaluations,
+            event_tolerance=tolerance)
+        self.evaluations += curve.calls-previous_calls
+        self.last_correction = getattr(curve, 'last_correction', None)
+        if curve.unverified_candidates:
+            self.solver.__dict__.setdefault('stationary_boundary_evidence', []).extend(
+                curve.unverified_candidates)
+        if point is not None:
+            point['trim_algorithm'] = 'shared stationary correction of baseline continuation plane'
+            if point['valid']:
+                self._stationary_seed = point
+        return point
 
     def limit(self, initial, kind, **options):
         axis = None

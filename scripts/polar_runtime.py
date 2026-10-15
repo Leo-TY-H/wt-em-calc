@@ -3,7 +3,7 @@ import struct
 from component_assembly import f32, add, sub, mul
 from control_mixer import prepare_rows, curve
 from polar_model import FIELDS
-from mach_cubic import all_coefficients,continuous_value,native_local_coefficients,needs_continuous_approximation
+from mach_cubic import all_coefficients,continuous_value,stable_value,native_local_coefficients,needs_continuous_approximation
 
 DATA=0x220000000; STACK=0x220010000; STOP=0x220020000
 CONST_KEYS=['lineClCoeff','AfterCritParabAngle','AfterCritDeclineCoeff',
@@ -62,7 +62,9 @@ def interpolate(a,b,k,machine=None):
     cm=prepare_rows([(x,[lerp(u,v) for u,v in zip(values,curve(b['cm'],x,2))]) for x,_,values in a['cm']])
     out=dict(base=[lerp(x,y) for x,y in zip(a['base'],b['base'])],mode=choose['mode'],combined=choose['combined'],mach=rows,cm=cm)
     for row,c in zip(rows,all_coefficients(out) if machine is None else machine.coefficients(out)):row[5:]=c
-    if a.get('continuous_mach') is not None or b.get('continuous_mach') is not None:
+    if a.get('stable_mach') is not None or b.get('stable_mach') is not None:
+        stabilize_mach(out)
+    elif a.get('continuous_mach') is not None or b.get('continuous_mach') is not None:
         approximate_mach(out)
     return out
 
@@ -72,6 +74,14 @@ def approximate_mach(runtime):
     runtime['continuous_mach']=tuple(native_local_coefficients(tuple(row))
         if runtime['mode']==3 and needs_continuous_approximation(row,i) else None
         for i,row in enumerate(runtime['mach']))
+    return runtime
+
+
+def stabilize_mach(runtime):
+    """Opt-in diagnostic arithmetic; all stored mode-3 pieces keep their joins."""
+    runtime['stable_mach']=tuple(native_local_coefficients(tuple(row))
+        if runtime['mode']==3 and row[1]>row[0] else None
+        for row in runtime['mach'])
     return runtime
 
 
@@ -99,6 +109,9 @@ def flap_polar(properties,flaps,machine=None):
 
 
 def mach_value(runtime,mach,index):
+    stable=runtime.get('stable_mach')
+    if stable is not None:
+        return f32(stable_value(runtime['mach'][index],mach,index,stable[index]))
     approximation=runtime.get('continuous_mach')
     if approximation and approximation[index]:
         return f32(continuous_value(runtime['mach'][index],mach,index,approximation[index]))

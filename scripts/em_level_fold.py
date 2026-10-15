@@ -7,8 +7,13 @@ def level_fold(solver, left, right):
     point = right.get('boundary')
     if not point or not point['valid'] or point['load_g'] != 1.:
         return None
-    from em_level_bracket import level_response_edge
-    response_edge=level_response_edge(solver,left,right)
+    stationary=solver.config.get('trim_solver_mode')=='stationary'
+    if stationary:
+        from em_stationary_boundary import level_edge
+        response_edge=level_edge(solver,left['speed_kmh'],right,kind='pitch response')
+    else:
+        from em_level_bracket import level_response_edge
+        response_edge=level_response_edge(solver,left,right)
     if response_edge:return response_edge
     if point['stall_margin_deg'] < .1 or point['authority_margin'] < .05:
         return None
@@ -23,12 +28,27 @@ def level_fold(solver, left, right):
     memo = {}
 
 
+    original_solver=solver
     solver=copy.copy(solver);solver._pitch_response_recovery=True
+    curve=None
+    if stationary:
+        from em_stationary_boundary import Curve
+        curve=Curve(solver,speed,speed_interval=(max(1.,left['speed_kmh']-1.),speed+3.))
+        curve.unverified_candidates=original_solver.__dict__.setdefault('stationary_boundary_evidence',[])
 
     def at(command):
         if command in memo:
             return memo[command]
         near = min(memo.values(), key=lambda p: abs(p['solution'][3]-command)) if memo else point
+        if stationary:
+            p=curve.correct(near,elevator=command,max_nfev=25)
+            if (p is None or not p['converged'] or
+                    set(p['reasons'])-{'reversed pitch response','pitch response unresolved'} or
+                    abs(p['solution'][3]-command)>1e-5 or abs(p['alpha_deg']-point['alpha_deg'])>2. or
+                    p['force_error_g']>2e-4 or p['angular_error_rad_s2']>5e-5):
+                raise ValueError('Unbalanced or disconnected stationary level-fold probe')
+            memo[command]=p
+            return p
         x = near['solution']
         initial = np.array([x[0], x[1], x[2], x[4], near['speed_kmh']])
         cache = {}

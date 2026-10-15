@@ -1,4 +1,5 @@
 import numpy as np
+from functools import lru_cache
 from scipy.interpolate import PchipInterpolator
 
 
@@ -58,6 +59,20 @@ def pchip_pair(xs,values,left,speeds):
             +(-2*t3+3*t2)*values[left+1]+(t3-t2)*h*_derivative(xs,values,left+1))
 
 
+class PreparedPchipPair:
+    """Fixed speed-coordinate work shared by all load-inversion iterations."""
+    def __init__(self,xs,left,speeds):
+        self.xs=np.asarray(xs);self.left=left
+        h=self.xs[left+1]-self.xs[left]
+        t=(np.asarray(speeds)-self.xs[left])/h;t2=t*t;t3=t2*t
+        self.weights=(2*t3-3*t2+1,(t3-2*t2+t)*h,-2*t3+3*t2,(t3-t2)*h)
+
+    def __call__(self,values):
+        values=np.asarray(values);left=self.left;a,b,c,d=self.weights
+        return (a*values[left]+b*_derivative(self.xs,values,left)
+                +c*values[left+1]+d*_derivative(self.xs,values,left+1))
+
+
 def normalized_values(column,u):
     from em_sampling import column_curve,load_coordinate
     low,high=column['lower_boundary']['load_g'],column['boundary']['load_g']
@@ -68,31 +83,40 @@ def normalized_values(column,u):
 
 def angle_surface(support,sx,left,speeds,loads,bottom,top):
     from em_sampling import column_at_load
-    curves=[]
+    curves=[];direct=[]
     for column in support:
         points=[p for p in column['points'] if p['valid'] and p.get('surface_sample',True)
                 and column['lower_boundary']['load_g']<=p['load_g']<=column['boundary']['load_g']]
         if len(points)<4 or np.any(np.diff([p['alpha_deg'] for p in points])<=1e-8):return None
         cached=column.get('_angle_map')
         if cached is None:
-            cached=ParametricCurve(points,column['boundary']['load_g']);column['_angle_map']=cached
+            cached=ParametricCurve(points,column['boundary']['load_g'],_output_allowance(points));column['_angle_map']=cached
         curves.append(cached)
+        direct.append(bool(cached.output_tolerance) and len({curve_branch(p) for p in points})==1)
     def states(u):
         return np.asarray([curve.load(curve.angles[0]+u*(curve.angles[-1]-curve.angles[0])) for curve in curves])
-    def mapped(u):return pchip_pair(sx,states(u),left,speeds)
+    interpolate=PreparedPchipPair(sx,left,speeds)
+    def mapped(u):return interpolate(states(u))
     target=np.clip(loads,bottom,top);lo=np.zeros_like(target);hi=np.ones_like(target)
+    tolerance=(min(2e-4,.25*min(float(np.min(curve.load_tolerance)) for curve in curves))
+               if all(curve.output_tolerance for curve in curves) else 1e-10)
     u=np.sqrt(np.clip((target-bottom)/(top-bottom),0.,1.))
     for iteration in range(20):
         predicted=mapped(u);error=predicted-target
-        if np.max(abs(error),initial=0.)<1e-10:break
+        if np.max(abs(error),initial=0.)<=tolerance:break
         lo=np.where(error<0.,u,lo);hi=np.where(error>0.,u,hi)
         before=np.maximum(0.,u-1e-5);after=np.minimum(1.,u+1e-5)
         slope=(mapped(after)-mapped(before))/(after-before)
         with np.errstate(divide='ignore',invalid='ignore'):trial=u-error/slope
-        u=np.where(abs(error)<1e-10,u,np.where(np.isfinite(trial)&(trial>=lo)&(trial<=hi),trial,(lo+hi)*.5))
+        u=np.where(abs(error)<=tolerance,u,np.where(np.isfinite(trial)&(trial>=lo)&(trial<=hi),trial,(lo+hi)*.5))
     ns=states(u)
-    powers=np.asarray([column_at_load(c,np.clip(n,c['lower_boundary']['load_g'],c['boundary']['load_g'])) for c,n in zip(support,ns)])
-    return pchip_pair(sx,powers,left,speeds)
+    # This coordinate already identifies alpha. On one stationary branch the
+    # same parametric curve supplies power directly; inverting its load again
+    # only duplicates work and introduces a second numerical error.
+    powers=np.asarray([curve.power(curve.angles[0]+u*(curve.angles[-1]-curve.angles[0]))
+        if known else column_at_load(c,np.clip(n,c['lower_boundary']['load_g'],c['boundary']['load_g']))
+        for c,n,curve,known in zip(support,ns,curves,direct)])
+    return interpolate(powers)
 
 
 def fitted_interpolate(columns,speeds,loads):
@@ -114,7 +138,7 @@ def fitted_interpolate(columns,speeds,loads):
             continue
         indices=local_support(columns,j-1,valid)
         support=[columns[i] for i in indices];sx=xs[indices];v=speeds[chosen]
-        limits=PchipInterpolator(sx,[[c['lower_boundary']['load_g'],c['boundary']['load_g']] for c in support],axis=0)(v)
+        limits=_envelope_curve(support)(v)[:,:2]
         bottom,top=limits.T;n=grid[:,chosen]
         inside=(n>=bottom[None,:]-1e-12)&(n<=top[None,:]+1e-12)&(top[None,:]>1.)
         with np.errstate(invalid='ignore',divide='ignore'):
@@ -164,6 +188,22 @@ def envelope_values(columns,speeds):
     return result
 
 
+def _envelope_curve(columns):
+    xs=tuple(c['speed_kmh'] for c in columns)
+    values=tuple((c['lower_boundary']['load_g'],c['boundary']['load_g'],
+                  c['lower_boundary']['ps_mps'],c['boundary']['ps_mps']) for c in columns)
+    # The replacement's repeated numerical probes and detached previews share
+    # coefficients by value, without retaining mutable solver/column objects.
+    if all('stationary_coordinates' in c['boundary'] for c in columns):
+        return _prepared_envelope(xs,values)
+    return PchipInterpolator(xs,values,axis=0)
+
+
+@lru_cache(maxsize=1024)
+def _prepared_envelope(xs,values):
+    return PchipInterpolator(xs,values,axis=0)
+
+
 def _envelope_values(columns,speeds):
     speeds=np.asarray(speeds);out=np.full((len(speeds),4),np.nan);run=[]
     def values(c):
@@ -176,7 +216,7 @@ def _envelope_values(columns,speeds):
             if not 0<j<len(xs):continue
             mask=(right==j)
             support=local_support(group,j-1,[True]*len(group))
-            out[mask]=PchipInterpolator(xs[support],[values(group[i]) for i in support],axis=0)(speeds[mask])
+            out[mask]=_envelope_curve([group[i] for i in support])(speeds[mask])
     for c in columns+[None]:
         if (c is not None and (c.get('boundary_status') in ('verified limit','plot ceiling') or (c.get('boundary') or {}).get('native_branch_search')) and
                 all(c.get(k) and c[k]['valid'] for k in ('lower_boundary','boundary'))):run.append(c)
@@ -187,7 +227,7 @@ def _envelope_values(columns,speeds):
 
 
 class ParametricCurve:
-    def __init__(self,points,top):
+    def __init__(self,points,top,output_tolerance=0.):
         from scipy.interpolate import CubicSpline
         self.top=top
         self.angles=np.array([p['alpha_deg'] for p in points])
@@ -213,6 +253,22 @@ class ParametricCurve:
         if np.any(derivatives*secants[None,:]<0.) or np.any((secants==0.)&np.any(derivatives!=0.,axis=0)):
             self.power=PchipInterpolator(self.angles,[p['ps_mps'] for p in points])
         self.slope=self.load.derivative()
+        self.output_tolerance=output_tolerance
+        self.load_tolerance=np.full(len(h),1e-12)
+        if output_tolerance:
+            # Bound the SEP effect of inverse error using extrema of the two
+            # cubic derivatives on each segment. This stops at output accuracy
+            # rather than twelve invisible decimal places of load factor.
+            def derivative_bounds(curve):
+                c=curve.c
+                with np.errstate(divide='ignore',invalid='ignore'):
+                    vertex=np.clip(-c[1]/(3*c[0]),0.,h)
+                vertex=np.where(np.isfinite(vertex),vertex,0.)
+                return np.array([(3*c[0]*t+2*c[1])*t+c[2] for t in (np.zeros_like(h),h,vertex)])
+            minimum=np.maximum(0.,np.min(derivative_bounds(self.load),axis=0))
+            maximum=np.max(abs(derivative_bounds(self.power)),axis=0)
+            self.load_tolerance=np.divide(output_tolerance*minimum,maximum,
+                out=np.full_like(minimum,np.inf),where=maximum>0.)
 
     def __call__(self,u):
         from em_sampling import coordinate_load
@@ -222,31 +278,35 @@ class ParametricCurve:
         alpha=lo+(hi-lo)*np.clip((n-self.loads[indices])/(self.loads[indices+1]-self.loads[indices]),0.,1.)
         for _ in range(16):
             error=self.load(alpha)-n
-            if np.max(abs(error),initial=0.)<1e-12:break
+            closed=abs(error)<=self.load_tolerance[indices]
+            flat=(self.load_tolerance[indices]==0.)
+            if self.output_tolerance and np.any(flat):
+                closed[flat]|=abs(self.power(hi[flat])-self.power(lo[flat]))<=self.output_tolerance
+            if np.all(closed):break
             lo=np.where(error<0.,alpha,lo);hi=np.where(error>0.,alpha,hi)
             slope=self.slope(alpha)
             with np.errstate(divide='ignore',invalid='ignore'):trial=alpha-error/slope
-            alpha=np.where(abs(error)<=1e-12,alpha,
-                np.where(np.isfinite(trial)&(trial>=lo)&(trial<=hi),trial,(lo+hi)*.5))
+            alpha=np.where(closed,alpha,np.where(np.isfinite(trial)&(trial>=lo)&(trial<=hi),
+                                                trial,(lo+hi)*.5))
         return self.power(alpha).reshape(shape)
 
 
-def _smooth_curve(points,top):
+def _smooth_curve(points,top,output_tolerance=0.):
     from em_sampling import load_coordinate,interpolation_knots
     if len(points)>=4 and np.all(np.diff([p['alpha_deg'] for p in points])>1e-8):
-        return ParametricCurve(points,top)
+        return ParametricCurve(points,top,output_tolerance)
     ux,uy=interpolation_knots(load_coordinate([p['load_g'] for p in points],top),[p['ps_mps'] for p in points])
     return PchipInterpolator(ux,uy)
 
 
 class BranchCurve:
-    def __init__(self,groups,top):
+    def __init__(self,groups,top,output_tolerance=0.):
         from em_sampling import load_coordinate
         self.parts=[];self.transitions=[]
         previous=None
         for group in groups:
             lo,hi=[float(load_coordinate(p['load_g'],top)) for p in (group[0],group[-1])]
-            curve=_smooth_curve(group,top) if len(group)>1 else None
+            curve=_smooth_curve(group,top,output_tolerance) if len(group)>1 else None
             self.parts.append((lo,hi,curve,group[0]['ps_mps']))
             if previous is not None:
                 self.transitions.append((previous[0],lo,previous[1],group[0]['ps_mps']))
@@ -262,12 +322,34 @@ class BranchCurve:
         return out
 
 
+def curve_branch(point):
+    return (point.get('roll_leveling_branch'),
+            tuple(point.get('propulsion',{}).get('stationarity',{}).get('governor_status',())))
+
+
 def prepare_curve(points,top):
+    # Preparation depends only on these numerical values. Refinement, boundary
+    # checks and detached previews often ask for the same curve repeatedly.
+    # Do not key on mutable point dictionaries or retain whole solver results.
+    key=tuple((p['load_g'],p.get('alpha_deg',0.),p['ps_mps'],curve_branch(p)) for p in points)
+    return _prepared_curve(key,top,_output_allowance(points))
+
+
+def _output_allowance(points):
+    if all('stationary_coordinates' in point for point in points):
+        from em_accuracy_policy import ALLOWANCE
+        return float(ALLOWANCE)
+    return 0.
+
+
+@lru_cache(maxsize=256)
+def _prepared_curve(key,top,output_tolerance=0.):
+    points=[dict(load_g=n,alpha_deg=a,ps_mps=p,branch=b) for n,a,p,b in key]
     groups=[]
     for point in points:
-        if not groups or point.get('roll_leveling_branch')!=groups[-1][-1].get('roll_leveling_branch'):groups.append([])
+        if not groups or point['branch']!=groups[-1][-1]['branch']:groups.append([])
         groups[-1].append(point)
-    return BranchCurve(groups,top) if len(groups)>1 else _smooth_curve(points,top)
+    return BranchCurve(groups,top,output_tolerance) if len(groups)>1 else _smooth_curve(points,top,output_tolerance)
 
 
 def coordinate_regions(columns,speeds):

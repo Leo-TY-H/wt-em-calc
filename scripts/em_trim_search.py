@@ -52,7 +52,12 @@ def solve(solver, speed, load, initial=None, detailed=False, exhaustive=True, re
     request = Request(solver, speed, load, initial, detailed, exhaustive, refine, quick)
 
 
-    limits = getattr(solver, '_search_limits', {})
+    # Stop repeatedly differentiating an unchanging rejected iterate. Retain
+    # the best full-physics state and explicitly report an incomplete search;
+    # this allowance never certifies a physical limit or an infeasible region.
+    defaults = ({'stagnant_aircraft_evaluations':192}
+                if getattr(solver,'is_prop',False) and solver.engine.quasi_steady else {})
+    limits = getattr(solver, '_search_limits', defaults)
     work = Work(limits, parent=current())
     with use(work):
         try:

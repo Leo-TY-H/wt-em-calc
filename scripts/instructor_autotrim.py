@@ -52,9 +52,10 @@ def autotrim_predictor(model,ip,state,history=(0.,0.,False),trace=None,*,
         raise ValueError('Mode-0 one-g horizontal auto trim only')
     c=prepare_geometry(model,ip,state);f=state['f'];flags=state['flags'];g=c['geometry']
     areas=[add(add(s[1],s[0]),s[2]) for s in g['areas']];area=add(areas[0],areas[1])
-    if abs(sub(*areas))>mul(area,f32(.01)) or abs(sub(*c['tail_areas']))>mul(c['tail_area'],f32(.01)) or abs(f.get(0x5328,0.))>f32(.1):
-        raise ValueError('Asymmetric geometry is not supported by the portable solver')
-    asymmetric=abs(ip[0x5c])>f32(.01)
+    asymmetric=(abs(ip[0x5c])>f32(.01)
+        or abs(sub(*areas))>mul(area,f32(.01))
+        or abs(sub(*c['tail_areas']))>mul(c['tail_area'],f32(.01))
+        or abs(f.get(0x5328,0.))>f32(.1))
     plain_limits={k:axis_limits(model['controls'][k],[False]*3,ip[0x44],
         mul(f32(math.sqrt(f32(ip[0x44]/state['rho0']))),ip[0x38]))
         for k in ('Ailerons','Elevator')} if asymmetric else None

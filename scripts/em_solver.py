@@ -2,7 +2,6 @@ import json
 import math
 import time
 from types import SimpleNamespace
-from collections import deque
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,9 +19,9 @@ from air_state import cache, world_to_body_air
 from body_dynamics import preprocess_angular_rate, angular_acceleration, G
 from component_assembly import f32, mul, add
 from control_mixer import density_at_height
-from engine_supply import selected_properties as engine_properties, fuel_properties, healthy_running_owner_step,available_fuel,mechanical_multiplier
+from engine_supply import selected_properties as engine_properties, fuel_properties
 from engine_commands import afterburner_command
-from jet_model import prepare as prepare_jet,prepare_nozzle, mode, table, selected_nozzle,scalar_update
+from jet_model import prepare as prepare_jet
 from jet_nozzle import prepare as prepare_general_nozzle,evaluate as evaluate_nozzles
 from aircraft_catalog import LazyCatalog,catalog,load as load_aircraft,is_prop,REFERENCE
 from jet_catalog import engines as installed_engines,fuel_capacities
@@ -38,22 +37,29 @@ from primary_controls import selected_properties as control_properties, authorit
 ROOT = Path(__file__).resolve().parents[1]
 AIRCRAFT = LazyCatalog()
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
+                manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
                 afterburner=True, torque_gyro=False, engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
-                extra_mass_kg=0., default_ammunition=False, ammunition_vehicle='', speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
+                extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=False,aircraft_search_region=True,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
-                aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='nested',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='native')
+                aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='stationary',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='stable',
+                experimental_instantaneous_aero=False,experimental_lateral_trim='full',stationary_execution='baseline',
+                stationary_governor_mode='pitch_stops',enable_exports=False)
 
-# Backend-only opt-in: mach_curve_mode='continuous' enables the selective tanh
-# approximation; 'native' (default) keeps native arithmetic and gap handling.
+# mach_curve_mode='continuous' enables the selective tanh approximation;
+# 'native' keeps original arithmetic and gap handling. The stationary default
+# 'stable' evaluates the same stored polynomial pieces in
+# binary64 with one final f32 rounding, retaining every join and coefficient.
 # Preliminary aircraft force estimates define the default chart search region.
 # The cap is predetermined from aircraft data; 64 g is an outer guard only.
 # The former frozen reference envelope remains an opt-in for reproduction.
 
 
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
+    'manual_engine_controls','propeller_pitch_auto','propeller_pitch_percent','oil_radiator_percent','radiator_percent',
     'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','structural_limits','turn_response_mode',
-    'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode'))
+    'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode',
+    'experimental_instantaneous_aero','experimental_lateral_trim','stationary_governor_mode'))
 
 
 def contour_levels(values):
@@ -74,8 +80,17 @@ def settings(values=None):
         from em_entries import entry_settings
         return entry_settings(values)
     result=dict(DEFAULTS); result.update(values or {})
-    unknown=set(result)-set(DEFAULTS)
+    if not values or 'mach_curve_mode' not in values:
+        result['mach_curve_mode']='stable' if result['trim_solver_mode']=='stationary' else 'native'
+    unknown=set(result)-set(DEFAULTS)-{'_over_rev_limits'}
     if unknown: raise ValueError('Unknown setting: '+', '.join(sorted(unknown)))
+    if '_over_rev_limits' in result:
+        cutoffs=result['_over_rev_limits']
+        if not isinstance(cutoffs,dict) or any(not isinstance(k,str) or not isinstance(v,dict) or
+            set(v)!={'speed_kmh','kind'} or isinstance(v['speed_kmh'],bool) or
+            not isinstance(v['speed_kmh'],(int,float)) or not math.isfinite(v['speed_kmh']) or
+            v['speed_kmh']<0 or v['kind'] not in ('Over-rev','Unresolved RPM limit') for k,v in cutoffs.items()):
+            raise ValueError('Invalid internal RPM limits')
     if not isinstance(result['aircraft'], list) or not result['aircraft'] or len(result['aircraft'])>2:
         raise ValueError('Select one or two aircraft')
     if any(a not in AIRCRAFT for a in result['aircraft']) or len(set(result['aircraft']))!=len(result['aircraft']):
@@ -85,6 +100,7 @@ def settings(values=None):
     for name in result['aircraft']:
         if not AIRCRAFT[name]['supported']:raise ValueError(AIRCRAFT[name]['name']+': '+AIRCRAFT[name]['reason'])
     limits={'altitude_m': (0,18000), 'fuel_percent': (1,100), 'throttle': (0,1.1),
+            'propeller_pitch_percent':(0,100),'oil_radiator_percent':(0,100),'radiator_percent':(0,100),
             'trim_limit': (0,1), 'extra_mass_kg': (0,5000), 'speed_min_kmh': (100,2500),
             'speed_max_kmh': (200,2600), 'max_load_g': (1.1,20), 'global_load_cap_g': (1.1,64),
             'speed_samples': (7,129), 'load_samples': (5,49), 'timestep_hz': (30,120),
@@ -101,7 +117,7 @@ def settings(values=None):
         result[key]=int(result[key])
     result['sep_contour_levels_mps']=contour_levels(result['sep_contour_levels_mps'])
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
-    for key in ['default_ammunition','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region']:
+    for key in ['manual_engine_controls','propeller_pitch_auto','default_ammunition','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region','enable_exports']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
     if not isinstance(result['ammunition_vehicle'],str):raise ValueError('ammunition_vehicle must be a vehicle ID')
     # The frozen chart domain is always intersected with this aircraft's
@@ -110,12 +126,20 @@ def settings(values=None):
     if result['compare_instructor'] and len(result['aircraft'])!=1:
         raise ValueError('Select one aircraft to compare Instructor on/off')
     if result['engine_control_mode'] not in ('automatic','quasi_steady'):raise ValueError('Unknown engine control mode')
-    if result['mach_curve_mode'] not in ('native','continuous'):raise ValueError('Unknown Mach curve mode')
+    if result['mach_curve_mode'] not in ('native','continuous','stable'):raise ValueError('Unknown Mach curve mode')
     
     if result['aircraft_trim_mode']!='discrete':raise ValueError('Aircraft trim mode is unavailable')
     if result['instructor_model']!='steady':raise ValueError('Only the static Instructor boundary is supported')
     if result['instructor_authority_mode']!='direct':raise ValueError('Instructor authority mode is unavailable')
-    if result['trim_solver_mode']!='nested':raise ValueError('Trim solver mode is unavailable')
+    if result['trim_solver_mode'] not in ('stationary','nested','off'):raise ValueError('Trim solver mode is unavailable')
+    if result['stationary_governor_mode'] not in ('pitch_stops','exact_rpm'):raise ValueError('Unknown stationary governor mode')
+    if result['stationary_execution'] not in ('baseline','columns','serial_cells'):
+        raise ValueError('Unknown stationary chart execution mode')
+    from em_model_experiments import MODES
+    if not isinstance(result['experimental_instantaneous_aero'],bool):raise ValueError('Instantaneous aerodynamics must be true or false')
+    if result['experimental_lateral_trim'] not in MODES:raise ValueError('Unknown experimental lateral trim mode')
+    if result['trim_solver_mode']=='nested' and (result['experimental_instantaneous_aero'] or result['experimental_lateral_trim']!='full'):
+        raise ValueError('Model experiments require stationary trim')
     if result['trim_mode'] not in ('optimized','fixed'): raise ValueError('Unknown trim mode')
     if result['sampling'] not in ('adaptive','regular'):raise ValueError('Unknown sampling mode')
     if result['turn_response_mode']!='settled':raise ValueError('Turn response mode is unavailable')
@@ -132,13 +156,28 @@ def settings(values=None):
     for name,conditions in overrides.items():
         if not isinstance(conditions,dict) or set(conditions)-AIRCRAFT_SETTINGS:
             raise ValueError('Unknown aircraft condition for '+name)
-        resolved=settings(dict(result,**dict(conditions,aircraft=[name],aircraft_settings={})))
+        requested=dict(result,**dict(conditions,aircraft=[name],aircraft_settings={}))
+        if 'mach_curve_mode' not in conditions and (not values or 'mach_curve_mode' not in values):
+            requested.pop('mach_curve_mode',None)
+        resolved=settings(requested)
         normalized[name]={key:resolved[key] for key in sorted(AIRCRAFT_SETTINGS)}
     result['aircraft_settings']=normalized
     if len(result['aircraft'])==1 and not AIRCRAFT[result['aircraft'][0]].get('has_flaps',False):
         result['flaps_percent']=0.
+    if len(result['aircraft'])==1 and result['manual_engine_controls']:
+        capability=AIRCRAFT[result['aircraft'][0]].get('manual_controls',{})
+        if capability.get('propeller_pitch') and not capability.get('propeller_auto'):
+            result['propeller_pitch_auto']=False
     for name in result['aircraft']:
         condition=dict(result,**normalized.get(name,{}))
+        if condition['manual_engine_controls']:
+            capability=AIRCRAFT[name].get('manual_controls',{})
+            if not is_prop(name):raise ValueError('Manual engine controls require a propeller aircraft')
+            if not condition['propeller_pitch_auto'] and not capability.get('propeller_pitch'):
+                raise ValueError('Manual propeller pitch is unavailable for '+name)
+            for key in ('radiator','oil_radiator'):
+                if condition[key+'_percent'] and not capability.get(key):
+                    raise ValueError('Manual '+key.replace('_',' ')+' is unavailable for '+name)
         # Mixed batches carry shared defaults plus per-aircraft engine modes.
         if is_prop(name) and condition['engine_control_mode']!='quasi_steady':
             raise ValueError('Propeller engine mode is unavailable')
@@ -146,6 +185,11 @@ def settings(values=None):
             from aircraft_ammunition import selected_mass
             selected_mass(name,condition['ammunition_vehicle'])
     return result
+
+
+def upright_bank_margin(bank_deg):
+    """Margin of the literal admitted native bank coordinate, including its faces."""
+    return 90. - abs(float(bank_deg)) if math.isfinite(bank_deg) else -math.inf
 
 
 def turn_geometry(alpha_deg, bank_deg, speed, load, dt, ias_u, sideslip_deg=0.):
@@ -168,18 +212,8 @@ def turn_geometry(alpha_deg, bank_deg, speed, load, dt, ias_u, sideslip_deg=0.):
     damping=max(1.-float(f32(ias_u))*1e-5,.8)
     stored=midpoint*(2./(1.+damping))
 
-    quaternion=[f32(math.sin(bank*.5)*math.cos(alpha*.5)),
-                f32(-math.sin(bank*.5)*math.sin(alpha*.5)),
-                f32(math.cos(bank*.5)*math.sin(alpha*.5)),
-                f32(math.cos(bank*.5)*math.cos(alpha*.5))]
-    if sideslip_deg:
-
-
-        sx,cx=math.sin(bank*.5),math.cos(bank*.5)
-        sy,cy=math.sin(beta*.5),math.cos(beta*.5)
-        sz,cz=math.sin(alpha*.5),math.cos(alpha*.5)
-        quaternion=list(map(f32,[sx*cy*cz+cx*sy*sz,cx*sy*cz-sx*cy*sz,
-                                cx*cy*sz+sx*sy*cz,cx*cy*cz-sx*sy*sz]))
+    from em_numeric_core import turn_quaternion
+    quaternion=turn_quaternion(alpha_deg,bank_deg,sideslip_deg)
     return dict(forward=forward, normal=normal, side=side, up=up, lateral=lateral,
                 omega=stored, quaternion=quaternion, turn_rate=turn_rate)
 
@@ -199,84 +233,25 @@ class EngineUnit:
         self.nozzles=[prepare_general_nozzle(instance[k]) for k in sorted((k for k in instance if re.fullmatch(r'Nozzle\d+',k)),key=lambda k:int(k[6:]))]
 
 
-        self.warm_nozzle=dict(position=[0.,0.,0.],ratio=0.,maximum=2147440000.,flaps=[0.,1.,1.,1.],
-                         airbrake=[(0.,0.,[0.,0.])],vtol=[(0.,0.,[0.,0.])],reverse=[(0.,0.,[0.,0.])])
-        try:self.nozzle=prepare_nozzle(instance['Nozzle0'])
-        except (KeyError,ValueError):self.nozzle=None
         self.rho=density_at_height(f32(config['altitude_m']))
         self.accumulator=min(self.fp['capacity'],self.system_fuel)
-        self.states,self.summary=self.settle(250.)
-        self.local_cycles={self.nominal_target(250.):self.states}
-        self.factors=[mode(self.jet,f32(s['omega']/self.jet['max_omega']))[0] for s in self.states]
+        nominal=self.nominal(250.)
+        rpm=nominal['omega']*60/(2*math.pi)
+        self.summary=dict(policy='instantaneous capped nominal RPM',period_steps=1,
+            samples=1,rpm_mean=rpm,rpm_range=[rpm,rpm],reference_body_u_mps=250.,
+            model_revision=nominal['revision'],mechanical_multiplier=1.)
 
-    def settle(self,body_u):
-        config=self.config
-        state=dict(omega=mul(.6,self.jet['max_omega']), health=1., cylinders=self.ep['cylinders'],
-                   mechanical=1., extra_amplitude=0., torque=0., friction=0., throttle=f32(config['throttle']),
-                   running=7, afterburner=self.afterburner, vtol=0., reverse=0., rpm_limit_scale=1.,
-                   elapsed=100., inactive_elapsed=0., stop_reason=0)
-        seed=183193; recent=deque(maxlen=32); samples=[]; period=0
-        burn=round(40/self.dt); window=round(20/self.dt)
-        for tick in range(burn+window):
-            old=dict(state,_seed=seed)
-            r=healthy_running_owner_step(self.ep,self.jet,self.warm_nozzle,self.fp,state,[body_u,0.,0.],
-                config['altitude_m'],self.mass['cog'],self.dt,seed,self.system_fuel,self.accumulator)
-            state,seed=r['state'],r['seed']
-            old['_next_omega']=state['omega']
-            record=(state['omega'],state['mechanical'],seed,old)
-            recent.append(record)
-            if len(recent)==32:
-                rows=list(recent)
-                for p in [1,2,3,4,8]:
-                    if all(rows[-j][:3]==rows[-j-p][:3] for j in range(1,25)):
-                        period=p; samples=[r[3] for r in rows[-p:]]; break
-                if period: break
-            if tick>=burn:samples.append(old)
-        summary=dict(policy='fixed point' if period==1 else f'{period}-step cycle' if period else '20 s seeded mean after 40 s warm-up',
-                          period_steps=period or None,samples=len(samples),seed=183193,
-                          rpm_mean=float(np.mean([s['omega']*60/(2*math.pi) for s in samples])),
-                          rpm_range=[float(min(s['omega'] for s in samples)*60/(2*math.pi)),float(max(s['omega'] for s in samples)*60/(2*math.pi))])
-        return samples,summary
-
-    def nominal_target(self,body_u):
-        state=self.states[0]
-        r=scalar_update(self.jet,self.rho,body_u,state['omega'],
-            min(f32(state.get('effective_throttle',self.config['throttle'])/self.jet['throttle_scale']),1.),self.dt,
-            afterburner=self.afterburner,fuel_available=available_fuel(self.fp,self.system_fuel,self.accumulator,1.,self.dt))
-        return r['target_omega'],r['active']
-
-    def phase_states(self,body_u):
-
-
-        key=self.nominal_target(body_u)
-        if key not in self.local_cycles:
-            if len(self.local_cycles)>512:self.local_cycles.clear()
-            self.local_cycles[key]=self.settle(body_u)[0]
-        return self.local_cycles[key]
-
-    def scalar_phase(self,body_u,state):
-        health,_,_=mechanical_multiplier(self.ep,state['omega'],state['health'],state['cylinders'],
-            state['mechanical'],0.,state['torque'],state['friction'],self.dt,state['_seed'])
-        supply=available_fuel(self.fp,self.system_fuel,self.accumulator,1.,self.dt)
-        throttle=state.get('effective_throttle',self.config['throttle'])
-        scalar=scalar_update(self.jet,self.rho,body_u,state['omega'],min(f32(throttle/self.jet['throttle_scale']),1.),self.dt,
-            afterburner=self.afterburner,fuel_available=supply,health=health,
-            shaft_fraction=mul(f32(state['omega']),self.ep['inverse_omega']))
-        next_omega=min(max(0.,scalar['next_omega']),mul(self.ep['omega_limit'],f32(state['rpm_limit_scale'])))
-        if next_omega!=state['_next_omega']:
-            raise ValueError('Speed-dependent fuel-flow-limited RPM requires local engine settling')
-        return scalar
+    def nominal(self,body_u):
+        from jet_nominal import evaluate as evaluate_nominal
+        return evaluate_nominal(self.ep,self.jet,self.fp,self.system_fuel,self.accumulator,
+            self.rho,body_u,self.dt,self.config['throttle'],self.afterburner)
 
     @lru_cache(maxsize=2048)
     def vectors(self, body_u, flaps=0.):
         ias=mul(body_u,f32(math.sqrt(f32(self.rho/f32(1.225)))))
-        results=[]
-        for state in self.phase_states(body_u):
-            scalar=self.scalar_phase(body_u,state)
-            results.append(evaluate_nozzles(self.nozzles,scalar['thrust'],self.mass['cog'],ias,flaps=flaps))
-        force=np.mean([r['force'] for r in results],axis=0).tolist()
-        moment=np.mean([r['moment'] for r in results],axis=0).tolist()
-        return force,moment
+        scalar=self.nominal(body_u)['scalar']
+        result=evaluate_nozzles(self.nozzles,scalar['thrust'],self.mass['cog'],ias,flaps=flaps)
+        return result['force'],result['moment']
 
 
 class EngineEnsemble:
@@ -342,6 +317,8 @@ class TrimSolver:
 
         self.fm=dict(load_aircraft(name),RollLeveling=self.config['roll_leveling'])
         self.flaps=f32(self.config['flaps_percent']/100.)
+        from em_manual_controls import radiator_positions
+        self.radiator,self.oil_radiator=radiator_positions(self.config,AIRCRAFT[name].get('manual_controls',{}))
         from flap_model import profile as flap_profile
         self.flap_profile=flap_profile(self.fm)
         self.instructor_profile=instructor_profile(self.fm,self.config)
@@ -349,6 +326,7 @@ class TrimSolver:
         from em_mach_events import configure_model
         configure_model(self.model,self.config['mach_curve_mode'])
         self.model['aircraft_trim_mode']=self.config['aircraft_trim_mode']
+        self.model['experimental_instantaneous_aero']=self.config['experimental_instantaneous_aero']
         self.sweep_rows=sweep_schedule(self.fm);self.has_sweep=len(self.model['wing_family'])>1
         self.is_prop=is_prop(name)
 
@@ -388,6 +366,8 @@ class TrimSolver:
 
     def at_sideslip(self,angle):
         angle=float(angle)
+        if angle!=0. and self.config['experimental_lateral_trim']!='full':
+            raise ValueError('This experimental trim mode requires zero sideslip')
         if angle==self.sideslip_attitude_deg:return self
         if angle not in self._sideslip_solvers:
             import copy
@@ -400,6 +380,9 @@ class TrimSolver:
         return self._sideslip_solvers[angle]
 
     def point_value(self,point):
+        if 'stationary_coordinates' in point:
+            from em_stationary import replay
+            return replay(self, point, detailed=True)['_detail']
         view=self.at_sideslip(point.get('sideslip_attitude_deg',0.))
         if self.is_prop and point.get('propulsion'):
             view=view.with_prop_controls(point['propulsion']['controls'])
@@ -649,6 +632,16 @@ class TrimSolver:
 
 
             if high['converged'] and high['reasons'] and z[5]>high['load_g']+1e-8:continue
+            # A balanced endpoint just outside a rounded controller constraint
+            # is useful rejection evidence. Previously it was discarded when
+            # the active-constraint corrector could not land on the valid side,
+            # sending the column back through distant, expensive trim retries.
+            if self.is_prop and self.engine.quasi_steady:
+                from em_pitch_response import PHYSICAL_REASONS
+                endpoint=self.certify(speed_kmh,float(z[5]),z[:5],value,evaluations=len(memo))
+                if endpoint['converged'] and endpoint['reasons'] and set(endpoint['reasons'])<=PHYSICAL_REASONS:
+                    bracketed=refine_physical_bracket(self,speed_kmh,low,endpoint)
+                    if bracketed:return bracketed
             if self.is_prop and self.engine.automatic and kind in ('stall','control','wing force','Instructor pitch'):
 
 
@@ -837,9 +830,15 @@ class TrimSolver:
     def operating_point(self, speed, load, x, *args, **kwargs):
         from em_operating import operating_point
         from em_trim_work import charge, observe
+        frozen=(kwargs.get('propulsion_override') is not None or kwargs.get('propulsion_sample') is not None
+                or bool(args and args[0] is not None))
+        if (self.config.get('trim_solver_mode') == 'stationary'
+                and not self.config.get('experimental_instantaneous_aero', False)
+                and kwargs.get('stationary_angles') is None and (frozen or not self.is_prop)):
+            from em_stationary_baseline import stationary_frozen_point
+            return stationary_frozen_point(self, speed, load, x, *args, **kwargs)
         charge('aircraft_evaluations')
         value=operating_point(self, speed, load, x, *args, **kwargs)
-        frozen=kwargs.get('propulsion_override') is not None or bool(args and args[0] is not None)
         observe(self, speed, load, x, value, frozen)
         return value
     _defer_search_reporting=True
@@ -868,9 +867,23 @@ class TrimSolver:
         finite=np.isfinite(np.r_[x,final['residual'],final['rate_residual'],aero['force'],aero['stored_moment'],
             final['force_mean_uncertainty_g'],final['angular_mean_uncertainty_rad_s2'],final['history_error'],
             final['stall_margin'],final['ps'],ratios,final['kinematic']['velocity'],aero['air']['ias_u'],aero['air']['mach']]).all()
+        history_finite=True
+        if final.get('history_closure_required',True):
+            # max([finite, NaN]) can be finite. Admission must check the actual
+            # retained memories, not infer their finiteness from that aggregate.
+            memories=(final.get('history_input',{}),aero.get('history',{}))
+            history_values=[v for memory in memories
+                for name in ('wing_aoa','wing_cl','body_angles')
+                for v in memory.get(name,[math.nan,math.nan])]
+            history_values += [memory.get('spin',math.nan) for memory in memories]
+            history_values += list(final.get('stationary_angle_residual',()))
+            history_finite=bool(np.isfinite(history_values).all())
+            finite=finite and history_finite
         converged=(finite and final['force_error_g']+final['force_mean_uncertainty_g']<=2e-4 and
                    max(abs(final['rate_residual'])+final['angular_mean_uncertainty_rad_s2'])<=5e-5 and final['history_error']<=2e-4)
         reasons=[]
+        upright_margin = upright_bank_margin(x[1])
+        if upright_margin < 0.:reasons.append('bank outside [-90, 90] degrees')
         from em_load_limits import ceiling
         if getattr(self,'chart_search',False) and load>ceiling(self,speed_kmh)+1e-10:
             reasons.append('chart load search limit')
@@ -878,6 +891,10 @@ class TrimSolver:
         if self.is_prop:
             propulsion=final['propulsion']
             if not propulsion['converged']:reasons.append('propulsion did not settle')
+            if (self.config['trim_solver_mode']=='stationary'
+                    and self.config.get('stationary_governor_mode','pitch_stops')=='pitch_stops'
+                    and propulsion['overspeed_engines']):
+                reasons.append('engine RPM limit')
 
 
             if propulsion['stopped_shafts']:reasons.append('propeller shaft stopped')
@@ -927,12 +944,14 @@ class TrimSolver:
                    aircraft_trim_mode=self.config['aircraft_trim_mode'],ps_definition='discrete energy step',
                    ps_mps=final['ps'],ps_continuous_mps=final['ps_continuous'],alpha_deg=float(x[0]),bank_deg=float(x[1]),
                    sideslip_deg=float(aero['air']['beta']),sideslip_attitude_deg=self.sideslip_attitude_deg,
+                   upright_bank_margin_deg=upright_margin,
                    roll_leveling_branch=(-1 if aero['air']['alpha']<=-12. else 1 if aero['air']['alpha']>=12. else 0) if self.fm.get('RollLeveling',True) else None,
                    converged=bool(converged),valid=not reasons,reasons=reasons,structural_flags=structural,
                    bounded_search_stationary=bool(bound_stationary),
                    pitch_response=pitch,
                    force_error_g=float(final['force_error_g']),angular_error_rad_s2=float(max(abs(final['rate_residual']))),
                    history_error=float(final['history_error']),stall_margin_deg=float(final['stall_margin']),
+                   history_components_finite=history_finite,
                    negative_stall_margin_deg=float(final['negative_stall_margin']),
                    wing_load_ratios=ratios,commands=final['allocation']['commands'],
                    control_bounds=control_bounds,authority_margin=min(min(d-lo,hi-d) for d,(lo,hi) in zip(final['allocation']['commands'],control_bounds)),
@@ -963,6 +982,7 @@ class TrimSolver:
                 stationarity=p.get('stationarity'),sample_frames=len(p.get('cycle_samples') or []),
                 phase_check=phase_check,
                 engine_rpm=[e['omega']*60/(2*math.pi) for e in p['state']['engines']],
+                radiator_percent=self.radiator*100.,oil_radiator_percent=self.oil_radiator*100.,
                 rpm_threshold_exceeded_engines=p['overspeed_engines'],
                 engine_rpm_threshold=[e['properties']['omega_limit']*60/(2*math.pi) for e in self.engine.properties['engines']],
                 compressor_stages=[e.get('gear',0) for e in p['state']['engines']],
@@ -973,16 +993,32 @@ class TrimSolver:
                 wash_mps=p['wash'],angular_momentum=p['angular_momentum'])
         if self.is_prop and point['propulsion']['engine_control_mode']=='automatic':
             point['propulsion']['optimization']=dict(method='Dynamic propulsion with automatic controls',evaluated=0,
-                global_optimum_certified=False,radiators_closed=True)
+                global_optimum_certified=False,radiators_closed=not (self.radiator or self.oil_radiator))
         elif self.is_prop and self.engine.quasi_steady:
-            point['propulsion']['optimization']=dict(method='Quasi-steady ideal RPM governor',evaluated=0,
-                global_optimum_certified=False,radiators_closed=True)
+            point['propulsion']['optimization']=dict(method='Quasi-steady selected manual pitch' if
+                any(not auto for auto in p['controls']['automatic']) else 'Quasi-steady ideal RPM governor',evaluated=0,
+                global_optimum_certified=False,radiators_closed=not (self.radiator or self.oil_radiator))
         if detailed:point['_detail']=final
         from em_trim_work import record_point
-        record_point(point)
+        # Stationary admission adds propeller checks after this common report.
+        # Its chart adapter records the completed result, never this partial one.
+        if self.config['trim_solver_mode']!='stationary':record_point(point)
         return point
 
     def solve(self, speed_kmh, load, initial=None, detailed=False, exhaustive=True, refine=False,quick=False):
+        if self.config['trim_solver_mode'] == 'off':
+            from em_uncorrected import evaluate
+            return evaluate(self, speed_kmh, load,
+                attitude=initial.get('solution') if isinstance(initial,dict) else initial,
+                coordinates=initial.get('stationary_coordinates') if isinstance(initial,dict) else None,
+                request_indices=initial.get('stationary_request_indices') if isinstance(initial,dict) else None)
+        if self.config['trim_solver_mode'] == 'stationary':
+            from em_stationary import solve
+            return solve(self, speed_kmh, load, initial, detailed, exhaustive, refine, quick)
+        if self.config.get('_over_rev_limits'):
+            from em_speed_limits import excluded_point as excluded_speed
+            excluded=excluded_speed(self,speed_kmh,load)
+            if excluded is not None:return excluded
         from em_load_limits import excluded_point
         excluded=excluded_point(self,speed_kmh,load,initial)
         if excluded is not None:return excluded
@@ -990,6 +1026,8 @@ class TrimSolver:
         return solve(self, speed_kmh, load, initial, detailed, exhaustive, refine, quick)
 
     def _solve_attempt(self, speed_kmh, load, initial=None, detailed=False, exhaustive=True, refine=False,quick=False):
+        if self.config['trim_solver_mode'] == 'off':
+            raise ValueError('Correction is off; use solve() to evaluate a trial state')
         from em_load_limits import excluded_point
         excluded=excluded_point(self,speed_kmh,load,initial)
         if excluded is not None:return excluded
@@ -1025,6 +1063,9 @@ class TrimSolver:
             mach=derivative_base['result']['air']['mach']
             project=(lambda q:project_state(self,speed,load,q,mach)) if rough_mach(self,mach) else None
             sample=(lambda q:self.operating_point(speed,load,q,propulsion_override=base['propulsion'],_search=defer_reporting)) if freeze_propulsion else evaluate_x
+            if not freeze_propulsion and self.is_prop and self.engine.quasi_steady:
+                from em_prop_derivative import sampler
+                sample=sampler(self,speed,load,x,base,sample,defer_reporting)
             last_jacobian=jacobian(x,derivative_base,sample,self.derivative_branch,steps,
                 [1.,.5,1.5,2.,.25,-.5,-1.,-1.5,-2.,.1,3.,4.,5.,-.1,.05,-.05,.01,-.01],
                 project=project,actual_step=project is not None)
@@ -1131,6 +1172,7 @@ class TrimSolver:
                     x,value=trial_x,trial;accepted=True;break
             if not accepted:break
         if (not quick and not prop_blocked and not bound_stationary and self.is_prop and self.engine.automatic
+                and not self.engine.quasi_steady
                 and not self.engine.force_canonical and not balanced(value)
                 and value['propulsion'].get('stationarity')
                 and value['propulsion']['converged'] and value['stall_margin']>0.
@@ -1203,7 +1245,9 @@ class TrimSolver:
 
             near_closure=(canonical['propulsion']['converged'] and
                           canonical['force_error_g']<.015 and max(abs(canonical['rate_residual']))<.008)
-            if not bound_stationary and not balanced(canonical) and (balanced(final) or near_closure):
+            same_equations=(self.engine.quasi_steady and np.array_equal(canonical['residual'],final['residual'])
+                            and canonical['propulsion']['converged']==final['propulsion']['converged'])
+            if not same_equations and not bound_stationary and not balanced(canonical) and (balanced(final) or near_closure):
                 strict=self.with_prop_controls(canonical['propulsion']['controls'])
 
 
@@ -1310,6 +1354,10 @@ class TrimSolver:
 
 def compute(config=None, progress=None, cancelled=None, preview=None):
     config=settings(config)
+    from em_uncorrected import require_chart_correction
+    require_chart_correction(config)
+    # Limits are derived afresh, never accepted from a saved or submitted chart.
+    config.pop('_over_rev_limits',None)
     if config['entries'] is not None:
         from em_entries import compute_entries
         return compute_entries(config,progress,cancelled,preview)
@@ -1336,14 +1384,52 @@ def compute(config=None, progress=None, cancelled=None, preview=None):
         output['assumptions']=[a for a in output['assumptions'] if a!='Instructor off']
         output['assumptions'].append('Same flight conditions with Instructor off and experimental Instructor on')
         return output
+    stationary=any(aircraft_settings(config, name)['trim_solver_mode'] == 'stationary' for name in config['aircraft'])
+    if stationary and config['stationary_execution']!='baseline':
+        from em_stationary_surface import compute as stationary_chart
+        return stationary_chart(config, progress, cancelled, preview)
+    from em_manual_controls import rpm_boundary
+    from em_speed_limits import speed_limits
+    over_rev={}
+    for name in config['aircraft']:
+        condition=aircraft_settings(config,name)
+        if is_prop(name) and condition['manual_engine_controls']:
+            if progress:progress(dict(done=0,total=1,phase='Locating over-rev boundaries',aircraft=name))
+            solver=TrimSolver(name,condition)
+            if condition['trim_solver_mode']=='stationary':
+                from em_stationary_baseline import AxialReference, BaselineSolver
+                solver=BaselineSolver(name,condition)
+            redline=speed_limits(solver.fm,condition)
+            ceiling=min(config['speed_max_kmh'],redline['vne_tas_kmh'],redline['mne_tas_kmh'])
+            if redline['enforced']:ceiling=min(ceiling,redline['sample_speed_kmh'])
+            engine=AxialReference(solver) if condition['trim_solver_mode']=='stationary' else solver.engine
+            over_rev[name]=rpm_boundary(engine,config['speed_min_kmh'],ceiling,cancelled)
+            over_rev[name]['vne_tas_kmh']=redline['vne_tas_kmh']
+    work_config=dict(config,_over_rev_limits={name:dict(speed_kmh=b['stop_speed_kmh'],kind=b['stop_reason'])
+        for name,b in over_rev.items() if b['stop_speed_kmh'] is not None})
+    def attach_boundaries(data):
+        rows=[]
+        for a in data['aircraft']:
+            row=dict(a)
+            if a['id'] in over_rev:row['over_rev']=over_rev[a['id']]
+            if 'settings' in row:row['settings']={k:v for k,v in row['settings'].items() if k!='_over_rev_limits'}
+            rows.append(row)
+        return dict(data,settings=config,aircraft=rows)
+    if stationary:
+        from em_stationary_baseline import compute as stationary_chart
+        return attach_boundaries(stationary_chart(work_config,progress,cancelled,
+            (lambda data:preview(attach_boundaries(data))) if preview else None))
     if config['sampling']=='adaptive':
         from em_sampling import compute_cached
-        return compute_cached(config,progress,cancelled,preview)
-    return compute_regular(config,progress,cancelled)
+        return attach_boundaries(compute_cached(work_config,progress,cancelled,
+            (lambda data:preview(attach_boundaries(data))) if preview else None))
+    return attach_boundaries(compute_regular(work_config,progress,cancelled))
 
 
 def compute_regular(config=None, progress=None, cancelled=None):
     config=settings(config); start=time.monotonic()
+    from em_uncorrected import require_chart_correction
+    require_chart_correction(config)
     speeds=np.linspace(config['speed_min_kmh'],config['speed_max_kmh'],config['speed_samples']).tolist()
     loads=np.linspace(1.,config['max_load_g'],config['load_samples']).tolist()
     output=dict(settings=config,speeds_kmh=speeds,loads_g=loads,aircraft=[],method='coordinated trim below positive stall; per-aircraft flight model and Ps definition',
@@ -1355,7 +1441,12 @@ def compute_regular(config=None, progress=None, cancelled=None):
                 validation='Reconstructed kernels have native-code comparisons; this EM solver has not been validated against live flight.')
     total=len(speeds)*len(loads)*len(config['aircraft']); done=0
     for index,name in enumerate(config['aircraft']):
-        solver=TrimSolver(name,config);solver.chart_search=True; columns=[]
+        condition=aircraft_settings(config,name)
+        solver_type=TrimSolver
+        if condition['trim_solver_mode']=='stationary':
+            from em_stationary_baseline import BaselineSolver
+            solver_type=BaselineSolver
+        solver=solver_type(name,condition);solver.chart_search=True; columns=[]
         from em_speed_limits import excluded_point,speed_limits
         for i,speed in enumerate(speeds):
             column=[]

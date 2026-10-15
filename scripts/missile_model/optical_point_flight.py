@@ -51,7 +51,8 @@ def update(p,state,targets,dt,*,guidance_step=guidance_update):
     motor_dt=sub(target_time,b['time'])
     propulsion=propulsion_adapter(p['rocket'],length=p['body']['length'],clocks=b['clocks'],
         factors=controls[4:],dt=motor_dt,quaternion=b['quaternion'],height=b['position'][1],
-        fins=controls[:2],orientation=controls[2:4],seed=b['seed'])
+        fins=controls[:2],orientation=controls[2:4],seed=b['seed'],
+        _motor_properties=p.get('_motor_properties'))
     b['seed']=propulsion['seed'];sub_dt=div(dt,p['precision']);substeps=[]
     # 14143b721..737 computes the flat-surface depth before body substeps.
     b['surface_depth']=max(sub(0.,b['position'][1]),f32(-2147440000.))

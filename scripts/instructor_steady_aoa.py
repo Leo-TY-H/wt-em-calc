@@ -1,7 +1,7 @@
 from instructor_aoa import controller_limits as effective_limits
 from struct import pack
 
-REVISION = 'steady-effective-aoa-fixed-autotrim-v8'
+REVISION = 'steady-effective-aoa-fixed-autotrim-v9'
 
 
 def controller_limits(solver, value, speed=None):

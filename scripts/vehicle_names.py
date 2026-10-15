@@ -23,9 +23,13 @@ def naming_sources():
 def apply_names(catalog):
     names, records = naming_sources()
     vehicles = {r['vehicle'] for r in records}
+    by_fm = {}
+    for record in records:
+        by_fm.setdefault(Path(record['fm'] or '').stem, []).append(record['vehicle'])
+    by_fm = {fm: sorted(ids) for fm, ids in by_fm.items()}
     for key, row in catalog.items():
-        ids = [key] if key in vehicles else sorted(r['vehicle'] for r in records
-            if row['propulsion'] in ('jet','rocket') and Path(r['fm'] or '').stem == key)
+        ids = ([key] if key in vehicles else by_fm.get(key, [])
+               if row['propulsion'] in ('jet','rocket') else [])
         labels = []
         for vehicle in ids or [key]:
             name = names['names'].get(vehicle)

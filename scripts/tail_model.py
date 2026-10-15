@@ -208,9 +208,12 @@ def secondary_model(properties,state,wing,controls,coefficient_evaluator=None,_c
             arm=list(map(f32,p['arms'][name]));arm[0]=add(arm[0],polar[name]['aerCenterOffset'])
             if name=='hstab':base['left_hstab']=arm;base['right_hstab']=[arm[0],arm[1],-arm[2]]
             else:base[name]=arm
-        flows={n:local_flow(v,s['cog'],s['velocity'],s['omega'],s.get('disturbance',(0.,0.,0.)) if n!='fuselage' else (0.,0.,0.)) for n,v in base.items()}
-        flows['left_hstab'],flows['right_hstab']=horizontal_flows([base['left_hstab'],base['right_hstab']],s['cog'],s['velocity'],s['omega'],s.get('disturbance',(0.,0.,0.)))
-        flows['fuselage']=fuselage_flow(base['fuselage'],s['cog'],s['velocity'],s['omega'])
+        # Each surface has its own native arithmetic ordering. The generic
+        # horizontal/fuselage flows were immediately overwritten and unused.
+        left,right=horizontal_flows([base['left_hstab'],base['right_hstab']],s['cog'],s['velocity'],s['omega'],s.get('disturbance',(0.,0.,0.)))
+        flows=dict(left_hstab=left,right_hstab=right,
+            vstab=local_flow(base['vstab'],s['cog'],s['velocity'],s['omega'],s.get('disturbance',(0.,0.,0.))),
+            fuselage=fuselage_flow(base['fuselage'],s['cog'],s['velocity'],s['omega']))
         prepared=(base,dict(flows))
         if _condition_cache is not None:_condition_cache['geometry']=prepared
     base,original_flows=prepared

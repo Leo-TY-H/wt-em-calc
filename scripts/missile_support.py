@@ -53,22 +53,29 @@ def ideal_context(launch, target, time, source_mask):
                 source_direction=lambda kind,t,direction: list(direction), observation_range=True)
 
 
-def supported_radar_step(launch):
+def supported_radar_step(launch, *, immutable_properties=False):
     """Return the transient step callback carried through frame/interaction copies."""
     launch = deepcopy(launch)
+    prepared_source = None
+    prepared_guidance = None
 
     def step(p, state, targets, dt):
+        nonlocal prepared_source, prepared_guidance
         if p.get('policy') != 'geometric_radar_v1' or len(targets) != 1:
             raise ValueError('Ideal radar support requires one geometric-policy target')
-        guidance_properties = deepcopy(p['guidance'])
-        # Inertial projection reaches the designation helper during coast modes.
-        # Remove scalar detection/ambiguity rejection here too, while retaining
-        # its authored angular pointing bounds and binary32 update arithmetic.
-        designation = guidance_properties['seeker']['modes']['designation']
-        for name in ('distance','doppler'):
-            axis = designation[name]
-            axis.update(minimum=0. if name=='distance' else -BOUND, maximum=BOUND,
-                        unambiguous=2*BOUND, signal_width_min=max(1.,axis['signal_width_min']))
+        if not immutable_properties or prepared_source is not p['guidance']:
+            guidance_properties = deepcopy(p['guidance'])
+            # Inertial projection reaches the designation helper during coast
+            # modes. Only these fixed policy parameters are prepared here.
+            designation = guidance_properties['seeker']['modes']['designation']
+            for name in ('distance','doppler'):
+                axis = designation[name]
+                axis.update(minimum=0. if name=='distance' else -BOUND, maximum=BOUND,
+                            unambiguous=2*BOUND, signal_width_min=max(1.,axis['signal_width_min']))
+            if immutable_properties:
+                prepared_source, prepared_guidance = p['guidance'], guidance_properties
+        else:
+            guidance_properties = prepared_guidance
 
         def guidance(unused, history, old, new, elapsed, clocks, points, **kwargs):
             context = ideal_context(launch, points[0]['scene']['new_target'], new[13],

@@ -1,6 +1,6 @@
 from functools import lru_cache
 from collections.abc import Mapping
-import json
+import orjson
 from pathlib import Path
 import jet_catalog
 import prop_catalog
@@ -31,7 +31,7 @@ def catalog():
     result.update(prop_catalog.catalog())
 
 
-    excluded=json.loads(EXCLUSIONS.read_text(encoding='utf-8'))['aircraft']
+    excluded=orjson.loads(EXCLUSIONS.read_bytes())['aircraft']
     for name in excluded:result.pop(name,None)
     from aircraft_upgrades import profile
     for name, row in result.items():
@@ -49,7 +49,7 @@ def catalog():
     from flap_model import profile as flap_profile
     for name, row in result.items():
         path = prop_catalog.fm_source(row['fm_id']) if 'fm_id' in row else jet_catalog.source(name)
-        row['flaps'] = flap_profile(json.loads(path.read_text()))
+        row['flaps'] = flap_profile(orjson.loads(path.read_bytes()))
     return result
 
 

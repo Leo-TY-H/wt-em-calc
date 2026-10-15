@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engagement research · neothunderism</title>
+<link rel="icon" href="./icons/neothunderism-32.png">
+<link rel="stylesheet" href="./engagement-research.css">
+<script defer src="./vendor/plotly.min.js"></script>
+<script defer src="./engagement-research.js"></script>
+</head>
+<body>
+<header><a href="./" class="brand">neothunderism</a><a href="./">← Flight tools</a><span class="build">LOCAL RESEARCH · 2.59.0.46</span></header>
+<main>
+<div class="intro"><p class="eyebrow">BEHAVIORAL RECONSTRUCTION</p><h1>From flare motion to seeker response</h1>
+<p>Run four examples checked against original game code. Each contains one named flare and a synthetic missile receiver, with fixed initial motion and clear visibility.</p></div>
+<div class="layout">
+<aside>
+<form id="run-form"><label for="preset">Validated example</label><select id="preset" disabled></select>
+<dl id="asset-facts"></dl><button id="run" disabled>Calculate example</button></form>
+<p id="status" role="status" aria-live="polite">Loading the local reference…</p>
+<section class="scope"><h2>What this example covers</h2><p>Loaded flare properties → source motion → spatial query → finite IR observation → tracking → guidance → receiver flight.</p>
+<h2>Supplied conditions</h2><p>The flare starts 1 km ahead at 150 m/s; the receiver starts at 300 m/s. Both begin at 1,000 m altitude. Surface and visibility inputs are fixed.</p>
+<p>Aircraft competition, dispenser release, clutter, support changes, removal and damage are outside these examples. A close pass does not establish a hit or a kill.</p></section>
+<button id="export" class="secondary" disabled>Export result &amp; provenance</button>
+</aside>
+<div class="results">
+<div class="metrics" aria-label="Selected sample"><div><span>Time</span><strong id="time-value">—</strong></div><div><span>Center separation</span><strong id="range-value">—</strong></div><div><span>Observation</span><strong id="observation-value">—</strong></div><div><span>Tracking</span><strong id="tracking-value">—</strong></div></div>
+<section class="chart-panel"><div class="chart-heading"><h2>Motion through the scene</h2><span><i class="source-dot"></i> Flare <i class="receiver-dot"></i> Synthetic receiver</span></div>
+<p class="chart-note">Side view: X versus altitude. Axes use independent scales.</p>
+<div id="trajectory" class="chart" aria-label="Flare and receiver trajectories"></div>
+<div class="timeline"><button id="play" class="secondary" disabled aria-label="Play or pause history">Play</button><label for="sample">Sample</label><input id="sample" type="range" min="0" max="1" value="0" disabled><output id="sample-label">—</output></div></section>
+<section class="chart-panel"><h2>Observation and retained tracking</h2><p class="chart-note">Observation can become unavailable while tracking continues from stored state.</p><div id="signals" class="signal-chart" aria-label="Observation and tracking over time"></div></section>
+<section class="details"><h2>Observed transitions</h2><ol id="events"><li>Calculate an example to inspect its history.</li></ol><p id="stop-note">The simulation ends at the validated preset boundary. Expiry, deletion and damage are separate events.</p>
+<details><summary>Evidence and execution details</summary><pre id="provenance">No calculation yet.</pre></details></section>
+</div>
+</div>
+</main>
+</body></html>

@@ -47,11 +47,16 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
 
     batches=[]
     for index,entry in enumerate(entries):
-        if not batches or len(batches[-1])==2 or any(e['aircraft_id']==entry['aircraft_id'] for _,e in batches[-1]):
+        if (not batches or len(batches[-1])==2 or
+                any(e['aircraft_id']==entry['aircraft_id'] or
+                    e['settings']['trim_solver_mode']!=entry['settings']['trim_solver_mode']
+                    for _,e in batches[-1])):
             batches.append([])
         batches[-1].append((index,entry))
-    def assemble(data,batch):
-        rows=dict(completed)
+    def assemble(data,batch,copy_completed=False):
+        # Incoming previews are already detached by compute_adaptive. Earlier
+        # completed entries and the full request settings still need copies.
+        rows=clone(completed) if copy_completed else dict(completed)
         physical={a['id']:a for a in data['aircraft']}
         for index,entry in batch:
             if entry['aircraft_id'] not in physical:continue
@@ -60,11 +65,21 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
             mode=('RB' if condition['instructor'] else 'SB') if condition['instructor']!=condition['torque_gyro'] else (
                 f"Instructor {'on' if condition['instructor'] else 'off'} · torque/gyro {'on' if condition['torque_gyro'] else 'off'}")
             if not condition['structural_limits']:mode+=' · Flutter off'
+            mode+=' · '+('New stationary solver' if condition['trim_solver_mode']=='stationary' else 'Baseline solver')
+            from em_model_experiments import label
+            experiment=label(condition)
+            if experiment:mode+=' · '+experiment
             a.update(id=entry['id'],aircraft_id=entry['aircraft_id'],color=COLORS[index],
                      name=f"{AIRCRAFT[entry['aircraft_id']]['name']} · {index+1} · {mode}")
             rows[entry['id']]=a
-        output=dict(data,settings=config,aircraft=[rows[e['id']] for e in entries if e['id'] in rows],
+        output=dict(data,settings=clone(config) if copy_completed else config,
+                    aircraft=[rows[e['id']] for e in entries if e['id'] in rows],
                     elapsed_s=time.monotonic()-start)
+        modes={e['settings']['trim_solver_mode'] for e in entries if e['id'] in rows}
+        output['stationary_baseline_chart']='stationary' in modes and config['stationary_execution']=='baseline'
+        if len(modes)>1:
+            output.update(method='Baseline and stationary solver comparison; see per-entry settings',
+                          validation='Per-entry numerical equilibrium and physical admission; baseline interpolation checks')
         output['speeds_kmh']=sorted({v for a in output['aircraft'] for v in
             ([c['speed_kmh'] for c in a['columns']] if 'columns' in a else data['speeds_kmh'])})
         return output
@@ -80,7 +95,7 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
                           phase=f"Entries {batch[0][0]+1}–{batch[-1][0]+1} · "+p.get('phase','Solving'),
                           elapsed_s=time.monotonic()-start))
         run=compute(work,report if progress else None,cancelled,
-                    (lambda data:preview(clone(assemble(data,batch)))) if preview else None)
+                    (lambda data:preview(assemble(data,batch,copy_completed=True))) if preview else None)
         output=assemble(run,batch);runs.append(run)
         completed={a['id']:a for a in output['aircraft']}
         if preview and len(completed)<len(entries):preview(clone(dict(output,preview=True)))

@@ -1,10 +1,15 @@
+"""The retained three-equation one-g Instructor authority relation.
+
+The source predictor supplies both residuals and admission guards. Numerical
+correction is shared with the stationary aircraft and propulsion equations;
+there is no alternative finite-iteration model after a failed correction.
+"""
 import numpy as np
-from scipy.optimize import root
 
 from instructor_autotrim import autotrim_predictor
 from instructor_pitch_predictor import prepare_geometry
 
-REVISION = 'steady-authority-direct-v1'
+REVISION = 'steady-authority-shared-correction-v3'
 
 
 def solve(model, ip, state):
@@ -29,31 +34,46 @@ def solve(model, ip, state):
             eq = auto['equilibrium']
             residual = np.array([eq['lift_error_n'] / weight,
                 eq['moment_error_nm'] / moment_scale, eq['command_error']])
-            memo[key] = residual, auto
+            # These known signs and saturation state guide local stencils only.
+            # They do not claim to enumerate every inverse-polar/source guard.
+            memo[key] = dict(residual=residual, auto=auto,
+                proposal_branch=(x[0]>=0.,x[1]>=0.,x[2]>=0.,auto['saturated']))
         return memo[key]
 
-    def fun(x):return evaluate(x)[0]
-
-    def jac(x):
-
-
-        base = fun(x)
-        columns = []
-        for i, step in enumerate((.002, 2e-5, .0002)):
-            shifted = np.array(x, dtype=float); shifted[i] += step
-            columns.append((fun(shifted) - base) / step)
-        return np.column_stack(columns)
-
-    fit = root(fun, [angle, 0., 0.], jac=jac, method='hybr',
-               options=dict(xtol=2e-6, maxfev=48, factor=10.))
-    _, auto = evaluate(fit.x)
+    # These are representation bounds, not a newly assumed physical domain.
+    # The predictor consumes finite binary32 angle/tail-force/command values.
+    # Only the existing |command|<=1 admission rule supplies a physical bound.
+    finite32 = np.nextafter(float(np.finfo(np.float32).max), 0.)
+    lower = [-finite32, -finite32/weight, -1.]
+    upper = [finite32, finite32/weight, 1.]
+    # Defer this import: compiled Instructor wrappers import this Python module
+    # during backend activation, before all aircraft modules are installed.
+    from em_stationary_corrector import Corrector
+    corrector = Corrector(evaluate, (lower,upper), [.002,2e-5,.0002],
+        branch=lambda value:value['proposal_branch'],
+        scale=[10.,1.,.2], step_limit=[8.,.3,.4],
+        residual_scale=[20./weight,20./moment_scale,2e-6])
+    fit = corrector.solve([angle,0.,0.], max_nfev=120,
+                          numerical_target=None, reuse_jacobian=True)
+    value = evaluate(fit.x)
+    auto = value['auto']
     eq = auto['equilibrium']
 
     success = (auto['success'] and abs(eq['lift_error_n']) < 20.
         and abs(eq['moment_error_nm']) < 20. and abs(eq['command_error']) < 2e-6
         and abs(auto['output'][1]) <= 1. and np.isfinite(fit.x).all())
-    return dict(success=bool(success), method='simultaneous reduced equilibrium',
+    return dict(success=bool(success), method='shared correction of simultaneous one-g relation',
         equilibrium=eq, trim=[auto['output'][2], auto['output'][1], 0.],
         one_g_alpha_deg=auto['output'][0], evaluations=calls,
-        reason=None if success else 'Direct one-g equilibrium unresolved',
+        reason=None if success else 'One-g equilibrium correction unresolved',
+        coordinates=list(map(float,fit.x)),
+        coordinate_names=['predictor_angle_deg','tail_force_over_weight','elevator_command'],
+        search_bounds=[lower,upper],
+        search_bound_scope='Finite binary32 predictor states and retained command bound; no coverage proof',
+        local_admission=bool(success),coverage_complete=False,
+        correction=dict(termination=fit.termination,nfev=fit.nfev,
+            evaluations=fit.evaluations,derivative_evaluations=fit.derivative_evaluations,
+            residual_max=float(np.max(abs(value['residual']),initial=0.)),
+            return_metric=fit.return_metric,closure_ratio=fit.closure_ratio,
+            numerical_target_reached=fit.success),
         revision=REVISION)

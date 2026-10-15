@@ -54,8 +54,13 @@ def boundary_contour_speeds(columns,config):
             for level in config.get('sep_contour_levels_mps',[]):
                 if not np.isfinite([a,b]).all() or (a-level)*(b-level)>=0.:continue
                 try:
-                    speed=brentq(lambda v:float(envelope_values(columns,[v])[0,side+2])-level,
-                                 lo,hi,xtol=1e-5)
+                    residual=lambda v:float(envelope_values(columns,[v])[0,side+2])-level
+                    if config.get('trim_solver_mode')=='stationary':
+                        from em_roots import checked_root
+                        from em_accuracy_policy import ALLOWANCE
+                        speed=checked_root(residual,lo,hi,residual_tolerance=float(ALLOWANCE),
+                            xtol=.1*speed_tolerance(config))
+                    else:speed=brentq(residual,lo,hi,xtol=1e-5)
                 except ValueError:continue
                 if min(speed-lo,hi-speed)>speed_tolerance(config):queries.add((lo,hi,float(speed)))
     return sorted(queries)
@@ -84,6 +89,22 @@ def speed_tolerance(config):
     return cells*(config['speed_max_kmh']-config['speed_min_kmh'])/(2*config['surface_resolution']-2)
 
 
+def refinement_speed_tolerance(config):
+    """Locate stationary transitions to the chart's horizontal tolerance."""
+    return speed_tolerance(config)*(1. if config.get('trim_solver_mode')=='stationary' else .25)
+
+
+def load_interval_resolved(speed,low,high,config):
+    """An admitted interval narrower than the chart's vertical tolerance.
+
+    This bounds placement of a transition, not its SEP amplitude or root
+    coverage. Failed samples remain gaps and never enter an admitted interval.
+    """
+    if config.get('trim_solver_mode')!='stationary':return False
+    rates=np.degrees(9.8100004196167*np.sqrt(np.maximum(0.,np.array([low,high])**2-1.))/(speed/3.6))
+    return abs(rates[1]-rates[0])<=turn_tolerance(config['sep_tolerance_mps'])
+
+
 def surface_band_values(columns,speed,loads,config):
     from em_sampling import speed_interpolate
     from em_surface import envelope_limits
@@ -103,7 +124,8 @@ def contour_check_points(columns,low,high,speed,loads,actual,predicted,config,lo
     from scipy.optimize import brentq
     from em_sampling import speed_interpolate
     from em_surface import envelope_limits
-    tolerance=config['sep_tolerance_mps']
+    from em_accuracy_policy import comparison_tolerance
+    tolerance=comparison_tolerance(config)
     if high-low<=4*speed_tolerance(config):return []
     candidates=np.flatnonzero(np.isfinite(actual)&np.isfinite(predicted)&
         (abs(actual-predicted)>tolerance)&visible_error(actual,predicted,config))
@@ -129,8 +151,12 @@ def contour_check_points(columns,low,high,speed,loads,actual,predicted,config,lo
         if not crossings:return None
         near=bottom+fraction*(top-bottom)
         i=min(crossings,key=lambda i:abs((grid[i]+grid[i+1])*.5-near))
-        return brentq(lambda n:float(speed_interpolate(columns,[probe],[n])[0,0])-target,
-                      grid[i],grid[i+1],xtol=1e-7)
+        residual=lambda n:float(speed_interpolate(columns,[probe],[n])[0,0])-target
+        if config.get('trim_solver_mode')=='stationary':
+            from em_roots import checked_root
+            from em_accuracy_policy import ALLOWANCE
+            return checked_root(residual,grid[i],grid[i+1],residual_tolerance=float(ALLOWANCE),xtol=2e-5)
+        return brentq(residual,grid[i],grid[i+1],xtol=1e-7)
     points=[]
     for probe in (low+.25*(high-low),low+.75*(high-low)):
         load=contour_load(probe)
@@ -154,7 +180,12 @@ def contour_check_points(columns,low,high,speed,loads,actual,predicted,config,lo
         a,b=body_speed(low),body_speed(high)
         for knot in longitudinal_knots:
             if not np.isfinite([a,b]).all() or (a-knot)*(b-knot)>=0.:continue
-            try:probe=brentq(lambda v:body_speed(v)-knot,low,high,xtol=.01)
+            try:
+                if config.get('trim_solver_mode')=='stationary':
+                    from em_roots import checked_root
+                    probe=checked_root(lambda v:body_speed(v)-knot,low,high,
+                        residual_tolerance=.25*speed_tolerance(config),xtol=.1*speed_tolerance(config))
+                else:probe=brentq(lambda v:body_speed(v)-knot,low,high,xtol=.01)
             except ValueError:continue
             load=contour_load(probe)
             if load is not None and all(abs(probe-v)>.01 for v,_ in points):points.append((probe,load))

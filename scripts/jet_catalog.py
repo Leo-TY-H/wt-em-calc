@@ -1,9 +1,11 @@
 import copy,json,re,math
+import orjson
 from functools import lru_cache
 from pathlib import Path
 from component_assembly import f32,add,mul
 from mass_model import tank_configuration
 from fm_loader import normalize
+from em_data import clone
 
 ROOT=Path(__file__).resolve().parents[1]
 DIRECTORY=ROOT/'references/jet-catalog/fm'
@@ -20,7 +22,9 @@ def source(name):
 
 
 def merge(base,override):
-    out=copy.deepcopy(base)
+    # Engine records are plain authored data. The existing binary clone keeps
+    # container ownership/aliases while avoiding Python recursion over scalars.
+    out=clone(base)
     for key,value in override.items():
         out[key]=merge(out[key],value) if isinstance(value,dict) and isinstance(out.get(key),dict) else copy.deepcopy(value)
     return out
@@ -59,7 +63,7 @@ def fuel_capacities(fm):
 
 
 @lru_cache(maxsize=64)
-def load(name):return normalize(json.loads(source(name).read_text()))
+def load(name):return normalize(json.loads(source(name).read_text()),_owned=True)
 
 
 @lru_cache(maxsize=1)
@@ -71,7 +75,7 @@ def catalog():
     from jet_nozzle import prepare as prepare_nozzle
     out={}
     for path in sorted(DIRECTORY.glob('*.blkx')):
-        raw=json.loads(path.read_text());installed=engines(raw)
+        raw=orjson.loads(path.read_bytes());installed=engines(raw)
         rocket_only=bool(installed) and all(v.get('Main',{}).get('Type')=='Rocket' and not v.get('Booster',False) for _,v in installed)
         if not rocket_only and not any(v.get('Main',{}).get('Type')=='Jet' for _,v in installed):continue
         name=path.stem;ad=raw.get('Aerodynamics',{})

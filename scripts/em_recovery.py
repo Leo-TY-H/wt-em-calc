@@ -7,6 +7,20 @@ def recover_equilibrium(solver,speed_kmh,load,neighbors):
     below=[p for p in neighbors if p['load_g']<load];above=[p for p in neighbors if p['load_g']>load]
     if not below or not above:return None
     left=max(below,key=lambda p:p['load_g']);right=min(above,key=lambda p:p['load_g'])
+    if solver.config.get('trim_solver_mode') == 'stationary' and hasattr(solver,'core'):
+        # Neighbors nominate a continuation seed. The common equations and
+        # corrector replace the legacy nested bank/control and alpha solves.
+        from em_continuation import TrimCurve
+        fraction=(load-left['load_g'])/(right['load_g']-left['load_g'])
+        a,b=TrimCurve.encode(left['solution'],left['load_g']),TrimCurve.encode(right['solution'],right['load_g'])
+        curve=TrimCurve(solver,speed_kmh,min((left,right),key=lambda p:abs(p['load_g']-load)))
+        predicted=a+fraction*(b-a)
+        predicted[5]=np.sqrt(max(0.,load*load-1.))/curve.scale[5]
+        point=curve.correct(predicted,prescribed_load=load)
+        if point is not None and point['valid']:
+            point['recovery_method']='shared stationary correction from neighboring branch states'
+            return point
+        return None
     amin=max(solver.trim_bounds[0][0],min(left['alpha_deg'],right['alpha_deg'])-.05)
     amax=min(solver.trim_bounds[1][0],max(left['alpha_deg'],right['alpha_deg'])+.05)
     cache={};best=None

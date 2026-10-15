@@ -16,6 +16,7 @@ OUTSIDE_EM = frozenset(('bulletMod', 'weaponMod', 'additiveBulletMod', 'commonWe
     'extinguisherNum', 'gForceTolerationMult', 'sensors', 'counterMeasures',
     'nightVision', 'enginesInfraRedBrightnessMult', 'effects'))
 POLICY = 'Fully upgraded aircraft; RB/SB; all flight-performance upgrades installed'
+_vehicle_index = None
 
 
 @lru_cache(maxsize=1)
@@ -50,12 +51,24 @@ def resolve_modifications(vehicle, shared):
     return dict(applied=active, already_in_base_fm=included, outside_em=ignored)
 
 
+def _vehicle_candidates(name, rows):
+    """Index the immutable source rows once, preserving variant order/duplicates."""
+    global _vehicle_index
+    index = _vehicle_index
+    if index is None or index[0] is not rows:
+        by_fm = {}
+        for row in rows:
+            by_fm.setdefault(Path(row.get('fm') or '').stem, []).append(row['vehicle'])
+        index = (rows, {row['vehicle'] for row in rows},
+                 {fm: tuple(sorted(names)) for fm, names in by_fm.items()})
+        _vehicle_index = index
+    return [name] if name in index[1] else list(index[2].get(name, ()))
+
+
 @lru_cache(maxsize=2048)
 def profile(name):
     shared, rows = definitions()
-    by_name = {row['vehicle']: row for row in rows}
-    candidates = [name] if name in by_name else sorted(row['vehicle'] for row in rows
-        if Path(row.get('fm') or '').stem == name)
+    candidates = _vehicle_candidates(name, rows)
     if not candidates:
         raise ValueError('Fully upgraded configuration cannot be verified: no pinned vehicle maps to this FM')
     resolved = [resolve_modifications(json.loads((VEHICLES / (n + '.blkx')).read_text()), shared)

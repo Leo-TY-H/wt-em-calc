@@ -20,6 +20,67 @@ _COLUMN_CACHE=OrderedDict()
 _AIRCRAFT_CACHE=OrderedDict()
 
 
+def continuation_initial(solver,point,attitude=None):
+    """Carry one observed internal branch with the aircraft prediction.
+
+    Propeller/history states are not interpolated between different roots.
+    The stationary solver recorrects this hint at the requested speed and load.
+    """
+    attitude=list(point['solution'] if attitude is None else attitude)
+    names=point.get('stationary_coordinate_names',())
+    coordinates=point.get('stationary_coordinates',())
+    if (solver.config.get('trim_solver_mode')!='stationary' or not names
+            or len(names)!=len(coordinates)):return attitude
+    predicted=dict(zip(('alpha_deg','bank_deg','aileron','elevator','rudder'),attitude))
+    return dict(solution=attitude,stationary_coordinate_names=list(names),
+        stationary_coordinates=[predicted.get(name,value) for name,value in zip(names,coordinates)],
+        stationary_request_indices=list(point.get('stationary_request_indices',())))
+
+
+def nearby_initial(solver,speed,load,points,attitude):
+    if solver.config.get('trim_solver_mode')!='stationary' or isinstance(attitude,dict):return attitude
+    good=[p for p in points if p.get('valid') and p.get('stationary_coordinate_names')]
+    if not good:return attitude
+    near=min(good,key=lambda p:((p['speed_kmh']-speed)/speed)**2+
+                              ((p['load_g']-load)/max(1.,load))**2)
+    return continuation_initial(solver,near,attitude)
+
+
+def continuation_key(point):
+    # Internal roots now influence continuation and therefore cache identity.
+    return (point.get('speed_kmh'),point.get('stationary_coordinate_names'),
+            point.get('stationary_coordinates'),point.get('stationary_request_indices'))
+
+
+def revisit_lower_failures(solver,speed,samples,anchor):
+    """Continue a newly admitted branch down through earlier unclosed trials.
+
+    Each existing failure gets at most one local correction here. A balanced
+    physical rejection stops continuation. Failure remains a gap, never proof
+    of a lower flight limit. No new load samples or discovery are introduced.
+    """
+    if solver.config.get('trim_solver_mode')!='stationary':return anchor
+    from em_trim_work import charge
+    lower=sorted((p for p in samples.values() if p['load_g']<anchor['load_g']),
+                 key=lambda p:p['load_g'],reverse=True)
+    for old in lower:
+        if old['valid']:
+            anchor=old;continue
+        if old.get('converged'):break
+        attitude=list(anchor['solution'])
+        nominal=lambda n:math.degrees(math.acos(1./max(1.,n)))
+        attitude[1]+=nominal(old['load_g'])-nominal(anchor['load_g'])
+        view=solver.at_sideslip(anchor.get('sideslip_attitude_deg',0.))
+        charge('stationary_lower_rechecks')
+        point=view.solve(speed,old['load_g'],continuation_initial(solver,anchor,attitude),
+                         exhaustive=False,quick=True)
+        if point['valid'] or point.get('converged'):
+            samples[old['load_g']]=point
+        if not point['valid']:break
+        anchor=point
+    return anchor
+
+
 def compute_cached(config,progress=None,cancelled=None,preview=None):
     import json
     from em_solver import aircraft_settings
@@ -112,7 +173,11 @@ def sweep_speed_intervals(name,config):
 def worker_solver(name, config_json):
     import json
     from em_solver import TrimSolver
-    solver=TrimSolver(name,json.loads(config_json));solver.chart_search=True
+    config=json.loads(config_json)
+    if config.get('trim_solver_mode')=='stationary' and config.get('stationary_execution')=='baseline':
+        from em_stationary_baseline import BaselineSolver
+        TrimSolver=BaselineSolver
+    solver=TrimSolver(name,config);solver.chart_search=True
     return solver
 
 
@@ -120,6 +185,8 @@ def sample_with_history(worker,task,history):
     from em_workers import prepare_job
     prepare_job()
     solver=worker_solver(task[0],task[1])
+    if hasattr(solver,'direct_boundary'):
+        solver.stationary_boundary_evidence=[]
     solver.chart_load_anchors=[p['_low_speed_cap_anchor'] for p in task[3]
         if isinstance(p,dict) and p.get('_low_speed_cap_anchor')] if isinstance(task[3],list) else []
     solver._sideslip_solvers={}
@@ -148,6 +215,16 @@ def sample_with_history(worker,task,history):
     certificate=worker in (check_interior,check_boundary)
     column=(bounded_column(task,lambda:worker(task),certificate=certificate)
             if isinstance(task[2],Real) else worker(task))
+    if column is not None and hasattr(solver,'direct_boundary'):
+        # Helpers can retain candidates after the initial direct boundary
+        # search. Export the complete task record, including failed later
+        # localization, instead of only the earlier snapshot.
+        retained=[];seen=set()
+        for evidence in [*column.get('stationary_boundary_evidence',()),
+                         *getattr(solver,'stationary_boundary_evidence',())]:
+            if id(evidence) in seen:continue
+            seen.add(id(evidence));retained.append(evidence)
+        column['stationary_boundary_evidence']=retained
     from em_load_limits import annotate
     from em_mach_events import annotate as annotate_mach
     return annotate_mach(solver,annotate(solver,column)),solver.instructor_trim_entries if solver.config['instructor'] else {}
@@ -168,6 +245,8 @@ def boundary_prediction(columns,speed):
 def sample_level_endpoint(task):
     name,config_json,left,right=task
     solver=worker_solver(name,config_json)
+    from em_accuracy_policy import ALLOWANCE
+    sep_target=float(ALLOWANCE) if solver.config.get('trim_solver_mode')=='stationary' else .002
     levels={c['speed_kmh']:next(p for p in c['points'] if p['load_g']==1. and p['valid'])
             for c in (left,right)}
     class EndpointClosed(Exception):
@@ -176,13 +255,13 @@ def sample_level_endpoint(task):
         fresh=speed not in levels
         if speed not in levels:
             near=min(levels.values(),key=lambda p:abs(p['speed_kmh']-speed))
-            point=solver.solve(speed,1.,near['solution'],exhaustive=False)
+            point=solver.solve(speed,1.,continuation_initial(solver,near),exhaustive=False)
             if not point['valid']:raise ValueError('Unresolved level trim inside endpoint bracket')
             levels[speed]=point
         value=levels[speed]['ps_mps']
 
 
-        if fresh and abs(value)<.002:raise EndpointClosed(speed,levels[speed])
+        if fresh and abs(value)<sep_target:raise EndpointClosed(speed,levels[speed])
         return value
     try:
         speed=brentq(residual,left['speed_kmh'],right['speed_kmh'],xtol=1e-4,maxiter=24)
@@ -190,7 +269,7 @@ def sample_level_endpoint(task):
     except EndpointClosed as closed:
         speed,point=closed.speed,closed.point
     except (ValueError,RuntimeError):return None
-    if abs(point['ps_mps'])>.002:return None
+    if abs(point['ps_mps'])>sep_target:return None
     near=min((left,right),key=lambda c:abs(c['speed_kmh']-speed))
     column=sample_column((name,config_json,speed,
         [point]+[p for p in near['points'] if p['valid']]))
@@ -234,6 +313,10 @@ def complete_level_edge(task):
               'stall' if reasons=={'post-stall'} else None)
     if kind is None and right['boundary']['authority_margin']<.02:kind='control'
     if kind is None and right['boundary']['stall_margin_deg']<.15:kind='stall'
+    if kind is None:
+        fractions=[x for name,x in zip(right['boundary'].get('stationary_coordinate_names',()),
+                   right['boundary'].get('stationary_coordinates',())) if name.startswith('pitch:')]
+        if fractions and min(min(x,1.-x) for x in fractions)<.05:kind='propeller pitch'
     if kind:
         endpoint=sample_stall_endpoint((name,config_json,left,right,kind))
         if endpoint:return endpoint
@@ -266,7 +349,7 @@ def sample_level_edge_probe(task):
     from em_speed_limits import excluded_column
     excluded=excluded_column(solver,speed)
     if excluded is not None:return excluded
-    initial=next((p['solution'] for p in seed or [] if p['valid'] and p['load_g']==1.),None)
+    initial=next((continuation_initial(solver,p) for p in seed or [] if p['valid'] and p['load_g']==1.),None)
     point=solve_level(solver,speed,initial)
     return dict(speed_kmh=speed,points=[point],boundary=point if point['valid'] else None,
         lower_boundary=point if point['valid'] else None,sustained=[],load_checks=[],
@@ -415,7 +498,8 @@ def _sample_boundary_column(task):
             n=left['load_g']*(1-t)+right['load_g']*t
             guess=(np.array(left['solution'])*(1-t)+np.array(right['solution'])*t).tolist()
             inside=guess.copy();inside[0]-=.2
-            low=solver.solve(speed,max(1.,n-max(.01,n*.01)),inside,exhaustive=False,quick=True)
+            request=max(1.,n-max(.01,n*.01))
+            low=solver.solve(speed,request,nearby_initial(solver,speed,request,seed,inside),exhaustive=False,quick=True)
             if not low['valid']:
 
 
@@ -429,14 +513,14 @@ def _sample_boundary_column(task):
                         states.append([float(np.interp(load,[q['load_g'] for q in group],[q['solution'][j] for q in group])) for j in range(5)])
                     inside=[a*(1-t)+b*t for a,b in zip(*states)]
                     inside[1]=math.degrees(math.acos(1./load))
-                    low=solver.solve(speed,load,inside,exhaustive=False,quick=True)
+                    low=solver.solve(speed,load,nearby_initial(solver,speed,load,seed,inside),exhaustive=False,quick=True)
             if low['valid']:
                 hint=dict(left,load_g=n+max(.01,n*.02),solution=guess,valid=False,converged=False,reasons=[],
                     continuation_limit_kind=left['envelope_limit']['kind'],continuation_seed=dict(left,solution=guess,load_g=n,speed_kmh=speed))
                 if left['envelope_limit']['kind'] in ('Instructor pitch','wing force'):
 
 
-                    high=solver.solve(speed,hint['load_g'],guess,exhaustive=False,quick=True)
+                    high=solver.solve(speed,hint['load_g'],continuation_initial(solver,low,guess),exhaustive=False,quick=True)
                     if high['converged'] and high['reasons'] and set(high['reasons'])<=PHYSICAL_REASONS:
                         hint=high
                 point=solver.boundary(speed,low,hint,continuation=False,scalar_fallback=False,
@@ -451,6 +535,22 @@ def _sample_boundary_column(task):
 
 
 def predict_limit(solver,speed,level,seed):
+    def initial(load,attitude=None):
+        if attitude is None:
+            attitude=list(level['solution'])
+            attitude[1]=math.degrees(math.acos(1./max(1.,load)))
+        return nearby_initial(solver,speed,load,[level,*(seed or [])],attitude)
+    if solver.config.get('trim_solver_mode')=='stationary':
+        from em_stationary_boundary import Curve,finish_edge,mark,event_details
+        curve=Curve(solver,speed)
+        for kind,axis,event in curve.nearest_events(level):
+            if kind!='propeller pitch' or event.stationary_distance>.05:continue
+            edge=curve.correct(level,event=event)
+            if edge is None or not edge['valid'] or edge['load_g']<=level['load_g']:continue
+            if edge['alpha_deg']<level['alpha_deg']:continue
+            edge=mark(edge,kind,axis=axis,method='stationary requested-RPM pitch bound',**event_details(event))
+            checked=finish_edge(curve,[level],edge)
+            if checked is not None:return checked
     if any(p.get('native_branch_search') for p in seed or []):
         from em_branch_limit import continue_endpoint
         point=continue_endpoint(solver,speed,seed,level)
@@ -495,7 +595,8 @@ def predict_limit(solver,speed,level,seed):
     if estimate>1.8:
         fractions=(.8,.65,.9) if solver.is_prop and solver.engine.automatic else (.65,)
         for fraction in fractions:
-            interior=solver.solve(speed,max(1.1,target*fraction),exhaustive=False)
+            request=max(1.1,target*fraction)
+            interior=solver.solve(speed,request,initial(request),exhaustive=False)
             if interior['valid']:
                 low=interior;break
         else:return None
@@ -514,7 +615,8 @@ def predict_limit(solver,speed,level,seed):
 
 
         if solver.config['instructor'] or kind in ('control','wing force'):
-            measured=solver.solve(speed,min(high_load,max(1.01,estimate)),guess,
+            request=min(high_load,max(1.01,estimate))
+            measured=solver.solve(speed,request,initial(request,guess),
                 exhaustive=False,quick=True)
             if measured['converged'] and measured['reasons'] and set(measured['reasons'])<=PHYSICAL_REASONS:
                 from em_constraint_bracket import refine
@@ -527,7 +629,8 @@ def predict_limit(solver,speed,level,seed):
         if limit:return limit
 
 
-        interior=solver.solve(speed,max(1.1,estimate*.85),exhaustive=False)
+        request=max(1.1,estimate*.85)
+        interior=solver.solve(speed,request,initial(request),exhaustive=False)
         if interior['valid']:
             return solver.boundary(speed,interior,high,continuation=False,
                 candidate_kinds={'stall','control'},max_iterations=12,trial_cycle_seconds=20.)
@@ -535,7 +638,7 @@ def predict_limit(solver,speed,level,seed):
     if kind=='wing force':
 
 
-        measured_high=solver.solve(speed,high_load,guess,exhaustive=False)
+        measured_high=solver.solve(speed,high_load,initial(high_load,guess),exhaustive=False)
         if measured_high['converged'] and set(measured_high['reasons'])=={'wing force limit'}:
             measured_high['continuation_limit_kind']='wing force'
             high=measured_high
@@ -588,7 +691,9 @@ def _sample_column(task,boundary_only=False):
             boundary_bracket_g=None,boundary_reason=redline['kind'],boundary_status='speed limit',
             lower_boundary=None,numerical_gap_brackets=[],interior_failures=[],unresolved_load_intervals=[],
             elapsed_s=time.monotonic()-started,mass=solver.mass,engine=solver.engine.summary)
-    samples={};tol=cfg['sep_tolerance_mps'];checks=[];recovery_attempted=set();discovery=None
+    from em_accuracy_policy import comparison_tolerance
+    samples={};tol=comparison_tolerance(cfg);checks=[];recovery_attempted=set();discovery=None
+    stationary_boundary_evidence=[]
 
 
     from em_load_limits import ceiling,description
@@ -596,10 +701,18 @@ def _sample_column(task,boundary_only=False):
     for point in seed or []:
         if (point.get('valid') and point.get('speed_kmh')==speed and point['load_g']<=load_ceiling+1e-10):
             samples[point['load_g']]=dict(point)
+    def governor_transition(n):
+        def mode(p):return tuple(p.get('propulsion',{}).get('stationarity',{}).get('governor_status',()))
+        good=sorted((p for p in samples.values() if p['valid']),key=lambda p:p['load_g'])
+        left=next((p for p in reversed(good) if p['load_g']<n),None)
+        right=next((p for p in good if p['load_g']>n),None)
+        return bool(left and right and mode(left)!=mode(right))
+
     def solve(n,initial=None,exhaustive=False,local=False):
         n=float(n)
         if n not in samples:
-            local=local or n in recovery_attempted
+            transition=governor_transition(n)
+            local=local or n in recovery_attempted or transition
             exhaustive=exhaustive and not local
             searched_exhaustively=exhaustive
             if initial is None:
@@ -626,6 +739,8 @@ def _sample_column(task,boundary_only=False):
                     if not (n==1. and nearby['stall_margin_deg']<.5
                             and abs(nearby['speed_kmh']-speed)>.005*speed):
                         initial=nearby['solution']
+            if initial is not None:
+                initial=nearby_initial(solver,speed,n,[*samples.values(),*(seed or [])],initial)
             p=(solve_level(solver,speed,initial,exhaustive=exhaustive) if n==1. else
                solver.solve(speed,n,initial,exhaustive=exhaustive,
                             quick=local and solver.is_prop and solver.engine.automatic))
@@ -634,7 +749,7 @@ def _sample_column(task,boundary_only=False):
 
                 independent=solve_level(solver,speed)
                 if independent['valid'] or independent['force_error_g']<p['force_error_g']:p=independent
-            if boundary and bottom and bottom['load_g']<n<boundary['load_g'] and not p['converged']:
+            if not local and boundary and bottom and bottom['load_g']<n<boundary['load_g'] and not p['converged']:
 
 
                 from em_parameter import recover_fixed_load_point
@@ -644,7 +759,7 @@ def _sample_column(task,boundary_only=False):
                 from em_sideslip import recover_local_sideslip
                 recovered=recover_local_sideslip(solver,speed,n,p)
                 if recovered is not None:p=recovered
-            if (solver.is_prop and solver.engine.automatic and not p['converged']
+            if (not local and solver.is_prop and solver.engine.automatic and not p['converged']
                     and p['force_error_g']<.2 and p['stall_margin_deg']>1.
                     and p['authority_margin']>.02 and max(p['wing_load_ratios'])<.98):
 
@@ -657,7 +772,7 @@ def _sample_column(task,boundary_only=False):
                         p=trial;break
                     if (trial['force_error_g']+trial['angular_error_rad_s2']<
                             p['force_error_g']+p['angular_error_rad_s2']):p=trial
-            if boundary and bottom and bottom['load_g']<n<boundary['load_g'] and not p['converged']:
+            if not local and boundary and bottom and bottom['load_g']<n<boundary['load_g'] and not p['converged']:
                 correction=(continue_sideslip(solver,speed,n,[*samples.values(),*(seed or [])]) or
                             (recover_scalar_sideslip(solver,speed,n,p) if not local else None) or
                             (recover_fixed_alpha(solver,speed,n,p) if not local else None))
@@ -735,6 +850,18 @@ def _sample_column(task,boundary_only=False):
 
 
                 search_sequence[1:]=sorted(set(search_sequence[1:]+extra))
+            elif (solver.is_prop and discovery['attempts'] and
+                    discovery.get('estimated_aerodynamic_load_g',float('inf'))<1.):
+                # Level flight plus independent interior starts have failed
+                # below the nominal wing lift estimate. More high-load starts
+                # are low-value discovery work, not proof of infeasibility.
+                return dict(speed_kmh=float(speed),points=list(samples.values()),boundary=None,lower_boundary=None,
+                    sustained=[],load_checks=[],boundary_bracket_g=None,
+                    boundary_reason='Low-speed equilibrium search unresolved after independent starts',
+                    boundary_status='no feasible samples',numerical_gap_brackets=[],interior_failures=[],
+                    unresolved_load_intervals=[(1.,load_ceiling)],coverage_complete=False,
+                    search_unresolved='No closed equilibrium in bounded low-speed discovery',
+                    elapsed_s=time.monotonic()-started,mass=solver.mass,engine=solver.engine.summary,branch_discovery=discovery)
             elif discovery['attempts'] and p['stall_margin_deg']<.15 and p['force_error_g']<.15 and p['angular_error_rad_s2']<.01:
                 return dict(speed_kmh=float(speed),points=[p],boundary=None,lower_boundary=None,
                     sustained=[],load_checks=[],boundary_bracket_g=None,
@@ -744,6 +871,13 @@ def _sample_column(task,boundary_only=False):
                     mass=solver.mass,engine=solver.engine.summary,branch_discovery=discovery)
         if n==1. and p['valid'] and known_boundary:
             boundary=known_boundary;bottom=p;break
+        if (n==1. and p['valid'] and hasattr(solver,'direct_boundary')
+                and getattr(solver,'pretrace_boundary',True)):
+            direct=solver.direct_boundary(speed,p)
+            stationary_boundary_evidence.extend(getattr(solver,'stationary_boundary_evidence',()))
+            if direct is not None:
+                samples[direct['load_g']]=direct;bottom=p;boundary=direct
+                break
         if (n==1. and p['valid'] and cfg['max_load_g'] is None and
                 (solver.is_prop and solver.engine.automatic or
                  not solver.is_prop and any(p.get('envelope_limit') for p in (seed or [])))):
@@ -812,12 +946,14 @@ def _sample_column(task,boundary_only=False):
             previous_invalid=p
             continue
         if bottom is None:
-            bottom=p
+            bottom=revisit_lower_failures(solver,speed,samples,p)
+            previous_invalid=max((q for q in samples.values() if not q['valid']
+                and q['load_g']<bottom['load_g']),key=lambda q:q['load_g'],default=None)
             if previous_invalid is not None:
-                left,right=previous_invalid,p
+                left,right=previous_invalid,bottom
                 for _ in range(11):
                     if right['load_g']-left['load_g']<=.004:break
-                    middle=solve((left['load_g']+right['load_g'])*.5,right['solution'])
+                    middle=solve((left['load_g']+right['load_g'])*.5,right['solution'],local=True)
                     if middle['valid']:right=middle
                     else:left=middle
                 bottom=right
@@ -835,7 +971,12 @@ def _sample_column(task,boundary_only=False):
 
 
         physical_rejection=high['converged'] and bool(high['reasons']) and set(high['reasons'])<=physical_reasons
-        direct=(None if cfg['instructor'] and low['load_g']<1.05 and not high['converged'] else
+        if cfg.get('trim_solver_mode')=='stationary':
+            # The shared boundary solver handles failed upper trials and folds.
+            # Do not run the old propeller load retries before giving it the bracket.
+            direct=solver.boundary(speed,low,high)
+        else:
+            direct=(None if cfg['instructor'] and low['load_g']<1.05 and not high['converged'] else
                 solver.boundary(speed,low,high)) if not solver.is_prop else (
                 solver.boundary(speed,low,high) if physical_rejection else None)
         if direct:
@@ -873,7 +1014,7 @@ def _sample_column(task,boundary_only=False):
             if direct:samples[direct['load_g']]=direct;low=direct
         for _ in range(0 if direct else 11):
             if high['load_g']-low['load_g']<=.004:break
-            p=solve((low['load_g']+high['load_g'])/2,low['solution'])
+            p=solve((low['load_g']+high['load_g'])/2,low['solution'],local=True)
             if numerical_failure(p):
                 if not solver.is_prop:
                     # Contract toward the balanced trim instead of skipping the
@@ -891,7 +1032,11 @@ def _sample_column(task,boundary_only=False):
                     if not numerical_failure(probe):
                         high=probe;break
                 else:
-                    break
+                    # Failed probes do not exclude the valid interval below
+                    # them. Contract toward the last balanced trim within the
+                    # same iteration budget; this is only a search bound, not
+                    # evidence of a physical limit.
+                    high=p
                 continue
             if p['valid']:low=p
             else:high=p
@@ -975,7 +1120,8 @@ def _sample_column(task,boundary_only=False):
                 'verified limit' if boundary.get('envelope_limit') else 'unresolved numerical boundary',
             numerical_gap_brackets=[],interior_failures=[],unresolved_load_intervals=[],
             elapsed_s=time.monotonic()-started,mass=solver.mass,engine=solver.engine.summary,boundary_probe=True,
-            branch_selection=branch_selection,branch_search_points=branch_search_points,branch_discovery=discovery)
+            branch_selection=branch_selection,branch_search_points=branch_search_points,branch_discovery=discovery,
+            stationary_boundary_evidence=stationary_boundary_evidence)
     surface_loads=set();holdout_loads=set();pending=[]
     if boundary_only:
 
@@ -989,11 +1135,17 @@ def _sample_column(task,boundary_only=False):
     polar=condition_properties(solver.model,guide['mach'],guide['flaps_percent']/100.)[1] if guide else {}
     polar_angles=[polar[k]-solver.model['geometry']['incidence'] for k in ('aoaLineL','aoaLineH') if k in polar]
     from em_parameter import interior_point as solve_interior_point
+    from em_surface import curve_branch
     def alpha_point(solver,speed,left,right):
         lo,hi=left['load_g'],right['load_g']
         candidates=[p for n,p in samples.items() if p['valid'] and
                     lo+.25*(hi-lo)<=n<=lo+.75*(hi-lo)]
         if candidates:return min(candidates,key=lambda p:abs(p['load_g']-(lo+hi)*.5))
+        if curve_branch(left)!=curve_branch(right):
+            # Alpha continuation assumes a smooth propulsion branch. At a
+            # governor transition, certify an actual fixed-load midpoint.
+            point=solve((lo+hi)*.5,local=True)
+            return point if point['valid'] else None
         return solve_interior_point(solver,speed,left,right)
     def restore_coordinated_neighbors():
 
@@ -1016,6 +1168,7 @@ def _sample_column(task,boundary_only=False):
                 samples[n]=retry
 
     def refine_surface(phase):
+        from em_accuracy import load_interval_resolved
         top=boundary['load_g'];remaining=[]
         for depth in range(7):
             restore_coordinated_neighbors()
@@ -1036,6 +1189,10 @@ def _sample_column(task,boundary_only=False):
                 if len(ux)<2:continue
                 from em_surface import prepare_curve
                 curve=prepare_curve(good,top)
+                def resolved_interval(n):
+                    j=int(np.searchsorted([p['load_g'] for p in good],n))
+                    return (0<j<len(good) and load_interval_resolved(speed,
+                        good[j-1]['load_g'],good[j]['load_g'],cfg))
 
 
                 coordinates=np.unique(np.concatenate([np.linspace(a,b,9) for a,b in zip(ux,ux[1:])]))
@@ -1045,21 +1202,26 @@ def _sample_column(task,boundary_only=False):
                     for i in range(len(coordinates)-1):
                         a,b=values[i:i+2]
                         if not np.isfinite([a,b]).all() or not min(a,b)<=level<=max(a,b) or a==b:continue
-                        target=brentq(lambda u:float(curve(u))-level,coordinates[i],coordinates[i+1],xtol=1e-12)
+                        if cfg.get('trim_solver_mode')=='stationary':
+                            from em_accuracy_policy import ALLOWANCE
+                            target=checked_root(lambda u:float(curve(u))-level,coordinates[i],coordinates[i+1],
+                                residual_tolerance=float(ALLOWANCE),xtol=1e-6)
+                        else:target=brentq(lambda u:float(curve(u))-level,coordinates[i],coordinates[i+1],xtol=1e-12)
                         n=float(coordinate_load(target,top))
                         target_loads.append(n)
-                        if n in surface_loads:continue
-                        solve(n);holdout_loads.add(n)
+                        if n in surface_loads or resolved_interval(n):continue
+                        solve(n,local=True);holdout_loads.add(n)
                 for left,right in zip(good,good[1:]):
                     lo,hi=left['load_g'],right['load_g']
+                    if load_interval_resolved(speed,lo,hi,cfg):continue
                     u=float((load_coordinate(lo,top)+load_coordinate(hi,top))*.5)
                     mid=float(coordinate_load(u,top))
                     if not lo<mid<hi:continue
 
 
-                    if (left.get('roll_leveling_branch')==right.get('roll_leveling_branch') and
+                    if (curve_branch(left)==curve_branch(right) and
                             any(lo<n<hi for n in target_loads)):continue
-                    if left.get('roll_leveling_branch')==right.get('roll_leveling_branch'):
+                    if curve_branch(left)==curve_branch(right):
                         from em_accuracy import visible_error
                         values=curve(np.linspace(float(load_coordinate(lo,top)),float(load_coordinate(hi,top)),9))
                         if not visible_error(np.min(values),np.max(values),cfg):continue
@@ -1069,7 +1231,7 @@ def _sample_column(task,boundary_only=False):
                     p=alpha_holdouts[key]
                     if p is not None:
                         mid=p['load_g'];u=float(load_coordinate(mid,top));samples[mid]=p
-                    else:p=solve(mid)
+                    else:p=solve(mid,local=True)
                     holdout_loads.add(mid)
                     if not p['valid']:
                         continue
@@ -1078,9 +1240,17 @@ def _sample_column(task,boundary_only=False):
                     p['alpha_sample']=True
                     error=abs(p['ps_mps']-float(curve(u)))
                     alpha_error=0.
-                    checks.append(dict(load_g=mid,error_mps=error,alpha_equivalent_error_mps=alpha_error,
+                    checks.append(dict(load_g=mid,load_bracket_g=[lo,hi],error_mps=error,alpha_equivalent_error_mps=alpha_error,
                                        depth=depth,phase=phase))
-                    transition=left.get('roll_leveling_branch')!=right.get('roll_leveling_branch')
+                    transition=curve_branch(left)!=curve_branch(right)
+
+                    from em_accuracy import neighboring_loads,turn_tolerance,within_contour_band,visible_error
+                    query=neighboring_loads(speed,np.array([mid]),turn_tolerance(cfg['sep_tolerance_mps']))[0]
+                    query=np.clip(query,good[0]['load_g'],good[-1]['load_g'])
+                    geometric=bool(within_contour_band(p['ps_mps'],curve(load_coordinate(query,top)),tol))
+                    refine=error>tol and not geometric and hi-lo>.0002 and visible_error(p['ps_mps'],float(curve(u)),cfg)
+                    checks[-1]['within_contour_tolerance']=geometric
+                    checks[-1]['native_transition']=transition
 
 
                     extra_fractions=[]
@@ -1089,7 +1259,10 @@ def _sample_column(task,boundary_only=False):
                         extra_fractions.extend((angle-left['alpha_deg'])/angle_span for angle in polar_angles
                             if left['alpha_deg']+.1*angle_span<angle<right['alpha_deg']-.1*angle_span)
                     delta_ps=right['ps_mps']-left['ps_mps']
-                    if transition:extra_fractions.extend((.25,.75))
+                    # A changed governor mode alone does not require more
+                    # samples when the checked chart interpolation already fits.
+                    if transition and (refine or cfg.get('trim_solver_mode')!='stationary'):
+                        extra_fractions.extend((.25,.75))
                     if extra_fractions:
 
 
@@ -1097,20 +1270,14 @@ def _sample_column(task,boundary_only=False):
                         for fraction in extra_fractions:
                             branch_key=(*key,fraction)
                             if branch_key not in alpha_holdouts:
-                                alpha_holdouts[branch_key]=_alpha_point(solver,speed,left,right,fraction)
+                                alpha_holdouts[branch_key]=(solve(lo+fraction*(hi-lo),local=True) if transition else
+                                                            _alpha_point(solver,speed,left,right,fraction))
                             probe=alpha_holdouts[branch_key]
-                            if probe is not None:
+                            if probe is not None and probe['valid']:
                                 samples[probe['load_g']]=probe;holdout_loads.add(probe['load_g'])
                                 probe['alpha_sample']=True
 
 
-                    from em_accuracy import neighboring_loads,turn_tolerance,within_contour_band,visible_error
-                    query=neighboring_loads(speed,np.array([mid]),turn_tolerance(tol))[0]
-                    query=np.clip(query,good[0]['load_g'],good[-1]['load_g'])
-                    geometric=bool(within_contour_band(p['ps_mps'],curve(load_coordinate(query,top)),tol))
-                    refine=error>tol and not geometric and hi-lo>.0002 and visible_error(p['ps_mps'],float(curve(u)),cfg)
-                    checks[-1]['within_contour_tolerance']=geometric
-                    checks[-1]['native_transition']=transition
                     if refine:
                         insert.append(mid);remaining.append((lo,hi))
 
@@ -1121,10 +1288,12 @@ def _sample_column(task,boundary_only=False):
                 if evidence:
                     ns=np.array([p['load_g'] for p in evidence]);actual=np.array([p['ps_mps'] for p in evidence])
                     error=abs(actual-curve(load_coordinate(ns,top)))
-                    query=np.clip(neighboring_loads(speed,ns,turn_tolerance(tol)),good[0]['load_g'],good[-1]['load_g'])
+                    query=np.clip(neighboring_loads(speed,ns,turn_tolerance(cfg['sep_tolerance_mps'])),good[0]['load_g'],good[-1]['load_g'])
                     geometry=within_contour_band(actual,curve(load_coordinate(query,top)),tol)
                     for i in np.flatnonzero((error>tol)&~geometry&visible_error(actual,curve(load_coordinate(ns,top)),cfg)):
-                        n=float(ns[i]);insert.append(n)
+                        n=float(ns[i])
+                        if resolved_interval(n):continue
+                        insert.append(n)
                         k=int(np.searchsorted([p['load_g'] for p in good],n))
                         remaining.append((good[k-1]['load_g'],good[k]['load_g']))
             if not insert:return []
@@ -1142,11 +1311,11 @@ def _sample_column(task,boundary_only=False):
             samples[middle['load_g']]=middle;surface_loads.add(middle['load_g'])
             for left,right in ((bottom,middle),(middle,boundary)):
                 point=alpha_point(solver,speed,left,right)
-                if point is None:point=solve((left['load_g']+right['load_g'])*.5)
+                if point is None:point=solve((left['load_g']+right['load_g'])*.5,local=True)
                 samples[point['load_g']]=point;surface_loads.add(point['load_g'])
         else:
             for n in coordinate_load(np.linspace(start,1.,5),top):
-                point=solve(float(n));surface_loads.add(point['load_g'])
+                point=solve(float(n),local=True);surface_loads.add(point['load_g'])
 
 
         if top-bottom['load_g']>.05:
@@ -1168,6 +1337,10 @@ def _sample_column(task,boundary_only=False):
     recovery_candidates={n for n,p in samples.items() if not p['valid']}
     for n,p in list(samples.items()):
         if p.get('native_seam_marker'):continue
+        # A governor branch change can leave a genuine numerical gap. Smooth
+        # alpha/sideslip continuation across it repeats the same failed solve.
+        # Local probes below still locate both edges and retain the open gap.
+        if governor_transition(n):continue
         if (boundary and bottom and bottom['load_g']<n<boundary['load_g'] and not p['valid']
                 and (not p['converged'] or set(p['reasons'])<=
                      {'propulsion did not settle','propulsion cycle unresolved'})):
@@ -1264,6 +1437,10 @@ def _sample_column(task,boundary_only=False):
         p['surface_sample']=n in surface_loads or not p['valid']
     valid=sorted((p for p in samples.values() if p['valid']),key=lambda p:p['load_g'])
     roots=[]
+    from em_accuracy_policy import ALLOWANCE
+    stationary=cfg.get('trim_solver_mode')=='stationary'
+    root_target=float(ALLOWANCE) if stationary else .002
+    root_admission=root_target if stationary else .02
     for low,high in zip(valid,valid[1:]) if 0. in cfg['sep_contour_levels_mps'] else []:
         if low['ps_mps']*high['ps_mps']>0:continue
         def residual(n):
@@ -1273,15 +1450,17 @@ def _sample_column(task,boundary_only=False):
             if not p['valid']:raise ValueError('Root outside feasible branch')
             return p['ps_mps']
         try:
-            n=checked_root(residual,low['load_g'],high['load_g'],residual_tolerance=.002,xtol=2e-5,maxiter=18)
+            n=checked_root(residual,low['load_g'],high['load_g'],
+                residual_tolerance=root_target,
+                xtol=2e-5,maxiter=18)
             p=samples[n]
-            if abs(p['ps_mps'])<.02:roots.append(p)
+            if abs(p['ps_mps'])<=root_admission:roots.append(p)
         except (ValueError,RuntimeError):pass
 
 
         if not any(low['load_g']<=p['load_g']<=high['load_g'] for p in roots):
             candidates=[p for p in samples.values() if p['valid'] and
-                low['load_g']<=p['load_g']<=high['load_g'] and abs(p['ps_mps'])<.02]
+                low['load_g']<=p['load_g']<=high['load_g'] and abs(p['ps_mps'])<=root_admission]
             if candidates:roots.append(min(candidates,key=lambda p:abs(p['ps_mps'])))
     if bottom:bottom['_checked_probe_lower_boundary']=True
     for p in samples.values():p.setdefault('surface_sample',False)
@@ -1305,7 +1484,8 @@ def _sample_column(task,boundary_only=False):
                 interior_failures=[p['load_g'] for p in samples.values() if p['surface_sample'] and boundary and bottom and bottom['load_g']<p['load_g']<boundary['load_g'] and not p['valid']],
                 unresolved_load_intervals=pending if boundary and boundary['load_g']>1. else [],
                 elapsed_s=time.monotonic()-started,mass=solver.mass,engine=solver.engine.summary,
-                branch_selection=branch_selection,branch_search_points=branch_search_points,branch_discovery=discovery)
+                branch_selection=branch_selection,branch_search_points=branch_search_points,branch_discovery=discovery,
+                stationary_boundary_evidence=stationary_boundary_evidence)
 
 
 def column_curve(column):
@@ -1596,7 +1776,7 @@ def sample_speed_probe(task):
         if not guesses:return None
         guess=[float(np.interp(speed,[v for v,_ in guesses],[g[j] for _,g in guesses])) for j in range(5)]
         guess[1]=math.degrees(math.acos(1./max(1.,n)))
-        return guess
+        return nearby_initial(solver,speed,n,[*samples.values(),*(seed or [])],guess)
     if 1. not in samples:samples[1.]=solver.solve(speed,1.,initial(1.),exhaustive=False,quick=True)
     if samples[1.]['valid']:
         column['lower_boundary']=samples[1.]
@@ -1659,6 +1839,7 @@ def sample_interior_speed_probe(task):
             [p['solution'][axis] for p in points])) for axis in range(5)]))
     initial=[float(np.interp(speed,[v for v,_ in guesses],[g[axis] for _,g in guesses])) for axis in range(5)]
     initial[1]=math.degrees(math.acos(1./load))
+    initial=nearby_initial(solver,speed,load,seed,initial)
     point=solver.solve(speed,load,initial,exhaustive=False,quick=True)
     return dict(speed_kmh=speed,points=[point],boundary=point,lower_boundary=point,
         boundary_status='interior speed probe',boundary_reason=None,sustained=[],load_checks=[],
@@ -1685,7 +1866,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
         loads_g=[],method='near-coordinated trim below positive stall; per-aircraft flight model and Ps definition; adaptive cubic surface',
         assumptions=['Full-real manual aerodynamic trim','Positive-AoA stall enforced; negative-AoA stall not an exclusion; aircraft trim model selected per entry','Full pilot authority; aerodynamic control-power loss retained',
                      'Constant fuel and intact components','Propeller torque/gyro selected per aircraft: off for RB by default, on for SB; axial propwash retained','Still air; out of ground effect; retractable gear and airbrakes stowed; fixed propeller-aircraft gear retains its drag',
-                     'Propellers: automatic or idealized manual engine management selected per aircraft; closed radiators and frozen boost supply; complete aircraft phase outputs averaged; manual global optimum and periodic flight trajectory not certified',
+                     'Propellers: selected automatic or manual pitch; selected radiator drag with manual engine controls, otherwise radiators closed; frozen boost supply; thermal endurance and overspeed damage omitted. Manual-control charts stop at the first predicted axial-flow over-rev onset or unresolved RPM search; turning-flight RPM can differ. No over-rev line is plotted beyond VNE',
                      'Zero sideslip preferred; failed interior equilibria may use solved sideslip up to 2 degrees, with unchanged force/moment closure; not a minimum-drag sideslip optimization',
                      'Fixed flap extension; speed domain ends at the selected extension’s automatic IAS/Mach limit or intact-flap damage threshold; flap travel and damage transients omitted',
                      'Steady Instructor AoA schedule approximation: native Mach/flap/sweep angle targets, settled wing-angle adjustments, native rate feedback and reduced moment balance, with full physical trim and control-power loss. Same constraint at boundary and interior. Transient overshoot, delay, retained trim and overload reserve/release are omitted',
@@ -1710,13 +1891,35 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     boundary_probes={name:{} for name in results}
     entry_histories={name:{} for name in results}
     cache_hits=0;preview_time=0.;preview_version=0;published_version=-1;speed_grids={}
+    preview_pending={};preview_columns={name:{} for name in results};stop_pending={}
     def publish_preview(force=False):
-        nonlocal preview_time,published_version
+        nonlocal preview_time,published_version,preview_version
+        if preview is None:return
+        # Initial columns have independent, already-fixed inputs. Their fully
+        # certified results may be displayed as soon as they finish, while ALL
+        # numerical acceptance/history/refinement remains in OrderedWork order.
+        for future,name in tuple(preview_pending.items()):
+            if future.done():
+                del preview_pending[future]
+                if not future.cancelled() and future.exception() is None:
+                    column,_=future.result()
+                    if column is not None:
+                        preview_columns[name][column['speed_kmh']]=column
+                        preview_version+=1
+        # On stop, retain completed column work even when OrderedWork is still
+        # waiting for an earlier task. These copies never guide the calculation.
+        stopped_columns={name:{} for name in results}
+        if force:
+            for future,name in stop_pending.items():
+                if future.done() and not future.cancelled() and future.exception() is None:
+                    column,_=future.result()
+                    if column is not None:stopped_columns[name][column['speed_kmh']]=column
         now=time.monotonic()
-        if preview is None or preview_version==published_version or (not force and now-preview_time<3.):return
-        if not any(sum(bool(c['boundary']) for c in cols.values())>=2 for cols in results.values()):return
+        if not force and (preview_version==published_version or now-preview_time<3.):return
+        visible={name:{**preview_columns[name],**cols,**stopped_columns[name]} for name,cols in results.items()}
+        if not force and not any(sum(bool(c['boundary']) for c in cols.values())>=2 for cols in visible.values()):return
         snapshot=dict(output,preview=True,elapsed_s=now-start,aircraft=[],speeds_kmh=[])
-        for index,(name,cols) in enumerate(results.items()):
+        for index,(name,cols) in enumerate(visible.items()):
             ordered=[cols.get(v,dict(speed_kmh=v,points=[],boundary=None,lower_boundary=None,
                 sustained=[],boundary_status='pending',boundary_reason=None,numerical_gap_brackets=[]))
                 for v in sorted(set(speed_grids[name])|set(cols))]
@@ -1736,25 +1939,42 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
 
         preview(clone(snapshot));preview_time=now;published_version=preview_version
     def check_cancel():
-        if cancelled and cancelled():raise InterruptedError('Calculation cancelled')
+        if cancelled and cancelled():
+            publish_preview(force=True)
+            raise InterruptedError('Calculation cancelled')
     with process_pool() as (pool,worker_cancel):
         def run(tasks,phase,worker=sample_column):
             nonlocal cache_hits,preview_version
-            work=OrderedWork()
+            work=OrderedWork();prepared=[]
             for task in tasks:
                 name=task[0]
                 local=(name,json.dumps(conditions[name],sort_keys=True),*task[2:])
                 key=None
                 if worker in (sample_column,sample_initial_column,sample_boundary_column):
                     seed=[(p['load_g'],p['solution'],p.get('sideslip_attitude_deg',0.),
-                           p.get('envelope_limit'),p.get('_propulsion_seed'),p.get('_low_speed_cap_anchor')) for p in task[3]] if task[3] else None
+                           p.get('envelope_limit'),p.get('_propulsion_seed'),p.get('_low_speed_cap_anchor'),
+                           continuation_key(p)) for p in task[3]] if task[3] else None
                     key=(worker.__name__,name,local[1],task[2],json.dumps(seed,separators=(',',':')))
                 if key is not None and key in _COLUMN_CACHE:
                     _COLUMN_CACHE.move_to_end(key);cache_hits+=1
-                    work.submit((task,key),value=(clone(_COLUMN_CACHE[key]),{}))
+                    prepared.append((task,key,local,(clone(_COLUMN_CACHE[key]),{})))
                 else:
+                    prepared.append((task,key,local,None))
+            futures={}
+            # Preserve submission order so long low-speed columns start early.
+            # Detached previews can still use completed independent columns
+            # before OrderedWork accepts their numerical results.
+            for index,(task,key,local,value) in enumerate(prepared):
+                if value is None:
+                    name=task[0]
                     future=pool.submit(sample_with_history,worker,local,dict(entry_histories[name]))
-                    work.submit((task,key),future=future)
+                    futures[index]=future
+                    if preview is not None and worker is not sample_boundary_column:
+                        stop_pending[future]=name
+                    if preview is not None and worker is sample_initial_column:
+                        preview_pending[future]=name
+            for index,(task,key,local,value) in enumerate(prepared):
+                work.submit((task,key),future=futures.get(index),value=value)
             done=0;reported=0.
             destination=boundary_probes if worker is sample_boundary_column else results
             publish_preview()
@@ -1774,16 +1994,22 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                     publish_preview()
                     if progress and time.monotonic()-reported>1.:
                         progress(dict(done=done,total=len(tasks),phase=phase,elapsed_s=time.monotonic()-start));reported=time.monotonic()
+                if worker is sample_initial_column:
+                    for columns in preview_columns.values():columns.clear()
             except BaseException:
                 worker_cancel.set()
                 work.cancel()
+                if cancelled and cancelled():publish_preview(force=True)
                 raise
+            finally:
+                for future in futures.values():stop_pending.pop(future,None)
         exclusions={name:sweep_speed_intervals(name,conditions[name]) for name in results}
-        speed_grids={}
+        speed_grids={};ordinary_grids={}
         for name in results:
             upper=min(config['speed_max_kmh'],redlines[name]['sample_speed_kmh']) if redlines[name]['enforced'] else config['speed_max_kmh']
             speeds=(np.linspace(config['speed_min_kmh'],upper,config['speed_samples']).tolist()
                     if upper>config['speed_min_kmh'] else [config['speed_min_kmh']])
+            ordinary_grids[name]=set(speeds)
             speeds.extend(v for v in speed_knots(mach_info[name],conditions[name])
                           if config['speed_min_kmh']<v<upper)
             for interval in exclusions[name]:
@@ -1794,7 +2020,20 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                                   if config['speed_min_kmh']<edge+offset<upper)
             speed_grids[name]=sorted(set(speeds))
         if config.get('reference_load_cap',False) or not config['low_speed_load_cap']:
-            run([(name,cfg_json,v,None) for name,speeds in speed_grids.items() for v in speeds],'Solving feasible speed columns',sample_initial_column)
+            # Source joins need fresh equations on each side, but not fresh
+            # cold starts. Solve ordinary columns first, then carry a nearby
+            # admitted internal state into each declared source-join sample.
+            deferred={name:[v for v in speeds if v not in ordinary_grids[name]
+                and conditions[name].get('trim_solver_mode')=='stationary'] for name,speeds in speed_grids.items()}
+            run([(name,cfg_json,v,None) for name,speeds in speed_grids.items() for v in speeds
+                 if v not in deferred[name]],'Solving feasible speed columns',sample_initial_column)
+            tasks=[]
+            for name,speeds in deferred.items():
+                for speed in speeds:
+                    nearby=sorted((c for c in results[name].values() if any(p['valid'] for p in c['points'])),
+                                  key=lambda c:abs(c['speed_kmh']-speed))[:2]
+                    tasks.append((name,cfg_json,speed,[p for c in nearby for p in c['points'] if p['valid']]))
+            run(tasks,'Continuing source-join speed columns',sample_initial_column)
         else:
             from em_load_limits import anchor_from_columns,LOWER_SPEED_KMH,LOWER_LOAD_G
             run([(name,cfg_json,v,None) for name,speeds in speed_grids.items() for v in speeds if v>=300.],
@@ -1830,7 +2069,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             ordered=[columns[v] for v in sorted(columns)]
             first=next((i for i,c in enumerate(ordered) if c['boundary_status']=='verified limit'),None)
             if (first is not None and first>0 and ordered[first-1]['boundary_status'] in ('no feasible samples','level probe unresolved')
-                    and ordered[first]['boundary_reason'] in ('stall','Instructor pitch','control')):
+                    and ordered[first]['boundary_reason'] in ('stall','Instructor pitch','control','propeller pitch')):
                 edge_tasks.append((name,cfg_json,ordered[first-1],ordered[first],'stall'))
             for left,right in zip(ordered,ordered[1:]):
                 if overlaps(discontinuities[name],left['speed_kmh'],right['speed_kmh']):continue
@@ -1864,12 +2103,14 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                     if columns[ordered[first]].get('level_stall_endpoint'):continue
                     if (columns[ordered[first]].get('lower_boundary') or {}).get('load_g')!=1.:continue
                     lo,hi=ordered[first-1:first+1]
-                    if columns[lo]['boundary_status']!='no feasible samples' or hi-lo<=.05:continue
+                    from em_accuracy import refinement_speed_tolerance
+                    tolerance=(refinement_speed_tolerance(conditions[name])
+                        if conditions[name].get('trim_solver_mode')=='stationary' else .05)
+                    if columns[lo]['boundary_status']!='no feasible samples' or hi-lo<=tolerance:continue
 
 
                     seed=[p for p in columns[hi]['points'] if p['valid']]
-                    tasks.extend((name,cfg_json,lo+(hi-lo)*fraction,seed)
-                        for fraction in (.25,.5,.75))
+                    tasks.append((name,cfg_json,(lo+hi)*.5,seed))
                 if not tasks:break
                 run(tasks,'Refining the low-speed edge',sample_level_edge_probe)
 
@@ -1894,7 +2135,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             i=next((i for i,c in enumerate(ordered) if c['boundary_status']=='verified limit'),None)
             if i is None or i==0:continue
             left,right=ordered[i-1:i+1]
-            if (right.get('level_stall_endpoint') or right['boundary_reason'] not in ('stall','Instructor pitch','control')
+            if (right.get('level_stall_endpoint') or right['boundary_reason'] not in ('stall','Instructor pitch','control','propeller pitch')
                     or right['boundary']['load_g']>=1.1):continue
             exact_edges.append((name,cfg_json,left,right))
         run(exact_edges,'Closing the level-flight speed bracket',sample_stall_endpoint)
@@ -1920,7 +2161,8 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
         terminal_speed_intervals={name:[] for name in results}
 
 
-        speed_stop=.25*speed_tolerance(config)
+        from em_accuracy import refinement_speed_tolerance
+        speed_stop=refinement_speed_tolerance(config)
         initial_intervals=intervals
         intervals={name:[] for name in results}
         physical_stall_speed_brackets={name:[] for name in results}
@@ -1958,7 +2200,8 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             elif worker is sample_speed_probe:
                 from em_accuracy import surface_contour_loads
                 local=(*local,surface_contour_loads([columns[v] for v in prior_speeds],mid,config))
-            seed_key=[(p['load_g'],p['solution'],p.get('sideslip_attitude_deg',0.),p.get('envelope_limit'),p.get('_propulsion_seed')) for p in seed]
+            seed_key=[(p['load_g'],p['solution'],p.get('sideslip_attitude_deg',0.),p.get('envelope_limit'),
+                       p.get('_propulsion_seed'),continuation_key(p)) for p in seed]
             key=(worker.__name__,name,local[1],mid,json.dumps(seed_key,separators=(',',':')))
             if point_load is not None:key=(*key,point_load)
             elif len(local)>4:key=(*key,tuple(local[4]))
@@ -1968,10 +2211,13 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 speed_work.submit((context,None),value=(clone(_COLUMN_CACHE[key]),{}))
             else:
                 future=pool.submit(sample_with_history,worker,local,dict(entry_histories[name]))
+                if preview is not None:stop_pending[future]=name
                 speed_work.submit((context,key),future=future)
         def accept_speed(context,column,history,key):
             nonlocal preview_version,finished_speed,scheduled_speed,cache_hits
             name,lo,hi,mid,depth,pred,loads,predicted_cap,prior_speeds=context
+            from em_accuracy_policy import comparison_tolerance
+            comparison=comparison_tolerance(conditions[name])
             for speed,entry in history.items():entry_histories[name].setdefault(speed,entry)
             if key is not None:
                 _COLUMN_CACHE[key]=clone(column)
@@ -2002,17 +2248,17 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             band=neighboring_loads(mid,loads,turn_tolerance(config['sep_tolerance_mps']))
             if np.isfinite(predicted_limits).all():band=np.clip(band,*predicted_limits)
             nearby=speed_interpolate(source,[mid],band.ravel())[:,0].reshape((-1,2))
-            geometric=within_contour_band(actual,nearby,config['sep_tolerance_mps'])
+            geometric=within_contour_band(actual,nearby,comparison)
             from em_accuracy import surface_band_values
-            candidates=np.flatnonzero(finite & (abs(actual-pred)>config['sep_tolerance_mps']) & ~geometric & visible_error(actual,pred,config))
+            candidates=np.flatnonzero(finite & (abs(actual-pred)>comparison) & ~geometric & visible_error(actual,pred,config))
             if len(candidates):
                 box=surface_band_values(source,mid,query[candidates],config)
-                geometric[candidates]|=within_contour_band(actual[candidates],box,config['sep_tolerance_mps'])
-            failed=finite&(abs(actual-pred)>config['sep_tolerance_mps'])&~geometric&visible_error(actual,pred,config)
+                geometric[candidates]|=within_contour_band(actual[candidates],box,comparison)
+            failed=finite&(abs(actual-pred)>comparison)&~geometric&visible_error(actual,pred,config)
 
 
             if hi-lo>4.*speed_tolerance(config):
-                failed|=finite&(abs(actual-pred)>2.*config['sep_tolerance_mps'])&visible_error(actual,pred,config)
+                failed|=finite&(abs(actual-pred)>2.*comparison)&visible_error(actual,pred,config)
             caps=[c['boundary']['load_g'] if c['boundary'] else 0. for c in (left,column,right)]
             if np.isfinite(predicted_limits[1]):predicted_cap=predicted_limits[1]
 
@@ -2042,7 +2288,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                     rate=column['boundary']['turn_dps'];dw=turn_tolerance(config['sep_tolerance_mps'])
                     boundary_inaccurate=not (min(rates_near)-dw<=rate<=max(rates_near)+dw)
             feasibility_change=len({bool(c.get('boundary')) for c in (left,column,right)})>1
-            speed_checks[name].append(dict(speed_kmh=mid,error_mps=error,boundary_error_g=boundary_error,depth=depth,
+            speed_checks[name].append(dict(speed_kmh=mid,speed_bracket_kmh=[lo,hi],error_mps=error,boundary_error_g=boundary_error,depth=depth,
                                           probe=bool(column.get('speed_probe')),point_probe=bool(column.get('speed_point_probe')),
                                           holdouts=int(np.count_nonzero(finite)),
                                           failed_holdouts=int(np.count_nonzero(failed)),boundary_error_dps=boundary_turn_error,
@@ -2062,6 +2308,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                     seed=[p for p in column['points'] if p['valid']]
                     local=(name,json.dumps(conditions[name],sort_keys=True),mid,seed)
                     future=pool.submit(sample_with_history,sample_column,local,dict(entry_histories[name]))
+                    if preview is not None:stop_pending[future]=name
                     speed_work.submit((context,None),future=future)
                     scheduled_speed+=1
                 else:
@@ -2122,6 +2369,9 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                     while speed_work:
                         check_cancel()
                         for (context,key),(column,history) in speed_work.take():
+                            for future in tuple(stop_pending):
+                                if future.done() and not future.cancelled() and future.exception() is None and future.result()[0] is column:
+                                    stop_pending.pop(future)
                             accept_speed(context,column,history,key)
                     for name,probes in checked_probes.items():
                         for mid,(context,column) in list(probes.items()):
@@ -2137,6 +2387,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             except BaseException:
                 worker_cancel.set()
                 speed_work.cancel()
+                if cancelled and cancelled():publish_preview(force=True)
                 raise
         drain_speed_checks()
 
@@ -2265,12 +2516,16 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
         refine_low_speed_edge()
         for name,columns in results.items():
             ordered=sorted(columns)
-            first=next((i for i,v in enumerate(ordered) if columns[v]['boundary_status']=='verified limit'),None)
+            first=next((i for i,v in enumerate(ordered) if any(p['valid'] for p in columns[v]['points'])),None)
             if first is None:continue
             speed=ordered[first];column=columns[speed]
+            verified=column['boundary_status']=='verified limit'
+            edge_point=column.get('boundary') if verified else min(
+                (p for p in column['points'] if p['valid']),key=lambda p:p['load_g'])
             previous=columns[ordered[first-1]] if first else None
             clipped=abs(speed-config['speed_min_kmh'])<1e-8
             kind='speed-range edge' if clipped else 'low-speed feasibility edge'
+            if not verified:kind='first admitted sample; boundary unresolved'
             if (previous and previous['boundary_status']=='no feasible samples' and column['boundary_reason']=='stall'
                 and column['boundary']['load_g']<=1.01):
                 kind='stall-speed edge'
@@ -2280,9 +2535,11 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
                 kind='Instructor pitch minimum-speed edge'
             low_speed_edges[name]=dict(speed_kmh=speed,kind=kind,
                 bracket_kmh=[previous['speed_kmh'],speed] if previous else None,
-                refined=bool(column.get('level_stall_endpoint') or previous and speed-previous['speed_kmh']<=.05),
+                refined=bool(column.get('level_stall_endpoint') or previous and
+                    speed-previous['speed_kmh']<=refinement_speed_tolerance(conditions[name])),
+                boundary_verified=verified,
                 method='balanced level-flight limit root' if column.get('level_stall_endpoint') else 'speed bracket',
-                turn_dps=column['boundary']['turn_dps'],
+                turn_dps=edge_point['turn_dps'],
                 lower_load_g=column['lower_boundary']['load_g'] if column['lower_boundary'] else None,
                 note='Vertical outline only; Ps exists only where a balanced equilibrium was solved')
         endpoint_tasks=[]

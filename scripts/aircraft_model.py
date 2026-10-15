@@ -83,7 +83,7 @@ def replay_propulsion(model, result, mass_state, engine_vectors, engine_angular_
 
 
 def evaluate(model,velocity,stored_omega,mass_state,commands,height,dt,history,
-             *,oil_radiator,flaps=0.,throttle=1.1,gear=0.,airbrake=0.,cockpit_door=0.,
+             *,oil_radiator,radiator=0.,flaps=0.,throttle=1.1,gear=0.,airbrake=0.,cockpit_door=0.,
              attachment_drag_area=0.,external_force=(0.,0.,0.),external_moment=(0.,0.,0.),
              ext_thrust_mult=1.,height_agl=1e6,ground_effect_height=None,scalar_thrust=None,engine_spin_factor=None,
              engine_vectors=None,quaternion=(0.,0.,0.,1.),engine_wash=(0.,0.),torque_gyro=True,engine_angular_momentum=(0.,0.,0.),
@@ -112,7 +112,7 @@ def evaluate(model,velocity,stored_omega,mass_state,commands,height,dt,history,
             return mix(model['controls'][name],commands,inverted,0.,f32(height),air['ias_u'],air['mach'],False)[4]
         bias=add(mul(add(wing_bias('Elevator',[True,False,False]),wing_bias('Elevator',[False,False,True])),.5),wing_bias('Rudder',[False,False,False]))
         wc=[control('Ailerons',[True,False,False],bias),control('Ailerons',[False,False,False],bias)]
-        device_drag=drag_terms(fm,gear_position=gear,airbrake_position=airbrake,oil_radiator=oil_radiator)
+        device_drag=drag_terms(fm,gear_position=gear,airbrake_position=airbrake,oil_radiator=oil_radiator,radiator=radiator)
         wing_polars=intact_polars(wing_polar,g['areas'])
         prepared=(fm,ad,g,v,air,omega,cog,inertia,mass,commands,dt,flap_values,blend,stab_bias,secondary_properties,tc,wc,device_drag,wing_polars)
         if _condition_cache is not None:_condition_cache['prepared']=prepared
@@ -120,10 +120,16 @@ def evaluate(model,velocity,stored_omega,mass_state,commands,height,dt,history,
         fm,ad,g,v,air,omega,cog,inertia,mass,commands,dt,flap_values,blend,stab_bias,secondary_properties,tc,wc,device_drag,wing_polars=prepared
     swirl=f32(engine_wash[1])*.5 if torque_gyro else 0.
     if abs(swirl)<1.1920928955078125e-7:swirl=0.
+    instantaneous=model.get('experimental_instantaneous_aero',False)
+    if instantaneous:
+        from em_model_experiments import reference_wing_angles
+        history=dict(wing_aoa=reference_wing_angles(g,wing_polars,v,cog,wc,(blend,blend),
+                     air['density'],air['alpha'],f32(engine_wash[0]),swirl),
+                     wing_cl=[0.,0.],body_angles=[air['alpha'],air['beta']],spin=0.)
     wing=wings(g,wing_polars,v,omega,cog,wc,air['density'],dt,history['wing_aoa'],
                beta=air['beta'],body_aoa=air['alpha'],flaps=(blend,blend),gear=(quantized_fraction(gear),)*2,airbrake=(quantized_fraction(airbrake),)*2,
                pitch=commands[1],extra_cd=device_drag,inertia_x=inertia[0],height=ground_effect_height,ground_length=fm['Length'],
-               ordering=False,convert_aoa=fm.get('ConvertAoa',False),spin=history['spin'],spin_increment=f32(.2),spin_cap_input=engine_spin_factor,yaw_command=commands[2],spin_agl=height_agl,
+               ordering=False,convert_aoa=fm.get('ConvertAoa',False),spin=history['spin'],spin_increment=0. if instantaneous else f32(.2),spin_cap_input=engine_spin_factor,yaw_command=commands[2],spin_agl=height_agl,
                engine_x=f32(engine_wash[0]),engine_swirl=swirl,
                _condition_cache=_condition_cache.setdefault('wing',{}) if _condition_cache is not None else None,quasi_steady=steady)
     pass
@@ -140,6 +146,8 @@ def evaluate(model,velocity,stored_omega,mass_state,commands,height,dt,history,
               vertical_area_scale=1. if g['use_spin_loss'] else wing['postprocess']['vertical_area_scale'],
               vertical_lift_scale=1.,vertical_area_add=f32(.2),convert_aoa=fm.get('ConvertAoa',False))
     health={n:1. for n in ['left_main','right_main','left_elevator','right_elevator','v_main','rudder','fuselage']}
+    if instantaneous:
+        history['wing_cl']=[f32(c['raw_cl']) for c in wing['coefficients']]
     ts=dict(velocity=v,omega=omega,cog=cog,density=air['density'],dt=dt,body_angles=[air['alpha'],air['beta']],
             previous_angles=history['body_angles'],previous_wing_cl=history['wing_cl'],health=health,engine_wash=engine_wash,torque_gyro=torque_gyro)
     evaluator=None

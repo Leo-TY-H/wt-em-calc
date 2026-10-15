@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from scipy.optimize import least_squares,brentq
+from scipy.optimize import least_squares
 from instructor_envelope import controller_limits as instructor_limits
 from em_pitch_response import response as pitch_response
 
@@ -23,6 +23,9 @@ def level_constraint_point(point,kind=None):
 
 
 def level_stall_edge(solver,low_speed,column,low_point=None,kind=None):
+    if solver.config.get('trim_solver_mode')=='stationary':
+        from em_stationary_boundary import level_edge
+        return level_edge(solver,low_speed,column,low_point,kind)
     high=column['boundary']
     if high is None:return None
     if solver.is_prop and solver.engine.automatic:
@@ -181,6 +184,11 @@ def level_stall_edge(solver,low_speed,column,low_point=None,kind=None):
 
 def near_level_boundary(solver,speed_kmh,low,high,candidate_kinds=None,max_nfev=60):
     if low['load_g']>1.05:return None
+    if solver.config.get('trim_solver_mode')=='stationary':
+        from em_stationary_boundary import from_bracket
+        evidence=solver.__dict__.setdefault('stationary_boundary_evidence',[])
+        return from_bracket(solver,speed_kmh,low,high,candidate_kinds=candidate_kinds,
+                            max_iterations=max_nfev,continuation=False,evidence=evidence)
     kinds=(['Instructor pitch'] if solver.config['instructor'] else [])+['stall','control']
     if ('reversed pitch response' in high['reasons'] or high.get('continuation_limit_kind')=='pitch response' or
             candidate_kinds and 'pitch response' in candidate_kinds):kinds.insert(0,'pitch response')
@@ -269,6 +277,9 @@ def near_level_boundary(solver,speed_kmh,low,high,candidate_kinds=None,max_nfev=
 
 
 def near_level_held_pitch(held,speed_kmh,initial):
+    if held.aircraft.config.get('trim_solver_mode')=='stationary':
+        from em_stationary_boundary import held_pitch
+        return held_pitch(held.aircraft,held,speed_kmh,initial)
     solver=held.aircraft;memo={}
     def unpack(z):return np.r_[z[:5],math.hypot(1.,z[5])]
     def value(z):

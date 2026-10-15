@@ -15,6 +15,9 @@ from control_mixer import density_at_height
 from piston_model import div
 from prop_equilibrium_blocks import variable_blocks, grouped_jacobian
 from em_trim_work import charge
+from em_manual_controls import manual_rpm_governor
+from prop_governor_branch import select as select_governor_branch
+from prop_governor_evaluator import prepare as prepare_governor_evaluators
 
 
 RESIDUAL_TOLERANCE = 1e-5
@@ -22,6 +25,8 @@ RESIDUAL_TOLERANCE = 1e-5
 
 EARLY_STOP_ENABLED = os.environ.get('WT_EM_PROP_EARLY_STOP', '1') == '1'
 EARLY_STOP_TOLERANCE = 1e-6
+PREPARED_GOVERNOR_ENABLED = os.environ.get('WT_EM_PREPARED_GOVERNOR', '1') == '1'
+GOVERNOR_ACCELERATION_ENABLED = os.environ.get('WT_EM_GOVERNOR_ACCELERATION', '1') == '1'
 
 
 def _fit_equilibrium(evaluate, initial, **options):
@@ -83,12 +88,15 @@ def _regime_fit(evaluate, x, paths, bounds, blocks, targets, modes, full_jacobia
                 grouped_jacobian(evaluate,expand(z),bounds,blocks,2e-5))
         return matrix[np.ix_(rows,active)]
     fit=_fit_equilibrium(residual,np.clip(base[active],lo,hi),jac=derivative,bounds=(lo,hi),
-                         max_nfev=45,ftol=1e-10,xtol=2e-10,gtol=1e-10)
+                         max_nfev=12 if any(mode!='target' for mode in modes.values()) else 45,
+                         ftol=1e-10,xtol=2e-10,gtol=1e-10)
     fit.x=expand(fit.x)
     return fit
 
 
-def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=True, state=None, *, _prepare_only=False, _retain_linearization=False):
+def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=True, state=None, *, _prepare_only=False, _retain_linearization=False, _stationary=False, _governor_saturation=False):
+    if _stationary and not _prepare_only:
+        raise ValueError('Stationary equations require the stationary solver, not the legacy search')
     native_controls = dict(controls, engine_control_mode='automatic')
     seed = initial_state(p, velocity, height, nitro=nitro, **native_controls)
     if state is not None:
@@ -105,7 +113,9 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
         paths.append(path); scales.append(scale)
         lower.append(lo / scale); upper.append(hi / scale); initial.append(value / scale)
     for i, t in enumerate(p['transmissions']):
-        links = [link for link in t['propellers'] if p['propellers'][link['index']]['properties']['governor']]
+        links = [link for link in t['propellers'] if p['propellers'][link['index']]['properties']['governor']
+                 and (seed['propellers'][link['index']]['auto'] or
+                      manual_rpm_governor(p['propellers'][link['index']]['properties']))]
         governed.append(links)
         target = max((target_omega(p['engines'][l['index']]['properties'], seed['engines'][l['index']], nitro)
                       * l['inverse_ratio'] for l in t['engines']), default=300.)
@@ -142,6 +152,7 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
     calls = 0
     last = None
     evaluations = OrderedDict()
+    assigned_speeds = {}
 
     def evaluate(x):
         nonlocal calls, last
@@ -163,7 +174,9 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
         fractions = {}
         for path, value in zip(paths, x * scales):
             kind, i = path[:2]
-            if kind == 'shaft':s['transmissions'][i].update(omega=float(value), previous_omega=float(value))
+            if kind == 'shaft':
+                speed = assigned_speeds.get(i, float(value))
+                s['transmissions'][i].update(omega=speed, previous_omega=speed)
             elif kind == 'pitch':fractions[i] = value
             elif kind == 'flow':s['propellers'][i]['flow'][path[2]] = float(value)
         for i, t in enumerate(p['transmissions']):
@@ -174,6 +187,8 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
                 j = link['index']; pp = p['propellers'][j]['properties']
                 lo, hi = pitch_limits(pp, velocity, body_omega, s['transmissions'][i]['omega'] * link['ratio'])
                 pitch = lo + min(1., max(0., fractions.get(i, 0.))) * (hi - lo)
+                if pp['governor'] and not s['propellers'][j]['auto'] and not manual_rpm_governor(pp):
+                    pitch = pp['pitch_max'] + s['propellers'][j]['command'] * (pp['pitch_min'] - pp['pitch_max'])
                 s['propellers'][j].update(pitch=pitch, governor_pitch=pitch)
         r = step(p, s, velocity, height, body_omega, cg, dt, s['seed'], nitro, torque_gyro=torque_gyro)
         if r['seed'] != s['seed']:
@@ -196,10 +211,15 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
             for link in governed[i]:
                 pp = p['propellers'][link['index']]['properties']
                 value = target
-                if pp['governor'] in (1, 2):
-                    value = min(max(value, pp['min_omega']), pp['boost_omega'] if boost else pp['max_omega'])
+                if manual_rpm_governor(pp):
+                    maximum = pp['boost_omega'] if boost else pp['max_omega']
+                    if s['propellers'][link['index']]['auto']:
+                        value = min(max(value, pp['min_omega']), maximum)
+                    else:
+                        value = pp['min_omega'] + s['propellers'][link['index']]['command'] * (maximum - pp['min_omega'])
                 desired.append(value * pp['reduction'] / link['ratio'])
-            if desired and max(desired) - min(desired) > 1e-4 * max(1., max(desired)):
+            if desired and ((any(v != desired[0] for v in desired) if _stationary else
+                    max(desired) - min(desired) > 1e-4 * max(1., max(desired)))):
                 raise ValueError('Conflicting ideal governor targets on a shared shaft')
             targets.append(max(desired, default=shaft_targets[i]))
         residual = []
@@ -208,7 +228,7 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
             if kind == 'shaft':error = torques[i] / torque_scales[i]
             elif kind == 'pitch':
                 rpm_error = (s['transmissions'][i]['omega'] - targets[i]) / 300.
-                error = value - min(1., max(0., value + rpm_error))
+                error = rpm_error if _stationary and not _governor_saturation else value - min(1., max(0., value + rpm_error))
             elif kind == 'flow':error = (r['propellers'][i]['equilibrium_flow'][path[2]] - s['propellers'][i]['flow'][path[2]]) / scale
             residual.append(error)
 
@@ -243,7 +263,11 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
                 for i,links in enumerate(governed))
             branch=(modes,tuple(e.get('gear',0) for e in frame['engines']))
             return residual,outputs,branch
-        def sample(x, exact=False):
+        def sample(x, exact=False, *, requested_speeds=None):
+            assigned_speeds.clear()
+            if requested_speeds is not None:
+                if not _stationary:raise ValueError('Assigned requested speeds require stationary equations')
+                assigned_speeds.update(requested_speeds)
             q = np.array(x, copy=True)
             residual = evaluate(q)
             if exact:
@@ -254,6 +278,20 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
                         q[paths.index(('shaft', i))] = last[2][i] / 300.
                 residual = evaluate(q)
             result = _result(p, state, controls, governed, last, residual, calls, 0)
+            if _stationary and not _governor_saturation:
+                exact_requests = all(not links or last[0]['transmissions'][i]['omega'] == last[2][i]
+                                     for i, links in enumerate(governed))
+                result['converged'] = result['converged'] and exact_requests
+                result['feasible'] = result['converged'] and not result['stopped_shafts']
+                if not result['converged']:result['cycle_samples'] = None
+                result['stationarity'].update(method='stationary requested-RPM torque/wake equations',
+                    exact_governed_requests=exact_requests, equilibrium_coverage_complete=False,
+                    governor_selection_certified=False, governor_status=[
+                        'requested RPM' if links else 'fixed/manual pitch' for links in governed])
+            elif _stationary:
+                result['stationarity'].update(method='stationary bounded governor torque/wake equations',
+                    governor_model='pitch_stops',equilibrium_coverage_complete=False,
+                    governor_selection_certified=False)
             result['_equilibrium_coordinates'] = q
             return residual, result
         return dict(initial=np.clip(initial, *bounds), bounds=bounds, paths=paths,
@@ -263,10 +301,37 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
     x = np.clip(initial, *bounds)
     early_stops = 0
     best = None
-
-
     evaluate(x)
-    modes={i:'target' for i,links in enumerate(governed) if links}
+    governor_targets = list(last[2])
+    spans = {}
+    for i, links in enumerate(governed):
+        if links:
+            pp = p['propellers'][links[0]['index']]['properties']
+            lo, hi = pitch_limits(pp, velocity, body_omega, governor_targets[i] * links[0]['ratio'])
+            spans[i] = hi - lo
+    branch_evaluators = None
+    branch_work = None
+    if spans and PREPARED_GOVERNOR_ENABLED:
+        target_state = x.copy()
+        for i in spans:target_state[paths.index(('shaft', i))] = governor_targets[i] / 300.
+        evaluate(target_state)
+        branch_evaluators, branch_work = prepare_governor_evaluators(p, last[0], paths,
+            governor_targets, spans, torque_scales, velocity, height, body_omega, cg, pitch_limits)
+    # An algebraically closed stalled-blade root can coexist with the branch
+    # reached from fine pitch. Never let a trim-search warm start select it.
+    x, modes, branch = select_governor_branch(evaluate, x, bounds, paths, blocks,
+                                              governor_targets, spans, evaluators=branch_evaluators,
+                                              accelerate=GOVERNOR_ACCELERATION_ENABLED)
+    if branch_work is not None:branch['evaluation_work'] = branch_work
+    if not branch['resolved']:
+        residual = evaluate(x)
+        result = _result(p, state, controls, governed, last, residual, calls, early_stops)
+        result.update(converged=False, feasible=False, cycle_samples=None)
+        result['stationarity']['governor_branch'] = branch
+        return result
+    initial_residual = evaluate(x)
+    branch_initial = x.copy()
+    best = (float(max(abs(initial_residual), default=0.)), x.copy())
     for _ in range(3):
         targets=list(last[2])
         fit=_regime_fit(evaluate,x,paths,bounds,blocks,targets,modes,jacobian if _retain_linearization else None)
@@ -284,14 +349,27 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
         x=fit.x.copy()
         if not changed:break
 
+    if best[0] > RESIDUAL_TOLERANCE and any(mode != 'target' for mode in modes.values()):
+        from prop_stop_equilibrium import recover
+        stopped = recover(evaluate, branch_initial, paths, bounds, blocks, governor_targets, modes,
+                          RESIDUAL_TOLERANCE)
+        if stopped is not None:
+            residual = evaluate(stopped)
+            best = (float(max(abs(residual), default=0.)), stopped)
 
-    for fraction in (None, .2, .8):
+    # Governed pitch was already selected by a bracketed physical branch
+    # traversal. An unsuccessful stop/RPM fit must not escape onto a different
+    # interior pitch root via the historical arbitrary-pitch restarts.
+    for fraction in (() if spans else (None, .2, .8)):
         if best is not None and best[0]<=RESIDUAL_TOLERANCE:break
         trial = x.copy()
         if fraction is not None:
             for j, path in enumerate(paths):
                 if path[0] == 'pitch':trial[j] = fraction
-                elif path[0] == 'shaft':trial[j] = np.clip(shaft_targets[path[1]] / 300., bounds[0][j], bounds[1][j])
+                elif path[0] == 'shaft':
+                    guess = (shaft_targets[path[1]] / 300. if governed[path[1]] else
+                             bounds[1][j] * (.65 if fraction == .2 else .95))
+                    trial[j] = np.clip(guess, bounds[0][j], bounds[1][j])
         fit = _fit_equilibrium(evaluate, trial, jac=jacobian, bounds=bounds, max_nfev=45,
                             ftol=1e-10, xtol=2e-8, gtol=1e-10)
         early_stops += bool(getattr(fit, 'residual_stop', False))
@@ -348,6 +426,7 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
             condition=np.r_[velocity,body_omega,height],
             fixed=(tuple(cg),dt,nitro,deepcopy(controls),torque_gyro))
     result=_result(p, state, controls, governed, last, residual, calls, early_stops)
+    result['stationarity']['governor_branch'] = branch
     if linearization is not None:result['_linearization']=linearization
     return result
 
@@ -371,7 +450,8 @@ def _result(p, state, controls, governed, last, residual, calls, early_stops):
         shaft_target_rpm=[v * 60 / (2 * math.pi) for v in targets],
         shaft_rpm_error=[v * 60 / (2 * math.pi) for v in rpm_errors],
         induced_flow_residual_mps=[[a-b for a,b in zip(q['equilibrium_flow'],q['flow'])] for q in r['propellers']],
-        governor_status=[('fixed pitch' if not governed[i] else 'minimum pitch' if fractions[i] <= 2e-5 else
+        governor_status=[(('manual blade pitch' if any(p['propellers'][l['index']]['properties']['governor']
+                          for l in p['transmissions'][i]['propellers']) else 'fixed pitch') if not governed[i] else 'minimum pitch' if fractions[i] <= 2e-5 else
                           'maximum pitch' if fractions[i] >= 1 - 2e-5 else 'target RPM') for i in range(len(governed))])
     return dict(state=r, force=row[:3], moment=row[3:6], angular_momentum=row[6:9], wash=row[9:],
         converged=converged, feasible=converged and not stopped, stopped_shafts=stopped,

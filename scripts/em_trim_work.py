@@ -20,6 +20,10 @@ class Work:
         self.parent = parent
         self.counts = Counter()
         self.best = {}
+        self.progress = {}
+        # Requests leave run_generator's stack before this Work is discarded.
+        # Retain their identities for as long as best/progress retain their ids.
+        self.request_owners = {}
         self.active = None
         self.events = []
         self.points = {} if collect else None
@@ -53,8 +57,22 @@ class Work:
 
         rank = (bool(propulsion and not propulsion['converged']), float(np.linalg.norm(residual)))
         key = id(request)
+        owner = self.request_owners.setdefault(key, request)
+        if owner is not request:raise RuntimeError('Trim work request identity collision')
         if key not in self.best or rank < self.best[key][0]:
             self.best[key] = (rank, solver, list(x), value)
+        allowance = self.limits.get('stagnant_aircraft_evaluations')
+        if allowance is not None:
+            if (not rank[0] and value['force_error_g'] <= 2e-4 and
+                    np.max(abs(value['rate_residual']),initial=0.) <= 5e-5 and
+                    value['history_error'] <= 2e-4):return
+            count = self.counts['aircraft_evaluations']
+            previous = self.progress.get(key)
+            if (previous is None or rank[0] < previous[0][0] or
+                    rank[0] == previous[0][0] and rank[1] < previous[0][1]*(1.-1e-3)):
+                self.progress[key] = (rank,count)
+            elif count-previous[1] >= allowance:
+                raise WorkLimit(self,'stagnant aircraft evaluations')
 
 
 def current():return _current.get()

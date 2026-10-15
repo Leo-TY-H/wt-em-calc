@@ -27,17 +27,27 @@ def speed_limits(fm,config):
             candidates.append(dict(kind='Flap automatic Mach limit',
                 speed_kmh=flaps['automatic_mach']*speed_of_sound(config['altitude_m'])*3.6,enforced=True))
     active=[c for c in candidates if c['enforced']]
+    # Each worker receives the same precomputed aircraft-specific RPM cutoff.
+    rpm=(config.get('_over_rev_limits') or {}).get(config['aircraft'][0]) if len(config.get('aircraft',[]))==1 else None
+    if rpm:
+        candidate=dict(rpm,enforced=True)
+        candidates.append(candidate);active.append(candidate)
     selected=min(active or candidates,key=lambda c:c['speed_kmh'])
     limit=selected['speed_kmh']
 
 
     inside=max(0.,limit-.0036)
+    deployment=[]
+    if flaps:
+        if flaps['deployment_ias_kmh'] is not None:
+            deployment.append(flaps['deployment_ias_kmh']/factor)
+        if flaps['deployment_mach'] is not None:
+            deployment.append(flaps['deployment_mach']*speed_of_sound(config['altitude_m'])*3.6)
     return dict(speed_kmh=limit,sample_speed_kmh=inside,
         kind=selected['kind'],vne_ias_kmh=strength['ias']*3.6,
         vne_tas_kmh=vne,mne_tas_kmh=mne,mne=strength['mach'],
         enforced=bool(active),flaps=flaps,candidates=candidates,
-        deployment_speed_kmh=(flaps['deployment_ias_kmh']/factor
-            if flaps and flaps['deployment_ias_kmh'] is not None else None),
+        deployment_speed_kmh=min(deployment,default=None),
         convention='Total-speed IAS converted to TAS; lowest enforced wing, Mach, flap damage or automatic flap-extension limit; native pointwise checks retained')
 
 
@@ -59,4 +69,5 @@ def excluded_point(solver, speed, load):
         reasons=[column['boundary_reason']],not_evaluated=True,evaluations=0,
         turn_dps=math.degrees(9.8100004196167*math.sqrt(max(0.,load*load-1.))/(speed/3.6)),
         ps_mps=None,ps_continuous_mps=None,component_forces={},
+        flaps_percent=solver.config.get('flaps_percent',0.),flaps_requested_percent=solver.config.get('flaps_percent',0.),
         instructor_enabled=solver.config['instructor'])

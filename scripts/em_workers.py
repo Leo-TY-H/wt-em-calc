@@ -84,6 +84,8 @@ def prepare_job():
     if epoch==_seen_epoch:return
     from em_sampling import _AIRCRAFT_CACHE,_COLUMN_CACHE,worker_solver
     _AIRCRAFT_CACHE.clear();_COLUMN_CACHE.clear();worker_solver.cache_clear()
+    from em_surface import _prepared_curve
+    _prepared_curve.cache_clear()
     _seen_epoch=epoch
 
 
@@ -100,7 +102,9 @@ def process_pool():
     global _pool,_cancel,_depth,_job_epoch
     with _lock:
         if _pool is None:
-            method=START_METHOD
+            # Spawn installs the session snapshot before importing equations;
+            # forkserver preloads would read edited files from disk instead.
+            method='spawn' if os.environ.get('WT_EM_SESSION_SOURCE') else START_METHOD
             context=multiprocessing.get_context(method)
             if method=='forkserver':
 

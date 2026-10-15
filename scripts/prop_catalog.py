@@ -1,4 +1,5 @@
 import hashlib,json
+import orjson
 from functools import lru_cache
 from pathlib import Path
 from component_assembly import f32
@@ -26,27 +27,27 @@ def fm_source(name):return ROOT/'references/jet-catalog/fm'/(name+'.blkx')
 @lru_cache(maxsize=1)
 def catalog():
     if _worker_snapshot is not None:return _worker_snapshot
-    census=json.loads((ROOT/'references/prop-native-config.json').read_text())
+    census=orjson.loads((ROOT/'references/prop-native-config.json').read_bytes())
     names={r['aircraft'] for r in census['aircraft']}
     fm_names={p.stem.casefold():p.stem for p in (ROOT/'references/jet-catalog/fm').glob('*.blkx')}
 
     from jet_catalog import engines
     for path in (ROOT/'references/jet-catalog/fm').glob('*.blkx'):
-        raw=json.loads(path.read_bytes())
+        raw=orjson.loads(path.read_bytes())
         if (any(k.startswith('Propeller') and isinstance(v,dict) for k,v in raw.items()) or
             any(e.get('Main',{}).get('Type') in ('Radial','Inline','TurboProp') for _,e in engines(raw))):names.add(path.stem)
-    vehicles=json.loads((ROOT/'references/prop-vehicles/manifest.json').read_text())['records']
+    vehicles=orjson.loads((ROOT/'references/prop-vehicles/manifest.json').read_bytes())['records']
     out={}
     for vehicle in vehicles:
         if not vehicle.get('model'):continue
         declaration=ROOT/'references/prop-vehicles'/(vehicle['vehicle']+'.blkx')
-        if declaration.exists() and 'helicopter' in json.loads(declaration.read_bytes()):continue
+        if declaration.exists() and 'helicopter' in orjson.loads(declaration.read_bytes()):continue
         fm_id=Path(vehicle['fm']).stem if vehicle['fm'] else vehicle['vehicle']
         fm_id=fm_names.get(fm_id.casefold(),fm_id)
         if fm_id not in names:continue
         name=vehicle['vehicle']
         if not fm_source(fm_id).exists():continue
-        raw=fm_source(fm_id).read_bytes();fm=normalize(json.loads(raw))
+        raw=fm_source(fm_id).read_bytes();fm=normalize(orjson.loads(raw),_owned=True)
         propulsion_path=ROOT/'references/prop-propulsion'/(fm_id+'.json')
         resource=(vehicle['model'] or '')+'_collision'
         mass_path=ROOT/'references/prop-mass'/(fm_id+'--'+resource+'.json')
@@ -56,13 +57,15 @@ def catalog():
         if not propulsion_path.exists():entry['reason']='Pinned propulsion properties are unavailable'
         elif not mass_path.exists():entry['reason']='Matching collision geometry is unavailable'
         else:
-            propulsion=json.loads(propulsion_path.read_text());m=json.loads(mass_path.read_text())
+            propulsion=orjson.loads(propulsion_path.read_bytes());m=orjson.loads(mass_path.read_bytes())
             mismatch=asset_mismatch(raw,propulsion,m)
             if mismatch:
                 entry['reason']=mismatch
                 out[name]=entry
                 continue
             p=propulsion['properties']
+            from em_manual_controls import profile as manual_profile
+            entry['manual_controls']=manual_profile(fm,p)
             entry.update(engine_count=sum(e['family']!=3 for e in p['engines']),propeller_count=len(p['propellers']),
                 fuel_capacity=sum(s['capacity']-s['external_capacity'] for s in m['fuel_systems']),
                 propulsion='mixed' if any(e['family']==2 for e in p['engines']) else 'turboprop' if any(e['family']==5 for e in p['engines']) else 'piston',
@@ -73,7 +76,7 @@ def catalog():
 
 
 @lru_cache(maxsize=64)
-def load(name):return normalize(json.loads(fm_source(catalog()[name]['fm_id']).read_text()))
+def load(name):return normalize(json.loads(fm_source(catalog()[name]['fm_id']).read_text()),_owned=True)
 
 
 @lru_cache(maxsize=64)

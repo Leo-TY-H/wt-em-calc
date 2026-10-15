@@ -84,9 +84,15 @@ def curve_speed_limit(row, fraction):
 def limits(profile, percent):
     if not profile['available'] or percent <= 0:return None
     fraction = f32(percent/100.)
+    # The automatic schedule clamps the requested target BEFORE actuator travel.
+    # A takeoff request can therefore deploy a smaller extension from clean;
+    # it does not require the full takeoff detent to be maintainable first.
+    deployment_ias = [deployment_speed_limit(profile.get('deployment_rate_curve')),
+                      curve_speed_limit(profile['ias_curve'], fraction)]
     return dict(percent=float(percent),
         destruction_ias_kmh=destruction_speed(profile, fraction)*3.6,
-        deployment_ias_kmh=deployment_speed_limit(profile.get('deployment_rate_curve')),
+        deployment_ias_kmh=min((v for v in deployment_ias if v is not None), default=None),
+        deployment_mach=curve_speed_limit(profile['mach_curve'], fraction),
         automatic_ias_kmh=curve_speed_limit(profile['ias_curve'], fraction),
         automatic_mach=curve_speed_limit(profile['mach_curve'], fraction))
 

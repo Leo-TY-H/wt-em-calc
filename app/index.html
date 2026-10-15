@@ -14,6 +14,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <body>
 <header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span id="runtime-label" class="local"><i></i> LOCAL WORKSPACE</span><nav id="release-links" class="release-links" aria-label="Downloads and source"><a class="windows-download" href="https://github.com/Leo-TY-H/wt-em-calc/releases/latest" target="_blank" rel="noopener noreferrer">Download for Windows</a></nav></header>
 <nav class="tool-tabs" role="tablist" aria-label="Flight tools"><button id="em-tab" type="button" role="tab" aria-selected="true" aria-controls="em-workspace">EM diagram</button><button id="missile-tab" type="button" role="tab" aria-selected="false" aria-controls="missile-workspace" tabindex="-1">Missile simulator</button></nav>
+<a href="./engagement-research.html" style="display:inline-block;margin:8px 24px;color:inherit;font-size:13px">Engagement research: validated flare examples →</a>
 <div class="workspace" id="em-workspace" role="tabpanel" aria-labelledby="em-tab">
 <aside class="sidebar"><form id="scenario">
 <div class="section-heading"><span class="eyebrow">FLIGHT CONDITION</span><button type="button" class="text-button" id="reset">Reset</button></div>
@@ -33,6 +34,18 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <label class="field">Fuel load <output id="fuel-label">30%</output><input id="fuel" type="range" min="1" max="100" step="1" value="30"></label>
 <label class="field">Throttle <output id="throttle-label">110%</output><input id="throttle" type="range" min="0" max="110" step="1" value="110"></label>
 <small id="rocket-model-help" hidden>Rocket thrust at the selected throttle and fixed fuel load. The chart does not simulate fuel depletion or burnout.</small>
+<div id="manual-engine-field" hidden>
+<label class="check-row"><input id="manual-engine-controls" type="checkbox"> Manual engine controls</label>
+<div id="manual-engine-settings" hidden>
+<div id="propeller-pitch-field">
+<label id="propeller-pitch-auto-field" class="check-row"><input id="propeller-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
+  <label class="field"><span id="propeller-pitch-name">Propeller control</span> <output id="propeller-pitch-label">50%</output><input id="propeller-pitch" type="range" min="0" max="100" step="1" value="50"></label>
+<small id="propeller-pitch-help"></small>
+</div>
+<div id="oil-radiator-field"><label class="field">Oil radiator <output id="oil-radiator-label">0%</output><input id="oil-radiator" type="range" min="0" max="100" step="1" value="0"></label></div>
+<div id="radiator-field"><label class="field"><span id="radiator-name">Radiator</span> <output id="radiator-label">0%</output><input id="radiator" type="range" min="0" max="100" step="1" value="0"></label></div>
+<small>Radiators: 0% closed, 100% open. Over-rev boundaries use steady axial flow at the selected altitude and throttle. Overheating is not evaluated.</small>
+</div></div>
 
 
 <div id="flaps-field" class="field"><label for="flaps">Flaps</label> <output id="flaps-label">0%</output><input id="flaps" type="range" min="0" max="100" step="1" value="0">
@@ -47,13 +60,13 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div class="divider"></div>
 <details><summary>Additional settings</summary>
 <div class="ammunition-setting">
-<label class="check-row"><input id="default-ammunition" type="checkbox" aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
+<label class="check-row"><input id="default-ammunition" type="checkbox" checked aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
 <small id="ammunition-help">Standard gun belts and countermeasures.</small>
 <small id="ammunition-status" role="status" aria-live="polite"></small>
 <label id="ammunition-vehicle-field" class="field" hidden>Armament variant<select id="ammunition-vehicle"></select></label>
 </div>
 <label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="any" value="0"><span>kg</span></div></label>
-<label class="field">Simulation rate<div class="input-unit"><input id="timestep" type="number" min="30" max="120" step="1" value="48"><span>Hz</span></div></label></details>
+</details>
 <details id="legacy-modes" hidden><summary>Legacy modes</summary>
 <div class="field">Flutter<div class="mode-switch" role="radiogroup" aria-label="Flutter"><label><input id="flutter-on" type="radio" name="flutter" value="on" checked><span>On</span></label><label><input id="flutter-off" type="radio" name="flutter" value="off"><span>Off</span></label></div><small>The fixed search region always respects the selected aircraft’s structural load and speed limits. Off applies only to diagnostics with that search region disabled.</small></div>
 </details>
@@ -64,7 +77,9 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <label class="field">Sampling<select id="quality"><option value="quick">Preview · 1 m/s / 0.04°/s</option><option value="standard" selected>Smooth · 0.5 m/s / 0.02°/s</option><option value="fine">Detailed · 0.15 m/s / 0.01°/s</option></select></label>
 <div class="field contour-settings"><span>SEP contours · m/s</span><div id="contour-levels" class="contour-levels"></div><div class="contour-add"><input id="contour-input" type="number" min="-2000" max="2000" step="any" aria-label="New SEP contour in meters per second" placeholder="New level"><button id="contour-add" type="button">Add</button></div><span id="contour-status" class="hint" role="status"></span></div>
 
-<button id="calculate" class="primary-button" type="submit">Calculate diagram <span>↗</span></button><button id="cancel" type="button" class="secondary-button" hidden>Cancel calculation</button>
+<label class="check-row"><input id="enable-exports" type="checkbox" aria-describedby="exports-help"><span>Enable exports</span></label>
+<small id="exports-help">Off skips export preparation. You can enable downloads after calculation without recalculating.</small>
+<button id="calculate" class="primary-button" type="submit">Calculate diagram <span>↗</span></button><button id="cancel" type="button" class="secondary-button" title="Stop calculation and retain partial results" hidden>Stop</button>
 
 </form></aside>
 <main>
@@ -73,6 +88,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div id="error" class="error" role="alert" hidden></div>
 <div id="progress" class="progress-panel" aria-live="polite" hidden><div><span class="spinner"></span><strong id="progress-label">Preparing calculation…</strong><span id="progress-count"></span></div><div class="progress-track"><div id="progress-fill"></div></div></div>
 <div id="stale" class="notice" hidden>Settings have changed. Calculate to update the diagram.</div>
+<div id="over-rev-status" class="notice" role="status" hidden></div>
 <section class="chart-card">
 <div class="chart-toolbar"><div id="chart-tabs" class="tabs" role="group" aria-label="Chart view"><button type="button" data-view="compare" class="active">Compare</button></div><div class="chart-actions"><label><input id="show-samples" type="checkbox"> Samples</label><label><input id="show-rejected" type="checkbox"> Rejected</label><button id="reset-zoom" class="text-button" type="button">Reset view</button></div></div>
 <div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Ready to calculate</h2></div></div>

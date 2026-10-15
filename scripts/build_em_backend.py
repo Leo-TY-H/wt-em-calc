@@ -3,21 +3,33 @@ import ast
 import json
 import os
 import re
+import hashlib
+import subprocess
+import sys
+import sysconfig
+import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
-from em_backend import ROOT,DIRECTORY,MODULES,signature
+from em_backend import ROOT,DIRECTORY,MODULES,signature,valid_manifest,build_lock
 
 COMPILE_ARGS = ['/O2', '/fp:strict'] if os.name == 'nt' else ['-O3', '-ffp-contract=off', '-fno-fast-math']
 
 HELPERS='''
+from libc.math cimport isinf as _f32_isinf
 cpdef inline double f32(double x):
-    return <float>x
+    cdef float result = <float>x
+    # struct.pack('<f', x) rejects finite overflow, but accepts an input
+    # infinity. Preserve this distinction in every generated source helper.
+    if _f32_isinf(result) and not _f32_isinf(x):
+        raise OverflowError('float too large to pack with f format')
+    return result
 cpdef inline double add(double a, double b):
-    return <float>(a+b)
+    return f32(a+b)
 cpdef inline double sub(double a, double b):
-    return <float>(a-b)
+    return f32(a-b)
 cpdef inline double mul(double a, double b):
-    return <float>(a*b)
+    return f32(a*b)
 '''
 
 MATH_HELPERS = """
@@ -56,14 +68,84 @@ SCALARS = {'instructor_aoa_balance': {'required_acceleration(model, ip, state, d
 SCALARS['polar_model'] = {
     'safe_div(a, b)': ('cpdef double safe_div(double a, double b)', ''),
     'mach_multiplier(props, mach, index)': ('def mach_multiplier(props, double mach, int index)', 'low, a, b, high, slope, limit, value, t'),
+    'mach_factor(row, mach)': ('cpdef double mach_factor(row, double mach)', 'low, a, b, high, slope, limit, value, t'),
+    'evaluate_polar(prepared, mach, p, f, moments=True)': ('cpdef evaluate_polar(prepared, double mach, p, f, moments=True)', ''),
+    '_stall_shape(p, cy_mult)': ('cdef inline _stall_shape(p, cy_mult)', ''),
     'calc_cl(p, a)': ('cpdef double calc_cl(p, double a)', 's, crit, after, cy, max_ang, da, h, max_da, need, local_sign, local_aoa, correction'),
     'calc_cd(p, a)': ('cpdef double calc_cd(p, double a)', 'linear, s, crit, cd'),
 }
 SCALARS['prop_quasisteady'] = {
-    'blade_forces(p, omega, pitch, axial, transverse, density, sound, angular_flow=0.0)':
-        ('def blade_forces(p, double omega, double pitch, double axial, double transverse, double density, double sound, double angular_flow=0.0)',
+    'blade_forces(p, omega, pitch, axial, transverse, density, sound, angular_flow=0.0, prepared=None)':
+        ('def blade_forces(p, double omega, double pitch, double axial, double transverse, double density, double sound, double angular_flow=0.0, prepared=None)',
          'thrust, torque, area_unit, station, twist, width, radius, tangential, phi, alpha, speed, force_unit, lift, drag'),
 }
+SCALARS['prop_governor_wake'] = {
+    'settle(evaluate, q, flows, bounds, tolerance, accelerate)':
+        ('def settle(evaluate, q, flows, bounds, double tolerance, accelerate)',
+         'previous_error, relaxation, raw, error, current, value, update, difference, secant'),
+}
+SCALARS['em_numeric_core'] = {
+    'turn_quaternion(alpha_deg, bank_deg, sideslip_deg=0.0)':
+        ('def turn_quaternion(double alpha_deg, double bank_deg, double sideslip_deg=0.0)',
+         'alpha, bank, beta, sx, cx, sy, cy, sz, cz'),
+}
+SCALARS['mach_cubic'] = {
+    'stable_value(row, mach, index, local=None)':
+        ('cpdef double stable_value(row, double mach, int index, local=None)',
+         'a, b, high, slope, limit, c0, c1, c2, c3, value, radius, u'),
+}
+
+# Keep complete floating-point expression order and every explicit f32 round,
+# but avoid boxing scalar temporaries between operations. Integer quadrant and
+# index variables deliberately retain Python semantics (no narrowing overflow).
+NUMERIC_LOCALS = {
+    'air_state': {
+        'speed_of_sound': 'height temperature0 ceiling h p c',
+        'world_to_body_air': 'vx vy vz x y z w base r00 r11 r22 x2 y2 wn xy yz xz wy wz wx u v ww',
+        'cache': 'height rho0 temperature0 ceiling u v w square tas rho alpha beta ias mach',
+    },
+    'tail_model': {
+        'div': 'a b', 'guarded_div': 'a b',
+        'inline_half_sincos': 'angle h r r2 c s sn cs',
+        'wake_quaternion': 'alpha_degrees beta_degrees dihedral_degrees sa ca sb cb sc cc',
+        'wake_projection': 'alpha_degrees beta_degrees dihedral_degrees x y z w dx dy dz xx xy zw xz yw base px yz xw py pz',
+        'wrap_degrees': 'value',
+        'legacy_downwash': 'vertical_axial aspect distance alpha attenuation factor angle sn cs x y induced',
+        'type2_downwash': 'span area sweep taper dihedral omega_x alpha_degrees beta_degrees dt coefficient travel_cap speed2 invspeed invhalf shape amp invspan2 invdt x y z delta axial swirl local',
+        'history_increment': 'current_degrees previous_degrees scale flow_inertia dt delta',
+        'secondary_coefficients': 'hinc rate vinc finc ib hc a d cx cy',
+        'secondary_points': 'cx cy',
+        # x also names a list-valued comprehension iterator in these functions.
+        'horizontal_flows': 'y z', 'fuselage_flow': 'y z',
+        'secondary_model': 'axial swirl rhohalf qt qf',
+        'propeller_tail_flow': 'distance axial_source swirl_source attenuation axial cross gain swirl gate',
+    },
+    'wing_model': {
+        'div': 'a b',
+        'base_points': 'beta pitch modifier_x sn sv old lo hi excess blend flap x y first armz z',
+        'local_inputs': 'dihedral engine_x engine_swirl sn cs y z uy rz uz axial rotation_x rotation_y k ux swirl local_y reference_y alpha alpha_ref speed2',
+        'coefficients': 'incidence flap health body_aoa cd_factor shift rotation angle reference rot dragrot local common total cdadd',
+        'quantized_fraction': 'x',
+    },
+    'component_stages': {
+        'horizontal_application_point': 'cx cy cd_add cm0 cm1 b den inv k',
+        'secondary_forces': 'q_tail q_fuse vertical_area_add vertical_area_scale vertical_lift_scale qt qf al ar av fq vs',
+    },
+}
+for module, functions in NUMERIC_LOCALS.items():
+    nodes={n.name:n for n in ast.parse((ROOT/'scripts'/f'{module}.py').read_text()).body
+           if isinstance(n,ast.FunctionDef)}
+    for name, variables in functions.items():
+        node=nodes[name];header=ast.unparse(node).splitlines()[0][4:-1]
+        arguments={a.arg for a in (*node.args.posonlyargs,*node.args.args,*node.args.kwonlyargs)}
+        typed='def '+header
+        for variable in variables.split():
+            if variable in arguments:
+                typed=re.sub(r'(?<=[(,])\s*'+variable+r'(?=[,=)])',
+                    lambda m:(' ' if m.group(0).startswith(' ') else '')+'double '+variable,typed)
+        if name in ('div','guarded_div','wrap_degrees','quantized_fraction'):
+            typed=typed.replace('def ','cpdef double ',1)
+        SCALARS.setdefault(module,{})[header]=(typed,', '.join(v for v in variables.split() if v not in arguments))
 
 DIRECT_CALLS = {'piston_model': ('rpm_torque', 'mixture'), 'piston_compressor': ('candidate', 'step'), 'piston_general': ('step',), 'engine_supply': ('mechanical_multiplier',)}
 for module,names in DIRECT_CALLS.items():
@@ -105,15 +187,23 @@ def hoist_axial_flow(tree):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--force',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--force',action='store_true')
+    parser.add_argument('--lock-held',action='store_true',help=argparse.SUPPRESS)
+    args=parser.parse_args()
+    with nullcontext() if args.lock_held else build_lock():
+        build(args)
+
+
+def build(args):
     expected=signature();manifest=DIRECTORY/'manifest.json'
-    if not args.force and manifest.exists() and json.loads(manifest.read_text()).get('signature')==expected:
+    if not args.force and valid_manifest(expected) is not None:
         print('Compiled EM engine is up to date.');return
     from setuptools import setup,Extension
     from Cython.Build import cythonize
 
 
-    library=('lib/'+expected[:16]) if os.name=='nt' else 'lib'
+    # Never overwrite a loaded DLL or publish a partially linked generation.
+    library='lib/'+expected[:16]+'-'+uuid.uuid4().hex[:12]
     src=DIRECTORY/('src-'+expected[:16]);lib=DIRECTORY/library;src.mkdir(parents=True,exist_ok=True);lib.mkdir(parents=True,exist_ok=True)
     extensions=[]
     def write_source(path,text):
@@ -122,7 +212,8 @@ def main():
     write_source(src/'polar_f32.pxd','cpdef double calc_cl(object p, double a)\ncpdef double calc_cd(object p, double a)\n')
     write_source(src/'polar_runtime.pxd','cpdef double mach_value(object runtime, double mach, int index)\n')
     exports={
-        'polar_model': {'calc_cl':'cpdef double calc_cl(object p, double a)',
+        'polar_model': {'evaluate_polar':'cpdef evaluate_polar(object prepared, double mach, object p, object f, object moments=*)',
+                        'calc_cl':'cpdef double calc_cl(object p, double a)',
                         'calc_cd':'cpdef double calc_cd(object p, double a)'},
         'piston_model':{'div':'cpdef double div(double a, double b)',
                         'pressure_at_height':'cpdef double pressure_at_height(double height, double pressure0=*, double ceiling=*)',
@@ -183,8 +274,18 @@ def main():
     setup(name='wt-em-local-kernels',ext_modules=cythonize(extensions,nthreads=min(4,os.cpu_count() or 1),
           compiler_directives={'language_level':3,'infer_types':None,'binding':True}),
           script_args=['build_ext','--build-lib',str(lib),'--build-temp',str(DIRECTORY/'objects'),'-j','4'])
+    suffix=sysconfig.get_config_var('EXT_SUFFIX')
+    binaries={name+suffix:hashlib.sha256((lib/(name+suffix)).read_bytes()).hexdigest() for name in MODULES}
+    probe=subprocess.run([sys.executable,'-c',
+        "import importlib,json,pathlib,sys; sys.path[:0]=[sys.argv[1],sys.argv[2]]; "
+        "mods=[importlib.import_module(n) for n in json.loads(sys.argv[3])]; "
+        "assert all(pathlib.Path(m.__file__).resolve().parent==pathlib.Path(sys.argv[1]).resolve() for m in mods)",
+        str(lib),str(ROOT/'scripts'),json.dumps(MODULES)],capture_output=True,text=True)
+    if probe.returncode:
+        raise RuntimeError('Compiled EM import verification failed: '+probe.stderr[-4000:])
     temporary=manifest.with_suffix('.tmp')
     temporary.write_text(json.dumps({'signature':expected,'modules':MODULES,'library':library,
+        'binaries':binaries,
         'compiler':'Cython; '+' '.join(COMPILE_ARGS)},indent=2)+'\n')
     temporary.replace(manifest)
     print('Compiled EM engine ready.')

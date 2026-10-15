@@ -16,14 +16,16 @@ MIN_JUMP_PROBES = 4
 
 
 def configure_model(model,mode):
-    from polar_runtime import approximate_mach
-    if mode not in ('native','continuous'):raise ValueError('Unknown Mach curve mode')
+    from polar_runtime import approximate_mach,stabilize_mach
+    if mode not in ('native','continuous','stable'):raise ValueError('Unknown Mach curve mode')
     families=list(model['polars'].values())
     families.extend(wing['polars'] for _,wing in model['wing_family'])
     for family in families:
         for _,runtime in family:
+            runtime.pop('stable_mach',None)
+            runtime.pop('continuous_mach',None)
             if mode=='continuous':approximate_mach(runtime)
-            else:runtime.pop('continuous_mach',None)
+            elif mode=='stable':stabilize_mach(runtime)
     model['mach_curve_mode']=mode
     for key in ('_condition_cache','_condition_flap_cache','_sweep_cache'):model.pop(key,None)
     return model
@@ -58,10 +60,11 @@ def model_catalog(model, flaps):
     runtimes=[('WingPlane',flap_polar(model['polars']['WingPlane'],values[0]))]
     runtimes.extend((name,model['polars'][name][0][1])
                    for name in ('HorStabPlane','VerStabPlane','FuselagePlane'))
-    events={};rough=[];discontinuities=[];approximations=[];projection=[]
+    events={};rough=[];discontinuities=[];approximations=[];projection=[];pieces=[]
     for component,runtime in runtimes:
         if runtime['mode']!=3:continue
         for index,row in enumerate(runtime['mach']):
+            pieces.append(tuple(row[:5]))
             if index==6 and runtime['base'][8]==0.:continue
             a,b,high,slope,limit,*coefficients=row
             if not 0.<a<b:continue
@@ -81,7 +84,7 @@ def model_catalog(model, flaps):
                 # difference on a steep join is not evidence of a formula jump.
                 continue
             cancellation=sum(abs(c)*b**i for i,c in enumerate(coefficients))
-            if not approximated and cancellation>CANCELLATION_RATIO*max(1.,abs(high)):
+            if runtime.get('stable_mach') is None and cancellation>CANCELLATION_RATIO*max(1.,abs(high)):
                 rough.append((float(a),float(b)))
                 evidence=cancellation_jumps(runtime,index)
                 if evidence:
@@ -100,7 +103,24 @@ def model_catalog(model, flaps):
                     left_value=float(left),right_value=float(right)))
     return dict(events=[events[k] for k in sorted(events)],rough_intervals=sorted(set(rough)),
                 discontinuities=discontinuities,approximations=approximations,
-                projection_intervals=sorted(set(projection)))
+                projection_intervals=sorted(set(projection)),polynomial_pieces=pieces)
+
+
+def stable_piece_key(solver,mach):
+    """Protect declared mode-3 guards, without requiring an exact Mach bin.
+
+    This is a local stencil classification, not a complete source-branch proof.
+    Equality remains owned by the cubic, as in the evaluator.
+    """
+    key=[]
+    for a,b,high,slope,limit in catalog(solver,force=True).get('polynomial_pieces',()):
+        if mach<a:key.append('low')
+        elif mach>b:
+            value=high+(mach-b)*slope
+            clamped=value>=limit if slope>=0. else value<=limit
+            key.append('clamped' if clamped else 'linear')
+        else:key.append('cubic')
+    return tuple(key)
 
 
 def discontinuity_regions(info,config):
@@ -145,8 +165,8 @@ def discontinuous_column(solver,speed):
         elapsed_s=0.,mass=solver.mass,engine=solver.engine.summary)
 
 
-def catalog(solver):
-    if not ENABLED or not hasattr(solver,'model'):return dict(events=[],rough_intervals=[])
+def catalog(solver,*,force=False):
+    if (not ENABLED and not force) or not hasattr(solver,'model'):return dict(events=[],rough_intervals=[])
     key=(id(solver.model),float(solver.flaps),solver.model.get('mach_curve_mode','native'))
     cached=getattr(solver,'_mach_catalog',None)
     if cached is None or cached[0]!=key:
@@ -189,7 +209,7 @@ def rough_mach(solver,mach):
     return any(a<=mach<=b for a,b in info['rough_intervals']+info.get('projection_intervals',[]))
 
 
-def project_state(solver,speed,load,x,mach):
+def project_state(solver,speed,load,x,mach,*,bank_bounds=None):
     """Small bank adjustments find the same *evaluated* Mach bin, if attainable.
 
     Used for derivative and corrector proposals. The coupled stencil accounts
@@ -197,11 +217,12 @@ def project_state(solver,speed,load,x,mach):
     """
     from em_operating import flight_condition
     x=np.asarray(x)
+    low,high=(solver.trim_bounds[0][1],solver.trim_bounds[1][1]) if bank_bounds is None else bank_bounds
     if flight_condition(solver,speed,load,x)[1]['mach']==mach:return x
     step=max(abs(float(np.spacing(np.float32(x[1])))),1e-7)
     for offset in (1.,-1.,2.,-2.,4.,-4.,8.,-8.,16.,-16.):
         q=x.copy();q[1]+=offset*step
-        if not solver.trim_bounds[0][1]<=q[1]<=solver.trim_bounds[1][1]:continue
+        if not low<=q[1]<=high:continue
         if flight_condition(solver,speed,load,q)[1]['mach']==mach:return q
     return x
 

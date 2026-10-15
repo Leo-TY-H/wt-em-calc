@@ -43,5 +43,5 @@ def interior_seeds(solver, speed, neighbors=None):
         if point is not None and point['valid']:
             point['branch_seed'] = 'independent interior equilibrium; no 1-g connectivity prerequisite'
             points.append(point)
-    return dict(points=points, attempts=attempts, complete=False,
+    return dict(points=points, attempts=attempts, complete=False, estimated_aerodynamic_load_g=estimate,
         method='independent interior starts; original force, moment and feasibility checks')

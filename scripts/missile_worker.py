@@ -157,7 +157,8 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
         new = target(next_time)
         if frame.flight.family == 'optical': return [dict(position=new['position'], auxiliary=[0.,0.,0.], id=123)]
         return [dict(id=123, unit=1, unit_type=1, scene=dict(old_target=target(old['time']), new_target=new))]
-    radar_step = (supported_radar_step(dict(launch, quaternion=quaternion(launch['angles'])))
+    radar_step = (supported_radar_step(dict(launch, quaternion=quaternion(launch['angles'])),
+                                     immutable_properties=BACKEND != 'reference')
                   if frame.flight.family=='radar' else None)
     history = PointHistory(lambda t: target(t)['position'], lambda t: target(t)['quaternion'])
     rows = []; transitions = []; traveled_distance = 0.

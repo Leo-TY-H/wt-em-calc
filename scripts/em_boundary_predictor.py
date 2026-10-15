@@ -81,7 +81,7 @@ def continue_limit(solver,speed,seed):
     slope=gradients[0]*(1-t)+gradients[1]*t
     ps_slope=max(ps_gradients)
     from em_accuracy import turn_tolerance
-    rate_target=.25*turn_tolerance(solver.config['sep_tolerance_mps'])
+    rate_target=(1. if solver.config.get('trim_solver_mode')=='stationary' else .25)*turn_tolerance(solver.config['sep_tolerance_mps'])
     allowed=PHYSICAL_REASONS
     low=high=previous=None;observations=[]
     lower=max(1.00001,min(p['load_g'] for p in limits)*.8)
@@ -90,7 +90,8 @@ def continue_limit(solver,speed,seed):
     if not lower<load<upper:return None
     for iteration in range(4):
         guess[1]=math.degrees(math.acos(1./load))
-        point=solver.solve(speed,load,guess.tolist(),exhaustive=False,quick=True)
+        from em_sampling import nearby_initial
+        point=solver.solve(speed,load,nearby_initial(solver,speed,load,[*seed,*observations],guess.tolist()),exhaustive=False,quick=True)
         observations.append(point)
         if not point['converged'] or not set(point['reasons'])<=allowed:return None
         value=margin(point)

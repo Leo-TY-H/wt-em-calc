@@ -30,8 +30,9 @@ def deviation_sample(word):
 
 
 def motor_vector(rocket, clocks, *, height=0., fins=(0., 0.),
-                 orientation=(0., 0.), seed=1):
-    scalar = motor_scalar(motor_properties(rocket), clocks)
+                 orientation=(0., 0.), seed=1, _motor_properties=None):
+    props = motor_properties(rocket) if _motor_properties is None else _motor_properties
+    scalar = motor_scalar(props, clocks)
     mapping = [f32(v) for v in rocket.get('extPressureToThrustMult', [0., 1., 0., 1.])]
     # Native bypass retains the FIRST authored ordinate, before endpoint sorting.
     factor = mapping[1]
@@ -74,19 +75,22 @@ def rotate_thrust(quaternion, thrust):
 
 
 def propulsion_adapter(rocket, *, length, clocks, factors, dt, quaternion,
-                       height=0., fins=(0., 0.), orientation=(0., 0.), seed=1):
+                       height=0., fins=(0., 0.), orientation=(0., 0.), seed=1,
+                       _motor_properties=None):
     """Compute force at prospective clocks, returning rates but not committing clocks.
 
     Speed is immaterial for supported engines. Factor-table engines are rejected
     by motor_properties. Caller supplies all four stored clocks and factors.
     """
-    props = motor_properties(rocket)
+    # Owned website flights may supply their validated immutable motor layout.
+    # Other callers prepare from the current rocket; no identity/global cache.
+    props = motor_properties(rocket) if _motor_properties is None else _motor_properties
     if len(clocks) != 4 or len(factors) != 4:
         raise ValueError('Adapter requires four stored clocks and four factors')
     rates = [f32(v) for v in factors[:len(props)]] + [0.] * (4-len(props))
     future = [add(t, mul(k, dt)) for t, k in zip(clocks, rates)]
     body = motor_vector(rocket, future[:len(props)], height=height,
-                        fins=fins, orientation=orientation, seed=seed)
+                        fins=fins, orientation=orientation, seed=seed, _motor_properties=props)
     lever = mul(length, -.5)
     nt, ot = body['noiseless_thrust'], body['orientation_torque']
     return dict(world_force=rotate_thrust(quaternion, body['thrust']),

@@ -1,12 +1,11 @@
-import copy,math,os
+import copy
 from collections import OrderedDict
-from functools import lru_cache
 from prop_catalog import assets
 
 from prop_steady import retained_key
-from propulsion_general import target_omega
 from component_assembly import f32
 from em_cancellation import check as check_cancel
+from em_manual_controls import propeller_commands
 
 
 class PropellerEnsemble:
@@ -18,25 +17,35 @@ class PropellerEnsemble:
         self._pending=OrderedDict()
         self.quasi_steady=config['engine_control_mode']=='quasi_steady'
         self.automatic=config['engine_control_mode'] in ('automatic','quasi_steady')
-        self.automatic_controls=dict(commands=[255]*len(self.properties['propellers']),
-            automatic=[True]*len(self.properties['propellers']),gears=[0]*len(self.properties['engines']),
+        self.automatic_controls=dict(propeller_commands(self.properties,config),
+            gears=[0]*len(self.properties['engines']),
             throttle=config['throttle'],afterburner=config['afterburner'],engine_control_mode=config['engine_control_mode'])
-        self.summary=dict(engine_count=sum(e['family']!=3 for e in self.properties['engines']),
-            policy=(('Dynamic propulsion with automatic controls; radiators closed')),
-            nozzle_policy='Neutral nozzle controls; optional rocket boosters off',
-            fuel_policy='Initial internal fuel and boost consumables frozen',
-            engine_health_policy='Intact engines; no thermal or overspeed damage; native governor and shaft dynamics',
-            optimization=(('Automatic governor, mixture and compressor; no manual search')))
         from prop_quasisteady import REVISION
+        from prop_governor_branch import REVISION as branch_revision
 
 
         self.properties=dict(self.properties,engines=[dict(e,properties=dict(e['properties'],amplitude=[0.,0.,0.]))
             for e in self.properties['engines']])
-        self.summary.update(policy='Quasi-steady propulsion; ideal RPM governor with blade-pitch stops; radiators closed',
+        self.summary=dict(engine_count=sum(e['family']!=3 for e in self.properties['engines']),
+            policy='Quasi-steady propulsion; ideal RPM governor with blade-pitch stops; radiators closed',
+            nozzle_policy='Neutral nozzle controls; optional rocket boosters off',
+            fuel_policy='Initial internal fuel and boost consumables frozen',
             model_revision=REVISION,
+            governor_branch_revision=branch_revision,
+            governor_branch_policy='First restoring torque balance reached from minimum blade pitch; transient hysteresis omitted',
             engine_health_policy='Intact engines; no thermal or overspeed damage; balanced steady shaft torque',
             optimization='Instantaneous governor and compressor regulation; steady induced flow; automatic mixture and stage selection',
             approximation='Instantaneous governor and steady wake with continuous blade polars; nominal healthy engine torque; propulsion oscillations and transient peak loads are omitted')
+        if config.get('manual_engine_controls'):
+            self.summary.update(policy='Quasi-steady propulsion; selected manual controls and radiator drag',
+                optimization='Selected propeller command; automatic mixture and compressor; no manual search',
+                engine_health_policy='Intact engines; RPM-limit diagnostics only; thermal endurance not evaluated')
+
+        if config.get('trim_solver_mode') == 'stationary':
+            self.summary.update(policy='Stationary requested RPM; fixed/manual pitch retains unknown speed',
+                governor_branch_policy='Lowest-pitch admitted restoring root, otherwise lowest-pitch admitted root; equal-pitch ties retained',
+                governor_branch_revision='stationary-any-power-v1',
+                approximation='Legacy source polars retained including blade stall; forward flow; any absorbed-power sign; global selection unresolved')
 
 
     def with_controls(self,controls):
@@ -61,7 +70,6 @@ class PropellerEnsemble:
              independent,bool(certify_stationary and not self.automatic))
 
 
-        pending_key=(key,retained_key(self._reference) if independent and self._reference is not None else None)
         start=self._reference if independent else self._warm
         pending_key=(key,retained_key(start) if start is not None else None)
         result=self._certificates.get(key)
@@ -120,6 +128,8 @@ class PropellerEnsemble:
 
     def _condition(self,velocity,omega,flaps=0.,speed=None,canonical=False,cycle_seconds=60.,certify_stationary=False,preserve_cycle_samples=False,resume=None,observation=None):
         check_cancel()
+        if self.config.get('trim_solver_mode') == 'stationary':
+            raise ValueError('Stationary propulsion requires a joint torque/wake candidate; legacy pitch-stop fallback is disabled')
         from prop_equilibrium import solve
         independent=canonical or self.force_canonical
         warm=self._reference if independent else self._warm

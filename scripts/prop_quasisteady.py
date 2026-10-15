@@ -2,7 +2,7 @@ import math
 from collections import OrderedDict
 from functools import lru_cache
 
-from polar_model import make_polar, calc_cl, calc_cd
+from polar_model import make_polar, calc_cl, calc_cd, prepare_polar, evaluate_polar
 from polar_runtime import CONST_KEYS
 from propeller_general import local_flow
 from propulsion_general import fixed_air
@@ -45,23 +45,32 @@ def legacy_stall_shape():
     return {k:polar[k] for k in ('aoaLineH','aoaLineL','parabCyCoeffH','parabCyCoeffL')}
 
 
-def blade_polar(runtime, mach):
-    polar = make_polar(polar_properties(runtime), 1., 1., mach)
+def blade_polar(runtime, mach, *, moments=True):
+    polar = make_polar(polar_properties(runtime), 1., 1., mach, moments=moments)
     if runtime['mode'] == 2:polar.update(legacy_stall_shape())
     return polar
 
 
-def blade_forces(p, omega, pitch, axial, transverse, density, sound, angular_flow=0.):
+def prepare_blades(p):
+    """One flight-condition-owned geometry/polar plan and private scratch space."""
+    sections=tuple((station*p['radius'],twist,width)
+                   for station,twist,width in zip((.35,.55,.75,.95),p['twist'],p['width']))
+    polar=prepare_polar(polar_properties(p['polar']),1.,1.)
+    legacy=legacy_stall_shape() if p['polar']['mode']==2 else None
+    return sections,p['radius']**2*.2,polar,{},[0.]*8,legacy
+
+
+def blade_forces(p, omega, pitch, axial, transverse, density, sound, angular_flow=0., prepared=None):
     thrust = torque = 0.
-    area_unit = p['radius']**2 * .2
-    for station, twist, width in zip((.35,.55,.75,.95), p['twist'], p['width']):
-        radius = station*p['radius']
+    sections,area_unit,polar_data,polar,factors,legacy = prepare_blades(p) if prepared is None else prepared
+    for radius, twist, width in sections:
         tangential = radius*(omega-angular_flow)
         phi = math.atan2(axial,tangential) if abs(omega)>=1e-5 else math.pi/2
         alpha = math.degrees(pitch-phi+twist)
         speed = math.hypot(tangential+transverse,axial)
         if speed == 0.:continue
-        polar = blade_polar(p['polar'],speed/sound)
+        evaluate_polar(polar_data,speed/sound,polar,factors,False)
+        if legacy is not None:polar.update(legacy)
         force_unit = speed*speed*.5*density*width*area_unit
         lift = calc_cl(polar,alpha)*force_unit*polar['clKq']
         drag = calc_cd(polar,alpha)*force_unit*polar['kq']
@@ -91,20 +100,30 @@ def interval(x, x0, y0, x1, y1):
     return y0+(y1-y0)*(x-x0)/(x1-x0)
 
 
-def propeller(p, state, velocity, body_omega, cg, omega, density, sound, torque_gyro):
+def propeller_condition(p, velocity, body_omega):
+    """Geometry and inflow shared by all pitch/wake trials at one condition."""
     if p['cyclic'] or p['differential_pitch'] or p['active_pitch_2d'] or p['pitch_1d_count']:
         raise ValueError('Unsupported cyclic or scheduled-pitch geometry')
     local,local_w,transverse_sq,transverse = local_flow(
         tuple(p['basis']),tuple(p['position']),tuple(velocity),tuple(body_omega))
-    flow=list(state['flow']);pitch=state['pitch']
-    axial=local[0]+.5*(flow[0]+flow[1])
-    first=blade_forces(p,omega,pitch,axial,transverse,density,sound,.25*flow[2])
-    thrust=first['thrust'];torque=first['torque']
-    if p['coaxial']:
-        second=blade_forces(p,omega,pitch,axial,transverse,density,sound,-.25*flow[2])
-        thrust+=second['thrust'];torque+=second['torque']
     disc=math.pi*.25*p['diameter']**2
     airflow=table(p['airflow'],local[0]);ambient=local[0]+airflow[0]
+    return local,local_w,transverse_sq,transverse,disc,airflow,ambient,prepare_blades(p)
+
+
+def propeller_load(p, flow, pitch, omega, density, sound, condition):
+    """Shared physical torque/wake kernel; no reporting or moment assembly."""
+    local,local_w,transverse_sq,transverse,disc,airflow,ambient,blades=condition
+    axial=local[0]+.5*(flow[0]+flow[1])
+    first=blade_forces(p,omega,pitch,axial,transverse,density,sound,.25*flow[2],blades)
+    thrust=first['thrust'];torque=first['torque']
+    if p['coaxial']:
+        # At zero swirl and finite nonzero shaft speed the opposite angular
+        # flow sign gives identical blade inputs. Keep the original additions
+        # and evaluate both rotors for swirl, stopped or nonfinite shafts.
+        second=(first if flow[2]==0. and omega!=0. and math.isfinite(omega) else
+                blade_forces(p,omega,pitch,axial,transverse,density,sound,-.25*flow[2],blades))
+        thrust+=second['thrust'];torque+=second['torque']
     def induced(thrust, upstream):
         value=2*thrust/(density*disc)+sign(upstream)*upstream**2
 
@@ -115,6 +134,14 @@ def propeller(p, state, velocity, body_omega, cg, omega, density, sound, torque_
         flux=math.sqrt((local[0]+.5*x)**2+transverse_sq)*disc*density
         divisor=(p['diameter']*.5)**2*flux*.5
         target=[x,0.,clamp(torque/divisor if abs(divisor)>4e-19 else 0.,0.,20.)]
+    return thrust,torque,target
+
+
+def propeller(p, state, velocity, body_omega, cg, omega, density, sound, torque_gyro):
+    condition=propeller_condition(p,velocity,body_omega)
+    local,local_w,transverse_sq,transverse,disc,airflow,ambient,blades=condition
+    flow=list(state['flow']);pitch=state['pitch']
+    thrust,torque,target=propeller_load(p,flow,pitch,omega,density,sound,condition)
     deflection=clamp(p['thrust_deflection']*thrust,-p['max_deflection'],p['max_deflection'])
     axial_force=math.sqrt(max(0.,1.-deflection**2))*thrust
     force=transform(p['basis'],[axial_force,0.,0.])

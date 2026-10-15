@@ -17,6 +17,11 @@ def refine(solver,speed,low,high):
         result={'control':point['authority_margin'],'stall':point['stall_margin_deg']/10.}
         pitch=point.get('pitch_response')
         if pitch is not None:result['pitch response']=pitch['margin']
+        if point.get('stationary_governor_mode')=='pitch_stops':
+            prop=point.get('propulsion') or {}
+            rpm=[1.-value/(limit*(1.+1e-6)) for value,limit in
+                 zip(prop.get('engine_rpm',()),prop.get('engine_rpm_threshold',()))]
+            if rpm:result['engine RPM']=min(rpm)
         if solver.config['structural_limits']:result['wing force']=1.-max(point['wing_load_ratios'])
         if solver.config['instructor']:
             ctl=point.get('instructor')
@@ -30,8 +35,9 @@ def refine(solver,speed,low,high):
     if lo_m is None or hi_m is None:return None
     def rate(point):return math.degrees(9.8100004196167*math.sqrt(max(0.,point['load_g']**2-1.))/(speed/3.6))
     from em_accuracy import turn_tolerance
-    rate_target=.25*turn_tolerance(solver.config['sep_tolerance_mps'])
-    ps_target=.2*solver.config['sep_tolerance_mps']
+    stationary=solver.config.get('trim_solver_mode')=='stationary'
+    rate_target=(1. if stationary else .25)*turn_tolerance(solver.config['sep_tolerance_mps'])
+    ps_target=(1. if stationary else .2)*solver.config['sep_tolerance_mps']
     def closed():
         return (rate(high)-rate(low)<=rate_target and
                 (high['load_g']-low['load_g']<=.0005 or abs(high['ps_mps']-low['ps_mps'])<=ps_target))
@@ -48,7 +54,10 @@ def refine(solver,speed,low,high):
         t=(load-low['load_g'])/(high['load_g']-low['load_g'])
         guess=[a*(1-t)+b*t for a,b in zip(low['solution'],high['solution'])]
         guess[1]=math.degrees(math.acos(1./load))
-        if solver.is_prop and solver.engine.automatic:
+        if stationary:
+            from em_sampling import continuation_initial
+            guess=continuation_initial(solver,low if t<.5 else high,guess)
+        elif solver.is_prop and solver.engine.automatic:
             seeds=[p for p in (low,high) if p.get('_propulsion_seed')]
             if seeds:
                 from em_data import clone
@@ -96,7 +105,10 @@ def refine(solver,speed,low,high):
                 load=low['load_g']+t*width
                 guess=[a*(1-t)+b*t for a,b in zip(low['solution'],high['solution'])]
                 guess[1]=math.degrees(math.acos(1./load))
-                if solver.is_prop and solver.engine.automatic:
+                if stationary:
+                    from em_sampling import continuation_initial
+                    guess=continuation_initial(solver,low if t<.5 else high,guess)
+                elif solver.is_prop and solver.engine.automatic:
                     seeds=[p for p in (low,high) if p.get('_propulsion_seed')]
                     if seeds:
                         from em_data import clone

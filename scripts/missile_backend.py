@@ -5,11 +5,13 @@ session orchestration without an extension. 'auto' uses a valid local extension
 when present; missing/stale binaries fall back to fast Python without a build.
 """
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import sys
+from types import FunctionType
 from build_missile_backend import DIRECTORY, signature
 
 
@@ -27,17 +29,26 @@ def activate():
         if Path(library).name != library:
             raise ValueError('Invalid compiled library directory')
         binaries = manifest['binaries']
-        if len(binaries) != 1:
-            raise ValueError('Expected one compiled helper')
-        name, digest = next(iter(binaries.items()))
-        if Path(name).name != name:
-            raise ValueError('Invalid compiled helper path')
-        path = DIRECTORY/library/name
-        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise ValueError('Compiled helper hash mismatch')
-        spec = importlib.util.spec_from_file_location('_missile_accel', path)
-        accelerator = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(accelerator)
+        from missile_numeric_build import MODULES
+        expected = {'_missile_accel', *('_missile_numeric_' + name for name in MODULES)}
+        if {name.split('.')[0] for name in binaries} != expected or len(binaries) != len(expected):
+            raise ValueError('Unexpected compiled missile modules')
+        modules = {}
+        # Verify every file before loading any code.
+        for name, digest in binaries.items():
+            if Path(name).name != name:
+                raise ValueError('Invalid compiled helper path')
+            path = DIRECTORY/library/name
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                raise ValueError('Compiled helper hash mismatch')
+        for name in sorted(binaries, key=lambda n: (not n.startswith('_missile_accel.'), n)):
+            key = name.split('.')[0]
+            spec = importlib.util.spec_from_file_location(key, DIRECTORY/library/name)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[key] = module
+            spec.loader.exec_module(module)
+            modules[key] = module
+        accelerator = modules['_missile_accel']
     except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError):
         if mode == 'compiled':
             raise RuntimeError('Compiled missile helpers unavailable; run scripts/build_missile_backend.py')
@@ -54,13 +65,27 @@ def activate():
                     state_binary32.validate_flight_numbers: accelerator.validate_flight_numbers}
     scripts = Path(__file__).resolve().parent
     model = scripts/'missile_model'
+    if os.environ.get('WT_MISSILE_NUMERIC', '1') != '0':
+        for name in MODULES:
+            reference = importlib.import_module(name)
+            compiled = modules['_missile_numeric_' + name]
+            # The imported reference already identifies its own definitions.
+            # Parsing every source again allocates large temporary ASTs during
+            # activation and leaves allocator arenas resident for short flights.
+            for function, value in vars(reference).items():
+                if isinstance(value, FunctionType) and value.__module__ == reference.__name__:
+                    replacements[value] = getattr(compiled, function)
     # Avoid touching EM, standard-library modules, or unrelated interpreters.
     for module in list(sys.modules.values()):
+        if module is accelerator:
+            # Its fallback must remain the standard-library deepcopy, including
+            # dataclasses and tuples; replacing it would recurse into itself.
+            continue
         filename = getattr(module, '__file__', None)
         if not filename:
             continue
         path = Path(filename).resolve()
-        if path.parent != model and not (path.parent == scripts and path.stem in
+        if path.parent != model and path.parent != DIRECTORY/library and not (path.parent == scripts and path.stem in
                 {'missile_worker', 'missile_support', 'missile_initialization',
                  'missile_telemetry', 'missile_fast'}):
             continue

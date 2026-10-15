@@ -8,9 +8,22 @@ from em_load_limits import ceiling
 def limit(solver,speed,seed):
     if not seed['valid'] or not seed.get('pitch_response'):return None
     view=copy.copy(solver);view._pitch_response_recovery=True
+    stationary=view.config.get('trim_solver_mode')=='stationary'
+    curve=None
+    if stationary:
+        from em_stationary_boundary import Curve
+        curve=Curve(view,speed)
+        curve.unverified_candidates=solver.__dict__.setdefault('stationary_boundary_evidence',[])
     center=seed['solution'][3];memo={center:seed}
     def original_at(command,near):
         if command in memo:return memo[command]
+        if stationary:
+            p=curve.correct(near,elevator=command,max_nfev=18)
+            if (p is None or not p['converged'] or abs(p['solution'][3]-command)>1e-5 or
+                    not p.get('pitch_response') or set(p['reasons'])-{'reversed pitch response'} or
+                    abs(p['alpha_deg']-near['alpha_deg'])>.75):return None
+            memo[command]=p
+            return p
         x=near['solution'];n=near['load_g']
         initial=np.array([x[0],x[1],x[2],x[4],math.sqrt(max(0.,n*n-1.))]);cache={}
         def value(z):
@@ -48,7 +61,7 @@ def limit(solver,speed,seed):
         return p
     def at(command,near):
         p=original_at(command,near)
-        if p is not None or view.is_prop:return p
+        if p is not None or view.is_prop or stationary:return p
 
 
         from em_continuation import TrimCurve

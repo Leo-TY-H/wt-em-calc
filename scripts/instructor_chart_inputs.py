@@ -65,7 +65,9 @@ def source_state(solver,value,*,constant_cache=None):
 
         engine_wash=list(map(f32,prop['wash'])) if prop is not None else [0.,0.],engine_force=vectors[0],engine_moment=vectors[1],engine_scale=realistic_engine_scale(1.,fm.get('ExtThrustBaseMult',1.)),
         torque_gyro=solver.config['torque_gyro'],flap_blend=mapped[0],flap_health=[1.,1.],flap_incidence=mapped[2],sweep=model['sweep'],
-        gear_fraction=value.get('gear',0.),gear_available=[True,True],airbrake_fraction=0.,airbrake_health=[1.,1.],oil_radiator=0.,water_radiator=0.,cockpit_door=0.,parameter_pointer=0,gameplay_pointer=0)
+        gear_fraction=value.get('gear',0.),gear_available=[True,True],airbrake_fraction=0.,airbrake_health=[1.,1.],
+        oil_radiator=solver.oil_radiator,water_radiator=solver.radiator,
+        cockpit_door=0.,parameter_pointer=0,gameplay_pointer=0)
     commands=value['allocation']['commands'];snapshot=list(commands)
     if solver.controls['invert_elevator']:snapshot[1]=-snapshot[1]
     return dict(predictor=predictor,wrapper=wrapper,properties=props,

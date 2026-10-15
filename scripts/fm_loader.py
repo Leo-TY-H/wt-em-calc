@@ -23,8 +23,24 @@ def polar(config,cm=0.,defaults=None):
     return p
 
 
-def normalize(source):
-    fm=copy.deepcopy(source);ad=fm['Aerodynamics'];focus=fm.get('Focus',{});areas=fm.get('Areas',{})
+def expand_wing_polars(plane):
+    """Convert nested clean/flapped endpoints before supplying polar defaults."""
+    if any(key.startswith('FlapsPolar') for key in plane):return
+    source=plane.get('Polar',{})
+    endpoints=(('NoFlaps',0.),('FullFlaps',1.))
+    if not any(key in source for key,_ in endpoints):return
+    common={key:value for key,value in source.items() if key not in ('NoFlaps','FullFlaps')}
+    for index,(key,position) in enumerate(endpoints):
+        if key in source:
+            plane['FlapsPolar'+str(index)]=dict(common,**source[key],Flaps=position)
+    del plane['Polar']
+
+
+def normalize(source, *, _owned=False):
+    # Catalog readers own a freshly decoded JSON tree. Other callers keep the
+    # original defensive-copy contract, including nested alias preservation.
+    fm=source if _owned else copy.deepcopy(source)
+    ad=fm['Aerodynamics'];focus=fm.get('Focus',{});areas=fm.get('Areas',{})
     for key in ['GearCd','GearCentralCd','AirbrakeCd','RadiatorCd','OilRadiatorCd','BombBayCd','FuseCd','CockpitDoorCd']:
         if isinstance(ad.get(key),list):ad[key]=ad[key][0]
 
@@ -81,6 +97,7 @@ def normalize(source):
     ad['HorStabPlane'].setdefault('ClockWiseAOA',ad.get('clockWiseStabAOA0',False))
     for name,plane in list(ad.items()):
         if name in ['WingPlane','HorStabPlane','VerStabPlane','FuselagePlane'] or name.startswith('WingPlaneSweep'):
+            if name=='WingPlane' or name.startswith('WingPlaneSweep'):expand_wing_polars(plane)
             for key,value in list(plane.items()):
                 if key=='Polar' or key.startswith('FlapsPolar'):plane[key]=polar(value,plane.get('Arm',{}).get('ClToCmCoeff',.055) if isinstance(plane.get('Arm'),dict) else 0.)
 

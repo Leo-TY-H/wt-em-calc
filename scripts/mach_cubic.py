@@ -110,7 +110,27 @@ def native_local_coefficients(row):
             radius*radius*radius*c3))
 
 
-JOIN_FRACTION=.15
+JOIN_FRACTION=.20
+
+
+def stable_value(row,mach,index,local=None):
+    """Declared native pieces evaluated in binary64, without refitting joins.
+
+    Stored coefficients and comparison/equality ownership are unchanged. The
+    caller rounds the returned multiplier once to binary32. Degenerate native
+    intervals retain their guarded global polynomial at any owned equality.
+    """
+    a,b,high,slope,limit,c0,c1,c2,c3=row
+    if mach<a:return 0. if index==5 else 1.
+    if mach>b:
+        value=high+(mach-b)*slope
+        return min(value,limit) if slope>=0. else max(value,limit)
+    if b<=a:return ((c3*mach+c2)*mach+c1)*mach+c0
+    if local is None:local=native_local_coefficients(tuple(row))
+    radius=(b-a)*.5
+    u=(mach-(a+radius))/radius
+    c0,c1,c2,c3=local
+    return ((c3*u+c2)*u+c1)*u+c0
 
 
 def join_scale(row):

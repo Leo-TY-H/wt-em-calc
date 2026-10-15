@@ -8,7 +8,24 @@ from em_load_limits import ceiling
 ROLL_LEVELING_PROBE_OFFSET=1e-5
 
 
+def _opposite_seed(point):
+    """Keep the corrected branch identity for continuation at another speed."""
+    keys=('speed_kmh','load_g','alpha_deg','solution','converged','valid','reasons',
+          'force_error_g','angular_error_rad_s2','stall_margin_deg','wing_load_ratios',
+          'authority_margin','sideslip_attitude_deg','stationary_request_indices',
+          'stationary_coordinates','stationary_coordinate_names','source_branch',
+          'model_revision','model_experiments','mach_curve_mode','mach_curve_revision')
+    return {key:point[key] for key in keys if key in point}
+
+
 def fixed_alpha(solver,speed,alpha,seed,canonical=False):
+    if solver.config.get('trim_solver_mode') == 'stationary' and hasattr(solver,'core'):
+        from em_stationary_boundary import Curve
+        curve=Curve(solver,speed)
+        point=curve.correct(seed,alpha=alpha)
+        if curve.unverified_candidates:
+            solver.__dict__.setdefault('stationary_boundary_evidence',[]).extend(curve.unverified_candidates)
+        return point
     if canonical and solver.is_prop and solver.engine.automatic:
         solver=solver.with_prop_controls(solver.engine.fixed_controls or solver.engine.automatic_controls)
         solver.engine.force_canonical=True
@@ -71,8 +88,9 @@ def first_roll_leveling_limit(solver,speed,level,candidate):
 
 
     probe=(fixed_alpha(solver,speed,incoming,candidate) or
-           fixed_alpha(solver,speed,incoming,level) or
-           fixed_alpha(solver,speed,incoming,candidate,canonical=True))
+           fixed_alpha(solver,speed,incoming,level))
+    if probe is None and solver.config.get('trim_solver_mode')!='stationary':
+        probe=fixed_alpha(solver,speed,incoming,candidate,canonical=True)
     if (probe is None or not probe['converged'] or
             probe.get('roll_leveling_branch')!=0 or
             not level['load_g']<probe['load_g']<candidate['load_g']):return None
@@ -114,7 +132,10 @@ def branch_limit(solver,speed,low,high):
     if not solver.fm.get('RollLeveling',True) or not low['valid']:return None
     allowed=PHYSICAL_REASONS
     def at(alpha,seed):
-        return fixed_alpha(solver,speed,alpha,seed) or fixed_alpha(solver,speed,alpha,seed,True)
+        point=fixed_alpha(solver,speed,alpha,seed)
+        if point is None and solver.config.get('trim_solver_mode')!='stationary':
+            point=fixed_alpha(solver,speed,alpha,seed,True)
+        return point
     for alpha in (-12.,12.):
         if not low['alpha_deg']<alpha<max(low['alpha_deg']+low['stall_margin_deg'],high['alpha_deg'])+.25:continue
         if alpha-low['alpha_deg']>4.:continue
@@ -140,7 +161,7 @@ def branch_limit(solver,speed,low,high):
             left['envelope_limit']=dict(kind=kind,axis=None,limiting_load_g=left['load_g'],
                 method='balanced physical rejection across native roll-leveling branch',
                 angle_bracket_deg=[left['alpha_deg'],right['alpha_deg']],
-                opposite={k:right[k] for k in ('speed_kmh','load_g','alpha_deg','solution','converged','valid','reasons','force_error_g','angular_error_rad_s2','stall_margin_deg','wing_load_ratios','authority_margin')})
+                opposite=_opposite_seed(right))
             left['native_branch_search']['upper_limit_verified']=True
         return left
     return None
@@ -156,11 +177,15 @@ def continue_endpoint(solver,speed,neighbors,level):
             t=(speed-a['speed_kmh'])/(b['speed_kmh']-a['speed_kmh'])
             seed['solution']=(np.array(a['solution'])*(1-t)+np.array(b['solution'])*t).tolist()
             seed['load_g']=a['load_g']*(1-t)+b['load_g']*t
-    left=fixed_alpha(solver,speed,alpha-.002,seed) or fixed_alpha(solver,speed,alpha-.002,seed,True)
+    left=fixed_alpha(solver,speed,alpha-.002,seed)
+    if left is None and solver.config.get('trim_solver_mode')!='stationary':
+        left=fixed_alpha(solver,speed,alpha-.002,seed,True)
     if not left or not left['valid'] or left['stall_margin_deg']>.6:return None
     opposite=next((p['envelope_limit']['opposite'] for p in known if p.get('envelope_limit',{}).get('opposite')),None)
     right_seed=opposite or left
-    right=fixed_alpha(solver,speed,alpha+.002,right_seed) or fixed_alpha(solver,speed,alpha+.002,right_seed,True)
+    right=fixed_alpha(solver,speed,alpha+.002,right_seed)
+    if right is None and solver.config.get('trim_solver_mode')!='stationary':
+        right=fixed_alpha(solver,speed,alpha+.002,right_seed,True)
     if right and right['valid']:return None
     left['native_branch_search']=dict(alpha_switch_deg=alpha,solved_alpha_deg=left['alpha_deg'],
         upper_limit_verified=False,method='fixed-angle continuation of measured native branch edge across speed')
@@ -171,6 +196,6 @@ def continue_endpoint(solver,speed,neighbors,level):
         left['envelope_limit']=dict(kind=kind,axis=None,limiting_load_g=left['load_g'],
             method='balanced physical rejection across native roll-leveling branch',
             angle_bracket_deg=[left['alpha_deg'],right['alpha_deg']],
-            opposite={k:right[k] for k in ('speed_kmh','load_g','alpha_deg','solution','converged','valid','reasons','force_error_g','angular_error_rad_s2','stall_margin_deg','wing_load_ratios','authority_margin')})
+            opposite=_opposite_seed(right))
         left['native_branch_search']['upper_limit_verified']=True
     return left

@@ -1,3 +1,7 @@
+if __name__ in ('__main__','__mp_main__'):
+    from em_session import bootstrap
+    bootstrap()
+
 import argparse
 import ast
 import errno
@@ -21,19 +25,16 @@ from functools import lru_cache
 from urllib.parse import urlparse,parse_qs
 from urllib.request import urlopen
 
-import numpy as np
-from scipy.interpolate import PchipInterpolator
-
 from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute, contour_levels as validate_contour_levels
 from em_entries import ENTRY_ID
-from em_sampling import column_curve
 from aircraft_catalog import source,asset_sources
 if current_process().name=='MainProcess':
 
 
-    from em_plot import add_boundary_hover,write_exports,prepare_exports,export_csv,export_figure,preview_payload,contour_paths
-from vehicle_names import refresh_result_names, source_paths as name_sources
+    from em_plot import add_boundary_hover,write_exports,prepare_exports,prepare_export_data,export_csv,export_figure,preview_payload,contour_paths
+from vehicle_names import source_paths as name_sources
 from release_info import release_info
+from em_data import clone
 
 APP=ROOT/'app'; OUTPUT=Path(os.environ.get('WT_EM_OUTPUT_DIR',ROOT/'outputs/em'))
 JOBS={}; LOCK=threading.Lock(); WORKER=ThreadPoolExecutor(max_workers=1)
@@ -55,6 +56,23 @@ def named_data(key):
     with LOCK:result=RESULTS.get(key)
     if result is None:raise FileNotFoundError('Result expired')
     return result['data']
+
+
+def download_data(key):
+    """Prepare once on demand when exports were disabled during calculation.
+
+    Chart/point endpoints never enter this path. Keep the preparation under the
+    figure lock so simultaneous downloads share one result, without holding the
+    job-status lock during conversion. Expired results are never reinserted.
+    """
+    with FIGURE_LOCK:
+        with LOCK:result=RESULTS.get(key)
+        if result is None:raise FileNotFoundError('Result expired')
+        if not result.get('exports_ready',False):
+            data=prepare_export_data(result['data'])
+            with LOCK:
+                result.update(data=data,exports_ready=True)
+        return result['data']
 
 
 @lru_cache(maxsize=4)
@@ -97,7 +115,7 @@ def chart_payload(key):
 def fingerprint():
 
 
-    h=hashlib.sha256(b'em-cache-format-1');pending=['em_solver','em_plot'];seen=set()
+    h=hashlib.sha256(b'em-cache-format-1');pending=['em_solver','em_plot','em_server'];seen=set()
     while pending:
         name=pending.pop()
         if name in seen:continue
@@ -123,17 +141,13 @@ def fingerprint():
 RUNTIME_FINGERPRINT=fingerprint() if current_process().name=='MainProcess' else None
 
 
-class RestartRequired(Exception):
-    pass
-
-
 def key_for(config):
     return hashlib.sha256((RUNTIME_FINGERPRINT+json.dumps(config,sort_keys=True)).encode()).hexdigest()[:20]
 
 
 def discard_old_results():
     with LOCK:
-        finished=sorted((job for job in JOBS.values() if job['status']=='complete'),
+        finished=sorted((job for job in JOBS.values() if job['status'] in ('complete','stopped')),
                         key=lambda job:job['completed_at'])
         old=finished[:-MAX_FINISHED_JOBS]
         for job in old:
@@ -146,8 +160,13 @@ def discard_old_results():
 
 def run_job(key,config,event):
     preview_future=None
+    latest_snapshot=None
     def publish(data):
-        nonlocal preview_future
+        nonlocal preview_future,latest_snapshot
+        # Preserve raw diagnostics even when the preview renderer is busy.
+        # Rendering enriches/mutates its input, so it owns a separate copy.
+        latest_snapshot=clone(data)
+        if event.is_set():return
         if preview_future is not None and not preview_future.done():return
         def render():
             if event.is_set():return
@@ -168,10 +187,12 @@ def run_job(key,config,event):
         reset_calculation()
         update(dict(done=0,total=len(config['aircraft'])*config['speed_samples']*config['load_samples'],phase='Settling engines'))
         data=compute(config,update,event.is_set,preview=publish)
+        latest_snapshot=data
         if event.is_set():raise InterruptedError('Calculation cancelled')
         data['equations_fingerprint']=RUNTIME_FINGERPRINT
         with LOCK:JOBS[key].update(status='exporting')
-        with FIGURE_LOCK:prepared=prepare_exports(data,started_at=started)
+        with FIGURE_LOCK:prepared=prepare_exports(data,started_at=started,
+            include_exports=config.get('enable_exports',False))
 
         with LOCK:
             if event.is_set() or JOBS[key].get('cancel') is not event:raise InterruptedError('Calculation cancelled')
@@ -180,8 +201,28 @@ def run_job(key,config,event):
                              completed_at=time.monotonic())
         discard_old_results()
     except InterruptedError:
-        with LOCK:
-            if JOBS[key].get('cancel') is event:JOBS[key].update(status='cancelled')
+        # This is a partial snapshot, never a completed envelope. Keep preview
+        # interpolation/masking and expose raw data exports only.
+        data=clone(latest_snapshot) if latest_snapshot is not None else dict(
+            settings=clone(config),aircraft=[],speeds_kmh=[],loads_g=[],
+            assumptions=[],elapsed_s=0.,plot_max_turn=10.)
+        data.update(preview=True,calculation_stopped=True,calculation_status='stopped',
+            coverage_complete=False,equations_fingerprint=RUNTIME_FINGERPRINT,
+            snapshot_elapsed_s=data.get('elapsed_s',0.),elapsed_s=time.monotonic()-started,
+            partial_result_note='Stopped by user. Only available completed columns/snapshots are retained; '
+                'in-flight work and unsearched regions remain unresolved, not infeasible.')
+        with LOCK:JOBS[key].update(status='exporting',partial_result=True)
+        try:
+            with FIGURE_LOCK:prepared=prepare_exports(data,started_at=started,
+                include_exports=config.get('enable_exports',False))
+            with LOCK:
+                if JOBS[key].get('cancel') is event:
+                    RESULTS[key]=prepared
+                    JOBS[key].update(status='stopped',elapsed_s=time.monotonic()-started,
+                        completed_at=time.monotonic(),retained_points=sum(len(a['points']) for a in data['aircraft']))
+            discard_old_results()
+        except Exception as error:
+            with LOCK:JOBS[key].update(status='error',error='Partial export failed: '+str(error))
     except Exception as error:
         import traceback
         traceback.print_exc()
@@ -200,11 +241,12 @@ def reset_calculation():
 
 
 def start_job(config):
-    if fingerprint()!=RUNTIME_FINGERPRINT:
-        raise RestartRequired('Equation files changed; restarting the calculator with the new equations.')
     config=settings(config);key=uuid.uuid4().hex[:20]
+    from em_uncorrected import require_chart_correction
+    require_chart_correction(config)
     with LOCK:
-        pending=sum(job.get('status') in ('queued','running','exporting') for job in JOBS.values())
+        if RESTART_REQUESTED.is_set():raise ValueError('Calculator is loading updates. Refresh the page before calculating.')
+        pending=sum(job.get('status') in ('queued','running','stopping','exporting') for job in JOBS.values())
         if pending>=MAX_PENDING_JOBS:raise ValueError('Calculation queue is full. Try again after the current jobs finish.')
         event=threading.Event();JOBS[key]=dict(id=key,status='queued',settings=config,cancel=event)
         WORKER.submit(run_job,key,config,event)
@@ -246,6 +288,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(content)
     def do_GET(self):
         path=urlparse(self.path).path
+        if path=='/api/engagement-research/meta':
+            from engagement_research_service import metadata
+            try:return self.respond(metadata())
+            except (ValueError,OSError) as error:return self.respond(dict(error=str(error)),400)
         if path=='/api/missiles/meta':
             from missile_service import metadata
             return self.respond(metadata())
@@ -256,6 +302,20 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(job if job else dict(error='Unknown missile job'),200 if job else 404)
         if path=='/api/health':return self.respond(dict(status='ok',release=release_info()))
         if path=='/api/meta':
+            # Only a page load opts into edited equations. Running jobs keep
+            # their session; Calculate never scans sources or initiates updates.
+            if parse_qs(urlparse(self.path).query).get('refresh')==['1'] and fingerprint()!=RUNTIME_FINGERPRINT:
+                with LOCK:
+                    busy=any(job.get('status') in ('queued','running','stopping','exporting') for job in JOBS.values())
+                    missiles=sys.modules.get('missile_service')
+                    if missiles is not None:
+                        with missiles.LOCK:
+                            busy=busy or any(job.get('status') in ('queued','running') for job in missiles.JOBS.values())
+                    if not busy:RESTART_REQUESTED.set()
+                if not busy:
+                    self.respond(dict(error='Loading updated calculator.',code='server_restarting'),503)
+                    threading.Thread(target=self.server.shutdown,daemon=True).start()
+                    return
             return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,
                 result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info()))
         if path.startswith('/api/jobs/'):
@@ -284,9 +344,13 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts)==5 and parts[4] in ('data.json','chart.json','samples.csv','diagram.png','diagram.svg','diagram.pdf'):
                 try:
                     name=parts[4];data=named_data(key)
+                    if data.get('calculation_stopped') and name.startswith('diagram.'):
+                        return self.respond(dict(error='Stopped results support JSON and CSV exports; diagram refinement is incomplete.'),400)
                     if name=='chart.json':return self.respond(chart_payload(key))
-                    if name=='data.json':return self.download(orjson.dumps(data,option=orjson.OPT_SERIALIZE_NUMPY),name)
-                    if name=='samples.csv':return self.download(export_csv(data).encode(),name)
+                    data=download_data(key)
+                    download_name=('partial-' if data.get('calculation_stopped') else '')+name
+                    if name=='data.json':return self.download(orjson.dumps(data,option=orjson.OPT_SERIALIZE_NUMPY),download_name)
+                    if name=='samples.csv':return self.download(export_csv(data).encode(),download_name)
                     levels=query_contour_levels(self.path);validate_contour_coverage(data,levels)
                     buffer=io.BytesIO()
                     with FIGURE_LOCK:export_figure(data,buffer,levels=levels,format=name.split('.')[-1])
@@ -299,6 +363,7 @@ class Handler(BaseHTTPRequestHandler):
         names={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/config.js':'config.js','/styles.css':'styles.css','/vendor/plotly.min.js':'vendor/plotly.min.js'}
         names.update({'/release.json':'release.json','/release-links.js':'release-links.js','/release-links.css':'release-links.css'})
         names.update({'/missiles.js':'missiles.js','/missiles.css':'missiles.css'})
+        names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
         names.update({f'/icons/neothunderism-{asset}':f'icons/neothunderism-{asset}' for asset in ('mark.svg','mark.png','app.svg','favicon.svg')})
@@ -314,28 +379,32 @@ class Handler(BaseHTTPRequestHandler):
             if length<0 or length>32768:raise ValueError('Request too large')
             body=json.loads(self.rfile.read(length) or b'{}')
             if not isinstance(body,dict):raise ValueError('Expected a JSON object')
+            if path=='/api/engagement-research/run':
+                from engagement_research_service import run
+                return self.respond(run(body))
             if path=='/api/missiles/jobs':
                 from missile_service import start
-                return self.respond(dict(id=start(body)),202)
+                with LOCK:
+                    if RESTART_REQUESTED.is_set():raise ValueError('Calculator is loading updates. Refresh the page before calculating.')
+                    key=start(body)
+                return self.respond(dict(id=key),202)
             if path.startswith('/api/missiles/jobs/') and path.endswith('/cancel'):
                 from missile_service import cancel
                 return self.respond(dict(cancelled=cancel(path.split('/')[4])))
             if path=='/api/jobs':
                 key=start_job(body);return self.respond(dict(id=key),202)
+            if path=='/api/trial':
+                from em_uncorrected import request
+                return self.respond(request(body))
             if path.startswith('/api/jobs/') and path.endswith('/cancel'):
                 key=path.split('/')[3]
                 with LOCK:
                     job=JOBS.get(key)
-                    if job and 'cancel' in job:
+                    if job and 'cancel' in job and job['status'] in ('queued','running','stopping','exporting'):
                         job['cancel'].set()
-                        if job['status']=='queued':job['status']='cancelled'
+                        job['status']='stopping'
                 return self.respond(dict(cancelled=bool(job)))
             return self.respond(dict(error='Not found'),404)
-        except RestartRequired as error:
-            self.respond(dict(error=str(error),code='server_restarting'),503)
-            if not RESTART_REQUESTED.is_set():
-                RESTART_REQUESTED.set()
-                threading.Thread(target=self.server.shutdown,daemon=True).start()
         except (ValueError,TypeError,KeyError) as error:return self.respond(dict(error=str(error)),400)
     def do_OPTIONS(self):
         if not self.allowed_origin():return self.respond(dict(error='Origin not allowed'),403)
@@ -376,15 +445,22 @@ def main():
     finally:
         for job in list(JOBS.values()):
             if 'cancel' in job:job['cancel'].set()
-        server.server_close();WORKER.shutdown(wait=False,cancel_futures=True)
+        server.server_close();WORKER.shutdown(wait=True,cancel_futures=True)
+        PREVIEW_WORKER.shutdown(wait=True,cancel_futures=True)
+        from em_workers import shutdown
+        shutdown()
     if RESTART_REQUESTED.is_set():
-        command=[sys.executable,*sys.argv]
+        from em_session import cleanup,fresh_environment
+        command=[sys.executable,*[arg for arg in sys.argv if arg!='--open']]
+        env=fresh_environment()
         print('Equation files changed; restarting EM plotter.',flush=True)
         if os.name=='nt':
-            subprocess.Popen(command,cwd=ROOT,creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            subprocess.Popen(command,cwd=ROOT,env=env,creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            cleanup()
             os._exit(0)
         else:
-            os.execv(sys.executable,command)
+            cleanup()
+            os.execve(sys.executable,command,env)
 
 
 if __name__=='__main__':main()
