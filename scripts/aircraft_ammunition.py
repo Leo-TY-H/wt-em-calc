@@ -9,6 +9,7 @@ import math
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from component_assembly import f32, add, mul
+from aircraft_availability import excluded_vehicles
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / 'references/aircraft-ammunition.json'
@@ -184,7 +185,7 @@ def profiles():
 def profile(name, vehicle=None):
     try:
         available = profiles()
-        if name in available:
+        if name in available and name not in excluded_vehicles():
             if vehicle and vehicle != name:
                 raise ValueError('Ammunition vehicle does not match the selected aircraft')
             return available[name]

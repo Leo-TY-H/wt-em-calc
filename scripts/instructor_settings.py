@@ -1,4 +1,21 @@
 from component_assembly import mul
+from functools import lru_cache
+import json
+from pathlib import Path
+
+
+@lru_cache(maxsize=1)
+def payload_multipliers():
+    """Authored RB/SB base and assistance multipliers; no aircraft fitting."""
+    root=Path(__file__).resolve().parents[1]/'references'
+    difficulty=json.loads((root/'body-gameparams.blkx').read_text())['difficulty_settings']['baseDifficulty']
+    constants=json.loads((root/'body-gameplay.blkx').read_text())['fmConstants']
+    # The supported battle difficulties share the base. Assistance is selected
+    # separately by control-snapshot bit 0, not by torque/gyro or manual trim.
+    base=difficulty['medium']['payloadCoGMultiplier']
+    if base!=difficulty['hard']['payloadCoGMultiplier']:
+        raise ValueError('RB/SB payload base multipliers require an explicit battle-difficulty setting')
+    return base,constants.get('instructorPayloadCogOffsetMult',1.)
 
 
 def payload_scales(snapshot_flags,base_multiplier,instructor_multiplier):

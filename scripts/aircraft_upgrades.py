@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from component_assembly import f32, add, sub, mul
+from aircraft_availability import excluded_vehicles
 
 ROOT = Path(__file__).resolve().parents[1]
 VEHICLES = ROOT / 'references/prop-vehicles'
@@ -62,7 +63,8 @@ def _vehicle_candidates(name, rows):
         index = (rows, {row['vehicle'] for row in rows},
                  {fm: tuple(sorted(names)) for fm, names in by_fm.items()})
         _vehicle_index = index
-    return [name] if name in index[1] else list(index[2].get(name, ()))
+    candidates = [name] if name in index[1] and name not in excluded_vehicles() else index[2].get(name, ())
+    return [vehicle for vehicle in candidates if vehicle not in excluded_vehicles()]
 
 
 @lru_cache(maxsize=2048)

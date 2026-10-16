@@ -4,9 +4,9 @@ import orjson
 from pathlib import Path
 import jet_catalog
 import prop_catalog
+from aircraft_availability import EXCLUSIONS, exclusions
 REFERENCE=jet_catalog.REFERENCE
 _worker_snapshot=None
-EXCLUSIONS=Path(__file__).resolve().parents[1]/'references/aircraft-exclusions.json'
 
 
 class LazyCatalog(Mapping):
@@ -31,8 +31,7 @@ def catalog():
     result.update(prop_catalog.catalog())
 
 
-    excluded=orjson.loads(EXCLUSIONS.read_bytes())['aircraft']
-    for name in excluded:result.pop(name,None)
+    for name in exclusions():result.pop(name,None)
     from aircraft_upgrades import profile
     for name, row in result.items():
         try:

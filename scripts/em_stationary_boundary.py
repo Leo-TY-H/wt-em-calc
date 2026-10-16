@@ -14,6 +14,10 @@ from em_load_limits import ceiling
 from em_pitch_response import PHYSICAL_REASONS, KINDS
 from em_trim_numerics import UnevaluableTrial
 
+# Ordering allowances only; active events must already pass point admission.
+BACKWARD_LOAD_TOLERANCE_G = .001
+BACKWARD_ALPHA_TOLERANCE_DEG = .0001
+
 
 class TrialUnavailable(UnevaluableTrial):
     """A conditional trial has no usable residual, not an absence proof."""
@@ -321,15 +325,15 @@ class Curve:
         for kind,axis,event in self.nearest_events(point):
             p=self.correct(point,event=event)
             if p is None or not p['valid']:continue
-            if (point['alpha_deg']-1e-5 <= p['alpha_deg'] <= point['alpha_deg']+extent and
-                    p['load_g'] >= point['load_g']-2e-5):
+            if (point['alpha_deg']-BACKWARD_ALPHA_TOLERANCE_DEG <= p['alpha_deg'] <= point['alpha_deg']+extent and
+                    p['load_g'] >= point['load_g']-BACKWARD_LOAD_TOLERANCE_G):
                 return mark(p,kind,axis=axis,method='stationary balance and active constraint',
                             **event_details(event))
             else:
                 self.retain_event(p,kind,axis,point,
                     'Admitted active event is outside the current continuation extent; branch connection and preceding limits unresolved',
-                    requested_alpha_interval_deg=[point['alpha_deg']-1e-5,point['alpha_deg']+extent],
-                    requested_minimum_load_g=point['load_g']-2e-5)
+                    requested_alpha_interval_deg=[point['alpha_deg']-BACKWARD_ALPHA_TOLERANCE_DEG,point['alpha_deg']+extent],
+                    requested_minimum_load_g=point['load_g']-BACKWARD_LOAD_TOLERANCE_G)
         return None
 
     def nearest_events(self,point):

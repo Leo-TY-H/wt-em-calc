@@ -8,6 +8,7 @@ COPY requirements.txt requirements-plotter.txt ./
 RUN python -m pip install -r requirements-plotter.txt
 COPY scripts ./scripts
 COPY app ./app
+COPY references/aircraft-exclusions.json ./references/aircraft-exclusions.json
 ARG SOURCE_COMMIT=development
 RUN python -c "import json; from pathlib import Path; Path('build-info.json').write_text(json.dumps({'commit': '$SOURCE_COMMIT'}))"
 RUN python scripts/bootstrap_runtime.py

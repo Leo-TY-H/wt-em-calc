@@ -1,6 +1,7 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from aircraft_availability import excluded_vehicles
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'references/vehicle-names/wiki.json'
@@ -22,14 +23,16 @@ def naming_sources():
 
 def apply_names(catalog):
     names, records = naming_sources()
+    excluded = excluded_vehicles()
     vehicles = {r['vehicle'] for r in records}
     by_fm = {}
     for record in records:
         by_fm.setdefault(Path(record['fm'] or '').stem, []).append(record['vehicle'])
     by_fm = {fm: sorted(ids) for fm, ids in by_fm.items()}
     for key, row in catalog.items():
-        ids = ([key] if key in vehicles else by_fm.get(key, [])
+        ids = ([key] if key in vehicles and key not in excluded else by_fm.get(key, [])
                if row['propulsion'] in ('jet','rocket') else [])
+        ids = [vehicle for vehicle in ids if vehicle not in excluded]
         labels = []
         for vehicle in ids or [key]:
             name = names['names'].get(vehicle)

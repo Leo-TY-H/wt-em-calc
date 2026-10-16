@@ -91,8 +91,8 @@ def assets(name):
     return apply_propulsion(name,propulsion['properties']),mass
 
 
-def mass_state(name,fuel_percent,extra_mass=0.,payloads=()):
-    fm=load(name);_,asset=assets(name);p=aircraft_properties(fm)
+def mass_state(name,fuel_percent,extra_mass=0.,payloads=(),*,payload_scale=.2):
+    fm=load(name);_,asset=assets(name);p=aircraft_properties(fm,payload_scale=payload_scale)
     fill=initial(asset['tanks'],asset['fuel_systems'],fuel_percent/100.)
     payloads=[*payloads, *([dict(mass=extra_mass,position=fm['Mass']['CenterOfGravity'])] if extra_mass else [])]
     nitro=f32(fm['Mass'].get('MaxNitro',0.))

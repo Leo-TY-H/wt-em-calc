@@ -11,6 +11,14 @@ afterward and download the existing result without another solve. The first
 download then prepares the export data once. API requests can opt in with
 `enable_exports: true`; explicit command-line file exports remain available.
 
+The aircraft picker follows the [War Thunder Wiki aviation roster](https://wiki.warthunder.com/aviation),
+including playable premium, squadron, event and hidden aircraft. Drones, Zeppelin,
+ship-launched scouts, mission/tutorial aircraft and unlisted internal variants
+are excluded. The curated list in `references/aircraft-exclusions.json` is kept
+in Git and survives game-data refreshes. Exclusions also apply to the displayed
+variants and armament choices of aircraft sharing a flight model. Source assets
+remain available because retained aircraft can share them.
+
 ### Solver and model settings
 
 Browser calculations use the stationary solver, solver-default Mach arithmetic,
@@ -21,6 +29,12 @@ recorded settings. **Include default ammunition** starts enabled for aircraft
 with supported ammunition data and can still be unchecked. It includes the
 standard gun belts and countermeasures in the mass model. **Additional settings**
 retains ammunition, armament variant and additional mass controls.
+
+Instructor assistance applies the game's authored payload multiplier when
+calculating centre of gravity and inertia; total payload mass is unchanged.
+This follows the assistance setting independently of manual trim, torque/gyro
+and Flutter. Aircraft using advanced mass or an explicit full-payload CG rule
+retain their native mass behavior.
 
 The diagnostic API still accepts explicit solver/model settings.
 `trim_solver_mode="nested"` selects the original nested correction algorithm
@@ -99,6 +113,12 @@ The baseline load sampler establishes a plot cap or observed rejection bracket
 before asking for stationary boundary correction. It does not pretrace all
 potential physical limits at every speed column. Shared boundary correction,
 fold localization and physical admission remain available on observed brackets.
+
+Instructor one-g autotrim initializes tail force from pitch-moment balance and
+updates the wing-angle estimate once to account for that force's lift. The
+existing three-equation correction and physical acceptance limits still apply.
+Boundary ordering permits up to **0.001 g** backward load and **0.0001°** backward
+AoA after a candidate passes physical admission; forward extent is unchanged.
 
 The default numerical SEP allowance is **0.05 m/s**. Physical limits remain
 separate from numerical error and chart interpolation tolerances. Refinement

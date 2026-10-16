@@ -42,10 +42,13 @@
 !/app/vendor/plotly.min.js
 !/requirements-plotter.txt
 !/requirements.txt
+!/references/
+!/references/aircraft-exclusions.json
 !/scripts/advanced_mass.py
 !/scripts/aero_helpers.py
 !/scripts/air_state.py
 !/scripts/aircraft_ammunition.py
+!/scripts/aircraft_availability.py
 !/scripts/aircraft_catalog.py
 !/scripts/aircraft_description.py
 !/scripts/aircraft_model.py

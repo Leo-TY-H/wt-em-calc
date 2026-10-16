@@ -1,6 +1,8 @@
 *
 !requirements.txt
 !requirements-plotter.txt
+!references/
+!references/aircraft-exclusions.json
 !scripts/
 !scripts/*.py
 !scripts/missile_model/

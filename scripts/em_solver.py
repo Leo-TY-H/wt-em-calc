@@ -29,6 +29,7 @@ from prop_catalog import mass_state as prop_mass_state
 from prop_em import PropellerEnsemble
 from wing_sweep import schedule as sweep_schedule,available as available_sweep
 from instructor_envelope import profile as instructor_profile
+from instructor_settings import payload_multipliers, payload_scales
 from kinematics import airborne_step, altitude_velocity_correction
 from mass_model import aircraft_properties, evaluate as mass_evaluate, tank_configuration
 from polar_runtime import flap_polar, evaluate as mach_polar
@@ -336,11 +337,15 @@ class TrimSolver:
         ammunition_mass=selected_mass(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else 0.
         added_mass=self.config['extra_mass_kg']
         weapon_payloads=selected_payloads(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else []
-        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads)
+        # This app's Instructor toggle selects snapshot bit 0 (auto-trim
+        # assistance). Optimized manual trim and torque/gyro are independent.
+        assistance_flags=int(self.config['instructor'])
+        payload_scale=payload_scales(assistance_flags,*payload_multipliers())[0]
+        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads,payload_scale=payload_scale)
         else:
             fuel=[f32(capacity*self.config['fuel_percent']/100.) for capacity in fuel_capacities(self.fm)]
             payloads=[*weapon_payloads,*([dict(mass=added_mass,position=self.fm['Mass']['CenterOfGravity'])] if added_mass else [])]
-            self.mass=mass_evaluate(aircraft_properties(self.fm),fuel,payloads=payloads)
+            self.mass=mass_evaluate(aircraft_properties(self.fm,payload_scale=payload_scale),fuel,payloads=payloads)
             self.mass['fuel_by_system']=fuel
         self.mass['ammunition_mass_kg']=ammunition_mass
         self.mass['additional_mass_kg']=self.config['extra_mass_kg']

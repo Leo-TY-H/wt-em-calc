@@ -9,7 +9,7 @@ import numpy as np
 from instructor_autotrim import autotrim_predictor
 from instructor_pitch_predictor import prepare_geometry
 
-REVISION = 'steady-authority-shared-correction-v3'
+REVISION = 'steady-authority-moment-initialization-v4'
 
 
 def solve(model, ip, state):
@@ -46,6 +46,23 @@ def solve(model, ip, state):
     finite32 = np.nextafter(float(np.finfo(np.float32).max), 0.)
     lower = [-finite32, -finite32/weight, -1.]
     upper = [finite32, finite32/weight, 1.]
+    initial = [angle, 0., 0.]
+    if abs(c['tail_lever']) > 4e-19:
+        seed = evaluate(initial)['auto']
+        tail = seed['equilibrium']['moment_error_nm'] / c['tail_lever'] / weight
+        # Use the native pitch-moment update as an initial guess. A saturated
+        # command adds an unmet-authority term, so it cannot seed this balance.
+        # Keep the simultaneous equations and their admission gates unchanged.
+        if not seed['saturated'] and np.isfinite(tail) and lower[1] <= tail <= upper[1]:
+            initial[1] = tail
+            seeded = evaluate(initial)['auto']
+            lift_slope = sum(c['q_area']) * c['cos_dihedral'] * slope * p['cyMult']
+            # The new tail force also carries lift, especially on canards.
+            # Re-estimate wing angle once before the simultaneous correction.
+            if not seeded['saturated'] and abs(lift_slope) > 1e-9:
+                adjusted = angle + seeded['equilibrium']['lift_error_n'] / lift_slope
+                if np.isfinite(adjusted):
+                    initial[0] = min(p['aoaCritH'], max(p['aoaCritL'], adjusted))
     # Defer this import: compiled Instructor wrappers import this Python module
     # during backend activation, before all aircraft modules are installed.
     from em_stationary_corrector import Corrector
@@ -53,7 +70,7 @@ def solve(model, ip, state):
         branch=lambda value:value['proposal_branch'],
         scale=[10.,1.,.2], step_limit=[8.,.3,.4],
         residual_scale=[20./weight,20./moment_scale,2e-6])
-    fit = corrector.solve([angle,0.,0.], max_nfev=120,
+    fit = corrector.solve(initial, max_nfev=120,
                           numerical_target=None, reuse_jacobian=True)
     value = evaluate(fit.x)
     auto = value['auto']
