@@ -1,5 +1,7 @@
 *
 !/app/
+!/app/fonts/
+!/app/fonts/wt-symbols.ttf
 !/app/icons/
 !/app/vendor/
 !/scripts/

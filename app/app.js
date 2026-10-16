@@ -703,7 +703,8 @@ $('reset-zoom').addEventListener('click',()=>{if(state.data)Plotly.relayout('cha
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
 (async()=>{try{
   $('calculate').disabled=true;
-  [state.meta]=await Promise.all([api('/api/meta?refresh=1'),document.fonts.load('14px WTSymbols','▄')]);
+  // Symbol glyphs are cosmetic; a missing font must not disable the calculator.
+  [state.meta]=await Promise.all([api('/api/meta?refresh=1'),document.fonts?.load('14px WTSymbols','▄').catch(()=>[])]);
   $('calculate').disabled=false;
   state.meta.defaults=requestConditions({...state.meta.defaults,default_ammunition:true,aircraft:[]});
   populateAircraft();populate(state.meta.defaults);
