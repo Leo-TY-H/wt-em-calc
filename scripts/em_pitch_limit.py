@@ -78,11 +78,19 @@ def limit(solver,speed,seed):
 
     probes=[]
     for sign in (-1.,1.):
-        command=max(-1.,min(1.,center+sign*.01))
-        if command==center:continue
-        p=at(command,seed)
-        if (p and p['load_g']>=seed['load_g'] and
-                p['pitch_response']['margin']<seed['pitch_response']['margin']):probes.append(p)
+        # Near a response reversal, a fixed command step can cross the narrow
+        # maximum and return a lower-load rejected state. Contract that probe
+        # before discarding the direction. Every retained endpoint still closes
+        # the full equations; a failed probe never supplies rejection evidence.
+        for contraction in range(8 if stationary else 1):
+            command=max(-1.,min(1.,center+sign*.01*(.5**contraction)))
+            if command==center:break
+            p=at(command,seed)
+            if p is not None:
+                if p['pitch_response']['margin']>=seed['pitch_response']['margin']:break
+                if p['load_g']>=seed['load_g']:
+                    probes.append(p)
+                    break
     if not probes:return None
     probe=min(probes,key=lambda p:p['pitch_response']['margin'])
     direction=1. if probe['solution'][3]>center else -1.
