@@ -323,6 +323,19 @@ class Curve:
 
     def active(self, point, extent):
         for kind,axis,event in self.nearest_events(point):
+            # An admitted state can already be exactly on a control stop.
+            # Solving the inset event from it moves back into the interior and
+            # can manufacture a tiny apparent load maximum. Retain the actual
+            # reached face; finish_edge still checks the preceding branch.
+            if (kind=='control' and point.get('valid') and point.get('converged') and
+                    not self.solver.config['instructor']):
+                commands=point.get('commands');bounds=point.get('control_bounds')
+                if (commands is not None and bounds is not None and
+                        commands[axis-2] in bounds[axis-2]):
+                    return mark(point,kind,axis=axis,
+                        method='stationary admitted control-stop endpoint',
+                        constraint_residual=0.,control_command=commands[axis-2],
+                        control_bounds=list(bounds[axis-2]))
             p=self.correct(point,event=event)
             if p is None or not p['valid']:continue
             if (point['alpha_deg']-BACKWARD_ALPHA_TOLERANCE_DEG <= p['alpha_deg'] <= point['alpha_deg']+extent and
@@ -537,6 +550,7 @@ def from_bracket(solver,speed,low,high, *, candidate_kinds=None,max_iterations=2
                     result=finish_edge(curve,[low],edge)
                     if result is not None:return result
             view=curve._solver_at(low)
+            contraction_seed=low
             upper=math.sqrt(max(0.,high['load_g']**2-1.))
             for _ in range(12):
                 u=math.sqrt(max(0.,low['load_g']**2-1.))
@@ -553,6 +567,25 @@ def from_bracket(solver,speed,low,high, *, candidate_kinds=None,max_iterations=2
                     break
                 if trial['valid']:low=trial
                 else:upper=middle
+            # A sequence of balanced load corrections can approach a response
+            # reversal even when the upper load cannot close. Follow elevator
+            # command there: the response-event Jacobian becomes ill-conditioned
+            # near that turning point. This is only a search preference; require
+            # a balanced physical rejection and check the intervening branch.
+            if (not high.get('converged') and low is not contraction_seed and
+                    (candidate_kinds is None or 'pitch response' in candidate_kinds) and
+                    0.<(low.get('pitch_response') or {}).get('margin',float('inf'))<
+                        (contraction_seed.get('pitch_response') or {}).get('margin',0.) and
+                    curve.nearest_events(low)[0][0]=='pitch response'):
+                from em_pitch_limit import limit as pitch_limit
+                edge=pitch_limit(view,speed,low)
+                if (edge is not None and edge['valid'] and low['load_g']<=edge['load_g']<=high['load_g'] and
+                        edge['alpha_deg']>=low['alpha_deg']):
+                    result=finish_edge(curve,[low],edge)
+                    if (result is not None and low['load_g']<=result['load_g']<=high['load_g'] and
+                            (candidate_kinds is None or
+                             result.get('envelope_limit',{}).get('kind') in (*candidate_kinds,'trim fold'))):
+                        return result
         if (high.get('converged') and 'post-stall' in high.get('reasons',())
                 and set(high['reasons'])<=PHYSICAL_REASONS):
             # A rejected descending lift-curve root does not bound a different

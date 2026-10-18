@@ -114,6 +114,19 @@ before asking for stationary boundary correction. It does not pretrace all
 potential physical limits at every speed column. Shared boundary correction,
 fold localization and physical admission remain available on observed brackets.
 
+Near a narrow pitch-response limit, stationary command probes contract when the
+initial step overshoots the rising load branch. A balanced state already exactly
+at a manual control stop supplies that reached boundary instead of searching for
+an inset copy. The preceding-branch checks, force/moment closure, physical guards
+and fallback sideslip recovery remain in use.
+
+When balanced load corrections approach pitch-response reversal and it becomes
+the nearest constraint, boundary recovery tries a command-coordinate bracket
+before general continuation. This requires a balanced rejected endpoint and
+the existing preceding-branch checks; an unsuccessful attempt leaves general
+continuation and sideslip recovery available. Numerical failures alone never
+establish a physical limit.
+
 Instructor one-g autotrim initializes tail force from pitch-moment balance and
 updates the wing-angle estimate once to account for that force's lift. The
 existing three-equation correction and physical acceptance limits still apply.
