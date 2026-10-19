@@ -16,8 +16,9 @@
 # two faces the two faces continued from their columns (slope and curvature) up to where they meet (corner_vertex).
 # Withheld checks (check_s7) compare that interpolant, as em_march_chart.outline draws it, within half the envelope
 # tolerance: at the midpoint, where the column's own exact slope must agree too (a hidden kink fails it), or at the
-# predicted corner, which converges until both faces are drawn from nearby columns; narrow intervals across a jump
-# are halved to a quarter of the speed tolerance. The sweep predicts its next column with the face's slope and
+# predicted corner, which converges until both faces are drawn from nearby columns (a steep stretch of the face the
+# corner column is not on gets its own withheld column: stretch_check); narrow intervals across a jump are halved to a
+# quarter of the speed tolerance. The sweep predicts its next column with the face's slope and
 # curvature and stops a step past the predicted low-speed edge; infeasible edges are refined to the speed tolerance
 # with level-flight probes (edge_probe).
 
@@ -745,12 +746,18 @@ cdef class NTracer:
         """S7: an edge beyond which level flight is infeasible, to the speed tolerance, with level-flight probes
         (level_probe: corrections continued from the verified column's own level-flight state; no march, no production
         level search): from the verified column towards the infeasible one in steps of the placement tolerance (bands
-        without an equilibrium are sampled as finely as the S6 column bisection did), bisection inside the first step that
-        fails, then one column without rescues at the last probed speed whose level flight was admitted. Returns (the
-        edge's verified column, the nearest probed speed beyond it). A probe that does not close counts as beyond the edge;
-        where the refinement column does not verify, the S6 column bisection to the placement tolerance follows."""
+        without an equilibrium are sampled as finely as the S6 column bisection did); after a step that fails, on in
+        steps of the speed tolerance from the last admitted level flight (a correction that does not close over a longer
+        continuation step near the edge is no evidence of it), back to the placement tolerance once past the failed
+        speed; the first step of the speed tolerance that fails, or the infeasible column, is halved once more. Then one
+        column without rescues at the last probed speed whose level flight was admitted; where it does not verify, at the
+        two admitted speeds before it, and from the first of those that verifies (the march's predictors from a
+        neighbouring column) once more at the last admitted speed. Returns (the edge's verified column, the nearest
+        probed speed beyond it). Where no refinement column verifies, the S6 column bisection to the placement tolerance
+        follows."""
         from em_trim_work import Work, use, current
-        cdef double out = bad.speed, inside = good.speed, mid, nxt
+        cdef double out = bad.speed, inside = good.speed, nxt, h, step, failed = bad.speed, v
+        cdef int k
         cdef double direction = 1. if bad.speed > good.speed else -1.
         cdef int level = good.level, p
         cdef PredMap preds
@@ -759,32 +766,52 @@ cdef class NTracer:
         if level < 0 or not self.eng.st[level].valid or fabs(self.eng.st[level].load-1.) > 1e-9:
             g, b = self.localize(good, bad, 'edge')
             return g, b.speed
+        admitted = []
         w = Work({}, parent=current())
         with use(w):
+            step = self.place_tol
             while True:
-                nxt = inside+direction*self.place_tol
-                if (out-nxt)*direction <= 0.:break
-                p = self.level_probe(level, nxt, &preds)
-                if p < 0:
-                    out = nxt;break
-                inside = nxt;level = p
-            while fabs(inside-out) > self.vtol:
-                mid = .5*(inside+out)
-                p = self.level_probe(level, mid, &preds)
-                if p >= 0:
-                    inside = mid;level = p
+                h = pmin(step, fabs(bad.speed-inside))
+                nxt = inside+direction*h
+                if fabs(bad.speed-nxt) <= 1e-9:
+                    p = -1          # the infeasible column itself
                 else:
-                    out = mid
+                    p = self.level_probe(level, nxt, &preds)
+                if p >= 0:
+                    inside = nxt;level = p;admitted.append(nxt)
+                    if step < self.place_tol and (inside-failed)*direction >= 0.:step = self.place_tol
+                    continue
+                out = nxt
+                if h <= self.vtol*(1.+1e-9):break
+                failed = nxt;step = self.vtol
+            if fabs(out-inside) > .5*self.vtol:
+                nxt = .5*(inside+out)
+                p = self.level_probe(level, nxt, &preds)
+                if p >= 0:
+                    inside = nxt;level = p;admitted.append(nxt)
+                else:
+                    out = nxt
         row = self.work.setdefault('edge probe', dict(columns=0, evaluations=0))
         row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
         self.eng.stats['s7_edge_probes'] = self.eng.stats.get('s7_edge_probes', 0)+1
         if inside == good.speed:return good, out
-        self.cheap = True
-        try:col = self.column(inside, [good], 'edge', False, pmin(inside, out), pmax(inside, good.speed))
-        finally:self.cheap = False
-        if NTracer.ok(col):
-            self.columns[float(col.speed)] = col
-            return col, out
+        for k in range(len(admitted)-1, max(-1, len(admitted)-4), -1):
+            v = admitted[k]
+            self.cheap = True
+            try:col = self.column(v, [good], 'edge', False, pmin(v, out), pmax(v, good.speed))
+            finally:self.cheap = False
+            if NTracer.ok(col):
+                self.columns[float(col.speed)] = col
+                if k == len(admitted)-1:return col, out
+                v = admitted[len(admitted)-1]
+                self.cheap = True
+                try:near = self.column(v, [col, good], 'edge', False, pmin(v, out), pmax(v, col.speed))
+                finally:self.cheap = False
+                if NTracer.ok(near):
+                    self.columns[float(near.speed)] = near
+                    return near, out
+                return col, out
+            self.eng.stats['s7_edge_column_misses'] = self.eng.stats.get('s7_edge_column_misses', 0)+1
         self.eng.stats['s7_edge_probe_misses'] = self.eng.stats.get('s7_edge_probe_misses', 0)+1
         g, b = self.localize(good, bad, 'edge')
         return g, b.speed
@@ -982,14 +1009,57 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint stretch_check(self, list good, NColumn col, NColumn other, list checks) except -1:
+        """S7: whether a passing corner column ``col`` also validates the other face, drawn from its column ``other`` up
+        to the corner. A stretch within twice the speed tolerance, or whose drawn turn rate changes by at most twice the
+        turn tolerance, is validated by the corner column; a steeper one (an engine RPM limit near the speed limit can
+        stand almost vertical and curve away from its tangent within a few km/h) gets a withheld column at its midpoint,
+        which passes when it lies on that face within half the turn tolerance of the outline drawn with ``col`` (the
+        chart draws the corner column as a witness). A passing one is a witness too; a failing one joins the columns, and
+        the caller splits the interval at ``col``."""
+        cdef NColumn mid, a, b
+        cdef double va, vb, vm, x, t, lo_t, hi_t, sa, sb, ka, kb, pa, pb, na, nb
+        cdef bint ok
+        cdef int j
+        if fabs(other.speed-col.speed) <= 2*self.vtol:return True
+        if fabs(self.eng.st[other.boundary].turn-self.eng.st[col.boundary].turn) <= 2*self.ttol:return True
+        a, b = (col, other) if col.speed < other.speed else (other, col)
+        va, vb = a.speed, b.speed;vm = .5*(va+vb)
+        mid = self.column(vm, [col, other], 'corner check', False, va, vb)
+        vm = mid.speed
+        ok = NTracer.ok(mid) and self.face_of(mid) == self.face_of(other)
+        if ok:
+            drawn = sorted([c for c in good if c is not col]+[col], key=lambda c: c.speed)
+            j = drawn.index(a)
+            sa, sb, ka, kb, pa, pb = self.interval_slopes(drawn, j)
+            na = self.eng.st[a.boundary].load;nb = self.eng.st[b.boundary].load
+            lo_t = INFINITY;hi_t = -INFINITY
+            for x in (vm-self.vtol, vm, vm+self.vtol):
+                x = pmin_np(pmax_np(x, va), vb)
+                t = self.M.turn_rate(x, float(interval_load(va, na, sa, ka, pa, vb, nb, sb, kb, pb, self.face_of(a) != self.face_of(b),
+                                                             self.exact_a and self.exact_b, x)))
+                lo_t = pmin(lo_t, t);hi_t = pmax(hi_t, t)
+            ok = lo_t-S7_CHECK*self.ttol <= self.eng.st[mid.boundary].turn <= hi_t+S7_CHECK*self.ttol
+        checks.append(dict(interval_kmh=[va, vb], speed_kmh=vm, passed=bool(ok), faces=[a.reason, b.reason],
+                           midpoint_face=mid.reason if NTracer.ok(mid) else mid.status_name(), kind='corner stretch'))
+        self.eng.stats['s7_stretch_checks'] = self.eng.stats.get('s7_stretch_checks', 0)+1
+        if ok:self.witnesses.append(mid)
+        else:
+            self.eng.stats['s7_stretch_failed'] = self.eng.stats.get('s7_stretch_failed', 0)+1
+            if NTracer.ok(mid):self.columns[vm] = mid
+        return ok
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef list check_s7(self):
         """S7: MarchTracer.check on the S7 outline. Every interval between verified columns (wider than twice the speed
         tolerance, no Mach seam inside) gets a withheld column: at the predicted corner where its ends lie on different
         limiting faces (corner_vertex), else at its midpoint. The column passes when its turn rate lies within half the
         turn tolerance of the outline over the speed tolerance around it (interval_load, as the chart draws it) and, at a
         midpoint, its own exact slope agrees with the drawn line's there; at a corner it passes only if the face it is
-        not on is drawn from its column over at most twice the placement tolerance, and a face change without both faces'
-        slopes is halved down to the horizontal tolerance. A passing column is drawn as a witness, a failing one splits
+        not on is drawn from its column over at most twice the placement tolerance, and that stretch passes its own
+        withheld column where it is steep (stretch_check); a face change without both faces' slopes is halved down to the
+        horizontal tolerance. A passing column is drawn as a witness, a failing one splits
         the interval, an unresolved one is kept as before. Narrower intervals across a jump of the boundary are halved
         down to a quarter of the speed tolerance."""
         cdef NColumn a, b, col
@@ -1052,8 +1122,8 @@ cdef class NTracer:
                         # from its column over at most twice the placement tolerance (a face continued further is not
                         # validated by this column); otherwise it splits the interval and the corner is predicted again
                         if not has_vertex:ok = False
-                        elif self.face_of(col) == self.face_of(a):ok = vb-v <= 2*self.place_tol
-                        elif self.face_of(col) == self.face_of(b):ok = v-va <= 2*self.place_tol
+                        elif self.face_of(col) == self.face_of(a):ok = vb-v <= 2*self.place_tol and self.stretch_check(good, col, b, checks)
+                        elif self.face_of(col) == self.face_of(b):ok = v-va <= 2*self.place_tol and self.stretch_check(good, col, a, checks)
                         else:ok = False
                     elif ok and isfinite(col.slope_l) and isfinite(col.slope_r):
                         # the withheld column's own exact slope must agree with the drawn line's there: a kink of the
