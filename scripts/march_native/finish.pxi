@@ -837,7 +837,8 @@ cdef class Finisher:
         engine = self.solver.engine
         p = record
         if converged and p['converged'] and phase_check['checked'] and engine.automatic:
-            point['_propulsion_seed'] = clone(p['state'])
+            # the native record is built for this row alone: its state needs no defensive copy
+            point['_propulsion_seed'] = p['state']
         point['propulsion'] = dict(controls=p['controls'], converged=p['converged'],
             canonical_initialization=p['canonical_initialization'],
             period_frames=p['period_frames'], window_relative_change=p['window_relative_change'],

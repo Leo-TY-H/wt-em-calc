@@ -575,6 +575,11 @@ cdef class NTracer:
             start = self.column(hi, [previous] if previous is not None else [], 'start')
             if not NTracer.ok(start):
                 start = self.column(.5*(lo+hi), [previous] if previous is not None else [], 'start')
+            # S5: where neither start closes (level flight unresolved there), more start speeds across the
+            # segment before it is given up (the Python march would leave the chart to the old sampler)
+            for fraction in (.25, .75, .125, .375, .625, .875):
+                if NTracer.ok(start):break
+                start = self.column(lo+fraction*(hi-lo), [previous] if previous is not None else [], 'start')
             if NTracer.ok(start):
                 self.sweep(segment, start)
                 inside = [c for c in self.columns.values() if lo-1e-9 <= c.speed <= hi+1e-9 and NTracer.ok(c)]
