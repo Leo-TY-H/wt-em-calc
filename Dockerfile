@@ -13,6 +13,7 @@ ARG SOURCE_COMMIT=development
 RUN python -c "import json; from pathlib import Path; Path('build-info.json').write_text(json.dumps({'commit': '$SOURCE_COMMIT'}))"
 RUN python scripts/bootstrap_runtime.py
 RUN python scripts/build_em_backend.py
+RUN python scripts/build_march_native.py
 RUN python scripts/build_missile_backend.py
 
 FROM python:3.11-slim

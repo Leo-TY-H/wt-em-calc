@@ -117,6 +117,10 @@ def contour_paths(data,levels=None,*,prepared_matrices=None):
         return stationary(data, levels)
     output={}
     for aircraft in data['aircraft']:
+        if aircraft.get('chart_solver')=='march':
+            from em_march_chart import contours as march_contours
+            output[aircraft['id']]=march_contours(aircraft,levels if levels is not None else contour_levels(aircraft,data))
+            continue
         prepared=(prepared_matrices or {}).get(aircraft['id'])
         x,y,z=prepared if prepared is not None else matrices(data,aircraft)
         paths=[]
@@ -341,7 +345,12 @@ def enrich(data,*,surface_format='lists'):
     data['plot_max_load_g']=max(1.1,max((p['load_g'] for a in data['aircraft'] for p in a['points'] if p['valid']),default=1.1))
     prepared={}
     for aircraft in data['aircraft']:
-        if 'columns' in aircraft:prepared[aircraft['id']]=smooth_surface(data,aircraft,surface_format=surface_format)
+        if aircraft.get('chart_solver')=='march':
+            # Alpha-march chart: outline from the verified columns, contours from
+            # the solved SEP curves; there is no interpolated SEP surface.
+            from em_march_chart import enrich as march_enrich
+            march_enrich(data,aircraft)
+        elif 'columns' in aircraft:prepared[aircraft['id']]=smooth_surface(data,aircraft,surface_format=surface_format)
         else:prepared[aircraft['id']]=matrices(data,aircraft)
 
 
@@ -349,6 +358,8 @@ def enrich(data,*,surface_format='lists'):
     paths_by_aircraft=contour_paths(data,prepared_matrices=prepared)
     for aircraft in data['aircraft']:
         paths=paths_by_aircraft[aircraft['id']]
+        if aircraft.get('chart_solver')=='march':
+            aircraft['contours']=paths;continue
         boundary=[]
         x,y,z=prepared[aircraft['id']]
         if 'surface' not in aircraft:
@@ -381,7 +392,7 @@ def preview_payload(data):
     # Contours consume arrays directly; the preview does not export its surface.
     enrich(data,surface_format='arrays')
     chart={k:v for k,v in data.items() if k!='aircraft'}
-    chart['aircraft']=[{k:v for k,v in a.items() if k not in ('columns','surface','boundary_columns')}
+    chart['aircraft']=[{k:v for k,v in a.items() if k not in ('columns','surface','boundary_columns','curve_knots','curve_components','curves')}
                        for a in data['aircraft']]
     add_boundary_hover(chart,data)
     return chart
@@ -396,8 +407,10 @@ def export_csv(data):
           'flaps_requested_percent','flaps_percent','gear_percent','instructor_enabled','instructor','prolonged_pull','propulsion','local_response']
     writer=csv.DictWriter(out,fieldnames=fields);writer.writeheader()
     for aircraft in data['aircraft']:
-        for kind,points in [('grid',aircraft['points']),('Ps=0 refined',aircraft.get('sustained',[])),
-                            ('Instructor boundary',aircraft.get('continuous_pull_boundary',[]))]:
+        march=aircraft.get('chart_solver')=='march'
+        for kind,points in [('alpha-march sample' if march else 'grid',aircraft['points']),('Ps=0 refined',aircraft.get('sustained',[])),
+                            ('Instructor boundary',aircraft.get('continuous_pull_boundary',[])),
+                            ('SEP curve knot',aircraft.get('curve_knots',[]))]:
             for p in points:
                 row={key:p.get(key,'') for key in fields}
                 row.update(aircraft=aircraft['id'],aircraft_id=aircraft.get('aircraft_id',aircraft['id']),
@@ -429,8 +442,17 @@ def export_figure(data, path, selected=None, levels=None, format=None):
         fig.subplots_adjust(left=.09,right=.97,bottom=.10,top=.87 if len(aircraft)>4 else .90)
         for a in aircraft:
             color={'f_16a_block_15_adf':'#007f92','f_16xl':'#007f92','j6k1':'#bd581c','saab_jas39c':'#bd581c'}.get(a['id'],a['color'])
-            x,y,z=matrices(data,a)
-            if z.count()>3 and np.ma.max(z)>np.ma.min(z):
+            if a.get('chart_solver')=='march':
+                from em_march_chart import contours as march_contours
+                for line in march_contours(a,[n for n in contour_levels(a,data) if n!=0]):
+                    ax.plot(line['x'],line['y'],color=color if len(aircraft)>1 else '#526174',lw=1.5,linestyle='dashed')
+                    if len(line['x'])>5:
+                        i=len(line['x'])//2
+                        ax.text(line['x'][i],line['y'][i],f"SEP {line['level']:g}",fontsize=8,ha='center',va='center',
+                                bbox=dict(facecolor='white',edgecolor='none',alpha=.75,pad=1))
+                x=y=z=None
+            else:x,y,z=matrices(data,a)
+            if z is not None and z.count()>3 and np.ma.max(z)>np.ma.min(z):
                 levels_to_draw=[n for n in contour_levels(a,data) if n!=0]
                 if levels_to_draw:
                     contour=ax.contour(x,y,z,levels=levels_to_draw,colors=color if len(aircraft)>1 else '#526174',linewidths=1.5,linestyles='dashed',corner_mask=False)
@@ -676,7 +698,7 @@ def prepare_exports(data, *, started_at=None, include_exports=True):
 
     chart={k:v for k,v in data.items() if k!='aircraft'};chart['aircraft']=[]
     for aircraft in data['aircraft']:
-        item={k:v for k,v in aircraft.items() if k not in ('columns','surface','points','sustained','boundary_columns','cells')}
+        item={k:v for k,v in aircraft.items() if k not in ('columns','surface','points','sustained','boundary_columns','cells','curve_knots','curve_components','curves')}
         details=aircraft['points']+aircraft.get('sustained',[])
         points[aircraft['id']]=details if include_exports else _public_values(details)
         def brief(point,index):

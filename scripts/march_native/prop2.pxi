@@ -1,0 +1,747 @@
+# PropModel: the stationary propulsion block of JointProblem for supported
+# propeller aircraft (prepare / enumerate_speeds / sample / propulsion_at).
+
+DEF MAXPATH = 8
+DEF MAXCAND = 8
+
+cdef struct PropPrep:
+    # one flight condition (speed, load, alpha, bank)
+    double velocity[3]
+    double rates[3]
+    int ncand[NP]
+    double cand[NP][MAXCAND]
+    bint governed_request[NP]
+
+
+cdef struct PropSample:
+    double residual[MAXPATH]     # per prep path (scaled)
+    double row[11]               # aggregate force, moment, angular momentum, wash
+    bint converged
+    double fractions[NP]
+    double targets[NP]
+    double torques[NP]
+    PFrame frame
+
+
+class PropUnsupported(ValueError):
+    pass
+
+
+cdef class PropModel:
+    cdef int ne, nprops, nt
+    cdef EngineT engines[NP]
+    cdef PropT props[NP]
+    cdef TransT trans[NP]
+    cdef EngState seed_engines[NP]
+    cdef PropState seed_props[NP]
+    cdef double seed_omega[NP]
+    cdef double altitude, nitro, dt
+    cdef double cg[3]
+    cdef bint torque_gyro, governor_saturation
+    cdef int npaths
+    cdef int path_kind[MAXPATH]      # 0 shaft, 1 pitch, 2 flow
+    cdef int path_i[MAXPATH]
+    cdef int path_j[MAXPATH]
+    cdef double scales[MAXPATH]
+    cdef double lower[MAXPATH]
+    cdef double upper[MAXPATH]
+    cdef double initial[MAXPATH]
+    cdef int ngoverned[NP]
+    cdef LinkT governed[NP][NP]
+    cdef double shaft_targets[NP]
+    cdef double torque_scales[NP]
+    cdef public int nactive, nrows
+    cdef int active[MAXPATH]
+    cdef int rows[MAXPATH]
+    cdef public object paths, py_controls, py_seed, py_engines, py_props, py_trans
+    cdef public object revision, early_stop
+    cdef public long samples
+    cdef double dt_aircraft
+
+    def __init__(self, solver):
+        cdef EngineT* E
+        cdef PropT* P
+        cdef BPolar* Q
+        cdef EngState* S_
+        cdef TransT* T
+        from prop_steady import initial_state
+        from em_manual_controls import manual_rpm_governor
+        from prop_quasisteady import prepare_blades
+        from polar_model import mach_curve
+        from component_assembly import f32
+        engine = solver.engine
+        p = engine.properties
+        cfg = solver.config
+        if len(p['engines']) > NP or len(p['propellers']) > NP or len(p['transmissions']) > NP:
+            raise PropUnsupported('too many engines, propellers or shafts')
+        self.ne = len(p['engines']);self.nprops = len(p['propellers']);self.nt = len(p['transmissions'])
+        self.altitude = cfg['altitude_m'];self.nitro = solver.mass['nitro_mass'];self.dt = engine.dt
+        for i in range(3):self.cg[i] = solver.mass['cog'][i]
+        self.torque_gyro = bool(cfg['torque_gyro'])
+        self.governor_saturation = cfg.get('stationary_governor_mode', 'pitch_stops') == 'pitch_stops'
+        controls = engine.fixed_controls or engine.automatic_controls
+        self.py_controls = controls
+        for k, e in enumerate(p['engines']):
+            ep = e['properties'];E = &self.engines[k]
+            if e['family'] not in (0, 1) or ep['compressor_type'] not in (1, 2):
+                raise PropUnsupported('engine family or compressor')
+            E.family = e['family'];E.compressor_type = ep['compressor_type'];E.carburetor = ep['carburetor']
+            E.mixer_type = ep['mixer_type'];E.boost_type = ep['boost_type'];E.cylinders = ep['cylinders']
+            E.exact_altitudes = bool(ep['exact_altitudes']);E.ata_enabled = bool(ep['ata_enabled'])
+            E.manual_compressor = bool(ep['manual_compressor']);E.boost_controllable = bool(ep['boost_controllable'])
+            for name in ('base_hp', 'min_throttle', 'max_throttle', 'max_omega', 'afterburner_omega', 'omega_limit',
+                         'inverse_omega', 'compressor_reference', 'torque_base', 'mixer_scale', 'compressor_sq', 'max_ata',
+                         'ram_recovery', 'boost_ata_ratio', 'compressor_zero', 'throttle_boost', 'afterburner_boost',
+                         'reservoir_capacity'):
+                pass
+            E.base_hp = ep['base_hp'];E.min_throttle = ep['min_throttle'];E.max_throttle = ep['max_throttle']
+            E.max_omega = ep['max_omega'];E.afterburner_omega = ep['afterburner_omega'];E.omega_limit = ep['omega_limit']
+            E.inverse_omega = ep['inverse_omega'];E.compressor_reference = ep['compressor_reference']
+            E.torque_base = ep['torque_base'];E.mixer_scale = ep['mixer_scale'];E.compressor_sq = ep['compressor_sq']
+            E.max_ata = ep['max_ata'];E.ram_recovery = ep['ram_recovery'];E.boost_ata_ratio = ep['boost_ata_ratio']
+            E.compressor_zero = ep['compressor_zero'];E.throttle_boost = ep['throttle_boost']
+            E.afterburner_boost = ep['afterburner_boost'];E.reservoir_capacity = ep['reservoir_capacity']
+            for i in range(3):E.amplitude[i] = ep['amplitude'][i]
+            for i in range(4):E.consumption[i] = ep['consumption'][i]
+            if len(ep['stages']) > 4:raise PropUnsupported('compressor stages')
+            E.nstages = len(ep['stages'])
+            for i, st in enumerate(ep['stages']):
+                E.stages[i].critical = st['critical'];E.stages[i].power = st['power'];E.stages[i].flat = st['flat']
+                E.stages[i].flat_power = st['flat_power'];E.stages[i].curvature = st['curvature']
+                E.stages[i].ceiling = st['ceiling'];E.stages[i].ceiling_factor = st['ceiling_factor']
+                E.stages[i].boost = st['boost'];E.stages[i].pressure_boost = st['pressure_boost']
+            set_table(&E.ata, ep['ata'], 1)
+            if len(ep['rpm_targets']) > 8:raise PropUnsupported('rpm targets')
+            E.ntargets = len(ep['rpm_targets'])
+            for i, (x, y) in enumerate(ep['rpm_targets']):E.target_x[i] = x;E.target_y[i] = y
+        for k, prop in enumerate(p['propellers']):
+            pp = prop['properties'];P = &self.props[k]
+            if (pp['coaxial'] or pp['cyclic'] or pp['differential_pitch'] or pp['active_pitch_2d'] or pp['pitch_1d_count']
+                    or pp['iterative']):
+                raise PropUnsupported('propeller geometry')
+            sections, area_unit, prepared, _, _, legacy = prepare_blades(pp)
+            props_, base, mode, mrows = prepared
+            Q = &P.polar
+            Q.cl0 = base['cl0'];Q.cd0 = base['cd0'];Q.indCoeff = base['indCoeff'];Q.clLineCoeff = base['clLineCoeff']
+            Q.cyCritH = base['cyCritH'];Q.cyCritL = base['cyCritL'];Q.aoaCritH = base['aoaCritH'];Q.aoaCritL = base['aoaCritL']
+            Q.aerCenterOffset = base['aerCenterOffset'];Q.clToCm0 = base['clToCm0'];Q.clToCm1 = base['clToCm1']
+            Q.parabAngle = base['parabAngle'];Q.declineCoeff = base['declineCoeff'];Q.maxDistAng = base['maxDistAng']
+            Q.cdAfterCoeff = base['cdAfterCoeff'];Q.clAfterCritL = base['clAfterCritL'];Q.clAfterCritH = base['clAfterCritH']
+            Q.kq = base['kq'];Q.clKq = base['clKq'];Q.cyMult = base['cyMult']
+            Q.aoaLineH = base.get('aoaLineH', 0.);Q.aoaLineL = base.get('aoaLineL', 0.)
+            Q.parabCyCoeffH = base.get('parabCyCoeffH', 0.);Q.parabCyCoeffL = base.get('parabCyCoeffL', 0.)
+            Q.mode = mode;Q.combined = bool(props_.get('CombinedCl', True))
+            for i, row in enumerate(mrows):
+                for j in range(6):Q.rows[i][j] = row[j]
+            Q.legacy = legacy is not None
+            if legacy is not None:
+                Q.legacy_aoaLineH = legacy['aoaLineH'];Q.legacy_aoaLineL = legacy['aoaLineL']
+                Q.legacy_parabH = legacy['parabCyCoeffH'];Q.legacy_parabL = legacy['parabCyCoeffL']
+            for i, (r, tw, wd) in enumerate(sections):
+                P.station_radius[i] = r;P.twist[i] = tw;P.width[i] = wd
+            P.area_unit = area_unit;P.radius = pp['radius'];P.blades = pp['blades']
+            P.mean_twist = pp['mean_twist'];P.thrust_deflection = pp['thrust_deflection'];P.max_deflection = pp['max_deflection']
+            P.momentum_scale = pp['momentum_scale']
+            for i in range(4):
+                P.pitch_damping[i] = pp['pitch_damping'][i];P.yaw_damping[i] = pp['yaw_damping'][i]
+                P.damping_speed[i] = pp['damping_speed'][i];P.shake[i] = pp['shake'][i]
+            P.diameter = pp['diameter'];P.neutral_radius = pp['neutral_radius'];P.inertia = pp['inertia']
+            P.pitch_min = pp['pitch_min'];P.pitch_max = pp['pitch_max'];P.governor = pp['governor']
+            P.governor_fast = bool(pp['governor_fast']);P.torque_gyro_always = bool(pp['torque_gyro_always'])
+            P.min_omega = pp['min_omega'];P.max_omega = pp['max_omega'];P.inv_max_omega = pp['inv_max_omega']
+            P.boost_omega = pp['boost_omega'];P.reduction = pp['reduction']
+            for i in range(9):P.basis[i] = pp['basis'][i]
+            for i in range(3):P.position[i] = pp['position'][i]
+            inverse_basis(P.basis, P.inv_basis)
+            P.direction = pp['direction']
+            if len(pp['airflow']) > 4:raise PropUnsupported('airflow table')
+            P.nairflow = len(pp['airflow'])
+            for i, row in enumerate(pp['airflow']):
+                P.airflow_x[i] = row[0]
+                for j in range(3):P.airflow_v[i][j] = row[2+j]
+            P.polar_base1 = pp['polar']['base'][1];P.polar_base8 = pp['polar']['base'][8]
+        for k, t in enumerate(p['transmissions']):
+            T = &self.trans[k]
+            if len(t['engines']) > NP or len(t['propellers']) > NP:raise PropUnsupported('shaft links')
+            T.ne = len(t['engines']);T.np = len(t['propellers']);T.correct_link = bool(t['correct_link'])
+            for i, l in enumerate(t['engines']):
+                T.engines[i].index = l['index'];T.engines[i].ratio = l['ratio'];T.engines[i].inverse_ratio = l['inverse_ratio']
+            for i, l in enumerate(t['propellers']):
+                T.props[i].index = l['index'];T.props[i].ratio = l['ratio'];T.props[i].inverse_ratio = l['inverse_ratio']
+        # Seed (prop_equilibrium.solve: native_controls engine_control_mode='automatic'), velocity independent
+        native_controls = dict(controls, engine_control_mode='automatic')
+        seed = initial_state(p, (100., 0., 0.), self.altitude, nitro=self.nitro, **native_controls)
+        for k, es in enumerate(seed['engines']):
+            S_ = &self.seed_engines[k]
+            S_.throttle = es['throttle'];S_.effective_throttle = es['effective_throttle'];S_.omega = es['omega']
+            S_.mechanical = es['mechanical'];S_.mixture = es['mixture'];S_.reservoir = es['reservoir']
+            S_.regulator = es['regulator'];S_.turbo = es['turbo'];S_.afterburner = bool(es['afterburner'])
+            S_.automatic_mixture = bool(es['automatic_mixture']);S_.automatic_compressor = bool(es['automatic_compressor'])
+            S_.gear = es['gear'];S_.friction = 0.;S_.torque = 0.;S_.extra_amplitude = 0.;S_.seed = 12345
+            if es.get('running') != 7:raise PropUnsupported('engine not running')
+        for k, ps in enumerate(seed['propellers']):
+            self.seed_props[k].command = ps['command'];self.seed_props[k].auto = bool(ps['auto'])
+            self.seed_props[k].pitch = ps['pitch']
+            for j in range(3):self.seed_props[k].flow[j] = ps['flow'][j]
+        for k, ts in enumerate(seed['transmissions']):self.seed_omega[k] = ts['omega']
+        self.py_seed = seed;self.py_engines = p['engines'];self.py_props = p['propellers'];self.py_trans = p['transmissions']
+        from prop_quasisteady import REVISION as prop_revision
+        from prop_equilibrium import EARLY_STOP_ENABLED
+        self.revision = prop_revision;self.early_stop = EARLY_STOP_ENABLED
+        # Paths, scales, bounds, initial, governed links, shaft targets and torque scales
+        paths = [];scales = [];lower = [];upper = [];initial = []
+        def variable(path, value, scale, lo, hi):
+            paths.append(path);scales.append(scale);lower.append(lo/scale);upper.append(hi/scale);initial.append(value/scale)
+        for i, t in enumerate(p['transmissions']):
+            links = [l for l in t['propellers'] if p['propellers'][l['index']]['properties']['governor']
+                     and (seed['propellers'][l['index']]['auto'] or manual_rpm_governor(p['propellers'][l['index']]['properties']))]
+            self.ngoverned[i] = len(links)
+            for j, l in enumerate(links):
+                self.governed[i][j].index = l['index'];self.governed[i][j].ratio = l['ratio']
+                self.governed[i][j].inverse_ratio = l['inverse_ratio']
+            from propulsion_general import target_omega as py_target
+            target = max((py_target(p['engines'][l['index']]['properties'], seed['engines'][l['index']], self.nitro)
+                          * l['inverse_ratio'] for l in t['engines']), default=300.)
+            self.shaft_targets[i] = target
+            limit = min((p['engines'][l['index']]['properties']['omega_limit']*l['inverse_ratio'] for l in t['engines']),
+                        default=max(300., target))
+            variable(('shaft', i), target, 300., 1., 2.*limit)
+            self.torque_scales[i] = max(1000., sum(abs(p['engines'][l['index']]['properties'].get('torque_base', 1000.)*l['ratio'])
+                                                   for l in t['engines']))
+            if links:
+                variable(('pitch', i), .5, 1., -.25, 1.25)
+        for i, prop in enumerate(p['propellers']):
+            for j in (0, 2):
+                variable(('flow', i, j), 0., 20., -150. if j < 2 else 0., 150. if j < 2 else 20.)
+        if len(paths) > MAXPATH:raise PropUnsupported('too many propulsion unknowns')
+        self.npaths = len(paths);self.paths = paths
+        import numpy as np
+        lo = np.asarray(lower);hi = np.asarray(upper);ini = np.clip(initial, lo, hi)
+        for k, path in enumerate(paths):
+            self.path_kind[k] = 0 if path[0] == 'shaft' else 1 if path[0] == 'pitch' else 2
+            self.path_i[k] = path[1];self.path_j[k] = path[2] if len(path) > 2 else 0
+            self.scales[k] = scales[k];self.lower[k] = lo[k];self.upper[k] = hi[k];self.initial[k] = ini[k]
+        self.samples = 0
+
+    # ------------------------------------------------------------------ helpers
+    cdef void pitch_limits(self, const PropT* p, const double* velocity, const double* body_omega, double shaft_omega,
+                           double* lo_out, double* hi_out) noexcept nogil:
+        cdef double lo = p.pitch_min, hi = p.pitch_max, neutral, floor_
+        cdef double local[3]
+        cdef double local_w[3]
+        cdef double tsq, tr
+        if not p.governor:
+            lo_out[0] = lo; hi_out[0] = lo
+            return
+        local_flow32(p, velocity, body_omega, local, local_w, &tsq, &tr)
+        if fabs(shaft_omega) < 1e-5:
+            neutral = M_PI/2
+        else:
+            neutral = atan2(local[0], p.neutral_radius*shaft_omega)-p.mean_twist-p.polar_base8/p.polar_base1*M_PI/180
+        floor_ = neutral-.12
+        lo = floor_ if (p.governor_fast and p.governor == 6) else pmax(lo, floor_)
+        if p.governor == 8:
+            lo = pmax(lo, p.pitch_min+.05235988)
+        lo_out[0] = pmin(lo, hi); hi_out[0] = hi
+
+    cdef void requests_for(self, int shaft, const EngState* engines, double* desired, int* ndesired) noexcept nogil:
+        """prop_requests.requests / the evaluate() governed-target loop for one shaft."""
+        cdef const TransT* t = &self.trans[shaft]
+        cdef double target = 0., value, maximum
+        cdef bint boost = False, first = True
+        cdef int k, idx
+        cdef const PropT* pp
+        for k in range(t.ne):
+            idx = t.engines[k].index
+            value = target_omega(&self.engines[idx], &engines[idx], self.nitro)
+            if first or value > target:
+                target = value
+            first = False
+            if self.engines[idx].boost_controllable and boost_active(&self.engines[idx], engines[idx].effective_throttle,
+                                                                     engines[idx].afterburner, engines[idx].gear, self.nitro):
+                boost = True
+        if first:
+            target = 0.
+        ndesired[0] = 0
+        for k in range(self.ngoverned[shaft]):
+            idx = self.governed[shaft][k].index
+            pp = &self.props[idx]
+            value = target
+            if pp.governor == 1 or pp.governor == 2:
+                maximum = pp.boost_omega if boost else pp.max_omega
+                if self.seed_props[idx].auto:
+                    value = pmin(pmax(value, pp.min_omega), maximum)
+                else:
+                    value = pp.min_omega+self.seed_props[idx].command*(maximum-pp.min_omega)
+            desired[ndesired[0]] = value*pp.reduction/self.governed[shaft][k].ratio
+            ndesired[0] += 1
+
+    cdef int prepare(self, double speed, double load, double alpha, double bank, double G, PropPrep* out) except -1:
+        """JointProblem.prepared(attitude): flight condition and governed request candidates."""
+        cdef double quat[4]
+        cdef Air air
+        cdef Geometry geom
+        cdef double desired[NP]
+        cdef double possible[MAXCAND]
+        cdef int npossible = 0, nd, i, k, k2, s, idx, code, nc
+        cdef EngState states[NP]
+        cdef double v, tmp
+        cdef bint ok, dup
+        turn_quaternion(alpha, bank, quat)
+        world_to_body_air(quat, speed, out.velocity)
+        air_cache(out.velocity, self.altitude, &air)
+        turn_geometry(alpha, bank, speed, load, self.dt_aircraft, air.ias_u, G, &geom)
+        for i in range(3):
+            out.velocity[i] = F(out.velocity[i]); out.rates[i] = F(geom.omega[i])
+        for s in range(self.nt):
+            out.governed_request[s] = self.ngoverned[s] > 0
+            out.ncand[s] = 0
+            if not self.ngoverned[s]:
+                continue
+            npossible = 0
+            # engine stages: one automatic stage range per linked piston engine
+            # (stage products are enumerated for one engine per shaft here)
+            if self.trans[s].ne != 1:
+                raise PropUnsupported('multi-engine shaft request enumeration')
+            idx = self.trans[s].engines[0].index
+            for k in range(self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1):
+                for i in range(self.ne):
+                    states[i] = self.seed_engines[i]
+                states[idx].gear = k
+                self.requests_for(s, states, desired, &nd)
+                for i in range(nd):
+                    dup = False
+                    for k2 in range(npossible):
+                        if possible[k2] == desired[i]:
+                            dup = True
+                    if not dup:
+                        if npossible >= MAXCAND:raise PropUnsupported('request candidates')
+                        possible[npossible] = desired[i]; npossible += 1
+            # sorted(possible)
+            for i in range(1, npossible):
+                tmp = possible[i]; k = i-1
+                while k >= 0 and possible[k] > tmp:
+                    possible[k+1] = possible[k]; k -= 1
+                possible[k+1] = tmp
+            for i in range(npossible):
+                if not isfinite(possible[i]):raise ValueError('Nonfinite governed request; source-model calculation unresolved')
+            for i in range(npossible):
+                for k in range(self.ne):
+                    states[k] = self.seed_engines[k]
+                for k in range(self.trans[s].ne):
+                    idx = self.trans[s].engines[k].index
+                    states[idx].omega = possible[i]*self.trans[s].engines[k].ratio
+                    code = engine_output(&self.engines[idx], &states[idx], out.velocity[0], self.altitude, self.nitro)
+                    if code:
+                        raise ValueError('native steady engine output unavailable (%d)' % code)
+                self.requests_for(s, states, desired, &nd)
+                ok = True
+                for k in range(nd):
+                    if desired[k] != possible[i]:
+                        ok = False
+                if ok:
+                    out.cand[s][out.ncand[s]] = possible[i]; out.ncand[s] += 1
+        return 0
+
+    cdef int sample(self, const PropPrep* prep, const double* x, const double* assigned, const bint* has_assigned,
+                    PropSample* out) except -1:
+        """prop_equilibrium evaluate(x) (stationary, prepared-only): residual per path and aggregate row."""
+        cdef PFrame* fr = &out.frame
+        cdef int k, i, j, idx, s
+        cdef double value, lo, hi, pitch, torque, load_, target, rpm_error, error, density, sound, best
+        cdef double desired[NP]
+        cdef int nd
+        cdef double tf[3]
+        cdef double tm[3]
+        cdef double th[3]
+        cdef double tw
+        cdef double ts[2]
+        cdef double o_axial, sw
+        cdef Air air
+        cdef const PropT* pp
+        cdef PropState* q
+        cdef int direction
+        cdef bint gov_ok
+        cdef bint has_fraction[NP]
+        cdef double swirl[2]
+        cdef double err = 0.
+        cdef bint finite = True
+        self.samples += 1
+        for k in range(self.ne):
+            fr.engines[k] = self.seed_engines[k]; fr.engines[k].regulator = -1.
+        for k in range(self.nprops):
+            fr.props[k] = self.seed_props[k]
+        for k in range(self.nt):
+            fr.trans_omega[k] = self.seed_omega[k]
+        for k in range(NP):
+            out.fractions[k] = 0.
+        for k in range(NP):
+            has_fraction[k] = False
+        for k in range(self.npaths):
+            value = x[k]*self.scales[k]
+            i = self.path_i[k]
+            if self.path_kind[k] == 0:
+                fr.trans_omega[i] = assigned[i] if has_assigned[i] else value
+            elif self.path_kind[k] == 1:
+                out.fractions[i] = value; has_fraction[i] = True
+            else:
+                fr.props[i].flow[self.path_j[k]] = value
+        for s in range(self.nt):
+            for k in range(self.trans[s].ne):
+                idx = self.trans[s].engines[k].index
+                fr.engines[idx].omega = fr.trans_omega[s]*self.trans[s].engines[k].ratio
+            for k in range(self.trans[s].np):
+                idx = self.trans[s].props[k].index; pp = &self.props[idx]
+                self.pitch_limits(pp, prep.velocity, prep.rates, fr.trans_omega[s]*self.trans[s].props[k].ratio, &lo, &hi)
+                pitch = lo+pmin(1., pmax(0., out.fractions[s] if has_fraction[s] else 0.))*(hi-lo)
+                if pp.governor and not fr.props[idx].auto and not (pp.governor == 1 or pp.governor == 2):
+                    pitch = pp.pitch_max+fr.props[idx].command*(pp.pitch_min-pp.pitch_max)
+                fr.props[idx].pitch = pitch
+        # prop_quasisteady.frame
+        air_cache(prep.velocity, self.altitude, &air)
+        density = air.density
+        sound = speed_of_sound(self.altitude, F(288.16), F(18300.))
+        for i in range(3):
+            fr.force[i] = 0.; fr.moment[i] = 0.; fr.momentum[i] = 0.
+        fr.wash[0] = 0.; sw = 0.
+        swirl[0] = 0.; swirl[1] = 0.
+        for s in range(self.nt):
+            for i in range(3):
+                tf[i] = 0.; tm[i] = 0.; th[i] = 0.
+            tw = 0.; ts[0] = 0.; ts[1] = 0.
+            for k in range(self.trans[s].np):
+                idx = self.trans[s].props[k].index; pp = &self.props[idx]; q = &fr.props[idx]
+                propeller(pp, q, prep.velocity, prep.rates, self.cg, fr.trans_omega[s]*self.trans[s].props[k].ratio,
+                          density, sound, self.torque_gyro)
+                for i in range(3):
+                    tf[i] = tf[i]+q.outputs[i]
+                for i in range(3):
+                    tm[i] = tm[i]+q.outputs[23+i]
+                for i in range(3):
+                    th[i] = th[i]+q.outputs[26+i]
+                for i in range(3):
+                    tm[i] = tm[i]+q.outputs[20+i]*(1. if self.trans[s].correct_link else self.trans[s].props[k].ratio)
+                o_axial = q.outputs[32]*pp.basis[0]
+                if fabs(o_axial) > fabs(tw):
+                    tw = o_axial
+                direction = 0 if pp.direction == 0 else 1
+                ts[direction] = pmax(ts[direction], q.outputs[33]*pp.basis[0])
+            for k in range(self.trans[s].ne):
+                idx = self.trans[s].engines[k].index
+                fr.engines[idx].omega = fr.trans_omega[s]*self.trans[s].engines[k].ratio
+                if engine_output(&self.engines[idx], &fr.engines[idx], prep.velocity[0], self.altitude, self.nitro):
+                    raise ValueError('Steady engine requires nominal deterministic torque')
+                for i in range(3):
+                    tf[i] = tf[i]+0.
+                for i in range(3):
+                    tm[i] = tm[i]+self.trans[s].engines[k].ratio*0.
+            for i in range(3):
+                fr.trans_outputs[s][i] = tf[i]; fr.trans_outputs[s][3+i] = tm[i]; fr.trans_outputs[s][6+i] = th[i]
+            fr.trans_outputs[s][9] = tw; fr.trans_outputs[s][10] = ts[0]; fr.trans_outputs[s][11] = ts[1]; fr.trans_outputs[s][12] = 0.
+            for i in range(3):
+                fr.force[i] = fr.force[i]+tf[i]; fr.moment[i] = fr.moment[i]+tm[i]; fr.momentum[i] = fr.momentum[i]+th[i]
+            if fabs(tw) > fabs(fr.wash[0]):
+                fr.wash[0] = tw
+            swirl[0] = pmax(swirl[0], ts[0]); swirl[1] = pmax(swirl[1], ts[1])
+        fr.wash[1] = swirl[0]-swirl[1]
+        # torques / targets / residual
+        for s in range(self.nt):
+            torque = 0
+            for k in range(self.trans[s].ne):
+                idx = self.trans[s].engines[k].index
+                torque = torque+fr.engines[idx].torque*self.trans[s].engines[k].ratio
+            load_ = 0
+            for k in range(self.trans[s].np):
+                idx = self.trans[s].props[k].index
+                load_ = load_+fr.props[idx].outputs[18]*self.trans[s].props[k].ratio
+            out.torques[s] = torque-load_
+            self.requests_for(s, fr.engines, desired, &nd)
+            for k in range(1, nd):
+                if desired[k] != desired[0]:
+                    raise ValueError('Conflicting ideal governor targets on a shared shaft')
+            if nd == 0:
+                out.targets[s] = self.shaft_targets[s]
+            else:
+                best = desired[0]
+                for k in range(1, nd):
+                    best = pmax(best, desired[k])
+                out.targets[s] = best
+        for k in range(self.npaths):
+            value = x[k]*self.scales[k]
+            i = self.path_i[k]
+            if self.path_kind[k] == 0:
+                error = out.torques[i]/self.torque_scales[i]
+            elif self.path_kind[k] == 1:
+                rpm_error = (fr.trans_omega[i]-out.targets[i])/300.
+                if self.governor_saturation:
+                    error = value-pmin(1., pmax(0., value+rpm_error))
+                else:
+                    error = rpm_error
+            else:
+                error = (fr.props[i].equilibrium_flow[self.path_j[k]]-fr.props[i].flow[self.path_j[k]])/self.scales[k]
+            out.residual[k] = error
+        for i in range(3):
+            out.row[i] = fr.force[i]; out.row[3+i] = fr.moment[i]; out.row[6+i] = fr.momentum[i]
+        out.row[9] = fr.wash[0]; out.row[10] = fr.wash[1]
+        # _result convergence
+        for k in range(self.npaths):
+            if not isfinite(out.residual[k]):
+                finite = False
+            err = pmax(err, fabs(out.residual[k]))
+        out.converged = finite and err <= 1e-5
+        for s in range(self.nt):
+            if self.ngoverned[s]:
+                if not (out.fractions[s] <= 2e-5 or out.fractions[s] >= 1.-2e-5 or
+                        fabs(fr.trans_omega[s]-out.targets[s]) <= 1e-10*pmax(1., fabs(out.targets[s]))):
+                    out.converged = False
+        for i in range(11):
+            if not isfinite(out.row[i]):
+                out.converged = False
+        return 0
+
+    # ------------------------------------------------------------------ JointProblem.propulsion_at
+    cdef int propulsion_at(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest,
+                           double* inner, PropSample* out) except -1:
+        cdef double q[MAXPATH]
+        return self.propulsion_q(prep, coords, request_indices, nrequest, inner, out, q)
+
+    cdef int propulsion_q(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest,
+                          double* inner, PropSample* out, double* q) except -1:
+        """coords: the JointProblem propulsion coordinates (x[prop_start:]); returns 1 for BranchUnavailable.
+        q: the assembled propulsion-sample coordinates (prop_equilibrium paths)."""
+        cdef double assigned[NP]
+        cdef bint has_assigned[NP]
+        cdef int i, k, j, shaft, index, pitch_idx
+        cdef double c, omega, target
+        for k in range(self.npaths):
+            q[k] = self.initial[k]
+        for i in range(NP):
+            has_assigned[i] = False; assigned[i] = 0.
+        for i in range(self.nt):
+            if prep.governed_request[i]:
+                if i >= nrequest:
+                    return 1
+                index = request_indices[i]
+                if index < 0 or index >= prep.ncand[i]:
+                    return 1
+                assigned[i] = prep.cand[i][index]; has_assigned[i] = True
+                for k in range(self.npaths):
+                    if self.path_kind[k] == 0 and self.path_i[k] == i:
+                        q[k] = assigned[i]/300.
+        for j in range(self.nactive):
+            q[self.active[j]] = coords[j]
+        if self.governor_saturation:
+            for j in range(self.nactive):
+                k = self.active[j]
+                if self.path_kind[k] != 1:
+                    continue
+                shaft = self.path_i[k]; c = coords[j]; target = assigned[shaft]
+                omega = target+300.*(c if c < 0. else (c-1. if c > 1. else 0.))
+                index = -1
+                for i in range(self.npaths):
+                    if self.path_kind[i] == 0 and self.path_i[i] == shaft:
+                        index = i
+                if not (300.*self.lower[index] <= omega and omega <= 300.*self.upper[index]):
+                    return 1
+                assigned[shaft] = omega; q[index] = omega/300.
+                q[k] = pmin(1., pmax(0., c))
+        self.sample(prep, q, assigned, has_assigned, out)
+        for j in range(self.nrows):
+            inner[j] = out.residual[self.rows[j]]
+        return 0
+
+    cdef dict engine_dict(self, int k, const EngState* es):
+        # prop_quasisteady.engine_output(engine, dict(state, omega=...)) on the nominal seed state
+        d = dict(self.py_seed['engines'][k])
+        d['regulator'] = -1.
+        d['omega'] = es.omega
+        d['extra_amplitude'] = 0.
+        d.update(torque=es.torque, friction=0., regulator=es.regulator, gear=es.gear, throttle_ratio=es.throttle_ratio,
+                 potential_manifold=es.potential_manifold, manifold=es.manifold, mechanical=es.mechanical, seed=int(es.seed),
+                 extra_amplitude=es.extra_amplitude, consumption=es.consumption, effective_throttle=es.effective_throttle,
+                 force=[0., 0., 0.], moment=[0., 0., 0.], running=7)
+        return d
+
+    cdef object record(self, const PropSample* ps, const double* q):
+        """The baseline propulsion record of one stationary sample: prop_equilibrium
+        _result(...) plus the prepared sampler's stationary update (pitch-stop governor)."""
+        import math
+        import numpy as np
+        cdef const PFrame* fr = &ps.frame
+        cdef const PropState* st
+        cdef int k, i, s
+        cdef double error = 0.
+        cdef bint converged
+        if not self.governor_saturation:
+            raise PropUnsupported('exact-RPM governor record')
+        engines = [self.engine_dict(k, &fr.engines[k]) for k in range(self.ne)]
+        props = []
+        for k in range(self.nprops):
+            st = &fr.props[k]
+            d = dict(self.py_seed['propellers'][k])
+            d.update(pitch=st.pitch, governor_pitch=st.pitch, flow=[st.flow[0], st.flow[1], st.flow[2]],
+                     equilibrium_flow=[st.equilibrium_flow[0], st.equilibrium_flow[1], st.equilibrium_flow[2]],
+                     outputs=[st.outputs[i] for i in range(40)])
+            props.append(d)
+        trans = [dict(omega=fr.trans_omega[s], previous_omega=fr.trans_omega[s],
+                      outputs=[fr.trans_outputs[s][i] for i in range(13)]) for s in range(self.nt)]
+        per_engine = [[0., 0., 0.] for k in range(self.ne)]
+        for s in range(self.nt):
+            for k in range(self.trans[s].ne):
+                i = self.trans[s].engines[k].index
+                per_engine[i] = [per_engine[i][0]+fr.trans_outputs[s][0], per_engine[i][1]+fr.trans_outputs[s][1],
+                                 per_engine[i][2]+fr.trans_outputs[s][2]]
+        r = dict(transmissions=trans, engines=engines, propellers=props, seed=self.py_seed['seed'],
+                 aggregate_force=[fr.force[0], fr.force[1], fr.force[2]],
+                 aggregate_moment=[fr.moment[0], fr.moment[1], fr.moment[2]],
+                 engine_angular_momentum=[fr.momentum[0], fr.momentum[1], fr.momentum[2]],
+                 engine_wash=[fr.wash[0], fr.wash[1]], per_engine_force=per_engine)
+        residual = np.asarray([ps.residual[k] for k in range(self.npaths)])
+        error = float(np.max(np.abs(residual), initial=0.))
+        converged = bool(np.isfinite(residual).all() and error <= 1e-5)
+        rpm_errors = [fr.trans_omega[s]-ps.targets[s] for s in range(self.nt)]
+        for s in range(self.nt):
+            if self.ngoverned[s] and not (ps.fractions[s] <= 2e-5 or ps.fractions[s] >= 1.-2e-5
+                                          or abs(rpm_errors[s]) <= 1e-10*max(1., abs(ps.targets[s]))):
+                converged = False
+        row = r['aggregate_force']+r['aggregate_moment']+r['engine_angular_momentum']+r['engine_wash']
+        converged = converged and all(math.isfinite(v) for v in row)
+        stopped = [s for s in range(self.nt) if fr.trans_omega[s] <= 1.]
+        status = []
+        for s in range(self.nt):
+            if not self.ngoverned[s]:
+                status.append('manual blade pitch' if any(self.props[self.trans[s].props[k].index].governor
+                                                          for k in range(self.trans[s].np)) else 'fixed pitch')
+            else:
+                status.append('minimum pitch' if ps.fractions[s] <= 2e-5 else
+                              'maximum pitch' if ps.fractions[s] >= 1-2e-5 else 'target RPM')
+        diagnostics = dict(method='quasi-steady ideal governor equilibrium', model_revision=self.revision,
+            force_model='continuous steady blade polar; normalized Hermite Mach curves', residual=error,
+            residual_early_stop_enabled=self.early_stop, residual_early_stops=0,
+            frame_evaluations=1, shaft_torque_residual_nm=[ps.torques[s] for s in range(self.nt)],
+            shaft_target_rpm=[ps.targets[s]*60/(2*math.pi) for s in range(self.nt)],
+            shaft_rpm_error=[v*60/(2*math.pi) for v in rpm_errors],
+            induced_flow_residual_mps=[[a-b for a, b in zip(q_['equilibrium_flow'], q_['flow'])] for q_ in props],
+            governor_status=status)
+        result = dict(state=r, force=row[:3], moment=row[3:6], angular_momentum=row[6:9], wash=row[9:],
+            converged=converged, feasible=converged and not stopped, stopped_shafts=stopped,
+            overspeed_engines=[k for k, e in enumerate(engines)
+                               if e['omega'] > self.py_engines[k]['properties']['omega_limit']*(1+1e-6)],
+            period_frames=None, cycle_samples=[row] if converged else None, window_relative_change=None,
+            simulated_seconds=0., controls=self.py_controls, canonical_initialization=True, stationarity=diagnostics)
+        result['stationarity'].update(method='stationary bounded governor torque/wake equations',
+            governor_model='pitch_stops', equilibrium_coverage_complete=False, governor_selection_certified=False)
+        result['_equilibrium_coordinates'] = np.asarray([q[k] for k in range(self.npaths)])
+        return result
+
+    cdef object request_records(self, const PropPrep* prep):
+        """prop_requests.enumerate_speeds for every shaft (the JointProblem prepared requests)."""
+        cdef EngState states[NP]
+        cdef double desired[NP]
+        cdef double possible[MAXCAND]
+        cdef int npossible, nd, i, k, k2, s, idx, code
+        cdef bint dup, ok
+        out = []
+        for s in range(self.nt):
+            if not self.ngoverned[s]:
+                out.append(dict(governed=False, candidates=[], excluded=[], request_coverage_complete=True))
+                continue
+            if self.trans[s].ne != 1:raise PropUnsupported('multi-engine shaft request enumeration')
+            idx = self.trans[s].engines[0].index
+            npossible = 0
+            for k in range(self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1):
+                for i in range(self.ne):states[i] = self.seed_engines[i]
+                states[idx].gear = k
+                self.requests_for(s, states, desired, &nd)
+                for i in range(nd):
+                    dup = False
+                    for k2 in range(npossible):
+                        if possible[k2] == desired[i]:dup = True
+                    if not dup:
+                        if npossible >= MAXCAND:raise PropUnsupported('request candidates')
+                        possible[npossible] = desired[i];npossible += 1
+            values = sorted([possible[i] for i in range(npossible)])
+            candidates = [];excluded = []
+            for speed in values:
+                for k in range(self.ne):states[k] = self.seed_engines[k]
+                engines = {}
+                for k in range(self.trans[s].ne):
+                    i = self.trans[s].engines[k].index
+                    states[i].omega = speed*self.trans[s].engines[k].ratio
+                    code = engine_output(&self.engines[i], &states[i], prep.velocity[0], self.altitude, self.nitro)
+                    if code:raise ValueError('native steady engine output unavailable (%d)' % code)
+                    engines[i] = self.engine_dict(i, &states[i])
+                self.requests_for(s, states, desired, &nd)
+                actual = [desired[i] for i in range(nd)]
+                record = dict(shaft_speed=speed, actual_requests=actual,
+                              engine_gears=[states[self.trans[s].engines[k].index].gear for k in range(self.trans[s].ne)],
+                              engines=engines)
+                ok = True
+                for i in range(nd):
+                    if desired[i] != speed:ok = False
+                if ok:candidates.append(record)
+                else:excluded.append(record)
+            out.append(dict(governed=True, candidates=candidates, excluded=excluded, request_coverage_complete=True,
+                            equilibrium_coverage_complete=False))
+        return out
+
+    def test_record(self, double speed, double load, double alpha, double bank, double G, double dt, coords, request_indices):
+        """(record, request records, velocity, rates) for a JointProblem state (verification)."""
+        cdef PropPrep prep
+        cdef PropSample out
+        cdef double c[MAXPATH]
+        cdef double q[MAXPATH]
+        cdef int r[NP]
+        cdef double inner[MAXPATH]
+        self.dt_aircraft = dt
+        self.prepare(speed, load, alpha, bank, G, &prep)
+        for i in range(len(coords)):c[i] = float(coords[i])
+        for i in range(len(request_indices)):r[i] = int(request_indices[i])
+        code = self.propulsion_q(&prep, c, r, len(request_indices), inner, &out, q)
+        if code:return None
+        return (self.record(&out, q), self.request_records(&prep), tuple(prep.velocity[i] for i in range(3)),
+                tuple(prep.rates[i] for i in range(3)))
+
+    def set_joint_layout(self, active, rows):
+        self.nactive = len(active);self.nrows = len(rows)
+        for i, a in enumerate(active):self.active[i] = a
+        for i, r in enumerate(rows):self.rows[i] = r
+
+    def bench(self, double speed, double load, double alpha, double bank, double G, double dt, coords, request_indices,
+              int repeats=200):
+        """(seconds per prepare, seconds per propulsion sample) at one flight condition."""
+        import time
+        cdef PropPrep prep
+        cdef PropSample out
+        cdef double c[MAXPATH]
+        cdef int r[NP]
+        cdef double inner[MAXPATH]
+        cdef int k, i
+        self.dt_aircraft = dt
+        for i in range(len(coords)):c[i] = float(coords[i])
+        for i in range(len(request_indices)):r[i] = int(request_indices[i])
+        t0 = time.perf_counter()
+        for k in range(repeats):
+            self.prepare(speed, load, alpha, bank, G, &prep)
+        t1 = time.perf_counter()
+        for k in range(repeats):
+            c[0] += 1e-9
+            self.propulsion_at(&prep, c, r, len(request_indices), inner, &out)
+        t2 = time.perf_counter()
+        return (t1-t0)/repeats, (t2-t1)/repeats
+
+    def test_sample(self, double speed, double load, double alpha, double bank, double G, double dt, coords, request_indices):
+        """(inner residual, row, converged, candidates) for a JointProblem state (verification)."""
+        cdef PropPrep prep
+        cdef PropSample out
+        cdef double c[MAXPATH]
+        cdef int r[NP]
+        cdef double inner[MAXPATH]
+        self.dt_aircraft = dt
+        self.prepare(speed, load, alpha, bank, G, &prep)
+        for i in range(len(coords)):c[i] = float(coords[i])
+        for i in range(len(request_indices)):r[i] = int(request_indices[i])
+        code = self.propulsion_at(&prep, c, r, len(request_indices), inner, &out)
+        if code:return None
+        return ([inner[i] for i in range(self.nrows)], [out.row[i] for i in range(11)], bool(out.converged),
+                [[prep.cand[s][k] for k in range(prep.ncand[s])] for s in range(self.nt)])

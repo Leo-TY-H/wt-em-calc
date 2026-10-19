@@ -1,8 +1,31 @@
 The replacement stationary solver is the default for new API and browser
 calculations. It solves aircraft equilibrium, retained wing history and propeller
-closure through one evaluator and one shared numerical corrector. The existing
-adaptive speed/load sampling, PCHIP interpolation, previews, process pool and
-cancellation remain in use (`stationary_execution="baseline"`).
+closure through one evaluator and one shared numerical corrector.
+
+Charts use the **alpha-march chart solver** by default (`chart_solver="march"`).
+At each speed it starts from admitted level flight and raises alpha until the
+first physical limit; that state is the envelope point. A speed tracer places
+the columns (corners, edges and withheld midpoint checks). The selected SEP
+levels are then solved directly from the same columns and checked between
+knots with withheld exact solves. Every drawn state is an admitted full-model
+state with the unchanged physical checks, at zero prescribed sideslip. The
+envelope tolerance is 0.15 deg/s at standard precision and the curve tolerance
+is three times the chart curve tolerance. A compiled evaluate-and-correct loop
+(`scripts/march_native`, built into `.native_march/`) reproduces the Python
+evaluation bit for bit; it is used only while the Python sources it was
+verified against are unchanged (`scripts/verify_march_native.py --stamp`
+re-verifies and records them). Otherwise the same chart is computed in Python,
+more slowly. Unresolved speeds stay gaps in the outline, and only the calculated
+SEP levels are available; another level needs a new calculation.
+
+Configurations outside the march solver's validated domain use the previous
+adaptive speed/load sampler with PCHIP interpolation for that aircraft:
+manual engine controls, unavailable wing sweep in the speed range,
+non-default load caps, and the diagnostic trim, sampling and model-experiment
+modes. The same applies to any aircraft on which the march fails. The chart
+records the reason (`chart_solver_fallback`). `chart_solver="baseline"` selects
+the previous sampler for a request, and `WT_EM_CHART_SOLVER=baseline` makes it
+the server default (`stationary_execution="baseline"`).
 
 **Enable exports** is off by default. Normal calculations prepare the interactive
 chart and point inspection while skipping downloadable-data conversion. Enable

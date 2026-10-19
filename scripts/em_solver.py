@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import time
 from types import SimpleNamespace
 from functools import lru_cache
@@ -45,7 +46,17 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='stationary',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='stable',
                 experimental_instantaneous_aero=False,experimental_lateral_trim='full',stationary_execution='baseline',
-                stationary_governor_mode='pitch_stops',enable_exports=False)
+                stationary_governor_mode='pitch_stops',enable_exports=False,
+                chart_solver=os.environ.get('WT_EM_CHART_SOLVER','march'),sideslip_recovery=True)
+
+# chart_solver='march' (default since S4): alpha-march envelope plus direct SEP
+# curves (em_march_chart) on the stationary equations, with the compiled loop
+# where available. Configurations it does not cover, and any aircraft it fails
+# on, use the adaptive speed/load sampler instead ('baseline', also selectable
+# directly or for a whole server with WT_EM_CHART_SOLVER=baseline).
+# sideslip_recovery=False is the zero-sideslip policy of the march chart: no
+# nonzero attitude-sideslip seeds or recovery searches. It is set internally
+# for march solves; the baseline sampler keeps True.
 
 # mach_curve_mode='continuous' enables the selective tanh approximation;
 # 'native' keeps original arithmetic and gap handling. The stationary default
@@ -136,6 +147,8 @@ def settings(values=None):
     if result['stationary_governor_mode'] not in ('pitch_stops','exact_rpm'):raise ValueError('Unknown stationary governor mode')
     if result['stationary_execution'] not in ('baseline','columns','serial_cells'):
         raise ValueError('Unknown stationary chart execution mode')
+    if result['chart_solver'] not in ('march','baseline'):raise ValueError('Unknown chart solver')
+    if not isinstance(result['sideslip_recovery'],bool):raise ValueError('sideslip_recovery must be true or false')
     from em_model_experiments import MODES
     if not isinstance(result['experimental_instantaneous_aero'],bool):raise ValueError('Instantaneous aerodynamics must be true or false')
     if result['experimental_lateral_trim'] not in MODES:raise ValueError('Unknown experimental lateral trim mode')
@@ -409,6 +422,10 @@ class TrimSolver:
         return view
 
     def instructor_at(self,value,speed,load):
+        native=getattr(self,'native_loop',None)
+        if native is not None:
+            handled,limits=native.instructor_at(self,value,speed,load)
+            if handled:return limits
         from instructor_envelope import controller_limits
         return controller_limits(self,value,speed)
 
@@ -835,6 +852,12 @@ class TrimSolver:
     def operating_point(self, speed, load, x, *args, **kwargs):
         from em_operating import operating_point
         from em_trim_work import charge, observe
+        # Solver option of the march chart: the compiled evaluator (bit for bit
+        # this evaluation) where it covers the call; see em_march_native.
+        native=getattr(self,'native_loop',None)
+        if native is not None:
+            handled,value=native.operating_point(self,speed,load,x,args,kwargs)
+            if handled:return value
         frozen=(kwargs.get('propulsion_override') is not None or kwargs.get('propulsion_sample') is not None
                 or bool(args and args[0] is not None))
         if (self.config.get('trim_solver_mode') == 'stationary'
@@ -1389,6 +1412,11 @@ def compute(config=None, progress=None, cancelled=None, preview=None):
         output['assumptions']=[a for a in output['assumptions'] if a!='Instructor off']
         output['assumptions'].append('Same flight conditions with Instructor off and experimental Instructor on')
         return output
+    if config['chart_solver']=='march':
+        # Default chart: alpha-march envelope and direct SEP curves; aircraft it
+        # does not cover come back here with chart_solver='baseline'.
+        from em_march_chart import compute as march_chart
+        return march_chart(config,progress,cancelled,preview)
     stationary=any(aircraft_settings(config, name)['trim_solver_mode'] == 'stationary' for name in config['aircraft'])
     if stationary and config['stationary_execution']!='baseline':
         from em_stationary_surface import compute as stationary_chart

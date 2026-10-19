@@ -378,6 +378,7 @@ def solve_level(solver,speed,initial=None,exhaustive=False):
 
 
 def continue_sideslip(solver,speed,load,neighbors):
+    if not solver.config.get('sideslip_recovery',True):return None  # zero-sideslip policy (march chart)
     candidates=sorted((p for p in neighbors if p['valid'] and p.get('sideslip_attitude_deg',0.)),
                       key=lambda p:abs(p['load_g']-load))
     tried=set()
@@ -792,7 +793,8 @@ def _sample_column(task,boundary_only=False):
                 p=solver.solve(speed,n,p['solution'],exhaustive=True)
                 searched_exhaustively=True
             samples[n]=p
-            if not local and needs_sideslip_search(p) and boundary and bottom and bottom['load_g']<n<boundary['load_g']:
+            if (not local and solver.config.get('sideslip_recovery',True) and needs_sideslip_search(p)
+                    and boundary and bottom and bottom['load_g']<n<boundary['load_g']):
                 if not searched_exhaustively:
                     p=solver.solve(speed,n,p['solution'],exhaustive=True);samples[n]=p
                 if needs_sideslip_search(p):
@@ -1355,7 +1357,7 @@ def _sample_column(task,boundary_only=False):
             if not samples[n]['valid'] and n not in recovery_attempted:
                 retry=solver.solve(speed,n,exhaustive=not solver.is_prop)
                 if retry['valid']:samples[n]=retry
-                elif needs_sideslip_search(retry):
+                elif solver.config.get('sideslip_recovery',True) and needs_sideslip_search(retry):
                     replacement=recover_sideslip(solver,speed,n,retry,list(samples.values()))
                     if replacement:samples[n]=replacement
                     else:recovery_attempted.add(n)
