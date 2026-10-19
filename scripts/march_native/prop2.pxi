@@ -1,7 +1,7 @@
 # PropModel: the stationary propulsion block of JointProblem for supported
 # propeller aircraft (prepare / enumerate_speeds / sample / propulsion_at).
 
-DEF MAXPATH = 8
+DEF MAXPATH = 16
 DEF MAXCAND = 8
 
 cdef struct PropPrep:

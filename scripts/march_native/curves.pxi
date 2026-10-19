@@ -497,11 +497,11 @@ cdef class NCurves:
     # ------------------------------------------------------------------ top level
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef dict column_roots(self, column, list levels):
-        cdef double speed = column['speed_kmh'], cap = 0., target
-        cdef bint has_cap = False, found
-        cdef int top = -1, sid, a, b, i
-        out = dict(speed_kmh=speed, roots=[], fallback=None, stop=None)
+    cdef tuple column_samples(self, column):
+        """CurveSolver.column_samples: (admitted samples by load up to the verified boundary, boundary or -1)."""
+        cdef double speed = column['speed_kmh'], cap = 0.
+        cdef bint has_cap = False
+        cdef int top = -1, sid
         if column.get('boundary_status') in ('verified limit', 'plot ceiling') and column.get('boundary'):
             top = self.state(column['boundary'])
         if top >= 0:
@@ -520,6 +520,33 @@ cdef class NCurves:
         if top >= 0 and self.eng.st[top].valid and self.eng.st[top].has_coords and \
                 all(abs(self.eng.st[q].load-self.eng.st[top].load) > 1e-12 for q in pts):
             pts.append(top)
+        return pts, top
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object column_levels(self, column):
+        """CurveSolver.column_levels: the levels column_roots would find at this column (no solves), or None."""
+        cdef int i
+        pts, _ = self.column_samples(column)
+        if not pts or abs(self.eng.st[pts[0]].load-1.) > 1e-9:return None
+        out = []
+        for t in self.levels:
+            if abs(self.eng.st[pts[0]].ps-t) <= self.allowance:
+                out.append(t);continue
+            for i in range(len(pts)-1):
+                if ((self.eng.st[pts[i]].ps-t)*(self.eng.st[pts[i+1]].ps-t) <= 0. and
+                        self.eng.compatible(pts[i], pts[i+1])):
+                    out.append(t);break
+        return frozenset(out)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef dict column_roots(self, column, list levels):
+        cdef double speed = column['speed_kmh'], target
+        cdef bint found
+        cdef int top, a, b, i
+        out = dict(speed_kmh=speed, roots=[], fallback=None, stop=None)
+        pts, top = self.column_samples(column)
         if not pts or abs(self.eng.st[pts[0]].load-1.) > 1e-9:
             out['stop'] = dict(load_g=None, kind='unresolved', reasons=['no admitted level-flight state in column'])
             out['uninformative'] = True
@@ -544,24 +571,41 @@ cdef class NCurves:
     @cython.wraparound(True)
     cdef link_columns(self, dict segment, dict by_speed, list components, list seeds_report, list excluded,
                       list unresolved_targets, dict ones):
+        """CurveSolver.link_columns (with the level-presence columns between thinned solved columns)."""
         new, open_ = [], {}
         ordered = sorted(by_speed);last_used = None
+        solved, presence = [], {}
         for speed in ordered:
-            column = by_speed[speed]
             if (last_used is not None and speed-last_used < self.column_min_spacing and speed != ordered[-1]):continue
-            one = None
-            for p in column['points']:
-                if abs(p['load_g']-1.) <= 1e-9 and p.get('valid') and p.get('stationary_coordinates') is not None:
-                    one = self.state(p);break
-            ones[speed] = self.ones[speed] = one if one is not None else dict(
-                valid=False, reasons=['no admitted level-flight state in column'], speed_kmh=speed)
-            seed = self.column_roots(column, self.levels)
+            presence[speed] = self.column_levels(by_speed[speed])
+            if presence[speed] is None:continue
+            solved.append(speed);last_used = speed
+        extra = {}
+        for a, b in zip(solved, solved[1:]):
+            for speed in ordered:
+                if not a < speed < b or speed in presence:continue
+                here = self.column_levels(by_speed[speed])
+                if here is None:continue
+                levels = [L for L in self.levels if (L in here) != (L in presence[a]) and (L in here) != (L in presence[b])]
+                if levels:extra[speed] = levels
+        for speed in ordered:
+            if speed not in presence and speed not in extra:continue
+            column = by_speed[speed]
+            levels = extra.get(speed, self.levels)
+            if speed in presence:
+                one = None
+                for p in column['points']:
+                    if abs(p['load_g']-1.) <= 1e-9 and p.get('valid') and p.get('stationary_coordinates') is not None:
+                        one = self.state(p);break
+                ones[speed] = self.ones[speed] = one if one is not None else dict(
+                    valid=False, reasons=['no admitted level-flight state in column'], speed_kmh=speed)
+            seed = self.column_roots(column, levels)
             self.ladders.append(dict(speed_kmh=speed, segment=segment['speed_kmh'], ladder=seed))
-            seeds_report.append(dict(speed_kmh=speed, provenance='envelope column',
+            seeds_report.append(dict(speed_kmh=speed, provenance='envelope column' if speed in presence else
+                                     'envelope column (level presence change)',
                                      roots=sum(r['outcome'] == 'admitted' for r in seed['roots']), stop=seed['stop']))
             if seed.get('uninformative'):continue
-            last_used = speed
-            current = {}
+            current = {L: c for L, c in open_.items() if L not in levels}
             for root in seed['roots']:
                 target = root['target']
                 if root['outcome'] in ('rejected', 'beyond_load_cap'):

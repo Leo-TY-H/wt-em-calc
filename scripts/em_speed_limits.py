@@ -1,7 +1,36 @@
 import math
 from air_state import cache,speed_of_sound
-from wing_sweep import prepare,select
+from wing_sweep import prepare,select,schedule,available
 from flap_model import profile as flap_profile, limits as flap_limits
+
+
+def sweep_excluded_kmh(fm,config):
+    """TAS intervals of the chart speed range where the selected fixed wing sweep is unavailable."""
+    if len(prepare(fm))<2:return []
+    rows=schedule(fm);position=config['sweep_percent']/100.
+    scale=float(speed_of_sound(config['altitude_m']))*3.6
+    low,high=config['speed_min_kmh']/scale,config['speed_max_kmh']/scale
+    knots=[low,high]+[row[0] for row in rows if low<row[0]<high]
+    for (xa,_,va),(xb,_,vb) in zip(rows,rows[1:]):
+        for a,b in zip(va,vb):
+            if a!=b:
+                x=xa+(position-a)*(xb-xa)/(b-a)
+                if max(low,xa)<x<min(high,xb):knots.append(x)
+    knots=sorted(set(knots));excluded=[]
+    for a,b in zip(knots,knots[1:]):
+        lo,hi=available(fm,rows,(a+b)*.5)
+        if lo-1e-7<=position<=hi+1e-7:continue
+        if excluded and abs(excluded[-1][1]-a*scale)<1e-6:excluded[-1][1]=b*scale
+        else:excluded.append([a*scale,b*scale])
+    return excluded
+
+
+def sweep_cutoff_kmh(fm,config):
+    """The speed above which the selected fixed sweep stays unavailable up to the end of the chart range
+    (drawn as a speed boundary, Leo 2026-10-19), or None."""
+    excluded=sweep_excluded_kmh(fm,config)
+    if not excluded or excluded[-1][1]<config['speed_max_kmh']-1e-6 or excluded[-1][0]<=config['speed_min_kmh']+1e-6:return None
+    return excluded[-1][0]
 
 
 def speed_limits(fm,config):
@@ -26,6 +55,10 @@ def speed_limits(fm,config):
         if flaps['automatic_mach'] is not None:
             candidates.append(dict(kind='Flap automatic Mach limit',
                 speed_kmh=flaps['automatic_mach']*speed_of_sound(config['altitude_m'])*3.6,enforced=True))
+    cutoff=sweep_cutoff_kmh(fm,config)
+    if cutoff is not None:
+        # The selected wing sweep is unavailable above this speed (game sweep schedule): a speed boundary.
+        candidates.append(dict(kind='Wing sweep limit',speed_kmh=cutoff,enforced=True))
     active=[c for c in candidates if c['enforced']]
     # Each worker receives the same precomputed aircraft-specific RPM cutoff.
     rpm=(config.get('_over_rev_limits') or {}).get(config['aircraft'][0]) if len(config.get('aircraft',[]))==1 else None

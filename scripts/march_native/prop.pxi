@@ -7,7 +7,7 @@
 # piston engines (families 0/1, compressor types 1/2, exact altitudes),
 # non-coaxial propellers without cyclic or scheduled pitch.
 
-DEF NP = 2   # propellers / engines / transmissions supported
+DEF NP = 4   # propellers / engines / transmissions supported
 
 
 cdef struct BPolar:
