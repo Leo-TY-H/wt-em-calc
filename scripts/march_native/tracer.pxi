@@ -804,6 +804,15 @@ cdef class NTracer:
                 if prev is not None and prev.reason == last.reason:
                     r = (speed-last.speed)/(last.speed-prev.speed)
                     n = self.eng.st[last.boundary].load+r*(self.eng.st[last.boundary].load-self.eng.st[prev.boundary].load)
+                    if (self.s7 and isfinite(last.slope_l) and isfinite(last.slope_r) and isfinite(prev.slope_l)
+                            and isfinite(prev.slope_r) and self.face_of(last) == self.face_of(prev)):
+                        # S7: the face continued with its exact slope and curvature (the outline's own face_load)
+                        if side > 0:
+                            n = face_load(last.speed, self.eng.st[last.boundary].load, last.slope_r,
+                                          (last.slope_l-prev.slope_r)/(last.speed-prev.speed), speed)
+                        else:
+                            n = face_load(last.speed, self.eng.st[last.boundary].load, last.slope_l,
+                                          (prev.slope_l-last.slope_r)/(prev.speed-last.speed), speed)
                     error = abs(self.M.turn_rate(speed, n)-self.eng.st[col.boundary].turn)
                     h = abs(speed-last.speed)
                     if error > 8*self.ttol:step = max(.5*h, 2*self.vtol)

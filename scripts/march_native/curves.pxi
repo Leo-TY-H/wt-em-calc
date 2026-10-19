@@ -17,6 +17,10 @@ STATE_FIELDS = ('speed_kmh', 'load_g', 'turn_dps', 'ps_mps', 'alpha_deg', 'bank_
                 'force_error_g', 'angular_error_rad_s2', 'history_error', 'converged')
 
 
+DEF S7_CURVE_CHECK = .6666666666666666   # S7: a midpoint within 2/3 of the curve tolerance (the drawn line's worst point
+                                          # can lie off the midpoint, so the interval stays within the tolerance)
+
+
 cdef double py_sqrt(double x) except? -1.:
     # math.sqrt: ValueError on a negative argument
     if x < 0.:raise ValueError('math domain error')
@@ -612,7 +616,7 @@ cdef class NCurves:
                         lo_t = pmin(lo_t, tx);hi_t = pmax(hi_t, tx)
                     tx = self.eng.st[truth].turn
                     box = 0. if lo_t <= tx <= hi_t else (tx-hi_t if tx > hi_t else lo_t-tx)
-                    passed = box <= self.turn_tol
+                    passed = box <= S7_CURVE_CHECK*self.turn_tol
                     record.update(position_error_dps=box, route='position')
                     record['passed'] = passed
                     checks.append(record)
