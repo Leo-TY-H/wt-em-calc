@@ -966,7 +966,9 @@ def _sample_column(task,boundary_only=False):
         low,high=bracket
         physical_reasons=PHYSICAL_REASONS
         def numerical_failure(point):
-            return ((not point['converged'] or set(point['reasons'])<=
+            # An admitted point has no reasons, and the empty set is a subset
+            # of the propulsion reasons: it must never count as a failure.
+            return (not point['valid'] and (not point['converged'] or set(point['reasons'])<=
                      {'propulsion did not settle','propulsion cycle unresolved'}) and
                     point['stall_margin_deg']>1. and point['authority_margin']>.02 and
                     max(point['wing_load_ratios'])<.98)
