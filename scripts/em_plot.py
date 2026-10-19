@@ -111,13 +111,16 @@ def contour_levels(aircraft,data=None):
 
 
 @presentation
-def contour_paths(data,levels=None,*,prepared_matrices=None):
+def contour_paths(data,levels=None,*,prepared_matrices=None,march_drawn=False):
     if data.get('stationary_full_chart'):
         from em_stationary_surface import contours as stationary
         return stationary(data, levels)
     output={}
     for aircraft in data['aircraft']:
         if aircraft.get('chart_solver')=='march':
+            if march_drawn and levels is None and 'contours' in aircraft:
+                # S7: enrich has just drawn these (em_march_chart.enrich, the same calculated levels)
+                output[aircraft['id']]=aircraft['contours'];continue
             from em_march_chart import contours as march_contours
             output[aircraft['id']]=march_contours(aircraft,levels if levels is not None else contour_levels(aircraft,data))
             continue
@@ -355,7 +358,7 @@ def enrich(data,*,surface_format='lists'):
 
 
     data['plot_max_turn']=plot_turn_ceiling(data['aircraft'])
-    paths_by_aircraft=contour_paths(data,prepared_matrices=prepared)
+    paths_by_aircraft=contour_paths(data,prepared_matrices=prepared,march_drawn=True)
     for aircraft in data['aircraft']:
         paths=paths_by_aircraft[aircraft['id']]
         if aircraft.get('chart_solver')=='march':

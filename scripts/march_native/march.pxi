@@ -1011,6 +1011,13 @@ cdef class MarchEngine:
         if p < 0:return None
         return self.st[p].load, bool(self.st[p].valid), self.st[p].alpha
 
+    def debug_level(self, int sid, double speed, int nfev=12, int evals=40):
+        """Diagnostics: the level-flight correction (FIX_LOAD 1 g) at ``speed`` from state ``sid``: (state id, valid,
+        physical, reasons) or None."""
+        cdef int p = self.correct(sid, self.st[sid].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, nfev, evals, 2e-6, speed, NULL, NULL)
+        if p < 0:return None
+        return p, bool(self.st[p].valid), bool(self.physical(p)), self.reason_list(p)
+
     def debug_events(self, int sid):
         cdef Event ev[32]
         cdef int n = self.nearest_events(sid, ev), i
