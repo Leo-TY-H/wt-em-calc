@@ -24,7 +24,7 @@ os.environ['WT_MARCH_NATIVE_VERIFY'] = '1'
 for key in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):os.environ[key] = '1'
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'scripts'))
-DEFAULT = ('bi:sb', 'f_16xl:rb', 'f_16a_block_10:sb', 'a6m2_zero:sb', 'ki_61_1a_otsu:rb')
+DEFAULT = ('bi:sb', 'f_16xl:rb', 'f_16a_block_10:sb', 'a6m2_zero:sb', 'ki_61_1a_otsu:rb', 'f_14a_early:rb')
 NUMERIC = 1e-8  # Instructor trim and event corrections agree to rounding (S2/S3: <= 2e-12)
 
 

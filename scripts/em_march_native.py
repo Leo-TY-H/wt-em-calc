@@ -62,7 +62,11 @@ ROOTS = ('polar_f32', 'wing_model', 'wing_stages', 'tail_model', 'component_stag
          'instructor_steady_aoa', 'instructor_aoa', 'instructor_envelope', 'prop_equilibrium', 'prop_quasisteady',
          'piston_general', 'piston_compressor', 'prop_requests', 'prop_admission', 'em_pitch_response', 'polar_runtime',
          'polar_model', 'mach_cubic', 'flap_model', 'wing_sweep', 'engine_supply', 'structural_limits',
-         'em_model_experiments', 'em_accuracy_policy', 'aircraft_model', 'mass_model')
+         'em_model_experiments', 'em_accuracy_policy', 'aircraft_model', 'mass_model',
+         # S5: the march, curve, limit, recovery and propulsion modules the native engine transliterates
+         'em_march', 'em_march_curves', 'em_pitch_limit', 'em_prop_branch_recovery', 'prop_governor_evaluator',
+         'em_load_limits', 'em_aircraft_region', 'em_speed_limits', 'em_sampling', 'prop_steady', 'piston_general',
+         'piston_compressor', 'turbine_general', 'rocket_general', 'jet_model', 'jet_nozzle')
 _STATE = dict(module=None, status=None, events=None)
 
 
