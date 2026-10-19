@@ -77,7 +77,7 @@ def main():
                                      checks={r['aircraft']+':'+r['mode']: (r.get('native') or {}).get('verify') for r in rows},
                                      finish_rows=sum((r.get('native') or {}).get('curve_verified', 0) for r in rows),
                                      method='scripts/verify_march_native.py'))
-        N.STAMP.write_text(json.dumps(record, indent=1, default=str)+'\n')
+        N.STAMP.write_text(json.dumps(record, indent=1, default=str)+'\n', newline='\n')
         print('Stamped '+str(N.STAMP))
     raise SystemExit(0 if ok else 1)
 
