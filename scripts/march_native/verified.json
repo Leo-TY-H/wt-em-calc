@@ -1,0 +1,1113 @@
+{
+ "native_sha256": "a3cceea04ebc940a39dc2566577e97dedbf5c7eca8b5d2a2907818c9c93bce95",
+ "python_modules": [
+  "advanced_mass",
+  "aero_helpers",
+  "air_state",
+  "aircraft_availability",
+  "aircraft_catalog",
+  "aircraft_model",
+  "body_dynamics",
+  "component_assembly",
+  "component_stages",
+  "control_mixer",
+  "downwash",
+  "em_accuracy",
+  "em_accuracy_policy",
+  "em_backend",
+  "em_cancellation",
+  "em_data",
+  "em_load_limits",
+  "em_manual_controls",
+  "em_model_experiments",
+  "em_numeric_core",
+  "em_operating",
+  "em_pitch_response",
+  "em_roots",
+  "em_solver",
+  "em_stationary",
+  "em_stationary_baseline",
+  "em_stationary_boundary",
+  "em_stationary_chart",
+  "em_stationary_corrector",
+  "em_stationary_surface",
+  "em_trim_numerics",
+  "em_trim_work",
+  "engine_commands",
+  "engine_supply",
+  "flap_model",
+  "fm_loader",
+  "fuel_loading",
+  "instructor_aoa",
+  "instructor_aoa_balance",
+  "instructor_autotrim",
+  "instructor_chart_inputs",
+  "instructor_envelope",
+  "instructor_keyboard",
+  "instructor_pitch_predictor",
+  "instructor_predictor_inputs",
+  "instructor_protection",
+  "instructor_reduced",
+  "instructor_settings",
+  "instructor_static_trim",
+  "instructor_steady_aoa",
+  "instructor_trim_equilibrium",
+  "jet_catalog",
+  "jet_model",
+  "jet_nominal",
+  "jet_nozzle",
+  "kinematics",
+  "mach_cubic",
+  "mass_model",
+  "piston_compressor",
+  "piston_general",
+  "piston_model",
+  "polar_f32",
+  "polar_model",
+  "polar_runtime",
+  "primary_controls",
+  "prop_admission",
+  "prop_catalog",
+  "prop_em",
+  "prop_equilibrium",
+  "prop_equilibrium_blocks",
+  "prop_governor_branch",
+  "prop_governor_evaluator",
+  "prop_governor_wake",
+  "prop_quasisteady",
+  "prop_requests",
+  "prop_steady",
+  "propeller_general",
+  "propulsion_general",
+  "rocket_em",
+  "rocket_general",
+  "structural_limits",
+  "tail_model",
+  "turbine_general",
+  "windows_instructor_source",
+  "wing_area_normalization",
+  "wing_model",
+  "wing_stages",
+  "wing_sweep"
+ ],
+ "python_sha256": "9b8e8730137a85df38c0bd0c07f4bc288f31f76c4e90117773e6cba869959575",
+ "verification": {
+  "date": "2026-10-18",
+  "aircraft": [
+   "bi:sb",
+   "f_16xl:rb",
+   "f_16a_block_10:sb",
+   "a6m2_zero:sb",
+   "ki_61_1a_otsu:rb"
+  ],
+  "checks": {
+   "bi:sb": {
+    "operating_point": {
+     "checked": 354,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    },
+    "event": {
+     "checked": 16,
+     "mismatched": 13,
+     "decision": 0,
+     "worst": {
+      "/solution[]": 7.638334409421077e-14,
+      "/stationary_coordinates[]": 7.638334409421077e-14,
+      "/stationary_candidates[]/solution[]": 7.638334409421077e-14,
+      "/stationary_candidates[]/stationary_coordinates[]": 7.638334409421077e-14,
+      "/chart_candidate/solution[]": 7.638334409421077e-14,
+      "/chart_candidate/stationary_coordinates[]": 7.638334409421077e-14,
+      "/alpha_deg": 7.638334409421077e-14,
+      "/load_g": 1.7763568394002505e-15,
+      "/turn_dps": 7.105427357601002e-15,
+      "/ps_continuous_mps": 2.3447910280083306e-12,
+      "/force_error_g": 1.9500718619373195e-15,
+      "/stationary_residual[]": 1.9500718619373195e-15,
+      "/stationary_candidates[]/load_g": 1.7763568394002505e-15,
+      "/stationary_candidates[]/turn_dps": 7.105427357601002e-15,
+      "/stationary_candidates[]/force_error_g": 1.9500718619373195e-15,
+      "/chart_candidate/load_g": 1.7763568394002505e-15,
+      "/chart_candidate/turn_dps": 7.105427357601002e-15,
+      "/chart_candidate/force_error_g": 1.9500718619373195e-15,
+      "/pitch_response/margin": 2.531308496145357e-14,
+      "/pitch_response/gain_rad_s": 2.424727085781342e-13,
+      "/pitch_response/samples[]/gain_rad_s": 2.424727085781342e-13,
+      "/pitch_response/samples[]/margin": 2.531308496145357e-14,
+      "/pitch_response/samples[]/rounding": 1.8338263308055602e-19,
+      "/history_error": 8.881784197001252e-16,
+      "/stationary_candidates[]/history_error": 8.881784197001252e-16,
+      "/chart_candidate/history_error": 8.881784197001252e-16
+     },
+     "examples": [
+      {
+       "speed": 919.9964610351562,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.00025495284701388483",
+         "0.00025495284701388304"
+        ],
+        [
+         "/solution[4]",
+         "-0.003332656884814004",
+         "-0.003332656884814017"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.00025495284701388483",
+         "0.00025495284701388304"
+        ],
+        [
+         "/stationary_coordinates[4]",
+         "-0.003332656884814004",
+         "-0.003332656884814017"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.00025495284701388483",
+         "0.00025495284701388304"
+        ],
+        [
+         "/stationary_candidates[0]/solution[4]",
+         "-0.003332656884814004",
+         "-0.003332656884814017"
+        ]
+       ]
+      },
+      {
+       "speed": 784.3947769397078,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/alpha_deg",
+         "7.36994695114219",
+         "7.369946951142189"
+        ],
+        [
+         "/solution[0]",
+         "7.36994695114219",
+         "7.369946951142189"
+        ],
+        [
+         "/solution[2]",
+         "0.000815763407262637",
+         "0.0008157634072626433"
+        ],
+        [
+         "/solution[4]",
+         "-0.004241923442310617",
+         "-0.004241923442310623"
+        ],
+        [
+         "/stationary_coordinates[0]",
+         "7.36994695114219",
+         "7.369946951142189"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.000815763407262637",
+         "0.0008157634072626433"
+        ]
+       ]
+      },
+      {
+       "speed": 565.6447769397078,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "12.416467616703473",
+         "12.416467616703471"
+        ],
+        [
+         "/turn_dps",
+         "44.27263243762189",
+         "44.27263243762188"
+        ],
+        [
+         "/ps_continuous_mps",
+         "-67.5810123677372",
+         "-67.58101236773699"
+        ],
+        [
+         "/alpha_deg",
+         "15.86371684779849",
+         "15.863716847798484"
+        ],
+        [
+         "/force_error_g",
+         "5.9897452644490065e-06",
+         "5.989745265017996e-06"
+        ],
+        [
+         "/solution[0]",
+         "15.86371684779849",
+         "15.863716847798484"
+        ]
+       ]
+      },
+      {
+       "speed": 553.1447769397078,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "11.883535947783203",
+         "11.883535947783201"
+        ],
+        [
+         "/turn_dps",
+         "43.3169518151975",
+         "43.31695181519749"
+        ],
+        [
+         "/ps_continuous_mps",
+         "-56.80444302735716",
+         "-56.804443027359504"
+        ],
+        [
+         "/alpha_deg",
+         "15.860075978955443",
+         "15.86007597895552"
+        ],
+        [
+         "/force_error_g",
+         "1.5589758527504692e-06",
+         "1.5589758509075345e-06"
+        ],
+        [
+         "/solution[0]",
+         "15.860075978955443",
+         "15.86007597895552"
+        ]
+       ]
+      },
+      {
+       "speed": 809.3947769397078,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.0004970924293826029",
+         "0.0004970924293825974"
+        ],
+        [
+         "/solution[4]",
+         "-0.004018306948700221",
+         "-0.004018306948700234"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.0004970924293826029",
+         "0.0004970924293825974"
+        ],
+        [
+         "/stationary_coordinates[4]",
+         "-0.004018306948700221",
+         "-0.004018306948700234"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.0004970924293826029",
+         "0.0004970924293825974"
+        ],
+        [
+         "/stationary_candidates[0]/solution[4]",
+         "-0.004018306948700221",
+         "-0.004018306948700234"
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   "f_16xl:rb": {
+    "instructor": {
+     "checked": 2426,
+     "mismatched": 1082,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 3.4139358007223564e-15
+     },
+     "examples": [
+      {
+       "speed": 361.1111111111111,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.7101752905377817",
+         "-0.7101752905377814"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.04614513510332536",
+         "0.04614513510332531"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.05468968550612602",
+         "-0.054689685506125955"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 5.514377641675537,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.7101743172723638",
+         "-0.7101743172723636"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.04614839909588843",
+         "0.04614839909588847"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 5.514377641675537,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.7101743172723638",
+         "-0.7101743172723636"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.04614839909588843",
+         "0.04614839909588847"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 12.295871667740844,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.710175886325261",
+         "-0.7101758863252612"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.04613628258231498",
+         "0.04613628258231493"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.05468451040230905",
+         "-0.05468451040230903"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 12.295871667740844,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.710175886325261",
+         "-0.7101758863252612"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.04613628258231498",
+         "0.04613628258231493"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.05468451040230905",
+         "-0.05468451040230903"
+        ]
+       ]
+      }
+     ]
+    },
+    "operating_point": {
+     "checked": 253,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "f_16a_block_10:sb": {
+    "operating_point": {
+     "checked": 245,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    },
+    "event": {
+     "checked": 18,
+     "mismatched": 16,
+     "decision": 0,
+     "worst": {
+      "/ps_continuous_mps": 4.547473508864641e-13,
+      "/alpha_deg": 7.105427357601002e-15,
+      "/force_error_g": 6.03879010734271e-15,
+      "/history_error": 3.552713678800501e-15,
+      "/solution[]": 7.105427357601002e-15,
+      "/stationary_coordinates[]": 7.105427357601002e-15,
+      "/stationary_residual[]": 6.03879010734271e-15,
+      "/stationary_candidates[]/solution[]": 7.105427357601002e-15,
+      "/stationary_candidates[]/stationary_coordinates[]": 7.105427357601002e-15,
+      "/stationary_candidates[]/force_error_g": 6.03879010734271e-15,
+      "/stationary_candidates[]/history_error": 3.552713678800501e-15,
+      "/chart_candidate/solution[]": 7.105427357601002e-15,
+      "/chart_candidate/stationary_coordinates[]": 7.105427357601002e-15,
+      "/chart_candidate/force_error_g": 6.03879010734271e-15,
+      "/chart_candidate/history_error": 3.552713678800501e-15,
+      "/load_g": 3.552713678800501e-15,
+      "/turn_dps": 1.4210854715202004e-14,
+      "/pitch_response/margin": 3.8968828164342995e-14,
+      "/pitch_response/gain_rad_s": 8.79296635503124e-13,
+      "/pitch_response/samples[]/gain_rad_s": 8.79296635503124e-13,
+      "/pitch_response/samples[]/margin": 3.8968828164342995e-14,
+      "/pitch_response/samples[]/rounding": 1.2197274440461925e-19,
+      "/stationary_candidates[]/load_g": 3.552713678800501e-15,
+      "/stationary_candidates[]/turn_dps": 1.4210854715202004e-14,
+      "/chart_candidate/load_g": 3.552713678800501e-15,
+      "/chart_candidate/turn_dps": 1.4210854715202004e-14
+     },
+     "examples": [
+      {
+       "speed": 794.0778050181159,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/ps_continuous_mps",
+         "-683.3195390607366",
+         "-683.3195390607369"
+        ],
+        [
+         "/alpha_deg",
+         "23.092021616905363",
+         "23.092021616905367"
+        ],
+        [
+         "/force_error_g",
+         "3.558205468955914e-06",
+         "3.5582054695348966e-06"
+        ],
+        [
+         "/history_error",
+         "9.479838176673638e-07",
+         "9.479838141146502e-07"
+        ],
+        [
+         "/solution[0]",
+         "23.092021616905363",
+         "23.092021616905367"
+        ],
+        [
+         "/solution[2]",
+         "0.014406876361633649",
+         "0.014406876361633913"
+        ]
+       ]
+      },
+      {
+       "speed": 781.5778050181159,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "14.931748897547637",
+         "14.931748897547633"
+        ],
+        [
+         "/turn_dps",
+         "38.570608167793935",
+         "38.57060816779392"
+        ],
+        [
+         "/alpha_deg",
+         "23.343111270581087",
+         "23.343111270581083"
+        ],
+        [
+         "/pitch_response/margin",
+         "0.3793124149525468",
+         "0.3793124149525261"
+        ],
+        [
+         "/pitch_response/gain_rad_s2",
+         "8.569691564284819",
+         "8.56969156428435"
+        ],
+        [
+         "/pitch_response/samples[0]/gain_rad_s2",
+         "8.569691564284819",
+         "8.56969156428435"
+        ]
+       ]
+      },
+      {
+       "speed": 769.0778050181159,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/pitch_response/margin",
+         "0.36669387095574707",
+         "0.366693870955727"
+        ],
+        [
+         "/pitch_response/gain_rad_s2",
+         "8.28460458642658",
+         "8.284604586426127"
+        ],
+        [
+         "/pitch_response/samples[0]/gain_rad_s2",
+         "8.28460458642658",
+         "8.284604586426127"
+        ],
+        [
+         "/pitch_response/samples[0]/margin",
+         "0.36669387095574707",
+         "0.366693870955727"
+        ],
+        [
+         "/pitch_response/samples[0]/rounding",
+         "1.4845725394256224e-06",
+         "1.4845725394255413e-06"
+        ],
+        [
+         "/solution[2]",
+         "0.015462397738330639",
+         "0.015462397738330644"
+        ]
+       ]
+      },
+      {
+       "speed": 750.3278050181159,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/pitch_response/margin",
+         "0.3630637844694589",
+         "0.3630637844694788"
+        ],
+        [
+         "/pitch_response/gain_rad_s2",
+         "8.202591131783764",
+         "8.202591131784214"
+        ],
+        [
+         "/pitch_response/samples[0]/gain_rad_s2",
+         "8.202591131783764",
+         "8.202591131784214"
+        ],
+        [
+         "/pitch_response/samples[0]/margin",
+         "0.3630637844694589",
+         "0.3630637844694788"
+        ],
+        [
+         "/pitch_response/samples[0]/rounding",
+         "1.4845591448702115e-06",
+         "1.4845591448702926e-06"
+        ],
+        [
+         "/solution[2]",
+         "0.01667954098290111",
+         "0.0166795409829011"
+        ]
+       ]
+      },
+      {
+       "speed": 680.0153050181159,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "11.978092466869123",
+         "11.978092466869121"
+        ],
+        [
+         "/ps_continuous_mps",
+         "-637.1094171298919",
+         "-637.109417129892"
+        ],
+        [
+         "/alpha_deg",
+         "27.38300375507421",
+         "27.383003755074213"
+        ],
+        [
+         "/pitch_response/margin",
+         "0.3562896721973445",
+         "0.35628967219738344"
+        ],
+        [
+         "/pitch_response/gain_rad_s2",
+         "8.049545646043152",
+         "8.049545646044031"
+        ],
+        [
+         "/pitch_response/samples[0]/gain_rad_s2",
+         "8.049545646043152",
+         "8.049545646044031"
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   "a6m2_zero:sb": {
+    "operating_point": {
+     "checked": 286,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    },
+    "event": {
+     "checked": 15,
+     "mismatched": 15,
+     "decision": 0,
+     "worst": {
+      "/load_g": 4.440892098500626e-14,
+      "/turn_dps": 2.0605739337042905e-13,
+      "/ps_continuous_mps": 4.709477252617944e-11,
+      "/alpha_deg": 1.55964130499342e-12,
+      "/bank_deg": 1.4210854715202004e-14,
+      "/upright_bank_margin_deg": 1.4210854715202004e-14,
+      "/force_error_g": 1.472672064996945e-14,
+      "/angular_error_rad_s": 1.915134717478395e-15,
+      "/force_n[]": 2.1827872842550278e-11,
+      "/moment_nm[]": 1.3096723705530167e-10,
+      "/engine_force_n[]": 1.9099388737231493e-11,
+      "/solution[]": 1.55964130499342e-12,
+      "/_propulsion_seed/transmissions[]/outputs[]": 1.9099388737231493e-11,
+      "/_propulsion_seed/propellers[]/pitch": 2.220446049250313e-16,
+      "/_propulsion_seed/propellers[]/governor_pitch": 2.220446049250313e-16,
+      "/_propulsion_seed/propellers[]/flow[]": 1.4210854715202004e-14,
+      "/_propulsion_seed/propellers[]/equilibrium_flow[]": 1.4210854715202004e-14,
+      "/_propulsion_seed/propellers[]/outputs[]": 1.9099388737231493e-11,
+      "/_propulsion_seed/aggregate_force[]": 1.9099388737231493e-11,
+      "/_propulsion_seed/aggregate_moment[]": 1.0459189070388675e-11,
+      "/_propulsion_seed/engine_wash[]": 1.4210854715202004e-14,
+      "/_propulsion_seed/per_engine_force[][]": 1.9099388737231493e-11,
+      "/propulsion/stationarity/residual": 4.451988865384368e-15,
+      "/propulsion/stationarity/shaft_torque_residual_nm[]": 1.0459189070388675e-11,
+      "/propulsion/stationarity/induced_flow_residual_mps[][]": 2.1316282072803006e-14,
+      "/propulsion/phase_check/force_error_g": 1.472672064996945e-14,
+      "/propulsion/phase_check/angular_error_rad_s": 1.915134717478395e-15,
+      "/propulsion/propeller_pitch_deg[]": 1.4210854715202004e-14,
+      "/propulsion/wash_mps[]": 1.4210854715202004e-14,
+      "/stationary_coordinates[]": 1.55964130499342e-12,
+      "/stationary_residual[]": 7.66053886991358e-14,
+      "/propeller_admission[]/rotors[]/torque": 1.5006662579253316e-11,
+      "/propeller_admission[]/rotors[]/power": 2.6775524020195007e-09,
+      "/propeller_admission[]/rotors[]/sections[]/alpha_deg": 1.2878587085651816e-14,
+      "/propeller_admission[]/rotors[]/sections[]/stall_margins_deg/lower_deg": 1.4210854715202004e-14,
+      "/propeller_admission[]/rotors[]/sections[]/stall_margins_deg/upper_deg": 1.4210854715202004e-14,
+      "/stationary_candidates[]/load_g": 4.440892098500626e-14,
+      "/stationary_candidates[]/solution[]": 1.55964130499342e-12,
+      "/stationary_candidates[]/stationary_coordinates[]": 1.55964130499342e-12,
+      "/stationary_candidates[]/turn_dps": 2.0605739337042905e-13,
+      "/stationary_candidates[]/force_error_g": 1.472672064996945e-14,
+      "/stationary_candidates[]/angular_error_rad_s": 1.915134717478395e-15,
+      "/chart_candidate/load_g": 4.440892098500626e-14,
+      "/chart_candidate/solution[]": 1.55964130499342e-12,
+      "/chart_candidate/stationary_coordinates[]": 1.55964130499342e-12,
+      "/chart_candidate/turn_dps": 2.0605739337042905e-13,
+      "/chart_candidate/force_error_g": 1.472672064996945e-14,
+      "/chart_candidate/angular_error_rad_s": 1.915134717478395e-15,
+      "/propeller_admission[]/margins[]/value": 5.684341886080802e-14,
+      "/propeller_admission[]/rotors[]/sections[]/mach": 2.220446049250313e-16,
+      "/_propulsion_seed/transmissions[]/omega": 2.842170943040401e-14,
+      "/_propulsion_seed/transmissions[]/previous_omega": 2.842170943040401e-14,
+      "/_propulsion_seed/engines[]/omega": 2.842170943040401e-14,
+      "/_propulsion_seed/engine_angular_momentum[]": 7.275957614183426e-12,
+      "/propulsion/stationarity/shaft_rpm_error[]": 2.8421709430404007e-13,
+      "/propulsion/engine_rpm[]": 4.547473508864641e-13,
+      "/propulsion/shaft_power_kw[]": 1.1368683772161603e-13,
+      "/propulsion/angular_momentum[]": 7.275957614183426e-12,
+      "/propeller_admission[]/rotors[]/sections[]/margins[]/value": 5.684341886080802e-14,
+      "/propeller_admission[]/rotors[]/sections[]/critical_deg[]": 8.881784197001252e-15,
+      "/propeller_admission[]/rotors[]/margins[]/value": 5.684341886080802e-14
+     },
+     "examples": [
+      {
+       "speed": 459.9964366210937,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "13.603929517685232",
+         "13.603929517685188"
+        ],
+        [
+         "/turn_dps",
+         "59.67982470016069",
+         "59.67982470016048"
+        ],
+        [
+         "/ps_continuous_mps",
+         "-186.52757839963917",
+         "-186.52757839968626"
+        ],
+        [
+         "/alpha_deg",
+         "16.611729805486295",
+         "16.611729805487855"
+        ],
+        [
+         "/bank_deg",
+         "87.13852582384837",
+         "87.13852582384835"
+        ],
+        [
+         "/upright_bank_margin_deg",
+         "2.8614741761516314",
+         "2.8614741761516456"
+        ]
+       ]
+      },
+      {
+       "speed": 359.9964366210937,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/ps_continuous_mps",
+         "-78.74779549726325",
+         "-78.74779549726371"
+        ],
+        [
+         "/alpha_deg",
+         "16.94652206438032",
+         "16.946522064380353"
+        ],
+        [
+         "/force_error_g",
+         "3.0597924758921678e-06",
+         "3.0597924777217636e-06"
+        ],
+        [
+         "/force_n[0]",
+         "36341.83782507934",
+         "36341.83782507933"
+        ],
+        [
+         "/moment_nm[0]",
+         "-424.01497166587296",
+         "-424.01497166587205"
+        ],
+        [
+         "/engine_force_n[0]",
+         "5762.8925125793385",
+         "5762.892512579336"
+        ]
+       ]
+      },
+      {
+       "speed": 331.8714366210937,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "7.269285567381715",
+         "7.269285567381714"
+        ],
+        [
+         "/ps_continuous_mps",
+         "-55.88130133197095",
+         "-55.88130133197096"
+        ],
+        [
+         "/force_error_g",
+         "8.894948681410494e-07",
+         "8.894948681132939e-07"
+        ],
+        [
+         "/force_n[0]",
+         "32042.451966555607",
+         "32042.451966555604"
+        ],
+        [
+         "/moment_nm[0]",
+         "-434.4824593051885",
+         "-434.4824593051867"
+        ],
+        [
+         "/engine_force_n[0]",
+         "6247.237122805605",
+         "6247.237122805603"
+        ]
+       ]
+      },
+      {
+       "speed": 303.7464366210937,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/ps_continuous_mps",
+         "-36.990119706042954",
+         "-36.99011970604291"
+        ],
+        [
+         "/alpha_deg",
+         "16.70453683612321",
+         "16.704536836123207"
+        ],
+        [
+         "/force_error_g",
+         "3.41460167640224e-07",
+         "3.4146016747369054e-07"
+        ],
+        [
+         "/force_n[0]",
+         "28220.292984329444",
+         "28220.292984329448"
+        ],
+        [
+         "/engine_force_n[0]",
+         "6777.359390579444",
+         "6777.359390579446"
+        ],
+        [
+         "/solution[0]",
+         "16.70453683612321",
+         "16.704536836123207"
+        ]
+       ]
+      },
+      {
+       "speed": 275.6214366210937,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "5.085935897431271",
+         "5.085935897431272"
+        ],
+        [
+         "/turn_dps",
+         "36.60923285436193",
+         "36.609232854361935"
+        ],
+        [
+         "/force_error_g",
+         "1.4725442235309582e-07",
+         "1.4725442218060386e-07"
+        ],
+        [
+         "/solution[2]",
+         "0.14944477820763635",
+         "0.14944477820763633"
+        ],
+        [
+         "/solution[4]",
+         "-0.36484612386299925",
+         "-0.36484612386299936"
+        ],
+        [
+         "/propulsion/phase_check/force_error_g",
+         "1.4725442235309582e-07",
+         "1.4725442218060386e-07"
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   "ki_61_1a_otsu:rb": {
+    "instructor": {
+     "checked": 1355,
+     "mismatched": 926,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 1.9206858326015208e-14
+     },
+     "examples": [
+      {
+       "speed": 131.94395376925996,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.3378283810184936",
+         "-0.33782838101849616"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.0017553874611755265",
+         "-0.0017553874611755402"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.1338632417958897",
+         "-0.13386324179588976"
+        ]
+       ]
+      },
+      {
+       "speed": 131.94395376925996,
+       "load": 6.551499520919202,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.3378911333744006",
+         "-0.33789113337440385"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.0017551639962624982",
+         "-0.0017551639962624425"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.1338614096471428",
+         "-0.13386140964714308"
+        ]
+       ]
+      },
+      {
+       "speed": 131.94395376925996,
+       "load": 6.551499520919202,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.3378911333744006",
+         "-0.33789113337440385"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.0017551639962624982",
+         "-0.0017551639962624425"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.1338614096471428",
+         "-0.13386140964714308"
+        ]
+       ]
+      },
+      {
+       "speed": 131.94395376925996,
+       "load": 9.429649871280272,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.33801647746713914",
+         "-0.33801647746713165"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.0017546499208286196",
+         "-0.0017546499208287028"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.13385693200230883",
+         "-0.13385693200230817"
+        ]
+       ]
+      },
+      {
+       "speed": 131.94395376925996,
+       "load": 9.429649871280272,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.33801647746713914",
+         "-0.33801647746713165"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.0017546499208286196",
+         "-0.0017546499208287028"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.13385693200230883",
+         "-0.13385693200230817"
+        ]
+       ]
+      }
+     ]
+    },
+    "operating_point": {
+     "checked": 58,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   }
+  },
+  "finish_rows": 4204,
+  "method": "scripts/verify_march_native.py"
+ }
+}

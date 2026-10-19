@@ -133,6 +133,10 @@ def fingerprint():
 
     from em_backend import signature
     h.update(signature().encode())
+    # The march chart's compiled loop: its sources and verification record.
+    from em_march_native import native_digest,STAMP
+    h.update(native_digest().encode())
+    if STAMP.is_file():h.update(STAMP.read_bytes())
     for name in AIRCRAFT:h.update(source(name).read_bytes())
     for path in asset_sources():h.update(path.name.encode());h.update(path.read_bytes())
     return h.hexdigest()

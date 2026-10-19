@@ -29,6 +29,10 @@ def stationary_frozen_point(core, speed, load, x, *args, history_initial=None, *
     """
     if core.config.get('trim_solver_mode') == 'off':
         raise ValueError('Correction is off; conditional history correction is unavailable')
+    native = getattr(core, 'native_loop', None)
+    if native is not None:
+        handled, value = native.frozen_point(core, speed, load, x, args, kwargs, history_initial)
+        if handled:return value
     if (core.config.get('trim_solver_mode') != 'stationary'
             or core.config.get('experimental_instantaneous_aero',False)
             or kwargs.get('stationary_angles') is not None):

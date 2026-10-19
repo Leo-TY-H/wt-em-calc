@@ -12,6 +12,8 @@ if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" scripts\build_em_backend.py
 if errorlevel 1 goto failed
+".venv\Scripts\python.exe" scripts\build_march_native.py
+if errorlevel 1 goto failed
 echo Setup complete. Use Launch EM Plotter.cmd or Launch Altitude Plotter.cmd.
 pause
 exit /b 0

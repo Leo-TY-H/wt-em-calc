@@ -287,6 +287,11 @@ class JointProblem:
 
     def correct(self, initial, *, offset=0, max_nfev=120, trace=None, residual_scale=None,
                 numerical_target=PRODUCTION_NUMERICAL_TARGET, warm_start=False):
+        native=getattr(self.solver,'native_loop',None)
+        if native is not None:
+            handled,fit=native.joint_correct(self,initial,offset=offset,max_nfev=max_nfev,trace=trace,
+                residual_scale=residual_scale,numerical_target=numerical_target,warm_start=warm_start)
+            if handled:return fit
         cache = getattr(getattr(self, 'solver', None), '_stationary_predictors', None)
         key = (None if cache is None else (id(self.solver.engine), self.speed,
             self.solver.sideslip_attitude_deg, tuple(self.coordinate_names),
@@ -488,7 +493,9 @@ def solve(solver, speed_kmh, load, initial=None, detailed=False, exhaustive=True
     slip_trials = [solver.sideslip_attitude_deg]
     # Finite fallback sampling is explicitly incomplete; the reported beta
     # limit is enforced independently of these attitude-side search seeds.
-    if extended and solver.sideslip_attitude_deg == 0. and solver.config.get('experimental_lateral_trim','full')=='full':
+    # sideslip_recovery=False is the zero-sideslip policy of the march chart.
+    if (extended and solver.sideslip_attitude_deg == 0. and solver.config.get('experimental_lateral_trim','full')=='full'
+            and solver.config.get('sideslip_recovery',True)):
         slip_trials += [-.5, .5, -1., 1., -2., 2.]
     for slip in slip_trials:
         view = solver.at_sideslip(slip)

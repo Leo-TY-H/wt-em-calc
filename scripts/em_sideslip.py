@@ -13,6 +13,7 @@ def recover_local_sideslip(solver, speed, load, failed):
     the complete aircraft, propulsion and Instructor with the usual tolerances.
     Failure here leaves the existing exhaustive recovery available.
     """
+    if not solver.config.get('sideslip_recovery',True):return None  # zero-sideslip policy (march chart)
     if solver.config.get('experimental_lateral_trim','full')!='full':return None
     if (not solver.is_prop or not solver.engine.automatic or failed['converged'] or
             failed['force_error_g'] > .015 or failed['angular_error_rad_s2'] > .008 or
@@ -171,6 +172,7 @@ def recover_fixed_alpha(solver,speed_kmh,load,failed):
 
 
 def recover_scalar_sideslip(solver,speed,load,failed):
+    if not solver.config.get('sideslip_recovery',True):return None  # zero-sideslip policy (march chart)
     if solver.config.get('trim_solver_mode') == 'off':
         raise ValueError('Correction is off; sideslip correction is unavailable')
     if solver.config.get('experimental_lateral_trim','full')!='full':return None
@@ -249,6 +251,7 @@ def recover_scalar_sideslip(solver,speed,load,failed):
 
 
 def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
+    if not solver.config.get('sideslip_recovery',True):return None  # zero-sideslip policy (march chart)
     if solver.config.get('experimental_lateral_trim','full')!='full':return None
     if not needs_sideslip_search(failed):
         return None
@@ -324,6 +327,7 @@ def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
 
 
 def recover_sideslip_boundary(solver,speed_kmh,low,high):
+    if not solver.config.get('sideslip_recovery',True):return None  # zero-sideslip policy (march chart)
     if solver.config.get('experimental_lateral_trim','full')!='full':return None
     for magnitude in SEARCH_ANGLES:
         candidates=[]

@@ -107,6 +107,17 @@
 !/scripts/em_pitch_limit.py
 !/scripts/em_pitch_response.py
 !/scripts/em_plot.py
+!/scripts/em_march.py
+!/scripts/em_march_chart.py
+!/scripts/em_march_curves.py
+!/scripts/em_march_native.py
+!/scripts/build_march_native.py
+!/scripts/verify_march_native.py
+!/scripts/march_native/
+!/scripts/march_native/*.pyx
+!/scripts/march_native/*.pxi
+!/scripts/march_native/verified.json
+!/scripts/march_native/events.sha256
 !/scripts/em_prop_branch_recovery.py
 !/scripts/em_prop_derivative.py
 !/scripts/em_recovery.py

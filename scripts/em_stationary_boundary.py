@@ -70,6 +70,14 @@ class Curve:
     def correct(self, seed, *, alpha=None, elevator=None, event=None, events=None, load=None,
                 max_nfev=40, max_evaluations=None, event_tolerance=2e-6):
         from em_stationary import BranchUnavailable
+        # Solver option: the compiled evaluate-and-correct loop of the march
+        # chart (em_march_native). It reproduces this correction; anything it
+        # does not cover continues here unchanged.
+        native=getattr(self.solver,'native_loop',None)
+        if native is not None:
+            handled,point=native.correct(self,seed,alpha=alpha,elevator=elevator,event=event,events=events,
+                load=load,max_nfev=max_nfev,max_evaluations=max_evaluations,event_tolerance=event_tolerance)
+            if handled:return point
         try:
             return self._correct(seed,alpha=alpha,elevator=elevator,event=event,events=events,load=load,
                 max_nfev=max_nfev,max_evaluations=max_evaluations,event_tolerance=event_tolerance)
