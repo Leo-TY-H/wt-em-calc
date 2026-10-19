@@ -149,6 +149,7 @@ cdef class Finisher:
     cdef public dict loop_stats
     cdef public list python_instructors
     cdef double flaps_percent
+    cdef FrozenState* chain     # the frozen-history predictor chain of a point solve (its candidates share it), or NULL
 
     def __init__(self, Model model, solver):
         from em_model_experiments import description
@@ -181,6 +182,7 @@ cdef class Finisher:
         from prop_admission import REVISION as admission_revision
         self.admission_revision = admission_revision
         self.instructor = None;self.loop_stats = None;self.python_instructors = []
+        self.chain = NULL
 
     def set_prop(self, PropModel pm, layout):
         self.pm = pm;self.layout = dict(layout)
@@ -237,7 +239,23 @@ cdef class Finisher:
 
     cdef int pitch_core(self, Eval* e, bint jet, PitchRes* pr) except -1:
         """The native steady pitch response at the state (phase-fixed propulsion already set on the model)."""
-        cdef FrozenState st
+        cdef FrozenState local
+        cdef int i
+        if self.chain != NULL and jet:
+            return self.pitch_steps(e, self.chain, pr)
+        previous = self.solver.__dict__.get('_stationary_frozen_predictor')
+        local.valid = False;local.has_pred = False
+        # The propulsion record of a native finish is a fresh object, so only a
+        # direct-thrust predictor (propulsion None) can match ``previous`` (as S2-S4).
+        if previous is not None and previous['key'][2] == 0. and jet and previous['propulsion'] is None:
+            local.valid = True;local.speed = previous['key'][0];local.load = previous['key'][1]
+            for i in range(5):local.attitude[i] = float(previous['attitude'][i])
+            local.angles[0] = float(previous['angles'][0]);local.angles[1] = float(previous['angles'][1])
+            if isinstance(previous['predictor'], NativePredictor):
+                local.has_pred = True;local.pred = (<NativePredictor>previous['predictor']).p
+        return self.pitch_steps(e, &local, pr)
+
+    cdef int pitch_steps(self, Eval* e, FrozenState* st, PitchRes* pr) except -1:
         cdef double x[5]
         cdef double lo[5]
         cdef double hi[5]
@@ -246,16 +264,6 @@ cdef class Finisher:
         cdef bint ca, cb
         cdef int i, k
         cdef double[2] steps_ = [.002, .0005]
-        previous = self.solver.__dict__.get('_stationary_frozen_predictor')
-        st.valid = False;st.has_pred = False
-        # The propulsion record of a native finish is a fresh object, so only a
-        # direct-thrust predictor (propulsion None) can match ``previous`` (as S2-S4).
-        if previous is not None and previous['key'][2] == 0. and jet and previous['propulsion'] is None:
-            st.valid = True;st.speed = previous['key'][0];st.load = previous['key'][1]
-            for i in range(5):st.attitude[i] = float(previous['attitude'][i])
-            st.angles[0] = float(previous['angles'][0]);st.angles[1] = float(previous['angles'][1])
-            if isinstance(previous['predictor'], NativePredictor):
-                st.has_pred = True;st.pred = (<NativePredictor>previous['predictor']).p
         for i in range(5):x[i] = e.x[i]
         hist[0] = e.cycle_input.aoa[0];hist[1] = e.cycle_input.aoa[1]
         sign = 1. if self.invert_elevator else -1.
@@ -266,8 +274,8 @@ cdef class Finisher:
             for i in range(5):
                 lo[i] = x[i];hi[i] = x[i]
             lo[3] = pmax(-1., x[3]-step);hi[3] = pmin(1., x[3]+step)
-            self.frozen(&st, e.speed, e.load, lo, hist, &ma, &ca)
-            self.frozen(&st, e.speed, e.load, hi, hist, &mb, &cb)
+            self.frozen(st, e.speed, e.load, lo, hist, &ma, &ca)
+            self.frozen(st, e.speed, e.load, hi, hist, &mb, &cb)
             if not ca or not cb:
                 pr.unresolved = True;pr.normal = False;pr.reversed_ = False;pr.failed_step = step
                 return 0

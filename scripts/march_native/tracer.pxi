@@ -253,29 +253,27 @@ cdef class NTracer:
         from em_trim_work import Work, use, current
         cdef int level, retry
         cdef Trial* t
+        cdef LevelSolver ls = LevelSolver(self.eng.points_())
+        cdef long e0
         solver = self.eng.solver
         seed = None
-        if nearest >= 0:seed = self.S.continuation_initial(solver, self.eng.row_of(nearest))
+        if nearest >= 0:seed = self.eng.initial_dict(nearest, None)
         if solver.is_prop and hasattr(solver.engine, 'reset_search'):solver.engine.reset_search()
-        saved = <size_t>g_sink;g_sink = NULL
-        try:
+        # trial work: native charges plus the Python ones (propeller branch recovery) of the solve
+        e0 = self.eng.counts[K_EVAL]
+        w = Work({}, parent=current())
+        with use(w):level = ls.solve(speed, seed)
+        t = march.trial('level');t.ok = int(self.eng.st[level].valid)
+        t.evals = self.eng.counts[K_EVAL]-e0+w.counts.get('aircraft_evaluations', 0)
+        t.fresh = -1
+        if (not self.eng.st[level].valid and not self.eng.physical(level) and nearest >= 0
+                and speed > self.eng.st[nearest].speed):
+            e0 = self.eng.counts[K_EVAL]
             w = Work({}, parent=current())
-            with use(w):row = self.S.solve_level(solver, speed, seed)
-            self.eng.stats['python_calls'] += 1
-            level = self.eng.import_row(row)
-            t = march.trial('level');t.ok = int(self.eng.st[level].valid);t.evals = w.counts.get('aircraft_evaluations', 0)
-            t.fresh = -1
-            if (not self.eng.st[level].valid and not self.eng.physical(level) and nearest >= 0
-                    and speed > self.eng.st[nearest].speed):
-                w = Work({}, parent=current())
-                with use(w):row = self.S.solve_level(solver, speed, None)
-                self.eng.stats['python_calls'] += 1
-                retry = self.eng.import_row(row)
-                t = march.trial('level retry');t.ok = int(self.eng.st[retry].valid)
-                t.evals = w.counts.get('aircraft_evaluations', 0);t.fresh = -1
-                if self.eng.st[retry].valid or self.eng.physical(retry):level = retry
-        finally:
-            g_sink = <long*>saved
+            with use(w):retry = ls.solve(speed, None)
+            t = march.trial('level retry');t.ok = int(self.eng.st[retry].valid)
+            t.evals = self.eng.counts[K_EVAL]-e0+w.counts.get('aircraft_evaluations', 0);t.fresh = -1
+            if self.eng.st[retry].valid or self.eng.physical(retry):level = retry
         return level
 
     @cython.boundscheck(True)
