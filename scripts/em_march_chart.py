@@ -257,10 +257,12 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
                                     march=M.stats(), native=N.summary(loops), native_status=native,
                                     curve_status=(result or {}).get('status'))
     if engine is not None:
-        timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows))
+        timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows, point_s=engine.t_point, python_s=engine.t_python, ledger_s=engine.t_ledger))
         if curve_engine is not None:
-            timers['curves'] = dict(solve_s=curve_engine.t_solve, finish_s=curve_engine.t_finish, rows_s=curve_engine.t_rows)
+            timers['curves'] = dict(solve_s=curve_engine.t_solve, finish_s=curve_engine.t_finish, rows_s=curve_engine.t_rows, point_s=curve_engine.t_point, python_s=curve_engine.t_python, ledger_s=curve_engine.t_ledger)
         row['chart_solver_work']['native_timers'] = timers
+        row['chart_solver_work']['native_python'] = dict(envelope=engine.python_counts(),
+                                                         curves=curve_engine.python_counts() if curve_engine is not None else None)
     return row
 
 

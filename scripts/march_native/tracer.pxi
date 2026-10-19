@@ -225,6 +225,9 @@ cdef class NTracer:
         if not self.eng.st[level].valid:
             if not self.eng.physical(level) and healthy:
                 reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
+                # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
+                # (their march from level flight reached it without a limit) instead of the production column
+                if self.interior_march(col, march, speed, seeds, 'level flight unresolved: '+reasons, started):return 0
                 self.production(col, speed, seeds, 'level flight unresolved: '+reasons)
                 return 0
             reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
@@ -244,6 +247,49 @@ cdef class NTracer:
         col.region = True
         col.evidence = march.evidence;col.evidence_list = list(getattr(self.eng.solver, 'stationary_boundary_evidence', []))
         return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint interior_march(self, NColumn col, NMarch march, double speed, list seeds, why, double started) except -1:
+        """Where level flight at this speed is numerically unresolved above an admitted neighbouring speed: the
+        march from the lowest-alpha admitted state of this speed that the nearest neighbouring columns' marches
+        passed (their samples above level flight, corrected at the same alpha here). The boundary is the first
+        limit along alpha from that state; the neighbours' paths from level flight to it had none. False when
+        no such state closes or the march from it is unresolved (then the production column, as before)."""
+        cdef int sid, start = -1, p, boundary
+        cdef double d, best = INFINITY, predicted
+        cdef bint has_predicted
+        above = [sid for sid in seeds if self.eng.st[sid].valid and self.eng.st[sid].has_coords
+                 and self.eng.st[sid].load > 1.+1e-9 and self.eng.st[sid].speed != speed]
+        if not above:return False
+        for sid in above:
+            d = fabs(self.eng.st[sid].speed-speed)
+            if d < best:best = d
+        # the nearest neighbouring speed on each side
+        sides = {}
+        for sid in above:
+            side = self.eng.st[sid].speed > speed
+            d = fabs(self.eng.st[sid].speed-speed)
+            if side not in sides or d < sides[side]:sides[side] = d
+        near = [sid for sid in above if fabs(self.eng.st[sid].speed-speed) == sides[self.eng.st[sid].speed > speed]]
+        near.sort(key=lambda q: (self.eng.st[q].alpha, fabs(self.eng.st[q].speed-speed)))
+        for sid in near[:4]:
+            p = march.at_state(sid, self.eng.st[sid].alpha, 'interior start')
+            if p >= 0 and self.eng.st[p].valid:
+                start = p;break
+        if start < 0:return False
+        has_predicted = self.predicted_alpha(speed, seeds, &predicted)
+        boundary, status, reason = march.run(start, has_predicted, predicted)
+        if boundary < 0:return False
+        march.s3_path = 'interior start'
+        march.s3_flags.add(why[:80])
+        self.column_record(col, march, start, boundary,
+                           STATUS_VERIFIED if status == 'verified limit' else STATUS_CEILING if status == 'plot ceiling' else STATUS_UNRESOLVED,
+                           reason, started)
+        col.region = True
+        col.evidence = march.evidence;col.evidence_list = list(getattr(self.eng.solver, 'stationary_boundary_evidence', []))
+        self.eng.stats['interior_starts'] = self.eng.stats.get('interior_starts', 0)+1
+        return True
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -282,12 +328,14 @@ cdef class NTracer:
         """em_march.production_column: the production boundary column search at this speed."""
         global g_sink
         rows = [self.eng.row_of(sid) for sid in seeds]
+        cdef double t0 = s5_now()
         saved = <size_t>g_sink;g_sink = NULL
         try:
             self.eng.flush_counts()
             record = self.M.production_column((self.aircraft, self.cj, float(speed), rows), why)
         finally:
             g_sink = <long*>saved
+            self.eng.t_python += s5_now()-t0
         self.eng.stats['python_calls'] += 1
         col.record = record
         return 0

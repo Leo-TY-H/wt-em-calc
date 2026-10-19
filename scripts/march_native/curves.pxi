@@ -150,8 +150,10 @@ cdef class NCurves:
         cdef double sol[5]
         cdef int i, p
         if self.check is not None:self.check()
+        cdef double t0 = s5_now()
         self.eng.flush_counts()
         before = self.ledger.snapshot()
+        self.eng.t_ledger += s5_now()-t0
         for i in range(5):sol[i] = attitude[i]
         p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, self.max_nfev, 0, self.allowance, speed,
                              NULL, NULL)
@@ -161,8 +163,10 @@ cdef class NCurves:
         elif not self.eng.st[p].valid and self.balanced(p):outcome, reason = 'rejected', self.eng.reason_list(p)
         elif not self.eng.st[p].valid:outcome, reason = 'unresolved', ['unclosed']+self.eng.reason_list(p)
         else:outcome, reason = 'unresolved', 'SEP constraint did not close'
+        t0 = s5_now()
         self.ledger.charge(phase, before, outcome, kind='direct', speed_kmh=speed, target_mps=target,
                            seed_load_g=load, reason=reason)
+        self.eng.t_ledger += s5_now()-t0
         return outcome, (None if p < 0 else p), reason
 
     @cython.boundscheck(True)

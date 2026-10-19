@@ -1,5 +1,6 @@
 # Native port of em_stationary_corrector.Corrector.solve (production mode:
-# componentwise residual-scale target, reuse_jacobian=True) and
+# componentwise residual-scale target, reuse_jacobian=True; S5: also a raw
+# numerical target and reuse_jacobian=False, as the propeller wake probes) and
 # em_trim_numerics.jacobian (actual_step, prefer_informative, nominal
 # fallback stencils, branch-aware columns, projected stencils).
 #
@@ -83,6 +84,12 @@ cdef class NativeCorrector:
     cdef bint has_dep
     cdef bint dep[NMAX*NMAX]
     cdef public long evaluations, derivative_samples, nominal_comparisons, nominal_restorations, branch_secants
+    # numerical_target (negative: None, the componentwise production target) and reuse_jacobian
+    cdef double target
+    cdef bint reuse
+
+    def __cinit__(self, *args, **kwargs):
+        self.target = -1.;self.reuse = True
 
     # ---- evaluator interface (subclasses) ------------------------------
     cdef int evaluate(self, const double* q, Sample* out) except -1:
@@ -322,11 +329,17 @@ cdef int st_sample(SolveState* st, const double* q, bint objective, Sample* out)
         if fabs(w[i]) > k0 or i == 0:
             k0 = pmax(k0, fabs(w[i])) if i else fabs(w[i])
     norm = vector_norm(c.m, w)
+    cdef bint met = True
+    cdef double raw = 0.
+    if c.target >= 0.:
+        for i in range(c.m):
+            raw = pmax(raw, fabs(out.r[i]))
+        met = raw == 0. if c.target == 0. else raw < c.target
     if not st.has_best or norm < st.best_norm:
         st.best_value = out[0]; st.best_norm = norm; st.has_best = True
     if not st.has_return or (k0 < st.return_key0 or (k0 == st.return_key0 and norm < st.return_key1)):
         st.return_value = out[0]; st.return_key0 = k0; st.return_key1 = norm; st.has_return = True
-    if k0 <= 1.:
+    if met and k0 <= 1.:
         st.best_value = out[0]; st.best_norm = norm
         st.return_value = out[0]; st.return_key0 = k0; st.return_key1 = norm
         return CLOSED
@@ -377,7 +390,7 @@ cdef void accept(SolveState* st, const Sample* trial, int kind, bint relaxed, bi
     cdef int i, j
     for i in range(st.n):
         displacement[i] = trial.q[i]-st.x[i]
-    if st.has_matrix:
+    if c.reuse and st.has_matrix:
         if kind == 0 and not relaxed and not empirical and same_br(st.value.br, trial.br):
             for j in range(st.n):
                 scaled[j] = displacement[j]/c.scale[j]
@@ -522,6 +535,8 @@ cdef int jacobian(SolveState* st, const Sample* base, double* matrix) except -1:
     cdef double tmp[NMAX*NMAX]
     for i in range(st.m):
         required[i] = fabs(base.r[i]/c.rscale[i]) > 1.
+        if c.target >= 0.:
+            required[i] = required[i] or ((fabs(base.r[i]) > 0.) if c.target == 0. else (fabs(base.r[i]) >= c.target))
     for axis in range(st.n):
         h = st.stencil[axis]
         matched = False; has_last = False; has_zero = False; nseen = 0
@@ -671,7 +686,7 @@ cdef int run_solve(SolveState* st, const Predictor* predictor) except -1:
     if code != OK:
         return code
     remember(st, st.x, c.merit(st.value.r))
-    if predictor != NULL and predictor.valid:
+    if c.reuse and predictor != NULL and predictor.valid:
         v = 0.
         for i in range(st.n):
             v = pmax(v, fabs(predictor.x[i]-st.x[i])/c.step_limit[i])
@@ -683,7 +698,9 @@ cdef int run_solve(SolveState* st, const Predictor* predictor) except -1:
             st.matrix_value = st.value
             st.has_matrix = True
     while st.used < st.max_nfev:
-        if st.return_key0 < st.progress_ratio*(1.-PROGRESS_FRACTION):
+        if c.target >= 0.:
+            pass
+        elif st.return_key0 < st.progress_ratio*(1.-PROGRESS_FRACTION):
             st.progress_ratio = st.return_key0; st.progress_iteration = st.iterations
             st.progress_models = st.iterations-st.reuses
         elif (st.iterations-st.progress_iteration >= PROGRESS_WINDOW or
@@ -708,7 +725,7 @@ cdef int run_solve(SolveState* st, const Predictor* predictor) except -1:
         for i in range(st.n):
             st.stencil[i] = pmax_np(st.stencil[i], 8.*spacing(pmax_np(1., fabs(st.x[i]))))
         st.has_sc = False
-        reused = st.has_matrix
+        reused = c.reuse and st.has_matrix
         if reused:
             for i in range(st.n):
                 if st.matrix_x[i] != st.x[i]:
@@ -729,7 +746,7 @@ cdef int run_solve(SolveState* st, const Predictor* predictor) except -1:
             elif code != DERIV_UNAVAILABLE:
                 return code
         if code == OK:
-            code = c.direction(st.matrix, st.value.r, st.x, st.radius, 1e-5, delta)
+            code = c.direction(st.matrix, st.value.r, st.x, st.radius, 1e-5 if c.target < 0. else 1e-10, delta)
         if code != OK:
             st.has_matrix = False; st.matrix_exact = False
             for i in range(st.n):
