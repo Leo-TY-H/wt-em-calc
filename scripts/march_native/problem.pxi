@@ -46,11 +46,18 @@ def decode_branch(code):
     return ('postcrit', 1. if c & 32 else -1., bool(c & 16), bool(c & 8), bool(c & 4), bool(c & 2), bool(c & 1))
 
 
+ctypedef double (*instr_event_t)(object, const Eval*, const PropSample*, int, int, int) except? -1e308
+
+
 cdef class CurveProblem(NativeCorrector):
     cdef Model model
+    cdef object inst                 # native Instructor of the solver (Instructor events), or None
+    cdef instr_event_t instr_event   # its event residual (finish.pxi)
+    cdef double ev_limit             # engine RPM event: the shaft's omega limit of the event's point
     cdef double speed_kmh
     cdef int fixed           # 0: alpha; 3: elevator; nx: load (turn fixed); -1: discrete-SEP event; -3: generic event (S3)
-    cdef int ev_kind, ev_axis, ev_side   # S3 generic event: 1 stall, 2 wing force, 3 control (axis 0-2, side 0/1)
+    cdef int ev_kind, ev_axis, ev_side   # generic events: 1 stall, 2 wing force, 3 control (axis 0-2, side 0/1),
+                                         # S5: 4 Instructor pitch, 5 Instructor control bound, 6 engine RPM (axis = engine)
     cdef double alpha, load, target
     cdef double z[NMAX]
     cdef double zlower[NMAX]
@@ -176,7 +183,7 @@ cdef class CurveProblem(NativeCorrector):
         elif self.fixed == self.nx:
             extra = (hypot2(1., q[self.nx])-self.load)/10.
         elif self.fixed == -3:
-            extra = self.event_value(e)
+            extra = self.event_value(e, &ps if self.prop else NULL)
         else:
             # CurveSolver.event: production discrete energy-step reporting, ps - level
             ensure_complete(self.model, e)
@@ -186,7 +193,7 @@ cdef class CurveProblem(NativeCorrector):
         self.nmemo += 1
         return slot if self.memo_ok(slot) else -1
 
-    cdef double event_value(self, const Eval* e) noexcept:
+    cdef double event_value(self, Eval* e, const PropSample* ps) except? -1e308:
         """Curve.events (em_stationary_boundary) residuals on the value record, same arithmetic:
         stall (v['stall_margin']-.002)/10; wing force 1.-max(maximum_wing_load_ratios)-5e-5
         (Python max keeps the first of equal values); control (non-Instructor)
@@ -198,7 +205,13 @@ cdef class CurveProblem(NativeCorrector):
             m = e.wing_ratios[0]
             if e.wing_ratios[1] > m:m = e.wing_ratios[1]
             return 1.-m-5e-5
-        return (1. if self.ev_side == 0 else -1.)*(e.alloc.commands[self.ev_axis]-e.alloc.bounds[self.ev_axis][self.ev_side])-3e-5
+        if self.ev_kind == 3:
+            return (1. if self.ev_side == 0 else -1.)*(e.alloc.commands[self.ev_axis]-e.alloc.bounds[self.ev_axis][self.ev_side])-3e-5
+        if self.ev_kind == 6:
+            # rpm_limit: 1.-v['propulsion']['state']['engines'][engine]['omega']/limit-5e-6
+            return 1.-ps.frame.engines[self.ev_axis].omega/self.ev_limit-5e-6
+        # Instructor pitch (4) and Instructor control bound (5): instructor_at on the search record
+        return self.instr_event(self.inst, e, ps, self.ev_kind, self.ev_axis, self.ev_side)
 
     cdef bint memo_ok(self, int slot) noexcept:
         cdef int i
@@ -336,7 +349,7 @@ DEF FIX_ELEVATOR = 3
 DEF FIX_LOAD = 100
 DEF FIX_SEP = -1
 DEF FIX_EVENT = -3
-DEF EV_MAX = 3      # generic native events: 1 stall, 2 wing force, 3 control (S3)
+DEF EV_MAX = 6      # generic native events: 1 stall, 2 wing force, 3 control (S3); 4-6 Instructor pitch / bounds, RPM (S5)
 
 
 cdef struct Seed:

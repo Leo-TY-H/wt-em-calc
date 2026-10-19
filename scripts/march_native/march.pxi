@@ -187,7 +187,7 @@ cdef class MarchEngine:
     cdef public dict why_code, solve_of
     cdef public object points, point_solver
     cdef long counts[NCOUNT]
-    cdef bint instructor, structural, is_prop, roll_leveling
+    cdef bint instructor, structural, is_prop, roll_leveling, native_instructor
     cdef public double sep_tol
     cdef public list layout_names
     cdef int layout_nx
@@ -225,8 +225,12 @@ cdef class MarchEngine:
         self.cc = entry[0];self.P = self.cc.problem;self.model = self.cc.model
         if self.cc.finisher is None:raise NativeMarchUnsupported('native finish unavailable: '+str(loop.unsupported))
         self.fin = self.cc.finisher
+        self.P.inst = self.fin.instructor
+        self.P.instr_event = instructor_event
+        if self.fin.instructor is not None:(<Instructor>self.fin.instructor).loop_stats = loop.stats
         cfg = solver.config
         self.instructor = bool(cfg['instructor']);self.structural = bool(cfg['structural_limits'])
+        self.native_instructor = self.instructor and self.cc.finisher is not None and self.cc.finisher.instructor is not None
         self.is_prop = bool(solver.is_prop);self.roll_leveling = bool(solver.fm.get('RollLeveling', True))
         self.sep_tol = cfg['sep_tolerance_mps']
         self.layout_names = list(self.cc.layout['names']);self.layout_nx = len(self.layout_names)
@@ -634,13 +638,14 @@ cdef class MarchEngine:
         out[n].distance = fabs(t.stall_deg)/10. if t.has_stall_deg else INFINITY;n += 1
         if t.pitch_stops:
             for i in range(t.ne):
-                out[n].kind = KD_RPM;out[n].axis = -1;out[n].side = 0;out[n].engine = i;out[n].code = 0
+                out[n].kind = KD_RPM;out[n].axis = -1;out[n].side = 0;out[n].engine = i;out[n].code = 6 if t.rpm_limit[i] > 0. else 0
                 out[n].distance = INFINITY if t.regulated[i] else fabs(1.-t.rpm[i]/t.rpm_limit[i]);n += 1
         if self.structural:
             out[n].kind = KD_WING;out[n].axis = -1;out[n].side = 0;out[n].engine = -1;out[n].code = 2
             out[n].distance = fabs(1.-t.wing_max) if t.has_wing else INFINITY;n += 1
         if self.instructor:
-            out[n].kind = KD_INSTR;out[n].axis = -1;out[n].side = 0;out[n].engine = -1;out[n].code = 0
+            out[n].kind = KD_INSTR;out[n].axis = -1;out[n].side = 0;out[n].engine = -1
+            out[n].code = 4 if self.native_instructor else 0
             out[n].distance = fabs(t.instr_env) if t.instr_has_env else INFINITY;n += 1
         if t.has_pitch_rec:
             out[n].kind = KD_PITCH;out[n].axis = -1;out[n].side = 0;out[n].engine = -1;out[n].code = 0
@@ -648,7 +653,7 @@ cdef class MarchEngine:
         for axis in range(3):
             for side in range(2):
                 out[n].kind = KD_CONTROL;out[n].axis = axis+2;out[n].side = side;out[n].engine = -1
-                out[n].code = 0 if self.instructor else 3
+                out[n].code = (5 if self.native_instructor else 0) if self.instructor else 3
                 if t.has_cb:out[n].distance = fabs(t.commands[axis]-t.bounds[axis][side])
                 else:out[n].distance = fabs(t.authority) if t.has_authority else INFINITY
                 n += 1
@@ -686,6 +691,9 @@ cdef class MarchEngine:
             for i in range(t.nx):sd.coords[i] = t.coords[i]
         sd.nreq = t.nreq;sd.req_ok = t.req_ok
         for i in range(t.nreq):sd.req[i] = t.req[i]
+        if fixed_kind == FIX_EVENT and ev_kind == 6:
+            # engine RPM: the event point's limit, rpm_limit*pi/30 (Curve.events)
+            self.P.ev_limit = t.rpm_limit[ev_axis]*M_PI/30.
         if fixed_kind != FIX_EVENT and fixed_kind != FIX_SEP and preds != NULL:
             key.fixed = self.cc.fixed_index(fixed_kind);key.nreq = t.nreq
             for i in range(t.nreq):key.req[i] = t.req[i]
