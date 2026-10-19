@@ -96,7 +96,8 @@ cdef class NTracer:
     cdef public dict columns, work
     cdef public list witnesses, events
     cdef object N, M, S
-    cdef bint production_fallback
+    cdef bint production_fallback, nudge, s6, probing
+    cdef set check_tried, check_passed
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -109,19 +110,32 @@ cdef class NTracer:
         self.ttol = ttol;self.vtol = vtol;self.place_tol = place_tol;self.max_step = max_step;self.max_depth = max_depth
         self.march_tol = march_tol;self.on_column = on_column
         self.columns = {};self.witnesses = [];self.events = [];self.work = {}
+        self.check_tried = set();self.check_passed = set()
         self.N = N;self.M = M;self.S = S
         import os
         self.production_fallback = os.environ.get('WT_MARCH_PRODUCTION_FALLBACK') == '1'
+        # S6: WT_MARCH_S6=0 restores the S5 tracer and column rescues exactly (rollback / comparison);
+        # WT_MARCH_NUDGE=0 keeps unresolved columns at their requested speed (diagnostics)
+        self.s6 = os.environ.get('WT_MARCH_S6', '1') != '0' and not self.production_fallback
+        self.nudge = self.s6 and os.environ.get('WT_MARCH_NUDGE', '1') != '0'
+        self.probing = False   # nudge and gap probes run without the S6 robust march (they look for speeds outside a band)
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef NColumn column(self, double speed, list neighbours, why, bint keep=True):
-        """MarchTracer.column -> run_column -> sample_with_history -> bounded_column -> march_worker."""
+    cdef NColumn column(self, double speed, list neighbours, why, bint keep=True, double lo=-INFINITY,
+                        double hi=INFINITY):
+        """MarchTracer.column -> run_column -> sample_with_history -> bounded_column -> march_worker.
+
+        S6: a column whose boundary stays unresolved is replaced by the nearest column within the chart's speed
+        tolerance (inside the open interval (lo, hi) the caller allows) whose boundary is verified; the tracer
+        already resolves corners, edges and check intervals only to that tolerance. The column keeps its own
+        speed and records the requested one (nudged_from); a 'nudged' trace event names the reason."""
         global g_sink
         from em_trim_work import Work, use, current
-        cdef NColumn col, c
+        cdef NColumn col, c, alt
         cdef int sid
+        cdef double s, q
         if self.on_column is not None:self.on_column(self, 'start', speed, why)
         seeds = []
         for c in neighbours:
@@ -129,11 +143,26 @@ cdef class NTracer:
             for sid in c.points:
                 if self.eng.st[sid].valid:seeds.append(sid)
         w = Work({}, parent=current())
-        with use(w):col = self.run_column(speed, seeds)
+        with use(w):
+            col = self.run_column(speed, seeds)
+            if col.status == STATUS_UNRESOLVED and col.march and self.nudge:
+                q = .25*self.vtol
+                for k in (1., -1., 2., -2., 4., -4.):
+                    s = speed+k*q
+                    if not (lo < s < hi):continue
+                    self.probing = True
+                    try:alt = self.run_column(s, seeds)
+                    finally:self.probing = False
+                    if NTracer.ok(alt):
+                        alt.nudged_from = speed
+                        self.events.append(dict(kind='nudged', speed_kmh=speed, to_kmh=s, role=why,
+                                                reason=str(col.march_reason)[:80]))
+                        self.eng.stats['s6_nudged'] = self.eng.stats.get('s6_nudged', 0)+1
+                        col = alt;break
         col.role = why;col.evaluations = w.counts.get('aircraft_evaluations', 0)
         row = self.work.setdefault(why, dict(columns=0, evaluations=0))
         row['columns'] += 1;row['evaluations'] += col.evaluations
-        if keep:self.columns[float(speed)] = col
+        if keep:self.columns[float(col.speed)] = col
         if self.on_column is not None:self.on_column(self, 'done', speed, why)
         return col
 
@@ -249,6 +278,12 @@ cdef class NTracer:
             if out is not None and out[0] >= 0:
                 march.s3_flags.add('march unresolved: '+str(reason)[:60])
                 boundary, status, reason = out
+        if boundary < 0 and self.s6 and not self.probing:
+            # S6: the march again with robust corrections (regime seeds, larger budget)
+            out = march.robust_march(level, has_predicted, predicted)
+            if out is not None:
+                march.s3_flags.add('march unresolved: '+str(reason)[:60])
+                boundary, status, reason = out
         if boundary < 0:
             if not self.production_fallback:
                 # S5: the unresolved march column itself (a numerical gap in the chart, never an absence proof);
@@ -299,6 +334,11 @@ cdef class NTracer:
         if start < 0:return False
         has_predicted = self.predicted_alpha(speed, seeds, &predicted)
         boundary, status, reason = march.run(start, has_predicted, predicted)
+        if boundary < 0 and self.s6 and not self.probing:
+            out = march.robust_march(start, has_predicted, predicted)
+            if out is not None:
+                boundary, status, reason = out
+                march.s3_flags.add('s6 robust march')
         if boundary < 0:return False
         march.s3_path = 'interior start'
         march.s3_flags.add(why[:80])
@@ -452,12 +492,14 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef tuple localize(self, NColumn good, NColumn bad, reason):
+    cdef tuple localize(self, NColumn good, NColumn bad, reason, double tol=-1.):
         cdef NColumn col
         cdef double mid
-        while abs(bad.speed-good.speed) > self.place_tol:
+        if tol <= 0.:tol = self.place_tol
+        while abs(bad.speed-good.speed) > tol:
             mid = .5*(good.speed+bad.speed)
-            col = self.column(mid, [good, bad] if reason == 'corner' else [good], reason)
+            col = self.column(mid, [good, bad] if reason == 'corner' else [good], reason, True, pmin(good.speed, bad.speed),
+                              pmax(good.speed, bad.speed))
             if NTracer.ok(col) and (reason == 'edge' or col.reason == good.reason):good = col
             else:bad = col
         return good, bad
@@ -468,14 +510,18 @@ cdef class NTracer:
         cdef NColumn last, prev, col, good, bad
         cdef double speed, step, n, error, h, r, bound
         cdef int skipped
+        cdef bint ended
         lo, hi = segment['speed_kmh']
         for side in (-1., 1.):
             bound = lo if side < 0 else hi
-            chain = [start];step = self.max_step;skipped = 0
-            while abs(chain[-1].speed-bound) > 1e-9:
+            chain = [start];step = self.max_step;skipped = 0;ended = False
+            while abs(chain[-1].speed-bound) > 1e-9 and not ended:
                 last = chain[-1];prev = chain[-2] if len(chain) > 1 else None
                 speed = last.speed+side*min(step, abs(bound-last.speed))
-                col = self.column(speed, [last, prev], 'sweep')
+                if side > 0:col = self.column(speed, [last, prev], 'sweep', True, last.speed, bound+1e-9)
+                else:col = self.column(speed, [last, prev], 'sweep', True, bound-1e-9, last.speed)
+                # S6: a bound column placed inside the speed tolerance ends this direction
+                ended = col.nudged_from is not None and abs(bound-speed) <= 1e-9
                 if (not NTracer.ok(col) and col.status_name() != 'no feasible samples' and abs(bound-speed) > 1e-9
                         and skipped < 3):
                     self.events.append(dict(kind='unresolved', speed_kmh=speed, status=col.status_name()))
@@ -484,7 +530,8 @@ cdef class NTracer:
                     continue
                 skipped = 0 if NTracer.ok(col) else skipped
                 if not NTracer.ok(col):
-                    good, bad = self.localize(last, col, 'edge')
+                    # S6: an unresolved (not infeasible) column ends the sweep only to the speed tolerance
+                    good, bad = self.localize(last, col, 'edge', self.vtol if col.status == STATUS_UNRESOLVED and self.s6 else -1.)
                     self.events.append(dict(kind='edge', speed_kmh=[good.speed, bad.speed],
                                             status=bad.status_name(), reason=bad.reason))
                     break
@@ -510,7 +557,8 @@ cdef class NTracer:
         cdef double* xs
         cdef double* ns
         cdef double* coef
-        checks, tried, passed_set = [], set(), set()
+        # S6: the tried / passed intervals persist, so a later call checks only new intervals
+        checks, tried, passed_set = [], self.check_tried, self.check_passed
         seams = self.seams
 
         def seam(lo, hi):
@@ -531,7 +579,8 @@ cdef class NTracer:
                 window = [c for c in good if va-150 <= c.speed <= vb+150 and not seam(min(c.speed, va), max(c.speed, vb))]
                 nw = len(window)
                 v = .5*(va+vb)
-                col = self.column(v, [a, b], 'check', keep=False)
+                col = self.column(v, [a, b], 'check', False, va, vb)
+                v = col.speed
                 ok = NTracer.ok(col) and nw > 1
                 if ok:
                     xs = <double*>malloc(nw*sizeof(double));ns = <double*>malloc(nw*sizeof(double))
@@ -564,6 +613,131 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint numerical_gap(self, NColumn c) except -1:
+        """A march column without a verified boundary for a numerical reason: an unresolved boundary, or a level
+        flight that did not close for a reason that is not a physical rejection."""
+        if not c.march:return False
+        if c.status == STATUS_UNRESOLVED:return True
+        return c.status == STATUS_NOFEASIBLE and len(c.points) > 0 and not self.eng.physical(c.points[0])
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef list resolve_gaps(self, list segments):
+        """S6: around every column that is a numerical gap in the drawn outline (an unresolved boundary anywhere, or
+        a numerically unresolved level flight between verified columns of its segment) and wider than twice the speed
+        tolerance, columns at up to the tolerance on both sides inside the verified bracket; the verified ones join
+        the chart and the new intervals get the usual withheld checks. Returns those check records."""
+        cdef NColumn c, left, right, alt
+        cdef double q = .25*self.vtol, s, lo_b, hi_b
+        cdef int rnd, added
+        checks = []
+        tried = set()
+        for rnd in range(2):
+            added = 0
+            good = sorted((c for c in self.columns.values() if NTracer.ok(c)), key=lambda c: c.speed)
+            for key in sorted(self.columns):
+                c = self.columns.get(key)
+                if c is None or not self.numerical_gap(c):continue
+                seg = next((g['speed_kmh'] for g in segments if g['speed_kmh'][0]-1e-9 <= c.speed <= g['speed_kmh'][1]+1e-9), None)
+                if seg is None:continue
+                lefts = [g for g in good if seg[0]-1e-9 <= g.speed < c.speed]
+                rights = [g for g in good if c.speed < g.speed <= seg[1]+1e-9]
+                left = lefts[-1] if lefts else None;right = rights[0] if rights else None
+                if c.status == STATUS_NOFEASIBLE and (left is None or right is None):continue  # an envelope end
+                if left is not None and right is not None:
+                    if right.speed-left.speed <= 2*self.vtol+1e-9:continue
+                elif left is not None:
+                    if c.speed-left.speed <= 2*self.vtol+1e-9:continue
+                elif right is not None:
+                    if right.speed-c.speed <= 2*self.vtol+1e-9:continue
+                else:continue
+                lo_b = left.speed if left is not None else seg[0]-1e-9
+                hi_b = right.speed if right is not None else seg[1]+1e-9
+                for side in (1., -1.):
+                    # the nearest verified column on this side within the tolerance (stop at the first one)
+                    if side > 0 and right is not None and right.speed-c.speed <= self.vtol+1e-9:continue
+                    if side < 0 and left is not None and c.speed-left.speed <= self.vtol+1e-9:continue
+                    for k in (1., 2., 4.):
+                        s = c.speed+side*k*q
+                        if not (lo_b < s < hi_b) or round(s, 6) in tried:continue
+                        tried.add(round(s, 6))
+                        self.probing = True
+                        try:alt = self.column(s, [left, right], 'gap', False, lo_b, hi_b)
+                        finally:self.probing = False
+                        if NTracer.ok(alt):
+                            self.columns[float(alt.speed)] = alt;added += 1
+                            self.eng.stats['s6_gap_columns'] = self.eng.stats.get('s6_gap_columns', 0)+1
+                            break
+            if not added:break
+            checks += self.check()
+        return checks
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef within_tolerance(self, list segments):
+        """S6: unresolved march columns, and unresolved sweep speeds, within twice the chart's speed tolerance of
+        verified columns (between verified columns of one segment at most twice the tolerance apart, which the check
+        accepts without a midpoint; or towards a segment end or edge, at most twice the tolerance beyond the last
+        verified column) are resolved by those columns; the column is dropped and a 'within tolerance' event keeps its
+        speed and reason. An unresolved column separated from every verified column of its segment by a 'no feasible
+        samples' column lies beyond an explicit edge ('beyond edge'; the tracer never charts islands past an edge).
+        Anything else stays an unresolved gap."""
+        cdef NColumn c
+        good = sorted(float(c.speed) for c in self.columns.values() if NTracer.ok(c))
+        vtol = self.vtol
+
+        def bracket(v):
+            for seg in segments:
+                lo, hi = seg['speed_kmh']
+                if lo-1e-9 <= v <= hi+1e-9:break
+            else:return None, None, False
+            left = [x for x in good if lo-1e-9 <= x < v]
+            right = [x for x in good if v < x <= hi+1e-9]
+            l = left[-1] if left else None;r = right[0] if right else None
+            if l is not None and r is not None:return l, r, r-l <= 2*vtol+1e-9
+            if l is not None:return l, None, v-l <= 2*vtol+1e-9
+            if r is not None:return None, r, r-v <= 2*vtol+1e-9
+            return None, None, False
+        ordered = sorted(self.columns.values(), key=lambda c: c.speed)
+        status = [(float(c.speed), NTracer.ok(c), c.status == STATUS_NOFEASIBLE) for c in ordered]
+
+        def beyond_edge(v):
+            # a 'no feasible samples' column lies between v and every verified column of its segment on each side
+            for seg in segments:
+                lo, hi = seg['speed_kmh']
+                if lo-1e-9 <= v <= hi+1e-9:break
+            else:return False
+            blocked = False
+            for side in (-1, 1):
+                seq = [x for x in status if lo-1e-9 <= x[0] <= hi+1e-9 and (x[0] < v if side < 0 else x[0] > v)]
+                if side < 0:seq.reverse()
+                for speed, ok, infeasible in seq:
+                    if ok:return False
+                    if infeasible:
+                        blocked = True;break
+            return blocked
+        for key in list(self.columns):
+            c = self.columns[key]
+            if not self.numerical_gap(c):continue
+            l, r, inside = bracket(c.speed)
+            if c.status == STATUS_NOFEASIBLE:
+                # only an interior one (verified columns on both sides) is a gap; at an envelope end it is the edge
+                if l is None or r is None or not inside:continue
+            kind = 'within tolerance' if inside else 'beyond edge' if beyond_edge(c.speed) else None
+            if kind is None:continue
+            del self.columns[key]
+            self.events.append(dict(kind=kind, speed_kmh=c.speed, bracket_kmh=[l, r], role=c.role, status=c.status_name(),
+                                    reason=str(c.march_reason if c.status == STATUS_UNRESOLVED else c.raw_reason)[:80]))
+            self.eng.stats['s6_'+kind.replace(' ', '_')] = self.eng.stats.get('s6_'+kind.replace(' ', '_'), 0)+1
+        for e in self.events:
+            if e['kind'] != 'unresolved':continue
+            l, r, inside = bracket(e['speed_kmh'])
+            if inside:
+                e['kind'] = 'within tolerance';e['bracket_kmh'] = [l, r]
+                self.eng.stats['s6_within_tolerance'] = self.eng.stats.get('s6_within_tolerance', 0)+1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     def run(self):
         import time
         cdef NColumn start, c, previous = None
@@ -572,14 +746,15 @@ cdef class NTracer:
         self.seams = cuts
         for segment in sorted(segments, key=lambda s: -s['speed_kmh'][1]):
             lo, hi = segment['speed_kmh']
-            start = self.column(hi, [previous] if previous is not None else [], 'start')
+            start = self.column(hi, [previous] if previous is not None else [], 'start', True, lo-1e-9, hi+1e-9)
             if not NTracer.ok(start):
-                start = self.column(.5*(lo+hi), [previous] if previous is not None else [], 'start')
+                start = self.column(.5*(lo+hi), [previous] if previous is not None else [], 'start', True, lo-1e-9, hi+1e-9)
             # S5: where neither start closes (level flight unresolved there), more start speeds across the
             # segment before it is given up (the Python march would leave the chart to the old sampler)
             for fraction in (.25, .75, .125, .375, .625, .875):
                 if NTracer.ok(start):break
-                start = self.column(lo+fraction*(hi-lo), [previous] if previous is not None else [], 'start')
+                start = self.column(lo+fraction*(hi-lo), [previous] if previous is not None else [], 'start', True, lo-1e-9,
+                                    hi+1e-9)
             if NTracer.ok(start):
                 self.sweep(segment, start)
                 inside = [c for c in self.columns.values() if lo-1e-9 <= c.speed <= hi+1e-9 and NTracer.ok(c)]
@@ -587,9 +762,11 @@ cdef class NTracer:
             else:
                 self.events.append(dict(kind='segment unresolved', speed_kmh=segment['speed_kmh'], status=start.status_name()))
         checks = self.check()
+        if self.nudge:checks += self.resolve_gaps(segments)
         for c in self.witnesses:
             c.withheld = True
             self.columns.setdefault(float(c.speed), c)
+        if self.nudge:self.within_tolerance(segments)
         cols = sorted(self.columns.values(), key=lambda c: c.speed)
         return dict(columns=cols, segments=segments, mach_seams_kmh=cuts, events=self.events, checks=checks,
                     work_by_role=self.work, elapsed_s=time.perf_counter()-started,
@@ -620,6 +797,7 @@ cdef class NTracer:
                 out['lower_boundary'] = next((p for p in out['points'] if abs(p['load_g']-1.) <= 1e-9 and p.get('valid')), None)
             out['s1_role'] = col.role;out['s1_evaluations'] = col.evaluations
         if col.withheld:out['withheld_check'] = True
+        if col.nudged_from is not None:out['s6_requested_speed_kmh'] = float(col.nudged_from)
         return out
 
     @cython.boundscheck(True)

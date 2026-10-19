@@ -6,6 +6,11 @@ DEF STATUS_CEILING = 1      # 'plot ceiling'
 DEF STATUS_UNRESOLVED = 2   # 'unresolved numerical boundary'
 DEF STATUS_NOFEASIBLE = 3   # 'no feasible samples'
 DEF STATUS_OTHER = 4        # any other status (excluded / discontinuity / fallback columns): text in NCol.status_text
+# S6 robust corrections: governor coordinates this close to a regime boundary get a boundary seed; the budget retry
+DEF REGIME_REACH = .35
+DEF ROBUST_NFEV = 30
+DEF ROBUST_EVALS = 120
+DEF ROBUST_RETRIES = 16     # retried corrections per S6 rescue of one column (the resolving rescues needed at most 13)
 
 STATUS_TEXT = ('verified limit', 'plot ceiling', 'unresolved numerical boundary', 'no feasible samples', None)
 RESCUE_REASONS = ('march correction unresolved', 'march roots disagree')
@@ -66,10 +71,12 @@ cdef class NColumn:
     cdef public bint withheld, march, region
     cdef public list sample_points, evidence_list
     cdef public object raw_status, raw_reason
+    cdef public object nudged_from     # S6: the requested speed when this column was placed within the speed tolerance
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
     def __init__(self, double speed):
+        self.nudged_from = None
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None
@@ -97,6 +104,10 @@ cdef class NMarch:
     cdef public set s3_flags
     cdef bint store
     cdef public list evidence
+    # S6: robust corrections (regime seeds and a larger budget after a failed correction), used only by the
+    # S6 rescue of a column that every earlier rescue left unresolved
+    cdef public bint robust
+    cdef int retries_left
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -121,6 +132,8 @@ cdef class NMarch:
         self.last_lo = -1;self.s3_path = None;self.s3_flags = set()
         self.store = True
         self.evidence = []
+        self.robust = False
+        self.retries_left = 0
 
     # ------------------------------------------------------------------ bookkeeping
     @cython.boundscheck(True)
@@ -168,6 +181,99 @@ cdef class NMarch:
         evals[0] = self.eng.counts[K_EVAL]-e0;fresh[0] = self.eng.counts[K_DERIV]-d0
         return sid
 
+    # ------------------------------------------------------------------ S6: robust corrections
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int regime_seed(self, int seed, double offset) except -2:
+        """A copy of ``seed`` with every propeller governor coordinate moved onto its nearest regime boundary
+        (0: minimum pitch, 1: maximum pitch), ``offset`` beyond it; -1 when the seed has none within reach.
+        One governor coordinate spans the three governor regimes, so a correction started on the governed
+        side of a pitch stop can stall at the kink the state has to cross; started on the boundary it closes."""
+        cdef TState* s = &self.eng.st[seed]
+        cdef int j, cid
+        cdef double g, b
+        if not s.has_coords or not s.layout_names:return -1
+        moved = []
+        for j in range(s.nx):
+            if j >= len(self.eng.layout_names) or not self.eng.layout_names[j].startswith('governor:'):continue
+            g = s.coords[j]
+            b = 0. if g < .5 else 1.
+            if fabs(g-b) > REGIME_REACH:continue
+            moved.append((j, b-offset if b == 0. else b+offset))
+        if not moved:return -1
+        cid = self.eng.new_state()
+        self.eng.st[cid] = self.eng.st[seed]
+        self.eng.st[cid].src = -1;self.eng.st[cid].row = -1;self.eng.st[cid].base = cid;self.eng.st[cid].limit = -1
+        self.eng.st[cid].valid = False
+        for j, b in moved:self.eng.st[cid].coords[j] = b
+        return cid
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int retry(self, int seed, const double* sol, double load, int fixed_kind, double value, int ev_kind,
+                   int ev_axis, int ev_side, int max_nfev, int max_evaluations) except -2:
+        """After a correction that did not close (robust mode): the same correction from regime-boundary seeds,
+        then with a larger budget, each with fresh derivatives. A closed state still passes every admission check."""
+        cdef int p = -1, rs
+        cdef long evals, fresh
+        cdef double offset
+        cdef Trial* t
+        if self.retries_left <= 0:return -1
+        self.retries_left -= 1
+        for offset in (0., .01):
+            rs = self.regime_seed(seed, offset)
+            if rs < 0:break
+            p = self.correct_at(rs, sol, load, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
+                                2e-6, NULL, &evals, &fresh, NULL)
+            t = self.trial('s6 regime seed');t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
+            t.alpha = value if fixed_kind == FIX_ALPHA else (self.eng.st[p].alpha if p >= 0 else NAN)
+            self.eng.stats['s6_regime_seeds'] = self.eng.stats.get('s6_regime_seeds', 0)+1
+            if p >= 0:
+                self.eng.stats['s6_regime_closed'] = self.eng.stats.get('s6_regime_closed', 0)+1
+                return p
+        p = self.correct_at(seed, sol, load, fixed_kind, value, ev_kind, ev_axis, ev_side, ROBUST_NFEV,
+                            ROBUST_EVALS if max_evaluations > 0 else 0, 2e-6, NULL, &evals, &fresh, NULL)
+        t = self.trial('s6 larger budget');t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
+        t.alpha = value if fixed_kind == FIX_ALPHA else (self.eng.st[p].alpha if p >= 0 else NAN)
+        self.eng.stats['s6_budget_retries'] = self.eng.stats.get('s6_budget_retries', 0)+1
+        if p >= 0:self.eng.stats['s6_budget_closed'] = self.eng.stats.get('s6_budget_closed', 0)+1
+        return p
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object robust_march(self, int level, bint has_predicted, double predicted):
+        """S6: where the march and every earlier rescue left this speed unresolved, the march again from the
+        highest admitted samples of this speed with robust corrections (regime seeds, larger budget), then the
+        S3 rescue with them. Same step control, localization, face guards and first-limit rule; the columns
+        that resolve without it never reach it. (edge, status, reason) or None."""
+        cdef int lo
+        admitted = sorted((p for p in self.samples if self.eng.st[p].valid and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+                           and self.eng.st[p].alpha >= self.eng.st[level].alpha-1e-9), key=lambda p: self.eng.st[p].alpha)
+        if not admitted:
+            if not self.eng.st[level].valid:return None
+            admitted = [level]
+        start = [admitted[0]]
+        for sid in admitted[1:]:
+            # an increasing-alpha, non-decreasing-load history (the march's own invariant)
+            if self.eng.st[sid].load >= self.eng.st[start[-1]].load:start.append(sid)
+        self.robust = True;self.retries_left = ROBUST_RETRIES
+        self.eng.stats['s6_robust_marches'] = self.eng.stats.get('s6_robust_marches', 0)+1
+        import numpy as np
+        try:
+            out = self.run_march(level, has_predicted, predicted, start[-3:])
+            if out[0] < 0:
+                edge = self.rescue(level)
+                if edge is not None and edge[0] >= 0:out = edge
+        except (ValueError, ArithmeticError, RuntimeError, np.linalg.LinAlgError) as error:
+            errors = self.eng.stats.setdefault('rescue_errors', {});key = type(error).__name__+': '+str(error)[:60]
+            errors[key] = errors.get(key, 0)+1;out = (-1, 'unresolved numerical boundary', 'S6 rescue error')
+        finally:
+            self.robust = False
+        if out[0] < 0:return None
+        self.s3_path = 's6 robust march'
+        self.eng.stats['s6_robust_resolved'] = self.eng.stats.get('s6_robust_resolved', 0)+1
+        return out
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef int at(self, int seed, const double* sol, double load, double seed_alpha, double alpha, why,
@@ -198,6 +304,8 @@ cdef class NMarch:
         else:
             p = self.correct_at(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS, 2e-6,
                                 &self.preds, &evals, &fresh, NULL)
+        if p < 0 and self.robust:
+            p = self.retry(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS)
         if self.store:self.eng.store_keep(p, self.speed, &self.preds)
         t = self.trial(why)
         t.alpha = alpha;t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
@@ -521,19 +629,19 @@ cdef class NMarch:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef tuple run_march(self, int level, bint has_predicted, double predicted):
-        """March.run(level, predicted)."""
+    cdef tuple run_march(self, int level, bint has_predicted, double predicted, list start=None):
+        """March.run(level, predicted, history=start)."""
         cdef double span, step, cap, target
         cdef int low, p, q, tried_active = -1, lo, edge, seed_state
         cdef double sol[5]
         cdef double load
         cdef bint extrapolated_seed
         cdef int it, i
-        history = [level]
+        history = list(start) if start else [level]
         for h in history:
             if not self.has_sample(h):self.samples.append(h)
         if has_predicted:
-            span = predicted-self.eng.st[level].alpha
+            span = predicted-self.eng.st[history[-1]].alpha if start else predicted-self.eng.st[level].alpha
             step = self.max_step if span <= 0 else span/pmax(1., ceil(span/self.max_step))
         else:
             step = self.max_step
@@ -694,6 +802,9 @@ cdef class NMarch:
             p = self.correct_at(low, self.eng.st[low].sol, self.eng.st[low].load, FIX_EVENT, 0., ev.code,
                                 ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6,
                                 &self.preds, &evals, &fresh, NULL)
+            if p < 0 and self.robust:
+                p = self.retry(low, self.eng.st[low].sol, self.eng.st[low].load, FIX_EVENT, 0., ev.code,
+                               ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0)
         else:
             p = self.python_event(low, ev, &evals, &fresh)
         t = self.trial(prefix+KIND_TEXT[ev.kind])
@@ -1032,6 +1143,9 @@ cdef class NMarch:
         p = self.correct_at(b, self.eng.st[b].sol, self.eng.st[b].load, FIX_EVENT, 0., ev.code,
                             ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6,
                             &self.preds, &evals, &fresh, NULL)
+        if p < 0 and self.robust:
+            p = self.retry(b, self.eng.st[b].sol, self.eng.st[b].load, FIX_EVENT, 0., ev.code,
+                           ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0)
         t = self.trial('s5 neighbour '+KIND_TEXT[ev.kind])
         t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
         t.alpha = self.eng.st[p].alpha if p >= 0 else NAN
