@@ -329,6 +329,8 @@ def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
 def recover_sideslip_boundary(solver,speed_kmh,low,high):
     if not solver.config.get('sideslip_recovery',True):return None  # zero-sideslip policy (march chart)
     if solver.config.get('experimental_lateral_trim','full')!='full':return None
+    # Sideslip cannot make the selected wing sweep available (as in recover_sideslip).
+    if 'sweep unavailable' in high.get('reasons',()):return None
     for magnitude in SEARCH_ANGLES:
         candidates=[]
         for sign in (1.,-1.):
