@@ -17,10 +17,18 @@ admission unchanged; every drawn state is an admitted full-model state.
 What the chart shows:
 - the outline is PCHIP in limiting load through verified boundary columns,
   split wherever the trace has a Mach seam, an unresolved speed, an edge or a
-  missing column; a smooth line is never drawn across an unresolved speed;
+  missing column; a smooth line is never drawn across an unresolved speed.
+  S7: where the columns carry their exact boundary slopes, the outline is the
+  cubic Hermite through loads and slopes, and between two columns on different
+  limiting faces the faces' tangent lines up to their intersection (the
+  corner), the interpolant the tracer's withheld checks validate
+  (boundary_interval);
 - SEP contours are the solved curve components, drawn only between their
   knots and never across an unresolved knot interval; only the calculated
-  levels are available (other levels need a new calculation).
+  levels are available (other levels need a new calculation). S7: a contour is
+  the cubic Hermite in n^2-1 through its knots and their exact slopes (the
+  slope of each knot's own SEP level set; PCHIP slopes where none was solved),
+  the interpolant the curve solver's withheld position checks validate.
 
 Fallback (``eligible``): configurations outside the validated domain use the
 baseline sampler for that aircraft, and so does any aircraft on which the
@@ -215,7 +223,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     from em_trim_work import Work, use
     native = N.attach(solver)
     loops = [solver.native_loop] if getattr(solver, 'native_loop', None) is not None else []
-    total = Work({});t0 = time.process_time()
+    total = Work({});t0 = time.process_time();w0 = time.perf_counter()
     # S5: the march, its column workers and the tracer on native trial states where the compiled
     # module covers this solver; otherwise the Python march (em_march, the reference) as in S4.
     engine = N.engine(solver)
@@ -228,7 +236,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         N.merge_stats(engine.stats)
     else:
         with use(total):envelope = tracer.run()
-    envelope_cpu = time.process_time()-t0
+    envelope_cpu = time.process_time()-t0;envelope_wall = time.perf_counter()-w0
     envelope_work = dict(total.counts)
     verified = [c for c in envelope['columns'] if tracer.ok(c)]
     row = aircraft_row(name, index, cfg, solver, envelope, None, tracer)
@@ -244,7 +252,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         count[0] += 1
         if count[0] % 25 == 0:report(dict(phase='SEP curves', aircraft=name, fraction=min(.99, .6+.4*count[0]/2000.)))
     curves.check = check
-    t0 = time.process_time()
+    t0 = time.process_time();w0 = time.perf_counter()
     # S5: the curve solver on native trial states where the compiled module covers it.
     curve_engine = N.engine(curve_solver) if engine is not None else None
     if curve_engine is not None:curve_engine.known_caps = engine.ceilings
@@ -254,20 +262,23 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         result = native_curves.run(verified)
     else:
         result = curves.run() if verified else None
-    curve_cpu = time.process_time()-t0
+    curve_cpu = time.process_time()-t0;curve_wall = time.perf_counter()-w0
     if result is not None and str(result.get('status', '')).startswith('exhausted'):
         raise RuntimeError('SEP curve budget exhausted: '+result['status'])
     row = aircraft_row(name, index, cfg, solver, envelope, result, tracer)
     ee, ce = envelope_work.get('aircraft_evaluations', 0), (result or {}).get('work', {}).get('aircraft_evaluations', 0)
     row['chart_solver_work'] = dict(evaluations=ee+ce, envelope_evaluations=ee, curve_evaluations=ce,
                                     envelope_cpu_s=envelope_cpu, curve_cpu_s=curve_cpu, elapsed_s=time.monotonic()-started,
+                                    envelope_wall_s=envelope_wall, curve_wall_s=curve_wall,
                                     columns=len(envelope['columns']), work_by_role=envelope['work_by_role'],
                                     march=M.stats(), native=N.summary(loops), native_status=native,
                                     curve_status=(result or {}).get('status'))
     if engine is not None:
-        timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows, point_s=engine.t_point, python_s=engine.t_python, ledger_s=engine.t_ledger))
+        timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows, point_s=engine.t_point, python_s=engine.t_python, ledger_s=engine.t_ledger, tangent_s=engine.t_tangent))
         if curve_engine is not None:
-            timers['curves'] = dict(solve_s=curve_engine.t_solve, finish_s=curve_engine.t_finish, rows_s=curve_engine.t_rows, point_s=curve_engine.t_point, python_s=curve_engine.t_python, ledger_s=curve_engine.t_ledger)
+            timers['curves'] = dict(solve_s=curve_engine.t_solve, finish_s=curve_engine.t_finish, rows_s=curve_engine.t_rows, point_s=curve_engine.t_point, python_s=curve_engine.t_python, ledger_s=curve_engine.t_ledger, tangent_s=curve_engine.t_tangent)
+            row['chart_solver_work']['curve_native'] = {k: v for k, v in curve_engine.stats.items()
+                                                        if isinstance(v, (int, float)) and not isinstance(v, bool)}
         f = engine.fin_timers()
         timers['envelope'].update(f)
         row['chart_solver_work']['native_timers'] = timers
@@ -323,8 +334,10 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
 
 
 def compact_component(comp):
+    # S7: knots are [speed, load, Ps, left slope, right slope] (dw/dV per km/h, w = n^2-1; None where unavailable)
     return dict(level=comp['level'], segment_kmh=comp['segment_kmh'],
-                knots=[[k['speed_kmh'], k['load_g'], k.get('ps_mps')] for k in comp['knots']],
+                knots=[[k['speed_kmh'], k['load_g'], k.get('ps_mps')]+(list(k['s7_w_slope']) if k.get('s7_w_slope') else [])
+                       for k in comp['knots']],
                 unresolved_intervals=[dict(interval_kmh=list(u['interval_kmh']), reason=str(u.get('reason'))[:120])
                                       for u in comp.get('unresolved_intervals', [])],
                 start=(comp.get('start') or {}).get('kind'), end=(comp.get('end') or {}).get('kind'))
@@ -399,9 +412,85 @@ def runs(aircraft):
     return out
 
 
-def outline(data, aircraft):
-    """Boundary outline in the production chart format (dense PCHIP of limiting load per run)."""
+def face_load(v0, n0, s0, k0, v):
+    """One limiting face beyond its column: load, slope and curvature there (a quadratic; the native face_load)."""
+    return n0+(v-v0)*(s0+.5*k0*(v-v0))
+
+
+def corner_vertex(va, na, sa, ka, vb, nb, sb, kb):
+    """Speed of the corner of an interval whose ends lie on different limiting faces: where the two faces continued
+    from their columns (face_load) meet, or None unless face a lies below face b at va and above it at vb (the
+    boundary is the lower face, the first limit along alpha). The native corner_vertex (the same 60 bisection steps)."""
+    if not all(np.isfinite(x) for x in (sa, sb, ka, kb)):return None
+    tol = 1e-3*max(abs(na), abs(nb))
+    fa, fb = na-face_load(vb, nb, sb, kb, va), face_load(va, na, sa, ka, vb)-nb
+    if fa > tol or fb < -tol:return None
+    if fa > 0.:return va    # within 0.1% in load of an end the corner is that end
+    if fb < 0.:return vb
+    lo, hi = va, vb
+    for _ in range(60):
+        mid = .5*(lo+hi)
+        if face_load(va, na, sa, ka, mid)-face_load(vb, nb, sb, kb, mid) > 0.:hi = mid
+        else:lo = mid
+    return .5*(lo+hi)
+
+
+def boundary_interval(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, v):
+    """The S7 outline's load on [va, vb] (vectorized over v; the native interval_load): on one limiting face the cubic
+    Hermite through loads and slopes (sa right of va, sb left of vb); across a face change the two faces up to their
+    corner where both slopes are exact and the faces meet, else the Hermite with the PCHIP slopes pa, pb (no overshoot)."""
+    v = np.asarray(v, dtype=float)
+    if corner:
+        vc = corner_vertex(va, na, sa, ka, vb, nb, sb, kb) if exact else None
+        if vc is not None:
+            return np.where(v <= vc, face_load(va, na, sa, ka, v), face_load(vb, nb, sb, kb, v))
+        sa, sb = pa, pb
+    h = vb-va;t = (v-va)/h;t2 = t*t;t3 = t2*t
+    return (2*t3-3*t2+1)*na+(t3-2*t2+t)*h*sa+(-2*t3+3*t2)*nb+(t3-t2)*h*sb
+
+
+def face_of(column):
+    """The limiting face of a verified column: its boundary reason with the control axis or the engine (the native
+    tracer's face_of)."""
+    limit = (column.get('boundary') or {}).get('envelope_limit') or {}
+    if limit.get('axis') is not None:return '%s:%s' % (column.get('boundary_reason'), limit['axis'])
+    engine = (limit.get('engine_rpm_limit') or {}).get('engine')
+    if engine is not None:return '%s:%s' % (column.get('boundary_reason'), engine)
+    return column.get('boundary_reason')
+
+
+def run_loads(run, xs):
+    """Loads of one outline run at speeds xs: the S7 interpolant (boundary_interval, with the native tracer's
+    interval_slopes rules) where its columns carry boundary slopes, PCHIP through the loads otherwise (S5/S6)."""
     from scipy.interpolate import PchipInterpolator
+    speeds = np.array([c['speed_kmh'] for c in run], dtype=float);loads = np.array([c['boundary']['load_g'] for c in run], dtype=float)
+    if len(run) == 1:return np.full(len(xs), loads[0])
+    if not any(c.get('boundary_slope') for c in run):return PchipInterpolator(speeds, loads)(xs)
+    pchip = pchip_slopes(speeds, loads)
+    left = np.array([(c.get('boundary_slope') or [None, None])[0] for c in run], dtype=float)
+    right = np.array([(c.get('boundary_slope') or [None, None])[1] for c in run], dtype=float)
+    faces = [face_of(c) for c in run]
+    exact_left, exact_right = np.isfinite(left), np.isfinite(right)
+    # a missing exact slope: the same face's slope at the neighbouring column on that side (the native interval_slopes)
+    fill_left, fill_right = left.copy(), right.copy()
+    for k in range(len(run)):
+        if not exact_right[k] and k >= 1 and faces[k-1] == faces[k] and exact_right[k-1]:fill_right[k] = right[k-1]
+        if not exact_left[k] and k+1 < len(run) and faces[k+1] == faces[k] and exact_left[k+1]:fill_left[k] = left[k+1]
+    exact_left, exact_right = np.isfinite(fill_left), np.isfinite(fill_right)
+    left = np.where(exact_left, fill_left, pchip);right = np.where(exact_right, fill_right, pchip)
+    out = np.empty(len(xs))
+    i = np.clip(np.searchsorted(speeds, xs, side='right')-1, 0, len(run)-2)
+    for k in np.unique(i).tolist():
+        ka = (left[k]-right[k-1])/(speeds[k]-speeds[k-1]) if k >= 1 and faces[k-1] == faces[k] else 0.
+        kb = (left[k+2]-right[k+1])/(speeds[k+2]-speeds[k+1]) if k+2 < len(run) and faces[k+2] == faces[k+1] else 0.
+        sel = i == k
+        out[sel] = boundary_interval(speeds[k], loads[k], right[k], ka, pchip[k], speeds[k+1], loads[k+1], left[k+1], kb,
+                                     pchip[k+1], faces[k] != faces[k+1], bool(exact_right[k] and exact_left[k+1]), xs[sel])
+    return out
+
+
+def outline(data, aircraft):
+    """Boundary outline in the production chart format (dense interpolant of limiting load per run, run_loads)."""
     cfg = data['settings']
     pieces = runs(aircraft)
     nx = 2*cfg.get('surface_resolution', 601)-1
@@ -412,21 +501,18 @@ def outline(data, aircraft):
         speeds = np.array([c['speed_kmh'] for c in run])
         exact = {c['speed_kmh']: c for c in run}
         xs = np.unique(np.r_[grid[(grid > speeds[0]) & (grid < speeds[-1])], speeds])
-        if len(run) > 1:
-            f = PchipInterpolator(speeds, [c['boundary']['load_g'] for c in run])
-            loads = f(xs)
-        else:loads = np.array([run[0]['boundary']['load_g']])
+        loads = run_loads(run, xs)
         rates = turn_rate(xs, loads)
-        for i, (x, t) in enumerate(zip(xs, rates)):
-            c = exact.get(float(x))
-            j = int(np.searchsorted(speeds, x))
+        index = np.searchsorted(speeds, xs)
+        for x, t, j in zip(xs.tolist(), rates.tolist(), index.tolist()):
+            c = exact.get(x)
             if c is not None:
-                p = dict(speed_kmh=float(x), turn_dps=float(c['boundary']['turn_dps']),
+                p = dict(speed_kmh=x, turn_dps=float(c['boundary']['turn_dps']),
                          at_plot_ceiling=c['boundary_status'] == 'plot ceiling')
                 if c.get('load_search_limit'):p['load_search_limit'] = c['load_search_limit']
             else:
                 left, right = run[max(0, j-1)], run[min(len(run)-1, j)]
-                p = dict(speed_kmh=float(x), turn_dps=float(t),
+                p = dict(speed_kmh=x, turn_dps=t,
                          at_plot_ceiling=left['boundary_status'] == 'plot ceiling' and right['boundary_status'] == 'plot ceiling')
             boundary.append(p)
         if k < len(pieces)-1:
@@ -455,22 +541,72 @@ def outline(data, aircraft):
     return boundary
 
 
-def polyline(component, samples=200):
-    """Drawable pieces of one compact curve component: PCHIP in n^2-1 through its knots,
-    split at unresolved knot intervals (as em_march_curves.polyline)."""
+def pchip_slopes(x, y):
+    """The PCHIP derivatives at the knots (PchipInterpolator(x, y).derivative()(x))."""
     from scipy.interpolate import PchipInterpolator
+    if len(x) < 2:return np.zeros(len(x))
+    return PchipInterpolator(x, y).derivative()(x)
+
+
+def hermite_slopes(x, y, left, right):
+    """(left, right) knot slopes with the missing ones (None/NaN) taken from PCHIP; an end knot in level flight
+    (y = w = 0, no exact slope there) takes the slope of the parabola through both ends of its interval with the
+    neighbour's slope. The rule of the native fill_slopes."""
+    dl = np.array([np.nan if v is None else v for v in left], dtype=float)
+    dr = np.array([np.nan if v is None else v for v in right], dtype=float)
+    missing = ~(np.isfinite(dl) & np.isfinite(dr))
+    if missing.any():
+        n = len(x)
+        lend = n >= 2 and y[0] == 0. and not np.isfinite(dl[0]) and not np.isfinite(dr[0])
+        rend = n >= 2 and y[-1] == 0. and not np.isfinite(dl[-1]) and not np.isfinite(dr[-1])
+        d = pchip_slopes(x, y)
+        both = ~np.isfinite(dl) & ~np.isfinite(dr)
+        dl[both] = d[both];dr[both] = d[both]
+        dl = np.where(np.isfinite(dl), dl, dr);dr = np.where(np.isfinite(dr), dr, dl)
+        if lend:
+            dl[0] = 2.*(y[1]-y[0])/(x[1]-x[0])-dl[1];dr[0] = dl[0]
+        if rend:
+            dr[-1] = 2.*(y[-1]-y[-2])/(x[-1]-x[-2])-dr[-2];dl[-1] = dr[-1]
+    return dl, dr
+
+
+def hermite(x, y, dl, dr, v):
+    """Piecewise cubic Hermite through (x, y): on [x[k], x[k+1]] the slopes dr[k] and dl[k+1]; vectorized over v
+    (the native hermite_eval)."""
+    x = np.asarray(x, dtype=float);y = np.asarray(y, dtype=float);v = np.asarray(v, dtype=float)
+    if len(x) == 1:return np.full(v.shape, y[0])
+    i = np.clip(np.searchsorted(x, v, side='right')-1, 0, len(x)-2)
+    h = x[i+1]-x[i];t = (v-x[i])/h;t2 = t*t;t3 = t2*t
+    return (2*t3-3*t2+1)*y[i]+(t3-2*t2+t)*h*dr[i]+(-2*t3+3*t2)*y[i+1]+(t3-t2)*h*dl[i+1]
+
+
+def curve_interpolant(knots):
+    """w(V) of compact curve knots: the S7 Hermite where the knots carry slopes, PCHIP otherwise (S5/S6 records)."""
+    from scipy.interpolate import PchipInterpolator
+    v = np.array([k[0] for k in knots], dtype=float);w = np.array([k[1]**2-1. for k in knots], dtype=float)
+    if all(len(k) < 5 for k in knots):return PchipInterpolator(v, w)
+    dl, dr = hermite_slopes(v, w, [k[3] if len(k) >= 5 else None for k in knots], [k[4] if len(k) >= 5 else None for k in knots])
+    return lambda x: hermite(v, w, dl, dr, x)
+
+
+def polyline(component, samples=200):
+    """Drawable pieces of one compact curve component: the curve interpolant in n^2-1 through its knots
+    (curve_interpolant), split at unresolved knot intervals (as em_march_curves.polyline)."""
     knots = component['knots']
     if not knots:return []
     if len(knots) == 1:return [[(knots[0][0], float(turn_rate(knots[0][0], knots[0][1])))]]
-    v = np.array([k[0] for k in knots]);w = np.array([k[1]**2-1. for k in knots])
-    f = PchipInterpolator(v, w);xs = np.unique(np.r_[np.linspace(v[0], v[-1], samples), v])
+    v = np.array([k[0] for k in knots], dtype=float)
+    f = curve_interpolant(knots);xs = np.unique(np.r_[np.linspace(v[0], v[-1], samples), v])
+    turns = turn_rate(xs, np.sqrt(1.+np.maximum(np.asarray(f(xs), dtype=float), 0.)))
     open_ = [tuple(u['interval_kmh']) for u in component.get('unresolved_intervals', [])]
+    inside = np.zeros(len(xs), dtype=bool)
+    for lo, hi in open_:inside |= (xs > lo) & (xs < hi)
     pieces, piece = [], []
-    for x in xs:
-        if any(lo < x < hi for lo, hi in open_):
+    for x, t, cut in zip(xs.tolist(), turns.tolist(), inside.tolist()):
+        if cut:
             if piece:pieces.append(piece)
             piece = [];continue
-        piece.append((float(x), float(turn_rate(x, math.sqrt(1.+max(float(f(x)), 0.))))))
+        piece.append((x, t))
     if piece:pieces.append(piece)
     return pieces
 

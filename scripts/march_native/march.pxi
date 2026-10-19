@@ -197,6 +197,9 @@ class NativeMarchUnsupported(Exception):
     pass
 
 
+cdef double g_tangent_scale = 4.   # S7: tangent stencils are 4x the corrector's steps (binary32 rows)
+
+
 cdef class MarchEngine:
     """The trial states, chart rows and cross-speed store of one march chart solver."""
     cdef public object solver, loop
@@ -227,7 +230,7 @@ cdef class MarchEngine:
     # S5: the envelope engine's exact load caps (by speed), for the curve engine's cheap SEP-solve bound
     cdef public object known_caps
     cdef public list known_speeds
-    cdef public double t_solve, t_finish, t_rows, t_point, t_python, t_ledger, t_srows
+    cdef public double t_solve, t_finish, t_rows, t_point, t_python, t_ledger, t_srows, t_tangent
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -282,6 +285,7 @@ cdef class MarchEngine:
         self.ceilings = {}
         self.known_caps = None;self.known_speeds = None
         self.t_solve = self.t_finish = self.t_rows = self.t_point = self.t_python = self.t_ledger = self.t_srows = 0.
+        self.t_tangent = 0.
         self.engine_shafts = []
         if self.is_prop:
             p = solver.engine.properties
@@ -790,6 +794,232 @@ cdef class MarchEngine:
             if si == self.nsrc-1:
                 self.nsrc -= 1;self.st[sid].src = -1
         return sid
+
+    # ------------------------------------------------------------------ S7: exact slopes
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint tangent(self, int sid, int mode, int ev_code, int ev_axis, int ev_side, double speed, double delta,
+                      int sides, double* left, double* right) except -1:
+        """S7: dw/dV (w = n^2-1, V in km/h) along the solution set of a state's own equations through the state:
+        mode 0 the SEP level set (rows: stationary residuals and SEP; unknowns: coordinates and w), mode 1 an event
+        face (rows: stationary residuals and the event residual ``ev_code``/``ev_axis``/``ev_side``), mode 2 fixed
+        alpha (rows: stationary residuals; unknowns without alpha: at a load maximum along alpha this is the slope
+        of the maximum). A fresh forward-difference Jacobian at the state (4x the corrector's steps: the rows are binary32
+        model values, and the corrector's own steps leave about 1% noise in a slope; stencils projected onto the state's
+        Mach bin on rough Mach intervals, as the corrector's), then the state's own rows solved again at speed-delta
+        (``left``) and speed+delta (``right``) by chord Newton steps with that Jacobian (NaN where unavailable): the
+        slope is the secant of exact solutions of the same rows, so neither noise in the Jacobian (the Instructor's and
+        the propulsion rows are not smooth at stencil scale) nor the state's closure residual enters it. Returns False
+        when no slope is available (unevaluable state or stencil, a stencil that changes the polar branch, singular
+        rows). ``sides``: 1 left, 2 right, 3 both; a single requested side that fails falls back to the other."""
+        cdef CurveProblem P = self.P
+        cdef TState* t = &self.st[sid]
+        cdef int nx = P.nx, n, m, nr, i, j, k, slot0, slot, ci, side
+        cdef double q0[NMAX]
+        cdef double q[NMAX]
+        cdef double y[NMAX]
+        cdef double yp[NMAX]
+        cdef double r0[NMAX]
+        cdef double rv[NMAX]
+        cdef double C[NMAX*NMAX]
+        cdef double D[NMAX*NMAX]
+        cdef double z[NMAX]
+        cdef double du[NMAX]
+        cdef double rs[NMAX]
+        cdef double h, w0, wp, step, value
+        cdef int br0[BMAX]
+        cdef Sample base
+        cdef bint ok = True, same, governor
+        cdef double sgn, first, best, best_w
+        cdef int oi
+        cdef double[7] steps7 = [.002, .002, .0002, .0002, .0002, .002, .002]
+        cdef double[7] rs7 = [2e-4, 2e-4, 5e-4, 5e-4, 5e-4, 2e-5, 2e-5]
+        cdef double t0 = s5_now()
+        left[0] = NAN;right[0] = NAN
+        if not t.has_coords or not t.layout_names or t.nx != nx or not t.req_ok:return False
+        # level flight (w = 0): bank and turn rate scale with sqrt(w) there, so no slope in these coordinates
+        # (the interpolant's end rule takes over: fill_slopes)
+        if not t.load*t.load-1. > 1e-6:return False
+        self.stats['s7_tangents'] = self.stats.get('s7_tangents', 0)+1
+        # the problem at the state (CurveCorrection.solve_core's layout, turn coordinate q[nx])
+        P.nreq = t.nreq
+        for i in range(t.nreq):P.req[i] = t.req[i]
+        P.nz = nx+1;P.speed_kmh = speed
+        w0 = pmax(0., t.load*t.load-1.)
+        for i in range(nx):q0[i] = t.coords[i]
+        q0[nx] = sqrt(w0)
+        for i in range(nx+1):P.z[i] = q0[i]
+        if mode == 0:
+            P.fixed = -1;P.target = t.ps if isfinite(t.ps) else 0.
+        elif mode == 1:
+            P.fixed = -3;P.ev_kind = ev_code;P.ev_axis = ev_axis;P.ev_side = ev_side
+            if ev_code == 6:P.ev_limit = t.rpm_limit[ev_axis]*M_PI/30.
+        else:
+            P.fixed = 0;P.alpha = q0[0]
+        k = 0
+        for i in range(nx+1):
+            if mode == 2 and i == 0:continue
+            P.free_idx[k] = i;k += 1
+        n = k;P.n = n
+        nr = 7+P.nprows;m = nr+(1 if mode != 2 else 0)
+        if n != m:return False
+        for i in range(7):rs[i] = rs7[i]
+        for i in range(7, nr):rs[i] = 1e-5
+        if mode == 0:rs[nr] = .05
+        elif mode == 1:rs[nr] = 2e-6
+        P.nmemo = 0;P.aircraft_evaluations = 0;P.last_slot = -1;P.nprep = 0;P.prep_next = 0
+        P.evaluations = 0;P.derivative_samples = 0;P.nominal_comparisons = 0;P.nominal_restorations = 0;P.branch_secants = 0
+        try:
+            slot0 = P.value(q0)
+            if slot0 < 0:return False
+            for i in range(nr):r0[i] = P.memo_r[slot0*NMAX+i]
+            if m > nr:r0[nr] = P.memo_extra[slot0]
+            for i in range(BMAX):br0[i] = P.memo_br[slot0*BMAX+i]
+            # the coordinates must reproduce a closed state of these rows (the SEP and event rows by construction:
+            # their level is the state's own)
+            for i in range(nr):
+                if not fabs(r0[i]) <= 20.*rs[i]:return False
+            base.slot = slot0
+            for j in range(n):
+                ci = P.free_idx[j]
+                governor = False
+                if ci < 7:h = steps7[ci]
+                elif ci < nx:
+                    governor = self.layout_names[ci].startswith('governor:')
+                    h = 1e-4 if governor else 1e-4*pmax(1., fabs(q0[ci]))
+                else:h = .0004*pmax(sqrt(w0), .25)
+                h *= g_tangent_scale
+                same = False
+                for side in range(2):
+                    step = h if side == 0 else -h
+                    if governor:
+                        # one governor coordinate spans three regimes with kinks at 0 and 1: stay in the state's regime
+                        if (q0[ci] < 0.) != (q0[ci]+step < 0.) or (q0[ci] > 1.) != (q0[ci]+step > 1.):continue
+                    for i in range(nx+1):q[i] = q0[i]
+                    if ci == nx:
+                        wp = w0+step
+                        if wp < 0.:continue
+                        q[nx] = sqrt(wp)
+                    else:
+                        q[ci] = q0[ci]+step
+                    for i in range(n):y[i] = q[P.free_idx[i]]
+                    if P.model.conds[P.memo_eval[slot0].cond].rough:
+                        P.project(y, &base, yp)
+                        for i in range(n):q[P.free_idx[i]] = yp[i]
+                    slot = P.value(q)
+                    if slot < 0:continue
+                    same = True
+                    for i in range(BMAX):
+                        if P.memo_br[slot*BMAX+i] != br0[i]:
+                            same = False;break
+                    if not same:continue
+                    for i in range(nr):C[i*n+j] = (P.memo_r[slot*NMAX+i]-r0[i])/rs[i]
+                    if m > nr:C[nr*n+j] = (P.memo_extra[slot]-r0[nr])/rs[nr]
+                    for i in range(n):
+                        ci = P.free_idx[i]
+                        if ci == nx:D[i*n+j] = q[nx]*q[nx]-w0
+                        else:D[i*n+j] = q[ci]-q0[ci]
+                    break
+                if not same:return False
+            # each side: the state's own rows F = F(state) solved at speed +- delta by chord Newton steps with this
+            # Jacobian from the state (the first step is the linear tangent); the slope is the secant of the two exact
+            # solutions, so neither the Jacobian's noise nor the state's closure residual enters it
+            for oi in range(2):
+                side = (oi if sides != 2 else 1-oi)
+                if sides != 3 and oi == 1 and (isfinite(left[0]) or isfinite(right[0])):break
+                sgn = 1. if side == 1 else -1.
+                P.speed_kmh = speed+sgn*delta
+                P.nmemo = 0;P.nprep = 0;P.prep_next = 0
+                for i in range(n):du[i] = 0.
+                first = NAN;value = NAN;best = INFINITY;best_w = NAN
+                for it in range(6):
+                    for i in range(nx+1):q[i] = q0[i]
+                    ok = True
+                    for i in range(n):
+                        ci = P.free_idx[i]
+                        if ci == nx:
+                            wp = w0+du[i]
+                            if wp < 0.:
+                                ok = False;break
+                            q[nx] = sqrt(wp)
+                        else:q[ci] = q0[ci]+du[i]
+                    if not ok:break
+                    slot = P.value(q)
+                    if slot < 0:
+                        self.stats['s7_chord_unevaluable'] = self.stats.get('s7_chord_unevaluable', 0)+1;break
+                    same = True
+                    for i in range(BMAX):
+                        if P.memo_br[slot*BMAX+i] != br0[i]:
+                            same = False;break
+                    if not same:
+                        self.stats['s7_chord_branch'] = self.stats.get('s7_chord_branch', 0)+1;break
+                    step = 0.
+                    for i in range(nr):
+                        rv[i] = (P.memo_r[slot*NMAX+i]-r0[i])/rs[i];step = pmax(step, fabs(rv[i]))
+                    if m > nr:
+                        rv[nr] = (P.memo_extra[slot]-r0[nr])/rs[nr];step = pmax(step, fabs(rv[nr]))
+                    if it > 0 and step < best:
+                        best = step;best_w = du[n-1]
+                    if (it > 0 and step <= .05) or (it >= 2 and step <= .5):break
+                    if it == 5:
+                        # the rows' own noise floor (Instructor and propulsion rows): the best iterate within half the
+                        # corrector's closure tolerance stands
+                        self.stats['s7_chord_budget'] = self.stats.get('s7_chord_budget', 0)+1
+                        break
+                    for i in range(m):rv[i] = -rv[i]
+                    if svd_solve(m, n, C, rv, z):break
+                    for i in range(n):
+                        h = 0.
+                        for k in range(n):h += D[i*n+k]*z[k]
+                        du[i] += h
+                    if it == 0:first = du[n-1]/(sgn*delta)
+                if best <= .5:value = best_w/(sgn*delta)
+                else:
+                    value = first
+                    self.stats['s7_tangent_linear'] = self.stats.get('s7_tangent_linear', 0)+1
+                if not isfinite(value):continue
+                if side == 1:right[0] = value
+                else:left[0] = value
+        finally:
+            P.speed_kmh = speed
+            self.stats['s7_tangent_evals'] = self.stats.get('s7_tangent_evals', 0)+P.aircraft_evaluations
+            self.cc.charge_problem(P)
+            self.t_tangent += s5_now()-t0
+        if isfinite(left[0]) or isfinite(right[0]):
+            self.stats['s7_tangents_ok'] = self.stats.get('s7_tangents_ok', 0)+1
+            return True
+        return False
+
+    def debug_scale(self, double scale):
+        global g_tangent_scale
+        g_tangent_scale = scale
+
+    def debug_tangent(self, int sid, int mode, int code, int axis, int side, double speed, double delta):
+        """Diagnostics: MarchEngine.tangent from Python ((left, right) dw/dV or None)."""
+        cdef double l = NAN, r = NAN
+        if not self.tangent(sid, mode, code, axis, side, speed, delta, 3, &l, &r):return None
+        return l, r
+
+    def debug_face(self, int sid, int code, int axis, int side, double speed):
+        """Diagnostics: the event-face correction (FIX_EVENT) at ``speed`` from state ``sid``: (load, valid) or None."""
+        cdef PredMap preds
+        cdef int p
+        preds.n = 0
+        if code == 6:self.P.ev_limit = self.st[sid].rpm_limit[axis]*M_PI/30.
+        p = self.correct(sid, self.st[sid].sol, self.st[sid].load, True, FIX_EVENT, 0., code, axis, side, 30, 0, 2e-6, speed,
+                         &preds, NULL)
+        if p < 0:return None
+        return self.st[p].load, bool(self.st[p].valid), self.st[p].alpha
+
+    def debug_events(self, int sid):
+        cdef Event ev[32]
+        cdef int n = self.nearest_events(sid, ev), i
+        return [(ev[i].kind, ev[i].axis, ev[i].side, ev[i].engine, ev[i].code, ev[i].distance) for i in range(n)]
+
+    def debug_state(self, int sid):
+        cdef TState* t = &self.st[sid]
+        return dict(speed=t.speed, load=t.load, alpha=t.alpha, base=t.base, limit=t.limit, valid=bool(t.valid),
+                    margins={KIND_TEXT[k]: t.m[k] for k in range(NKD) if (t.mset >> k) & 1})
 
     @cython.boundscheck(True)
     @cython.wraparound(True)

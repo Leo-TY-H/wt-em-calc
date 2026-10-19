@@ -73,11 +73,15 @@ cdef class NColumn:
     cdef public list sample_points, evidence_list
     cdef public object raw_status, raw_reason
     cdef public object nudged_from     # S6: the requested speed when this column was placed within the speed tolerance
+    # S7: the exact slope of the boundary, dn/dV (per km/h) from below / above the column speed (NaN: none), and its kind
+    cdef public double slope_l, slope_r
+    cdef public object slope_kind
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
     def __init__(self, double speed):
         self.nudged_from = None
+        self.slope_l = NAN;self.slope_r = NAN;self.slope_kind = None
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None

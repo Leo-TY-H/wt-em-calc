@@ -8,6 +8,14 @@
 # (resolve_gaps), and an unresolved column within twice the speed tolerance of verified
 # columns, or past an explicit edge, is dropped with a trace event (within_tolerance).
 # WT_MARCH_S6=0 restores the S5 tracer exactly.
+#
+# S7 (WT_MARCH_S7=0 restores S6 exactly): every verified column carries the exact slope of its boundary (MarchEngine
+# .tangent on the limiting face's own equations, both one-sided speed derivatives; the slope of the load cap on the
+# plot ceiling); the outline between two columns is the cubic Hermite through their loads and slopes, and between two
+# columns on different limiting faces the two faces' tangent lines up to their intersection (the corner). Withheld
+# checks compare that interpolant (as em_march_chart.outline draws it); a corner interval is checked at its predicted
+# corner, a smooth one at a model kink speed inside it (jet thrust-table speed, Mach polynomial end) or its midpoint.
+# Edges are localized to the speed tolerance.
 
 
 cdef int pchip_build(int n, const double* x, const double* y, double* c) except -1:
@@ -66,6 +74,80 @@ cdef double pchip_edge(double h0, double h1, double m0, double m1) noexcept nogi
     return d
 
 
+cdef void pchip_slopes(int n, const double* x, const double* y, double* d) noexcept nogil:
+    """S7: the PCHIP derivatives at the knots (PchipInterpolator(x, y).derivative()(x), the arithmetic of pchip_build)."""
+    cdef int k
+    cdef double w1, w2, whmean, h0, h1, m0, m1
+    if n < 2:
+        if n == 1:d[0] = 0.
+        return
+    if n == 2:
+        d[0] = (y[1]-y[0])/(x[1]-x[0]);d[1] = d[0]
+        return
+    for k in range(1, n-1):
+        h0 = x[k]-x[k-1];h1 = x[k+1]-x[k]
+        m0 = (y[k]-y[k-1])/h0;m1 = (y[k+1]-y[k])/h1
+        if (np_sign(m1) != np_sign(m0)) or m1 == 0. or m0 == 0.:
+            d[k] = 0.
+        else:
+            w1 = 2*h1+h0;w2 = h1+2*h0
+            whmean = (w1/m0+w2/m1)/(w1+w2)
+            d[k] = 1.0/whmean
+    d[0] = pchip_edge(x[1]-x[0], x[2]-x[1], (y[1]-y[0])/(x[1]-x[0]), (y[2]-y[1])/(x[2]-x[1]))
+    d[n-1] = pchip_edge(x[n-1]-x[n-2], x[n-2]-x[n-3], (y[n-1]-y[n-2])/(x[n-1]-x[n-2]), (y[n-2]-y[n-3])/(x[n-2]-x[n-3]))
+
+
+cdef double hermite_eval(int n, const double* x, const double* y, const double* dl, const double* dr, double v) noexcept nogil:
+    """S7: piecewise cubic Hermite through (x, y): on [x[k], x[k+1]] the slope dr[k] (right of knot k) and dl[k+1]
+    (left of knot k+1); the end cubics extrapolate. Same formula as em_march_chart.hermite."""
+    cdef int i = 0, lo, hi, mid
+    cdef double h, t, t2, t3
+    if n == 1:return y[0]
+    if v <= x[0]:i = 0
+    elif v >= x[n-1]:i = n-2
+    else:
+        lo = 0;hi = n-2
+        while lo < hi:
+            mid = (lo+hi)//2
+            if v < x[mid]:hi = mid
+            elif v >= x[mid+1]:lo = mid+1
+            else:
+                lo = mid;break
+        i = lo
+    h = x[i+1]-x[i];t = (v-x[i])/h;t2 = t*t;t3 = t2*t
+    return ((2*t3-3*t2+1)*y[i]+(t3-2*t2+t)*h*dr[i]+(-2*t3+3*t2)*y[i+1]+(t3-t2)*h*dl[i+1])
+
+
+cdef void fill_slopes(int n, const double* x, const double* y, double* dl, double* dr) noexcept nogil:
+    """S7: knots without an exact slope (NaN) take the PCHIP derivative there; an end knot in level flight (y = w = 0,
+    where no exact slope exists) takes the slope of the parabola through both ends of its interval with the
+    neighbour's slope (w is smooth and crosses zero at a contour's level-flight end). Same rule as
+    em_march_chart.hermite_slopes."""
+    cdef double d[256]
+    cdef double* buf = d
+    cdef int k, j
+    cdef bint missing = False, lend, rend
+    for k in range(n):
+        if not (isfinite(dl[k]) and isfinite(dr[k])):missing = True
+    if not missing:return
+    if n > 256:
+        buf = <double*>malloc(n*sizeof(double))
+        if buf == NULL:return
+    pchip_slopes(n, x, y, buf)
+    lend = n >= 2 and y[0] == 0. and not isfinite(dl[0]) and not isfinite(dr[0])
+    rend = n >= 2 and y[n-1] == 0. and not isfinite(dl[n-1]) and not isfinite(dr[n-1])
+    for k in range(n):
+        if not isfinite(dl[k]) and not isfinite(dr[k]):
+            dl[k] = buf[k];dr[k] = buf[k]
+        elif not isfinite(dl[k]):dl[k] = dr[k]
+        elif not isfinite(dr[k]):dr[k] = dl[k]
+    if lend:
+        dl[0] = 2.*(y[1]-y[0])/(x[1]-x[0])-dl[1];dr[0] = dl[0]
+    if rend:
+        dr[n-1] = 2.*(y[n-1]-y[n-2])/(x[n-1]-x[n-2])-dr[n-2];dl[n-1] = dr[n-1]
+    if buf != d:cfree(buf)
+
+
 cdef double pchip_eval(int n, const double* x, const double* c, double xv) noexcept nogil:
     """PPoly.__call__ (extrapolating, ascending x): interval search and evaluate_poly1."""
     cdef int i = 0, lo, hi, mid
@@ -94,6 +176,61 @@ cdef double pchip_eval(int n, const double* x, const double* c, double xv) noexc
     return res
 
 
+DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope turn tolerance (the outline aims at it)
+
+
+cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
+    """S7: d(load)/dV of the cubic Hermite through (na, sa) at va and (nb, sb) at vb."""
+    cdef double h = vb-va, t = (v-va)/h, t2 = t*t
+    return ((6*t2-6*t)*na+(3*t2-4*t+1)*h*sa+(-6*t2+6*t)*nb+(3*t2-2*t)*h*sb)/h
+
+
+cdef inline double face_load(double v0, double n0, double s0, double k0, double v) noexcept nogil:
+    """S7: one limiting face beyond its column: load, slope and curvature there (a quadratic)."""
+    return n0+(v-v0)*(s0+.5*k0*(v-v0))
+
+
+cdef inline bint corner_vertex(double va, double na, double sa, double ka, double vb, double nb, double sb, double kb,
+                               double* vc) noexcept nogil:
+    """S7: the corner of an interval whose ends lie on different limiting faces: where the two faces, continued from
+    their columns (face_load: load, exact slope and the curvature from the face's neighbouring column), meet. The
+    boundary is the lower face (the first limit along alpha), so face a must lie below face b at va and above it at vb
+    (within 0.1% in load: then the corner is that end); False otherwise (no corner: a jump or a face the columns do not
+    describe). Bisection, the same 60 steps as em_march_chart.corner_vertex."""
+    cdef double lo = va, hi = vb, mid, f, fa, fb, tol = 1e-3*pmax(fabs(na), fabs(nb))
+    cdef int it
+    if not (isfinite(sa) and isfinite(sb) and isfinite(ka) and isfinite(kb)):return False
+    fa = na-face_load(vb, nb, sb, kb, va);fb = face_load(va, na, sa, ka, vb)-nb
+    if fa > tol or fb < -tol:return False
+    # within 0.1% in load of an end the corner is that end (the column there is on the other face's edge)
+    if fa > 0.:
+        vc[0] = va;return True
+    if fb < 0.:
+        vc[0] = vb;return True
+    for it in range(60):
+        mid = .5*(lo+hi)
+        f = face_load(va, na, sa, ka, mid)-face_load(vb, nb, sb, kb, mid)
+        if f > 0.:hi = mid
+        else:lo = mid
+    vc[0] = .5*(lo+hi)
+    return True
+
+
+cdef inline double interval_load(double va, double na, double sa, double ka, double pa, double vb, double nb, double sb,
+                                 double kb, double pb, bint corner, bint exact, double v) noexcept nogil:
+    """S7: the outline's load at v on [va, vb] (em_march_chart.boundary_interval): on one limiting face the cubic Hermite
+    through loads and slopes (sa right of va, sb left of vb); across a face change the two faces up to their corner
+    (corner_vertex) where both slopes are exact (``exact``) and the faces meet, else the Hermite with the PCHIP slopes
+    (pa, pb; no overshoot)."""
+    cdef double vc, h, t, t2, t3
+    if corner:
+        if exact and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc):
+            return face_load(va, na, sa, ka, v) if v <= vc else face_load(vb, nb, sb, kb, v)
+        sa = pa;sb = pb
+    h = vb-va;t = (v-va)/h;t2 = t*t;t3 = t2*t
+    return (2*t3-3*t2+1)*na+(t3-2*t2+t)*h*sa+(-2*t3+3*t2)*nb+(t3-t2)*h*sb
+
+
 cdef class NTracer:
     """em_march.MarchTracer on native columns."""
     cdef MarchEngine eng
@@ -103,8 +240,11 @@ cdef class NTracer:
     cdef public dict columns, work
     cdef public list witnesses, events
     cdef object N, M, S
-    cdef bint production_fallback, nudge, s6, probing
+    cdef bint production_fallback, nudge, s6, probing, s7
     cdef set check_tried, check_passed
+    cdef public list knot_speeds
+    cdef double tangent_delta
+    cdef bint exact_a, exact_b      # S7: interval_slopes found face slopes (exact or the face neighbour's) at both ends
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -126,6 +266,10 @@ cdef class NTracer:
         self.s6 = os.environ.get('WT_MARCH_S6', '1') != '0' and not self.production_fallback
         self.nudge = self.s6 and os.environ.get('WT_MARCH_NUDGE', '1') != '0'
         self.probing = False   # nudge and gap probes run without the S6 robust march (they look for speeds outside a band)
+        # S7: WT_MARCH_S7=0 restores the S6 tracer exactly (PCHIP checks, corners bisected to the placement tolerance)
+        self.s7 = os.environ.get('WT_MARCH_S7', '1') != '0' and self.s6
+        self.knot_speeds = []
+        self.tangent_delta = 1.
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -166,12 +310,74 @@ cdef class NTracer:
                                                 reason=str(col.march_reason)[:80]))
                         self.eng.stats['s6_nudged'] = self.eng.stats.get('s6_nudged', 0)+1
                         col = alt;break
+            if self.s7 and NTracer.ok(col):self.column_slope(col)
         col.role = why;col.evaluations = w.counts.get('aircraft_evaluations', 0)
         row = self.work.setdefault(why, dict(columns=0, evaluations=0))
         row['columns'] += 1;row['evaluations'] += col.evaluations
         if keep:self.columns[float(col.speed)] = col
         if self.on_column is not None:self.on_column(self, 'done', speed, why)
         return col
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int slope_sides(self, double speed) except -1:
+        """S7: which one-sided slopes a column needs: both next to a model kink (two pieces meet there), else one, towards
+        the inside of its segment (a one-sided difference over the slope step is exact to well below the tolerances)."""
+        cdef double v
+        for v in self.knot_speeds:
+            if fabs(v-speed) <= 2*self.vtol:return 3
+        for seg in self.segments_ or ():
+            if seg['speed_kmh'][0]-1e-9 <= speed <= seg['speed_kmh'][1]+1e-9:
+                return 1 if speed+self.tangent_delta > seg['speed_kmh'][1] else 2
+        return 2
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int column_slope(self, NColumn col) except -1:
+        """S7: the exact slope dn/dV of the column's boundary (both sides): the load cap's on the plot ceiling; the
+        limiting face's own equations through the boundary state (MarchEngine.tangent: the event residual for stall,
+        wing force, control, Instructor and engine RPM faces, fixed alpha at a load maximum). Pitch-response faces and
+        events without a native residual have none (the outline takes the PCHIP slope there)."""
+        cdef int b = col.boundary, base, i, nev, mode = -1, code = 0, axis = 0, side = 0, kind = -1, laxis = -1
+        cdef double wl = NAN, wr = NAN, n, d = self.tangent_delta, c0, cp, cm
+        cdef Event ev[32]
+        if b < 0:return 0
+        base = self.eng.st[b].base
+        n = self.eng.st[base].load
+        if col.status == STATUS_CEILING:
+            c0 = self.eng.cap(col.speed);cp = self.eng.cap(col.speed+d);cm = self.eng.cap(col.speed-d)
+            col.slope_l = (c0-cm)/d;col.slope_r = (cp-c0)/d;col.slope_kind = 'load cap'
+            return 0
+        limit = self.eng.limits[self.eng.st[b].limit] if self.eng.st[b].limit >= 0 else None
+        if limit is None:return 0
+        kind = KIND_CODE.get(limit.get('kind'), -1)
+        if limit.get('axis') is not None:laxis = int(limit['axis'])
+        if kind == KD_FOLD:
+            mode = 2
+        elif kind in (KD_STALL, KD_WING, KD_CONTROL, KD_INSTR, KD_RPM):
+            engine = int((limit.get('engine_rpm_limit') or {}).get('engine', -1))
+            nev = self.eng.nearest_events(base, ev)
+            for i in range(nev):
+                if ev[i].kind != kind or ev[i].code <= 0:continue
+                if kind == KD_CONTROL and laxis >= 0 and ev[i].axis != laxis:continue
+                if kind == KD_RPM and engine >= 0 and ev[i].engine != engine:continue
+                mode = 1;code = ev[i].code;side = ev[i].side
+                axis = ev[i].engine if code == 6 else (ev[i].axis-2 if ev[i].axis >= 0 else 0)
+                break
+        if mode < 0:
+            col.slope_kind = 'none: '+str(limit.get('kind'))
+            return 0
+        self.eng.flush_counts()
+        if not self.eng.tangent(base, mode, code, axis, side, self.eng.st[base].speed, d, self.slope_sides(col.speed), &wl, &wr):
+            col.slope_kind = 'unavailable: '+str(limit.get('kind'))
+            return 0
+        if isfinite(wl) and isfinite(wr) and fabs(wl-wr) <= .05*pmax(fabs(wl), fabs(wr)):
+            wl = .5*(wl+wr);wr = wl
+        col.slope_l = wl/(2.*n);col.slope_r = wr/(2.*n)
+        if not isfinite(col.slope_l):col.slope_l = col.slope_r
+        if not isfinite(col.slope_r):col.slope_r = col.slope_l
+        col.slope_kind = ('fixed alpha' if mode == 2 else 'face')+': '+str(limit.get('kind'))
+        return 0
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -514,6 +720,49 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef tuple edge_probe(self, NColumn good, NColumn bad):
+        """S7: an edge beyond which level flight is infeasible, to the speed tolerance: bisection with level-flight
+        corrections continued from the verified column's own level-flight state (no march and no production level search
+        for the probes), then one column at the last probed speed whose level flight closed and was admitted. Returns
+        (the edge's verified column, the nearest probed speed beyond it). A probe that does not close counts as beyond
+        the edge (the edge never moves past a closed, admitted level flight; at worst it stays at the swept column)."""
+        from em_trim_work import Work, use, current
+        cdef double out = bad.speed, inside = good.speed, mid
+        cdef int level = good.level, p
+        cdef PredMap preds
+        cdef NColumn col
+        preds.n = 0
+        if level < 0 or not self.eng.st[level].valid or fabs(self.eng.st[level].load-1.) > 1e-9:
+            g, b = self.localize(good, bad, 'edge', self.vtol)
+            return g, b.speed
+        w = Work({}, parent=current())
+        with use(w):
+            while fabs(inside-out) > self.vtol:
+                mid = .5*(inside+out)
+                p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS, 2e-6,
+                                     mid, &preds, NULL)
+                if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
+                    # not closed: once more with fresh derivatives and the S6 robust budget before it counts as beyond
+                    p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV,
+                                         ROBUST_EVALS, 2e-6, mid, NULL, NULL)
+                self.eng.flush_counts()
+                if p >= 0 and self.eng.st[p].valid:
+                    inside = mid;level = p
+                else:
+                    out = mid
+        row = self.work.setdefault('edge probe', dict(columns=0, evaluations=0))
+        row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
+        self.eng.stats['s7_edge_probes'] = self.eng.stats.get('s7_edge_probes', 0)+1
+        if inside == good.speed:return good, out
+        col = self.column(inside, [good], 'edge', False, pmin(inside, out), pmax(inside, good.speed))
+        if NTracer.ok(col):
+            self.columns[float(col.speed)] = col
+            return col, out
+        self.eng.stats['s7_edge_probe_misses'] = self.eng.stats.get('s7_edge_probe_misses', 0)+1
+        return good, inside
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef sweep(self, dict segment, NColumn start):
         cdef NColumn last, prev, col, good, bad
         cdef double speed, step, n, error, h, r, bound
@@ -539,6 +788,12 @@ cdef class NTracer:
                 skipped = 0 if NTracer.ok(col) else skipped
                 if not NTracer.ok(col):
                     # S6: an unresolved (not infeasible) column ends the sweep only to the speed tolerance
+                    if self.s7 and col.status == STATUS_NOFEASIBLE:
+                        # S7: an infeasible edge to the speed tolerance (it was drawn up to the placement tolerance inside)
+                        good, edge = self.edge_probe(last, col)
+                        self.events.append(dict(kind='edge', speed_kmh=[good.speed, edge], status=col.status_name(),
+                                                reason=col.reason, located_by='level-flight probes'))
+                        break
                     good, bad = self.localize(last, col, 'edge', self.vtol if col.status == STATUS_UNRESOLVED and self.s6 else -1.)
                     self.events.append(dict(kind='edge', speed_kmh=[good.speed, bad.speed],
                                             status=bad.status_name(), reason=bad.reason))
@@ -571,6 +826,7 @@ cdef class NTracer:
 
         def seam(lo, hi):
             return any(lo < x < hi or lo < y < hi for x, y in seams)
+        if self.s7:return self.check_s7()
         for depth in range(self.max_depth):
             good = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c)]
             added = 0
@@ -616,6 +872,171 @@ cdef class NTracer:
                 else:
                     self.columns[v] = col
                     if not NTracer.ok(col):tried.add(key)
+            if not added:break
+        return checks
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object face_of(self, NColumn c):
+        """S7: the limiting face of a verified column: its boundary reason, with the control axis or the engine
+        (an aileron and an elevator authority limit are two faces; em_march_chart.face_of)."""
+        if c.boundary < 0 or self.eng.st[c.boundary].limit < 0:return c.reason
+        limit = self.eng.limits[self.eng.st[c.boundary].limit]
+        if limit.get('axis') is not None:return '%s:%s' % (c.reason, limit['axis'])
+        engine = (limit.get('engine_rpm_limit') or {}).get('engine')
+        if engine is not None:return '%s:%s' % (c.reason, engine)
+        return c.reason
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef tuple interval_slopes(self, list good, int i):
+        """S7: the interval good[i]..good[i+1] as em_march_chart.run_loads draws it: (sa, sb, ka, kb, pa, pb): the right
+        slope of good[i] and the left slope of good[i+1] (the PCHIP slope through the neighbouring verified columns
+        with no seam between where none is available), each face's curvature from its neighbouring column on the same
+        face (0 without one), and the PCHIP slopes at both ends."""
+        cdef NColumn a = good[i], b = good[i+1], c, p, q
+        cdef double sa = a.slope_r, sb = b.slope_l, ka = 0., kb = 0., pa, pb, s0, s1
+        cdef int lo, hi, j, n
+        cdef double xs[8]
+        cdef double ns[8]
+        cdef double ds[8]
+        seams = self.seams
+        lo = i;hi = i+1
+        while lo > 0 and i-lo < 2 and not any((<NColumn>good[lo-1]).speed < x < (<NColumn>good[lo]).speed or
+                                               (<NColumn>good[lo-1]).speed < y < (<NColumn>good[lo]).speed for x, y in seams):lo -= 1
+        while hi < len(good)-1 and hi-(i+1) < 2 and not any((<NColumn>good[hi]).speed < x < (<NColumn>good[hi+1]).speed or
+                                                           (<NColumn>good[hi]).speed < y < (<NColumn>good[hi+1]).speed for x, y in seams):hi += 1
+        n = hi-lo+1
+        for j in range(n):
+            c = good[lo+j];xs[j] = c.speed;ns[j] = self.eng.st[c.boundary].load
+        pchip_slopes(n, xs, ns, ds)
+        pa = ds[i-lo];pb = ds[i+1-lo]
+        # a missing exact slope: the same face's slope at its neighbouring column (a face's slope changes little over a
+        # column interval; a PCHIP slope through another face's column says nothing about it), else PCHIP
+        if not isfinite(sa) and lo <= i-1:
+            p = good[i-1]
+            if self.face_of(p) == self.face_of(a) and isfinite(p.slope_r):sa = p.slope_r
+        if not isfinite(sb) and hi >= i+2:
+            q = good[i+2]
+            if self.face_of(q) == self.face_of(b) and isfinite(q.slope_l):sb = q.slope_l
+        self.exact_a = isfinite(sa);self.exact_b = isfinite(sb)
+        if not isfinite(sa):sa = pa
+        if not isfinite(sb):sb = pb
+        if lo <= i-1:
+            p = good[i-1]
+            if self.face_of(p) == self.face_of(a):
+                s0 = p.slope_r if isfinite(p.slope_r) else ds[i-1-lo]
+                s1 = a.slope_l if isfinite(a.slope_l) else pa
+                ka = (s1-s0)/(a.speed-p.speed)
+        if hi >= i+2:
+            q = good[i+2]
+            if self.face_of(q) == self.face_of(b):
+                s0 = b.slope_r if isfinite(b.slope_r) else pb
+                s1 = q.slope_l if isfinite(q.slope_l) else ds[i+2-lo]
+                kb = (s1-s0)/(q.speed-b.speed)
+        return sa, sb, ka, kb, pa, pb
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double check_speed(self, double va, double vb) noexcept:
+        """S7: the model kink speed inside (va, vb) nearest the midpoint (at least twice the speed tolerance from both
+        ends), else the midpoint (MarchCurveSolver.check_speed with the tracer's tolerance)."""
+        cdef double mid = .5*(va+vb), best = mid, v
+        cdef bint found = False
+        for v in self.knot_speeds:
+            if va+2*self.vtol < v < vb-2*self.vtol and (not found or fabs(v-mid) < fabs(best-mid)):
+                best = v;found = True
+        return best
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef list check_s7(self):
+        """S7: MarchTracer.check on the S7 outline. Every interval between verified columns (wider than twice the speed
+        tolerance, no Mach seam inside) gets a withheld column: at the predicted corner where its ends lie on different
+        limiting faces (corner_vertex), else at a model kink speed inside it or its midpoint. The column passes when its
+        turn rate lies within half the turn tolerance of the outline over the speed tolerance around it (interval_load,
+        as the chart draws it); a passing column is drawn as a witness, a failing one splits the interval (corners
+        converge on the intersection of the faces), an unresolved one is kept as before. Narrower intervals across a
+        jump of the boundary are halved down to a quarter of the speed tolerance."""
+        cdef NColumn a, b, col
+        cdef double va, vb, v, x, sa, sb, ka, kb, pa, pb, na, nb, vc, lo_t, hi_t, t
+        cdef bint corner, ok, has_vertex
+        cdef int i
+        checks, tried, passed_set = [], self.check_tried, self.check_passed
+        seams = self.seams
+
+        def seam(lo, hi):
+            return any(lo < x < hi or lo < y < hi for x, y in seams)
+        for depth in range(self.max_depth):
+            good = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c)]
+            added = 0
+            for i in range(len(good)-1):
+                a = good[i];b = good[i+1]
+                va, vb = a.speed, b.speed
+                key = (va, vb)
+                if key in passed_set or key in tried or seam(va, vb):continue
+                sa, sb, ka, kb, pa, pb = self.interval_slopes(good, i)
+                na = self.eng.st[a.boundary].load;nb = self.eng.st[b.boundary].load
+                if vb-va <= 2*self.vtol:
+                    # within the horizontal tolerance no withheld check exists; a jump of the boundary (the load at b
+                    # more than the turn tolerance from a's continued with the slopes) is bracketed to a quarter of it
+                    t = .5*(sa+sb)*(vb-va)
+                    if not (vb-va > .25*self.vtol and isfinite(t) and fabs(self.M.turn_rate(vb, nb)-self.M.turn_rate(vb, na+t)) > self.ttol):
+                        continue
+                    col = self.column(.5*(va+vb), [a, b], 'jump', False, va, vb)
+                    checks.append(dict(interval_kmh=[va, vb], speed_kmh=col.speed, passed=False, faces=[a.reason, b.reason],
+                                       midpoint_face=col.reason if NTracer.ok(col) else col.status_name(), kind='jump'))
+                    added += 1
+                    self.columns[col.speed] = col
+                    if not NTracer.ok(col):tried.add(key)
+                    continue
+                corner = self.face_of(a) != self.face_of(b)
+                # a corner needs both faces' exact slopes (a PCHIP slope through another face's column says nothing)
+                has_vertex = (corner and self.exact_a and self.exact_b
+                              and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc))
+                if has_vertex:
+                    # a corner at least a tenth of the interval from its ends (each failed check then shrinks it)
+                    v = pmin(pmax(vc, va+.1*(vb-va)), vb-.1*(vb-va))
+                else:
+                    # the midpoint: a kink inside (model or not) fails the column's exact-slope test there
+                    v = .5*(va+vb)
+                col = self.column(v, [a, b], 'corner check' if corner else 'check', False, va, vb)
+                v = col.speed
+                ok = NTracer.ok(col)
+                if ok:
+                    lo_t = INFINITY;hi_t = -INFINITY
+                    for x in (v-self.vtol, v, v+self.vtol):
+                        x = pmin_np(pmax_np(x, va), vb)
+                        t = self.M.turn_rate(x, float(interval_load(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner,
+                                                                     self.exact_a and self.exact_b, x)))
+                        lo_t = pmin(lo_t, t);hi_t = pmax(hi_t, t)
+                    ok = lo_t-S7_CHECK*self.ttol <= self.eng.st[col.boundary].turn <= hi_t+S7_CHECK*self.ttol
+                    if ok and corner:
+                        # a face change: without both faces' slopes the interval is halved down to the horizontal
+                        # tolerance; at a predicted corner the column passes only if the face it is not on is drawn
+                        # from its column over at most twice the placement tolerance (a face continued further is not
+                        # validated by this column); otherwise it splits the interval and the corner is predicted again
+                        if not has_vertex:ok = False
+                        elif self.face_of(col) == self.face_of(a):ok = vb-v <= 2*self.place_tol
+                        elif self.face_of(col) == self.face_of(b):ok = v-va <= 2*self.place_tol
+                        else:ok = False
+                    elif ok and isfinite(col.slope_l) and isfinite(col.slope_r):
+                        # the withheld column's own exact slope must agree with the drawn line's there: a kink of the
+                        # face inside the interval (the drawn cubic is wrong away from the midpoint) fails the check
+                        t = .5*(col.slope_l+col.slope_r)-hermite_dload(va, na, sa, vb, nb, sb, v)
+                        x = self.eng.st[col.boundary].load
+                        ok = fabs(self.M.turn_rate(v, x+fabs(t)*.25*(vb-va))-self.M.turn_rate(v, x)) <= S7_CHECK*self.ttol
+                checks.append(dict(interval_kmh=[va, vb], speed_kmh=v, passed=bool(ok), faces=[a.reason, b.reason],
+                                   midpoint_face=col.reason if NTracer.ok(col) else col.status_name(),
+                                   kind='corner' if has_vertex else 'kink' if v != .5*(va+vb) and not corner else 'midpoint'))
+                if ok:
+                    passed_set.add(key);self.witnesses.append(col)
+                    if corner:self.events.append(dict(kind='corner', speed_kmh=[va, vb], faces=[a.reason, b.reason],
+                                                      vertex_kmh=vc if has_vertex else None, verified_at_kmh=v))
+                    continue
+                added += 1
+                self.columns[v] = col
+                if not NTracer.ok(col):tried.add(key)
             if not added:break
         return checks
 
@@ -751,7 +1172,11 @@ cdef class NTracer:
         cdef NColumn start, c, previous = None
         started = time.perf_counter()
         segments, limit, cuts = self.segments()
-        self.seams = cuts
+        self.seams = cuts;self.segments_ = segments
+        if self.s7:
+            import em_march_curves as C
+            self.knot_speeds = C.model_knot_speeds(self.eng.solver, self.config, float(self.config['speed_min_kmh']),
+                                                   float(self.config['speed_max_kmh']), self.vtol)
         for segment in sorted(segments, key=lambda s: -s['speed_kmh'][1]):
             lo, hi = segment['speed_kmh']
             start = self.column(hi, [previous] if previous is not None else [], 'start', True, lo-1e-9, hi+1e-9)
@@ -806,6 +1231,9 @@ cdef class NTracer:
             out['s1_role'] = col.role;out['s1_evaluations'] = col.evaluations
         if col.withheld:out['withheld_check'] = True
         if col.nudged_from is not None:out['s6_requested_speed_kmh'] = float(col.nudged_from)
+        if col.slope_kind is not None:
+            out['boundary_slope'] = [col.slope_l if isfinite(col.slope_l) else None, col.slope_r if isfinite(col.slope_r) else None]
+            out['boundary_slope_kind'] = col.slope_kind
         return out
 
     @cython.boundscheck(True)

@@ -3,6 +3,12 @@
 # the native correction and lean finish; knots stay native states and the component
 # report is built from their fields (compact_state). The work ledger is the Python
 # Ledger, so the curve work record is unchanged.
+#
+# S7 (WT_CURVE_S7=0 restores S5/S6 exactly): every knot carries the exact slope dw/dV of its SEP level set (MarchEngine
+# .tangent, both one-sided speed derivatives), and the withheld checks judge each interval by position: the exact
+# midpoint turn rate within the curve tolerance of the drawn line, allowing the chart's 1 km/h horizontal slack, on the
+# piecewise cubic Hermite through values and slopes that the chart draws (em_march_chart.polyline). The SEP band no
+# longer passes an interval; it stays the acceptance check of the chart against the reference.
 
 STATE_FIELDS = ('speed_kmh', 'load_g', 'turn_dps', 'ps_mps', 'alpha_deg', 'bank_deg', 'solution',
                 'stationary_coordinates', 'stationary_coordinate_names', 'stationary_request_indices',
@@ -49,6 +55,11 @@ cdef class NCurves:
     cdef int npool, next_pool
     cdef dict pred_of
     cdef list owners
+    # S7: exact knot slopes (state id -> (left, right) dw/dV per km/h, NaN where unavailable) and the switch
+    cdef public dict slopes
+    cdef public bint s7
+    cdef double tangent_delta
+    cdef public list segs
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -76,6 +87,9 @@ cdef class NCurves:
         if p.exhaustive_retry:raise NativeMarchUnsupported('exhaustive curve retries')
         self.check = None
         self.column_ids = {}
+        self.slopes = {}
+        self.s7 = os.environ.get('WT_CURVE_S7', '1') != '0'
+        self.tangent_delta = .5
 
     # ------------------------------------------------------------------ states
     @cython.boundscheck(True)
@@ -458,6 +472,54 @@ cdef class NCurves:
                 if end is not None:break
             comp[key] = end
 
+    # ------------------------------------------------------------------ S7: exact slopes
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int slope_sides(self, double speed) except -1:
+        """S7: both one-sided slopes next to a model kink, else the one towards the inside of the knot's segment."""
+        cdef double v
+        for v in self.knot_speeds:
+            if fabs(v-speed) <= 2*self.speed_tol:return 3
+        for seg in self.segs or ():
+            if seg['speed_kmh'][0]-1e-9 <= speed <= seg['speed_kmh'][1]+1e-9:
+                return 1 if speed+self.tangent_delta > seg['speed_kmh'][1] else 2
+        return 2
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef tuple knot_slope(self, int sid):
+        """(left, right) dw/dV of the knot's SEP level set (MarchEngine.tangent, mode 0): one value for both sides where
+        the one-sided derivatives agree within 5% (their mean, a central difference), NaN where unavailable."""
+        cdef double l = NAN, r = NAN, m
+        cdef int base = self.eng.st[sid].base
+        got = self.slopes.get(base)
+        if got is not None:return got
+        if not self.eng.tangent(base, 0, 0, 0, 0, self.eng.st[base].speed, self.tangent_delta, self.slope_sides(self.eng.st[base].speed),
+                                &l, &r):
+            l = NAN;r = NAN
+        elif isfinite(l) and isfinite(r):
+            m = pmax(fabs(l), fabs(r))
+            if fabs(l-r) <= .05*m or m < 1e-9:
+                l = .5*(l+r);r = l
+        got = (l, r);self.slopes[base] = got
+        return got
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object hermite(self, list knots):
+        """The chart's contour interpolant: cubic Hermite in w through the knots with their exact slopes (PCHIP slopes
+        where none is available)."""
+        cdef int n = len(knots), i
+        cdef HermiteCurve f
+        if n < 2:return None
+        f = HermiteCurve(n)
+        for i in range(n):
+            f.x[i] = self.eng.st[knots[i]].speed;f.y[i] = pow(self.eng.st[knots[i]].load, 2.)-1.
+            l, r = self.knot_slope(knots[i])
+            f.dl[i] = l;f.dr[i] = r
+        f.build()
+        return f
+
     # ------------------------------------------------------------------ interpolation validation
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -484,11 +546,18 @@ cdef class NCurves:
         cdef double target = comp['level'], speed, w, n, t, w0, interp_turn, turn_error
         cdef int a, b, i, p
         cdef PchipCurve f
+        cdef HermiteCurve hf
+        cdef double x, tx, lo_t, hi_t, box
         checks = comp.setdefault('checks', [])
         unresolved = comp.setdefault('unresolved_intervals', [])
         for _ in range(self.refinement_passes):
-            knots = comp['knots'];f = self.interpolant(knots)
-            if f is None:return
+            knots = comp['knots']
+            if self.s7:
+                hf = self.hermite(knots)
+                if hf is None:return
+            else:
+                f = self.interpolant(knots)
+                if f is None:return
             done = {(c['interval_kmh'][0], c['interval_kmh'][1]) for c in checks if c['passed']}
             blocked = {tuple(u['interval_kmh']) for u in unresolved}
             additions = []
@@ -498,12 +567,21 @@ cdef class NCurves:
                 if key in done or key in blocked:continue
                 if self.eng.st[b].speed-self.eng.st[a].speed <= self.speed_tol:continue
                 speed = self.check_speed(self.eng.st[a].speed, self.eng.st[b].speed)
-                w = f.eval(speed);n = sqrt(1.+pmax(w, 0.))
+                w = hf.eval(speed) if self.s7 else f.eval(speed);n = sqrt(1.+pmax(w, 0.))
                 t = (speed-self.eng.st[a].speed)/(self.eng.st[b].speed-self.eng.st[a].speed)
                 attitude = [self.eng.st[a].sol[k]*(1-t)+self.eng.st[b].sol[k]*t for k in range(5)]
                 outcome, truth, reason = self.direct_seed(speed, target, n, [a, b], attitude, 'interpolation_checks')
                 if outcome == 'admitted' and not (self.eng.compatible(truth, a) and self.eng.compatible(truth, b)):
                     outcome, reason = 'incompatible', 'midpoint branch differs from knots'
+                if outcome != 'admitted' and self.s7:
+                    # S7: the S5 seed (the PCHIP load) before the single-anchor retries; the check still compares the
+                    # exact state with the drawn (Hermite) line
+                    f = self.interpolant(knots)
+                    w0 = sqrt(1.+pmax(f.eval(speed), 0.))
+                    if w0 != n:
+                        o2, t2, r2 = self.direct_seed(speed, target, w0, [a, b], attitude, 'interpolation_checks')
+                        if o2 == 'admitted' and self.eng.compatible(t2, a) and self.eng.compatible(t2, b):
+                            outcome, truth, reason = o2, t2, r2
                 if outcome != 'admitted':
                     retry = None
                     for anchor in (a, b):
@@ -524,6 +602,21 @@ cdef class NCurves:
                 if record['at_model_knot']:
                     record['passed'] = False;record['kink_knot'] = True
                     checks.append(record);additions.append(truth)
+                    continue
+                if self.s7:
+                    # S7: position with the chart's horizontal slack (the drawn line over speed +- speed tolerance)
+                    lo_t = interp_turn;hi_t = interp_turn
+                    for x in (speed-self.speed_tol, speed+self.speed_tol):
+                        x = pmin(pmax(x, self.eng.st[a].speed), self.eng.st[b].speed)
+                        tx = curve_turn(x, sqrt(1.+pmax(hf.eval(x), 0.)))
+                        lo_t = pmin(lo_t, tx);hi_t = pmax(hi_t, tx)
+                    tx = self.eng.st[truth].turn
+                    box = 0. if lo_t <= tx <= hi_t else (tx-hi_t if tx > hi_t else lo_t-tx)
+                    passed = box <= self.turn_tol
+                    record.update(position_error_dps=box, route='position')
+                    record['passed'] = passed
+                    checks.append(record)
+                    if not passed:additions.append(truth)
                     continue
                 if not passed:
                     p = self.fixed(speed, pmax(1., n), truth, 'interpolation_checks')
@@ -737,6 +830,7 @@ cdef class NCurves:
         self.total = total
         self.ledger = C.Ledger(total)
         segments, limit, cuts = self.py.segments()
+        self.segs = segments
         self.ladders = [];self.ones = {}
         self.knot_speeds = self.py.model_knot_speeds(float(self.py.config['speed_min_kmh']), float(self.py.config['speed_max_kmh']))
         columns = sorted(columns, key=lambda c: c['speed_kmh'])
@@ -861,9 +955,14 @@ cdef class NCurves:
                 if k == 'state' and isinstance(v, int):out[k] = self.compact(v)
                 else:out[k] = v
             return out
+        knots = [self.compact(p) for p in comp['knots']]
+        if self.s7:
+            for p, k in zip(comp['knots'], knots):
+                l, r = self.knot_slope(p)
+                k['s7_w_slope'] = [l if isfinite(l) else None, r if isfinite(r) else None]
         return dict(level=comp['level'], segment_kmh=comp['segment'], discovered_at_kmh=comp['discovered_at_kmh'],
                     provenance=comp.get('provenance'),
-                    knots=[self.compact(p) for p in comp['knots']], start=end(comp.get('start')), end=end(comp.get('end')),
+                    knots=knots, start=end(comp.get('start')), end=end(comp.get('end')),
                     checks=comp.get('checks', []), unresolved_intervals=comp.get('unresolved_intervals', []),
                     refinement_exhausted=comp.get('refinement_exhausted', False))
 
@@ -899,3 +998,39 @@ cdef class PchipCurve:
     @cython.wraparound(True)
     cdef double eval(self, double v) noexcept:
         return pchip_eval(self.n, self.x, self.c, v)
+
+
+cdef class HermiteCurve:
+    """S7: the piecewise cubic Hermite of curve knots (values, exact slopes, PCHIP slopes where missing)."""
+    cdef int n
+    cdef double* x
+    cdef double* y
+    cdef double* dl
+    cdef double* dr
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    def __cinit__(self, int n):
+        self.n = n
+        self.x = <double*>malloc(n*sizeof(double));self.y = <double*>malloc(n*sizeof(double))
+        self.dl = <double*>malloc(n*sizeof(double));self.dr = <double*>malloc(n*sizeof(double))
+        if self.x == NULL or self.y == NULL or self.dl == NULL or self.dr == NULL:raise MemoryError()
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    def __dealloc__(self):
+        if self.x != NULL:cfree(self.x)
+        if self.y != NULL:cfree(self.y)
+        if self.dl != NULL:cfree(self.dl)
+        if self.dr != NULL:cfree(self.dr)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int build(self) except -1:
+        fill_slopes(self.n, self.x, self.y, self.dl, self.dr)
+        return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double eval(self, double v) noexcept:
+        return hermite_eval(self.n, self.x, self.y, self.dl, self.dr, v)

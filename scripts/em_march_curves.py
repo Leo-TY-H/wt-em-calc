@@ -602,20 +602,7 @@ class CurveSolver:
         """Speeds where the model's speed dependence has kinks: jet thrust-table
         speeds and stable-Mach polynomial piece ends/clamp onsets. Continuation
         lands on these so interpolation never spans a known kink."""
-        from em_mach_events import catalog
-        from air_state import speed_of_sound
-        scale = 3.6*speed_of_sound(self.config['altitude_m'])
-        speeds = {float(v)*3.6 for u in getattr(self.solver.engine, 'units', ())
-                  if hasattr(u, 'jet') for v in u.jet['speed']}
-        try:info = catalog(self.solver, force=True)
-        except Exception:info = {}
-        for a, b, high, slope, limit in info.get('polynomial_pieces', ()):
-            speeds.update((a*scale, b*scale))
-            if slope:
-                m = b+(limit-high)/slope
-                if m > b:speeds.add(m*scale)
-        for r in info.get('approximations', []):speeds.update(m*scale for m in r['mach_knots'])
-        return sorted(v for v in speeds if lo+self.speed_tol < v < hi-self.speed_tol)
+        return model_knot_speeds(self.solver, self.config, lo, hi, self.speed_tol)
 
     def follow(self, comp, segment):
         for side, key in ((1, 'end'), (-1, 'start')):
@@ -1084,6 +1071,25 @@ def polyline(component, samples=200, gaps=False):
             continue
         out.append((float(x), turn_rate(float(x), math.sqrt(1.+max(float(f(x)), 0.)))))
     return out
+
+
+def model_knot_speeds(solver, config, lo, hi, speed_tol):
+    """CurveSolver.model_knot_speeds for any solver of the aircraft (S7: the envelope tracer places its withheld
+    checks there too)."""
+    from em_mach_events import catalog
+    from air_state import speed_of_sound
+    scale = 3.6*speed_of_sound(config['altitude_m'])
+    speeds = {float(v)*3.6 for u in getattr(solver.engine, 'units', ())
+              if hasattr(u, 'jet') for v in u.jet['speed']}
+    try:info = catalog(solver, force=True)
+    except Exception:info = {}
+    for a, b, high, slope, limit in info.get('polynomial_pieces', ()):
+        speeds.update((a*scale, b*scale))
+        if slope:
+            m = b+(limit-high)/slope
+            if m > b:speeds.add(m*scale)
+    for r in info.get('approximations', []):speeds.update(m*scale for m in r['mach_knots'])
+    return sorted(v for v in speeds if lo+speed_tol < v < hi-speed_tol)
 
 
 class MarchCurveSolver(CurveSolver):
