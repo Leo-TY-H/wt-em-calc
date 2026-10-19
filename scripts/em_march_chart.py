@@ -238,7 +238,14 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         if count[0] % 25 == 0:report(dict(phase='SEP curves', aircraft=name, fraction=min(.99, .6+.4*count[0]/2000.)))
     curves.check = check
     t0 = time.process_time()
-    result = curves.run() if verified else None
+    # S5: the curve solver on native trial states where the compiled module covers it.
+    curve_engine = N.engine(curve_solver) if engine is not None else None
+    if verified and curve_engine is not None:
+        native_curves = curve_solver.native_loop.m.NCurves(curve_engine, curves)
+        native_curves.check = check
+        result = native_curves.run(verified)
+    else:
+        result = curves.run() if verified else None
     curve_cpu = time.process_time()-t0
     if result is not None and str(result.get('status', '')).startswith('exhausted'):
         raise RuntimeError('SEP curve budget exhausted: '+result['status'])

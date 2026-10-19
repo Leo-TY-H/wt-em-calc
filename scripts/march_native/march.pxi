@@ -70,7 +70,7 @@ cdef struct TState:
     int row            # index into MarchEngine.rows (built or imported Python row) or -1
     int base           # the state this one copies (mark), itself otherwise
     int limit          # index into MarchEngine.limits (envelope_limit) or -1
-    double speed, load, alpha, bank, turn, ps, mach
+    double speed, load, alpha, bank, turn, ps, mach, beta
     double sol[5]
     int nx
     double coords[NMAX]
@@ -307,7 +307,7 @@ cdef class MarchEngine:
         t.speed = s.speed_kmh/3.6*3.6;t.load = s.load;t.alpha = e.x[0];t.bank = e.x[1]
         t.turn = e.geom.turn_rate*RAD_TO_DEG
         t.ps = e.kin.ps if isfinite(e.kin.ps) else NAN
-        t.mach = e.air.mach
+        t.mach = e.air.mach;t.beta = e.air.beta
         for i in range(5):t.sol[i] = e.x[i]
         t.nx = s.nx;t.has_coords = True;t.layout_names = True;t.names_id = 0
         for i in range(s.nx):t.coords[i] = s.q[i]
@@ -402,6 +402,7 @@ cdef class MarchEngine:
         t.turn = row.get('turn_dps', NAN)
         ps = row.get('ps_mps');t.ps = ps if ps is not None else NAN
         mach = row.get('mach');t.mach = mach if mach is not None else NAN
+        beta = row.get('sideslip_deg');t.beta = beta if beta is not None else NAN
         for i in range(5):t.sol[i] = float(sol[i]) if sol else NAN
         coords = row.get('stationary_coordinates');names = row.get('stationary_coordinate_names')
         t.has_coords = coords is not None
@@ -504,6 +505,46 @@ cdef class MarchEngine:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef list reason_list(self, int sid):
+        cdef TState* t = &self.st[sid]
+        if t.row >= 0 and self.rows[sid] is not None and t.base == sid and t.src < 0:
+            return list(self.rows[sid]['reasons'])
+        return [REASON_TEXT[t.reasons[i]] for i in range(t.nreasons)]
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object names_of(self, int sid):
+        cdef TState* t = &self.st[sid]
+        if t.layout_names:return self.layout_names
+        if t.names_id == 0:return None
+        names = self.names_table[t.names_id-1]
+        return None if names is None else list(names)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef dict compact_native(self, int sid):
+        """em_march_curves.compact_state of a native state's row, from its fields."""
+        cdef TState* t = &self.st[sid]
+        cdef int i
+        c = self.fin.constants
+        out = dict(speed_kmh=t.speed, load_g=t.load, turn_dps=t.turn, ps_mps=t.ps if isfinite(t.ps) else None,
+                   alpha_deg=t.alpha, bank_deg=t.bank, solution=[t.sol[i] for i in range(5)],
+                   stationary_coordinates=[t.coords[i] for i in range(t.nx)],
+                   stationary_coordinate_names=list(self.layout_names),
+                   stationary_request_indices=[t.req[i] for i in range(t.nreq)] if self.is_prop else [],
+                   sideslip_attitude_deg=0., sideslip_deg=t.beta if isfinite(t.beta) else None,
+                   stationary_governor_mode=c['governor'], model_experiments=dict(c['description']),
+                   mach_curve_mode=c['mach_mode'])
+        if c['mach_mode'] == 'stable':out['mach_curve_revision'] = c['stable_revision']
+        out.update(roll_leveling_branch=None if t.roll_branch == 9 else t.roll_branch, valid=bool(t.valid),
+                   reasons=[REASON_TEXT[t.reasons[i]] for i in range(t.nreasons)],
+                   force_error_g=t.force_error_g if isfinite(t.force_error_g) else None,
+                   angular_error_rad_s2=t.angular_error if isfinite(t.angular_error) else None,
+                   history_error=t.history_error if isfinite(t.history_error) else None, converged=bool(t.converged))
+        return out
+
     cdef bint physical(self, int sid) noexcept:
         # em_march.physical: converged, reasons nonempty and all physical
         cdef TState* t = &self.st[sid]
