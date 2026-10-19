@@ -20,15 +20,17 @@ What the chart shows:
   missing column; a smooth line is never drawn across an unresolved speed.
   S7: where the columns carry their exact boundary slopes, the outline is the
   cubic Hermite through loads and slopes, and between two columns on different
-  limiting faces the faces' tangent lines up to their intersection (the
-  corner), the interpolant the tracer's withheld checks validate
-  (boundary_interval);
+  limiting faces the two faces continued from their columns (slope and
+  curvature) up to where they meet (the corner), the interpolant the tracer's
+  withheld checks validate (run_loads, boundary_interval);
 - SEP contours are the solved curve components, drawn only between their
   knots and never across an unresolved knot interval; only the calculated
   levels are available (other levels need a new calculation). S7: a contour is
   the cubic Hermite in n^2-1 through its knots and their exact slopes (the
   slope of each knot's own SEP level set; PCHIP slopes where none was solved),
-  the interpolant the curve solver's withheld position checks validate.
+  the interpolant the curve solver's withheld position checks validate;
+  a level-flight end knot (no slope exists at n = 1) takes the slope of the
+  parabola through its interval with the neighbour's slope.
 
 Fallback (``eligible``): configurations outside the validated domain use the
 baseline sampler for that aircraft, and so does any aircraft on which the

@@ -9,13 +9,17 @@
 # columns, or past an explicit edge, is dropped with a trace event (within_tolerance).
 # WT_MARCH_S6=0 restores the S5 tracer exactly.
 #
-# S7 (WT_MARCH_S7=0 restores S6 exactly): every verified column carries the exact slope of its boundary (MarchEngine
-# .tangent on the limiting face's own equations, both one-sided speed derivatives; the slope of the load cap on the
-# plot ceiling); the outline between two columns is the cubic Hermite through their loads and slopes, and between two
-# columns on different limiting faces the two faces' tangent lines up to their intersection (the corner). Withheld
-# checks compare that interpolant (as em_march_chart.outline draws it); a corner interval is checked at its predicted
-# corner, a smooth one at a model kink speed inside it (jet thrust-table speed, Mach polynomial end) or its midpoint.
-# Edges are localized to the speed tolerance.
+# S7 (WT_MARCH_S7=0 restores S6 exactly): every verified column carries the exact slope of its boundary (column_slope:
+# MarchEngine.tangent on the limiting face's own equations; one-sided towards the inside of its segment, both sides next
+# to a model kink; the slope of the load cap on the plot ceiling). The outline between two columns on one limiting face
+# (reason, control axis, RPM engine: face_of) is the cubic Hermite through their loads and slopes; between columns on
+# two faces the two faces continued from their columns (slope and curvature) up to where they meet (corner_vertex).
+# Withheld checks (check_s7) compare that interpolant, as em_march_chart.outline draws it, within half the envelope
+# tolerance: at the midpoint, where the column's own exact slope must agree too (a hidden kink fails it), or at the
+# predicted corner, which converges until both faces are drawn from nearby columns; narrow intervals across a jump
+# are halved to a quarter of the speed tolerance. The sweep predicts its next column with the face's slope and
+# curvature and stops a step past the predicted low-speed edge; infeasible edges are refined to the speed tolerance
+# with level-flight probes (edge_probe).
 
 
 cdef int pchip_build(int n, const double* x, const double* y, double* c) except -1:
@@ -978,26 +982,16 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef double check_speed(self, double va, double vb) noexcept:
-        """S7: the model kink speed inside (va, vb) nearest the midpoint (at least twice the speed tolerance from both
-        ends), else the midpoint (MarchCurveSolver.check_speed with the tracer's tolerance)."""
-        cdef double mid = .5*(va+vb), best = mid, v
-        cdef bint found = False
-        for v in self.knot_speeds:
-            if va+2*self.vtol < v < vb-2*self.vtol and (not found or fabs(v-mid) < fabs(best-mid)):
-                best = v;found = True
-        return best
-
-    @cython.boundscheck(True)
-    @cython.wraparound(True)
     cdef list check_s7(self):
         """S7: MarchTracer.check on the S7 outline. Every interval between verified columns (wider than twice the speed
         tolerance, no Mach seam inside) gets a withheld column: at the predicted corner where its ends lie on different
-        limiting faces (corner_vertex), else at a model kink speed inside it or its midpoint. The column passes when its
-        turn rate lies within half the turn tolerance of the outline over the speed tolerance around it (interval_load,
-        as the chart draws it); a passing column is drawn as a witness, a failing one splits the interval (corners
-        converge on the intersection of the faces), an unresolved one is kept as before. Narrower intervals across a
-        jump of the boundary are halved down to a quarter of the speed tolerance."""
+        limiting faces (corner_vertex), else at its midpoint. The column passes when its turn rate lies within half the
+        turn tolerance of the outline over the speed tolerance around it (interval_load, as the chart draws it) and, at a
+        midpoint, its own exact slope agrees with the drawn line's there; at a corner it passes only if the face it is
+        not on is drawn from its column over at most twice the placement tolerance, and a face change without both faces'
+        slopes is halved down to the horizontal tolerance. A passing column is drawn as a witness, a failing one splits
+        the interval, an unresolved one is kept as before. Narrower intervals across a jump of the boundary are halved
+        down to a quarter of the speed tolerance."""
         cdef NColumn a, b, col
         cdef double va, vb, v, x, sa, sb, ka, kb, pa, pb, na, nb, vc, lo_t, hi_t, t
         cdef bint corner, ok, has_vertex

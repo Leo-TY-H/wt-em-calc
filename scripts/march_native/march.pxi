@@ -197,7 +197,7 @@ class NativeMarchUnsupported(Exception):
     pass
 
 
-cdef double g_tangent_scale = 4.   # S7: tangent stencils are 4x the corrector's steps (binary32 rows)
+DEF TANGENT_SCALE = 4.   # S7: tangent stencils are 4x the corrector's steps (binary32 rows)
 
 
 cdef class MarchEngine:
@@ -888,7 +888,7 @@ cdef class MarchEngine:
                     governor = self.layout_names[ci].startswith('governor:')
                     h = 1e-4 if governor else 1e-4*pmax(1., fabs(q0[ci]))
                 else:h = .0004*pmax(sqrt(w0), .25)
-                h *= g_tangent_scale
+                h *= TANGENT_SCALE
                 same = False
                 for side in range(2):
                     step = h if side == 0 else -h
@@ -989,10 +989,6 @@ cdef class MarchEngine:
             self.stats['s7_tangents_ok'] = self.stats.get('s7_tangents_ok', 0)+1
             return True
         return False
-
-    def debug_scale(self, double scale):
-        global g_tangent_scale
-        g_tangent_scale = scale
 
     def debug_tangent(self, int sid, int mode, int code, int axis, int side, double speed, double delta):
         """Diagnostics: MarchEngine.tangent from Python ((left, right) dw/dV or None)."""
