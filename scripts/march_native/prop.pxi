@@ -5,9 +5,9 @@
 # mechanical multiplier, prop_requests.enumerate_speeds and the JointProblem
 # governor-coordinate mapping. Supported subset (anything else stays Python):
 # piston engines (families 0/1, compressor types 1/2, exact altitudes),
-# non-coaxial propellers without cyclic or scheduled pitch.
+# propellers without cyclic or scheduled pitch (S5: also coaxial rotor pairs).
 
-DEF NP = 4   # propellers / engines / transmissions supported
+DEF NP = 12   # propellers / engines / transmissions supported
 
 
 cdef struct BPolar:
@@ -37,7 +37,7 @@ cdef struct PropT:
     double shake[4]
     double diameter, neutral_radius, inertia, pitch_min, pitch_max
     int governor
-    bint governor_fast, torque_gyro_always
+    bint governor_fast, torque_gyro_always, coaxial
     double min_omega, max_omega, inv_max_omega, boost_omega, reduction
     double basis[9]
     double inv_basis[9]
@@ -61,11 +61,16 @@ cdef struct EngineT:
     double compressor_zero, throttle_boost, afterburner_boost, reservoir_capacity
     double amplitude[3]
     double consumption[4]
-    StageT stages[4]
+    StageT stages[8]
     Table ata
     int ntargets
     double target_x[8]
     double target_y[8]
+    # turbo-supercharger (compressor_type 3); turbines and rockets
+    double shaft_min, turbo_min, turbo_max, turbo_allowed, inverse_time
+    double direct_thrust
+    double axis[3]
+    double position[3]
 
 
 cdef struct LinkT:
@@ -87,7 +92,12 @@ cdef struct EngState:
     int gear
     # piston step outputs
     double torque, friction, throttle_ratio, potential_manifold, manifold, extra_amplitude, consumption
+    double turbo_command
     long seed
+    # direct force and moment of the engine (turbine nozzles, rockets; zero for pistons) and its running state
+    double force[3]
+    double moment[3]
+    int running
 
 
 cdef struct PropState:
@@ -277,6 +287,12 @@ cdef void blade_forces(const PropT* p, double omega, double pitch, double axial,
     thrust_out[0] = thrust*p.blades; torque_out[0] = torque*p.blades
 
 
+cdef inline double induced_flow(double thrust, double upstream, double density, double disc, double gain) noexcept nogil:
+    # prop_quasisteady.propeller_load induced(thrust, upstream)
+    cdef double value = 2*thrust/(density*disc)+sign64(upstream)*pow(upstream, 2.)
+    return clamp64(sign64(thrust)*gain*(sign64(value)*sqrt(fabs(value))-upstream), -150., 150.)
+
+
 cdef void propeller(const PropT* p, PropState* st, const double* velocity, const double* body_omega, const double* cg,
                     double omega, double density, double sound, bint torque_gyro) noexcept nogil:
     cdef double local[3]
@@ -288,6 +304,7 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
     cdef double arm[3]
     cdef double tr[3]
     cdef double deflection, axial_force, direction, reaction, normalized, damp, momentum, a, b, c, d, t
+    cdef double first, thrust2, torque2
     cdef int i, k
     local_flow32(p, velocity, body_omega, local, local_w, &transverse_sq, &transverse)
     disc = M_PI*.25*pow(p.diameter, 2.)
@@ -305,20 +322,31 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
             t = (local[0]-p.airflow_x[k])/(p.airflow_x[k+1]-p.airflow_x[k])
             for i in range(3):airflow[i] = p.airflow_v[k][i]+(p.airflow_v[k+1][i]-p.airflow_v[k][i])*t
     ambient = local[0]+airflow[0]
-    # propeller_load (non-coaxial)
+    # propeller_load
     axial = local[0]+.5*(st.flow[0]+st.flow[1])
     blade_forces(p, omega, st.pitch, axial, transverse, density, sound, .25*st.flow[2], &thrust, &torque)
-    value = 2*thrust/(density*disc)+sign64(ambient)*pow(ambient, 2.)
-    x = clamp64(sign64(thrust)*airflow[2]*(sign64(value)*sqrt(fabs(value))-ambient), -150., 150.)
-    flux = sqrt(pow(local[0]+.5*x, 2.)+transverse_sq)*disc*density
-    divisor = pow(p.diameter*.5, 2.)*flux*.5
-    st.equilibrium_flow[0] = x; st.equilibrium_flow[1] = 0.
-    st.equilibrium_flow[2] = clamp64(torque/divisor if fabs(divisor) > 4e-19 else 0., 0., 20.)
+    first = thrust
+    if p.coaxial:
+        # the second rotor: identical blade inputs at zero swirl and a finite nonzero shaft speed
+        if st.flow[2] == 0. and omega != 0. and isfinite(omega):
+            thrust2 = thrust;torque2 = torque
+        else:
+            blade_forces(p, omega, st.pitch, axial, transverse, density, sound, -.25*st.flow[2], &thrust2, &torque2)
+        thrust = thrust+thrust2;torque = torque+torque2
+    x = induced_flow(first, ambient, density, disc, airflow[2])
+    if p.coaxial:
+        st.equilibrium_flow[0] = x;st.equilibrium_flow[1] = induced_flow(thrust, ambient+.5*x, density, disc, airflow[2])
+        st.equilibrium_flow[2] = 0.
+    else:
+        flux = sqrt(pow(local[0]+.5*x, 2.)+transverse_sq)*disc*density
+        divisor = pow(p.diameter*.5, 2.)*flux*.5
+        st.equilibrium_flow[0] = x; st.equilibrium_flow[1] = 0.
+        st.equilibrium_flow[2] = clamp64(torque/divisor if fabs(divisor) > 4e-19 else 0., 0., 20.)
     deflection = clamp64(p.thrust_deflection*thrust, -p.max_deflection, p.max_deflection)
     axial_force = sqrt(pmax(0., 1.-pow(deflection, 2.)))*thrust
     transform64(p.basis, axial_force, 0., 0., force)
     direction = 1. if p.direction == 0 else -1.
-    reaction = torque*direction
+    reaction = 0. if p.coaxial else torque*direction
     normalized = pow(omega/p.reduction*p.inv_max_omega, 2.)
     damp = interval64(local[0], p.damping_speed[0], p.damping_speed[1], p.damping_speed[2], p.damping_speed[3])
     transform64(p.basis, 0.,
@@ -331,7 +359,7 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
     b = moment[1]+force[2]*arm[0]-arm[2]*force[0]
     c = moment[2]+force[0]*arm[1]-arm[0]*force[1]
     moment[0] = a; moment[1] = b; moment[2] = c
-    momentum = omega*p.inertia*direction*p.momentum_scale
+    momentum = 0. if p.coaxial else omega*p.inertia*direction*p.momentum_scale
     for i in range(40):
         st.outputs[i] = 0.
     for i in range(3):
@@ -578,6 +606,56 @@ cdef int compressor_step(const EngineT* p, double omega, double throttle, double
     potential_out[0] = potential; manifold_out[0] = manifold
     return 0
 
+cdef void turbo_compressor(const EngineT* p, double omega, double throttle, double inlet, double dt, bint afterburner,
+                           double nitro, double height, double turbo, double turbo_command, bint automatic, bint assisted,
+                           double* multiplier, double* ratio_out, double* potential_out, double* manifold_out,
+                           double* turbo_out, double* command_out) noexcept nogil:
+    """piston_compressor.step for the turbo-supercharger (compressor_type 3, exact altitudes)."""
+    cdef double requested, x, speed, shape, base, upper, allowed, target, fraction, potential, top, ratio, manifold, line, factor
+    cdef const StageT* s = &p.stages[0]
+    omega = F(omega); throttle = F(throttle); inlet = F(inlet); dt = F(dt)
+    if not p.ata_enabled:
+        requested = M(A(M(pmin(throttle, 1.), F(.45)), F(.55)), p.max_ata)
+    elif throttle < F(.01):
+        requested = pdiv(pressure_at_height(height), 101300.)
+    else:
+        curve(&p.ata, throttle, 1, &requested)
+    x = M(p.inverse_omega, omega)
+    speed = A(M(A(M(S(M(x, x), x), p.compressor_sq), x), S(1., p.compressor_zero)), p.compressor_zero)
+    if inlet <= s.critical:
+        shape = s.power
+    else:
+        shape = A(pdiv(M(S(s.power, 1.), S(1., inlet)), pmax(S(1., s.critical), F(.0001))), 1.)
+    base = M(M(speed, inlet), pdiv(p.max_ata, M(p.compressor_reference, s.critical)))
+    if boost_active(p, throttle, afterburner, 0, nitro):
+        requested = M(requested, p.boost_ata_ratio)
+    upper = interval32(omega, p.shaft_min, p.turbo_min, p.max_omega, p.turbo_max)
+    allowed = p.turbo_allowed
+    if automatic or assisted:
+        target = pmin(M(pdiv(allowed, base), requested), allowed)
+        turbo_command = pdiv(target, S(upper, p.turbo_min))
+    else:
+        target = A(M(S(upper, p.turbo_min), turbo_command), p.turbo_min)
+    turbo = F(turbo)
+    turbo = target if assisted else A(M(M(S(target, turbo), dt), p.inverse_time), turbo)
+    if turbo < p.turbo_min:
+        fraction = pdiv(turbo, p.turbo_min);potential = M(inlet, .75)
+        if fraction > 0.:
+            top = M(pdiv(p.turbo_min, allowed), base)
+            potential = A(potential, M(S(top, potential), fraction)) if fraction < 1. else top
+    else:
+        potential = M(pdiv(turbo, allowed), base)
+    ratio = pmin(pdiv(requested, potential), 1.);manifold = M(ratio, potential)
+    line = s.ceiling_factor if A(s.ceiling, F(.0001)) < s.critical else 1.
+    factor = M(A(pdiv(M(line, manifold), requested), S(1., line)), shape)
+    # low_rpm(manifold, omega, inlet)
+    if 20. <= omega and omega < 150.:
+        manifold = pmin(manifold, M(A(M(omega, F(.04)), F(-.39999995)), inlet))
+    elif omega < 20.:
+        manifold = M(A(M(omega, F(-.03)), 1.), inlet)
+    multiplier[0] = factor;ratio_out[0] = ratio;potential_out[0] = potential;manifold_out[0] = manifold
+    turbo_out[0] = turbo;command_out[0] = turbo_command
+
 
 cdef int mechanical_multiplier(const EngineT* p, double omega, double previous, double extra, double torque,
                                double friction, double dt, long seed, double* value_out, double* mechanical_out,
@@ -602,26 +680,160 @@ cdef int mechanical_multiplier(const EngineT* p, double omega, double previous, 
     return 1
 
 
-cdef int engine_output(const EngineT* p, EngState* s, double body_u, double height, double nitro) noexcept nogil:
+cdef void scalar_full(const JetT* p, double density, double speed, double omega, double throttle, double dt,
+                      bint afterburner, double fuel_available, double health, double shaft_fraction,
+                      double* thrust_out, double* torque_out, double* consumption_out, double* target_out,
+                      double* next_out, bint* active_out) noexcept nogil:
+    """jet_model.scalar_update(running=2) with its torque, consumption and next omega (turbine engines)."""
+    cdef double tab[4]
+    cdef double thrust, ab, torque, abtorque, target, out_thrust, out_torque, consumption, fraction, candidate_thrust
+    cdef double x1, x2, y1, y2, t, cap, tau_mult, sgn
+    cdef double r1[1]
+    cdef double md[5]
+    cdef int i, selected, nm = p.modes.n
+    cdef bint ab_mode, active = False
+    density = F(density); speed = F(speed); omega = F(omega); throttle = F(throttle); dt = F(dt)
+    fuel_available = F(fuel_available); health = F(health); shaft_fraction = F(shaft_fraction)
+    jet_table(p, density, speed, tab)
+    thrust = tab[0]; ab = tab[1]; torque = tab[2]; abtorque = tab[3]
+    target = 0.; out_thrust = 0.; out_torque = 0.; consumption = 0.; tau_mult = 1.
+    if nm > 0:
+        curve(&p.throttle, throttle, 1, r1); target = r1[0]
+        selected = -1; fraction = 0.; candidate_thrust = thrust
+        for i in range(nm-1, -1, -1):
+            ab_mode = M(p.throttle_scale, p.throttle.x[i]) > 1. or (afterburner and i == nm-1)
+            candidate_thrust = M(ab if ab_mode else 1., thrust)
+            fraction = F(fuel_available/pmax(M(candidate_thrust, M(p.consumption, dt)), F(1e-6)))
+            if M(p.modes.v[i][0], p.modes.v[i][3]) < fraction:
+                selected = i
+                break
+        if selected >= 0:
+            active = True
+            if afterburner:
+                thrust = candidate_thrust;torque = M(torque, abtorque)
+            if selected < nm-1:
+                x1 = M(p.modes.v[selected][0], p.modes.v[selected][3]); x2 = M(p.modes.v[selected+1][0], p.modes.v[selected+1][3])
+                y1 = p.modes.x[selected]; y2 = p.modes.x[selected+1]
+                if x2 < x1:
+                    t = x1; x1 = x2; x2 = t
+                    t = y1; y1 = y2; y2 = t
+                if fraction <= x1:
+                    cap = y1
+                elif fraction >= x2:
+                    cap = y2
+                else:
+                    cap = A(y1, F(M(S(fraction, x1), S(y2, y1))/S(x2, x1)))
+                target = pmin(target, cap)
+            curve(&p.modes, F(omega/p.max_omega), 5, md)
+            out_thrust = M(thrust, md[0])
+            out_torque = M(A(M(S(md[2], md[1]), shaft_fraction), md[1]), torque)
+            consumption = M(M(md[3], out_thrust), p.consumption)
+            tau_mult = md[4]
+        else:
+            target = 0.
+    sgn = -1. if health < 0 else (1. if health > 0 else 0.)
+    target = M(M(M(target, p.max_omega), sgn), F(sqrt(fabs(health))))
+    thrust_out[0] = out_thrust; torque_out[0] = out_torque; consumption_out[0] = consumption; target_out[0] = target
+    next_out[0] = A(F(M(S(target, omega), dt)/M(tau_mult, p.tau)), omega); active_out[0] = active
+
+
+cdef int turbine_output(const EngineT* p, EngState* s, const Unit* u, double body_u, double height, double nitro,
+                        const double* cg) noexcept nogil:
+    """turbine_general.step (dt = 0, the nominal seed) for a turbojet (family 2) or turboprop (family 5)."""
+    cdef double dt = F(0.), omega, throttle, rho, mod, mechanical, gas, thrust, torque, consumption, target, next_omega, ias
+    cdef double mod2, mechanical2
+    cdef bint active
+    cdef long seed_out, seed2
+    if u == NULL:
+        return 9
+    omega = F(s.omega); throttle = pmin(F(s.throttle), F(1.1))
+    rho = density_at_height(F(height), F(1.225), F(18300.))
+    if mechanical_multiplier(p, omega, s.mechanical, 0., s.torque, s.friction, dt, 12345, &mod, &mechanical, &seed_out):
+        return 7
+    gas = F(s.turbo) if p.family == 5 else omega
+    scalar_full(&u.jet, rho, body_u, gas, pmin(pdiv(throttle, F(1.1) if p.throttle_boost > 1. else 1.), 1.), dt,
+                boost_active(p, throttle, s.afterburner, s.gear, nitro), 1e6, mod, M(omega, p.inverse_omega),
+                &thrust, &torque, &consumption, &target, &next_omega, &active)
+    if not active:
+        return 8
+    ias = M(F(body_u), F(sqrt(pdiv(rho, F(1.225)))))
+    nozzle_vectors(u, thrust, cg, ias, 0., s.force, s.moment)
+    s.torque = 0.; s.friction = 0.; s.mechanical = mechanical; s.seed = seed_out; s.extra_amplitude = 0.
+    s.consumption = consumption; s.effective_throttle = throttle; s.running = 7
+    if p.family == 5:
+        if mechanical_multiplier(p, omega, mechanical, 0., torque, s.friction, dt, seed_out, &mod2, &mechanical2, &seed2):
+            return 7
+        s.torque = M(mod2, torque); s.mechanical = mechanical2; s.seed = seed2
+        s.turbo = pmin(pmax(next_omega, 0.), p.turbo_allowed)
+    else:
+        s.omega = pmin(pmax(next_omega, 0.), p.omega_limit)
+        if p.compressor_type == 3:
+            s.turbo = F(s.turbo); s.turbo_command = F(s.turbo_command)
+    return 0
+
+
+cdef int rocket_output(const EngineT* p, EngState* s, const double* cg) noexcept nogil:
+    """rocket_general.step (an unlit rocket gives no thrust)."""
+    cdef double throttle, normalized, omega, thrust, r[3]
+    cdef int i
+    throttle = pmin(F(s.throttle), F(1.1))
+    normalized = pmin(pdiv(throttle, F(1.1) if p.throttle_boost > 1. else 1.), 1.)
+    omega = A(M(S(p.max_omega, p.shaft_min), normalized), p.shaft_min)
+    thrust = pdiv(M(omega, p.direct_thrust), p.max_omega)
+    if s.running != 7:
+        omega = 0.; thrust = 0.; normalized = 0.; throttle = 0.
+    for i in range(3):
+        s.force[i] = M(thrust, p.axis[i]); r[i] = S(p.position[i], F(cg[i]))
+    s.moment[0] = S(M(s.force[1], r[2]), M(s.force[2], r[1]))
+    s.moment[1] = S(M(s.force[2], r[0]), M(s.force[0], r[2]))
+    s.moment[2] = S(M(s.force[0], r[1]), M(s.force[1], r[0]))
+    s.consumption = M(M(normalized, p.consumption[3]), F(s.throttle))
+    s.omega = omega; s.mechanical = F(s.mechanical); s.seed = 12345; s.extra_amplitude = 0.; s.effective_throttle = throttle
+    s.turbo = F(s.turbo); s.turbo_command = F(s.turbo_command)
+    return 0
+
+
+cdef int engine_output(const EngineT* p, EngState* s, double body_u, double height, double nitro, const Unit* u,
+                       const double* cg) noexcept nogil:
+    """prop_quasisteady.engine_output: pistons, turbines (family 2/5) and rockets (family 3); nonzero: unavailable."""
+    if p.family == 2 or p.family == 5:
+        s.regulator = -1.; s.extra_amplitude = 0.
+        return turbine_output(p, s, u, body_u, height, nitro, cg)
+    if p.family == 3:
+        s.regulator = -1.; s.extra_amplitude = 0.
+        return rocket_output(p, s, cg)
+    s.force[0] = s.force[1] = s.force[2] = 0.; s.moment[0] = s.moment[1] = s.moment[2] = 0.; s.running = 7
+    return piston_output(p, s, body_u, height, nitro)
+
+
+cdef int piston_output(const EngineT* p, EngState* s, double body_u, double height, double nitro) noexcept nogil:
     """prop_quasisteady.engine_output for a running piston engine; nonzero: Python must handle it."""
     cdef double dt = F(0.), omega, throttle, inlet, mult, regulator, ratio, potential, manifold, tq, mixf, rich, modulation
     cdef double mechanical, power, x, rate, mixf2, rich2
     cdef double* y
     cdef int gear, code
     cdef long seed_out
+    cdef double turbo, command
     if p.family != 0 and p.family != 1:
         return 2
-    if p.compressor_type == 3:
-        return 3
     s.regulator = -1.; s.extra_amplitude = 0.
     omega = F(s.omega); throttle = pmin(F(s.throttle), F(1.1))
     inlet = inlet_pressure(height, body_u, p.ram_recovery)
-    code = compressor_step(p, omega, throttle, inlet, dt,
-                           s.gear if (p.manual_compressor and not s.automatic_compressor) else -1, s.gear,
-                           s.regulator, s.afterburner, nitro, height,
-                           &mult, &gear, &regulator, &ratio, &potential, &manifold)
-    if code:
-        return 4
+    if p.compressor_type == 3:
+        # engine_output: the assisted turbo of the steady state, then piston_step's own (dt = 0) compressor step
+        turbo_compressor(p, s.omega, s.throttle, inlet, 0., s.afterburner, nitro, height, 0., 1., True, True,
+                         &mult, &ratio, &potential, &manifold, &turbo, &command)
+        turbo_compressor(p, omega, throttle, inlet, dt, s.afterburner, nitro, height, turbo, s.turbo_command, True, False,
+                         &mult, &ratio, &potential, &manifold, &turbo, &command)
+        s.turbo = turbo;s.turbo_command = command
+        gear = 0;regulator = 1.
+    else:
+        code = compressor_step(p, omega, throttle, inlet, dt,
+                               s.gear if (p.manual_compressor and not s.automatic_compressor) else -1, s.gear,
+                               s.regulator, s.afterburner, nitro, height,
+                               &mult, &gear, &regulator, &ratio, &potential, &manifold)
+        if code:
+            return 4
     if p.carburetor == 3:
         tq = reservoir_torque(p, omega, throttle, 1., s.reservoir, s.afterburner, gear, nitro)
     elif p.carburetor == 1 or p.carburetor == 2:

@@ -1,7 +1,9 @@
 # PropModel: the stationary propulsion block of JointProblem for supported
 # propeller aircraft (prepare / enumerate_speeds / sample / propulsion_at).
 
-DEF MAXPATH = 16
+from libc.stdlib cimport calloc, free as pfree
+
+DEF MAXPATH = 40
 DEF MAXCAND = 8
 
 cdef struct PropPrep:
@@ -11,6 +13,8 @@ cdef struct PropPrep:
     int ncand[NP]
     double cand[NP][MAXCAND]
     bint governed_request[NP]
+    # prop_equilibrium: the steady gas-generator (family 5) or spool (family 2) speed of each turbine seed
+    double tseed[NP]
 
 
 cdef struct PropSample:
@@ -55,8 +59,16 @@ cdef class PropModel:
     cdef int rows[MAXPATH]
     cdef public object paths, py_controls, py_seed, py_engines, py_props, py_trans
     cdef public object revision, early_stop
+    cdef Unit* units
+    cdef bint linked[NP]
     cdef public long samples
     cdef double dt_aircraft
+
+    def __cinit__(self, *args, **kwargs):
+        self.units = NULL
+
+    def __dealloc__(self):
+        if self.units != NULL:pfree(self.units)
 
     def __init__(self, solver):
         cdef EngineT* E
@@ -83,42 +95,57 @@ cdef class PropModel:
         self.py_controls = controls
         for k, e in enumerate(p['engines']):
             ep = e['properties'];E = &self.engines[k]
-            if e['family'] not in (0, 1) or ep['compressor_type'] not in (1, 2):
-                raise PropUnsupported('engine family or compressor')
-            E.family = e['family'];E.compressor_type = ep['compressor_type'];E.carburetor = ep['carburetor']
-            E.mixer_type = ep['mixer_type'];E.boost_type = ep['boost_type'];E.cylinders = ep['cylinders']
-            E.exact_altitudes = bool(ep['exact_altitudes']);E.ata_enabled = bool(ep['ata_enabled'])
-            E.manual_compressor = bool(ep['manual_compressor']);E.boost_controllable = bool(ep['boost_controllable'])
+            if e['family'] not in (0, 1, 2, 3, 5):
+                raise PropUnsupported('engine family')
+            if e['family'] in (0, 1) and ep.get('compressor_type', 0) not in (1, 2, 3):
+                raise PropUnsupported('engine compressor')
+            if e['family'] in (0, 1) and ep.get('compressor_type', 0) == 3 and not ep.get('exact_altitudes', 0):
+                raise PropUnsupported('alternate turbo-supercharger curve')
+            E.family = e['family'];E.compressor_type = ep.get('compressor_type', 0);E.carburetor = ep.get('carburetor', 0)
+            E.mixer_type = ep.get('mixer_type', 0);E.boost_type = ep.get('boost_type', 0);E.cylinders = ep.get('cylinders', 0)
+            E.exact_altitudes = bool(ep.get('exact_altitudes', 0));E.ata_enabled = bool(ep.get('ata_enabled', 0))
+            E.manual_compressor = bool(ep.get('manual_compressor', 0));E.boost_controllable = bool(ep.get('boost_controllable', 0))
             for name in ('base_hp', 'min_throttle', 'max_throttle', 'max_omega', 'afterburner_omega', 'omega_limit',
                          'inverse_omega', 'compressor_reference', 'torque_base', 'mixer_scale', 'compressor_sq', 'max_ata',
                          'ram_recovery', 'boost_ata_ratio', 'compressor_zero', 'throttle_boost', 'afterburner_boost',
                          'reservoir_capacity'):
                 pass
-            E.base_hp = ep['base_hp'];E.min_throttle = ep['min_throttle'];E.max_throttle = ep['max_throttle']
-            E.max_omega = ep['max_omega'];E.afterburner_omega = ep['afterburner_omega'];E.omega_limit = ep['omega_limit']
-            E.inverse_omega = ep['inverse_omega'];E.compressor_reference = ep['compressor_reference']
-            E.torque_base = ep['torque_base'];E.mixer_scale = ep['mixer_scale'];E.compressor_sq = ep['compressor_sq']
-            E.max_ata = ep['max_ata'];E.ram_recovery = ep['ram_recovery'];E.boost_ata_ratio = ep['boost_ata_ratio']
-            E.compressor_zero = ep['compressor_zero'];E.throttle_boost = ep['throttle_boost']
-            E.afterburner_boost = ep['afterburner_boost'];E.reservoir_capacity = ep['reservoir_capacity']
-            for i in range(3):E.amplitude[i] = ep['amplitude'][i]
-            for i in range(4):E.consumption[i] = ep['consumption'][i]
-            if len(ep['stages']) > 4:raise PropUnsupported('compressor stages')
-            E.nstages = len(ep['stages'])
-            for i, st in enumerate(ep['stages']):
+            E.base_hp = ep.get('base_hp', 0);E.min_throttle = ep.get('min_throttle', 0);E.max_throttle = ep.get('max_throttle', 0)
+            E.max_omega = ep.get('max_omega', 0);E.afterburner_omega = ep.get('afterburner_omega', 0);E.omega_limit = ep.get('omega_limit', 0)
+            E.inverse_omega = ep.get('inverse_omega', 0);E.compressor_reference = ep.get('compressor_reference', 0)
+            E.torque_base = ep.get('torque_base', 0);E.mixer_scale = ep.get('mixer_scale', 0);E.compressor_sq = ep.get('compressor_sq', 0)
+            E.max_ata = ep.get('max_ata', 0);E.ram_recovery = ep.get('ram_recovery', 0);E.boost_ata_ratio = ep.get('boost_ata_ratio', 0)
+            E.compressor_zero = ep.get('compressor_zero', 0);E.throttle_boost = ep.get('throttle_boost', 0)
+            E.afterburner_boost = ep.get('afterburner_boost', 0);E.reservoir_capacity = ep.get('reservoir_capacity', 0)
+            for i in range(3):E.amplitude[i] = ep.get('amplitude', (0., 0., 0.))[i]
+            for i in range(4):E.consumption[i] = ep.get('consumption', (0., 0., 0., 0.))[i]
+            if len(ep.get('stages', ())) > 8:raise PropUnsupported('compressor stages')
+            E.nstages = len(ep.get('stages', ()))
+            for i, st in enumerate(ep.get('stages', ())):
                 E.stages[i].critical = st['critical'];E.stages[i].power = st['power'];E.stages[i].flat = st['flat']
                 E.stages[i].flat_power = st['flat_power'];E.stages[i].curvature = st['curvature']
                 E.stages[i].ceiling = st['ceiling'];E.stages[i].ceiling_factor = st['ceiling_factor']
                 E.stages[i].boost = st['boost'];E.stages[i].pressure_boost = st['pressure_boost']
-            set_table(&E.ata, ep['ata'], 1)
-            if len(ep['rpm_targets']) > 8:raise PropUnsupported('rpm targets')
-            E.ntargets = len(ep['rpm_targets'])
-            for i, (x, y) in enumerate(ep['rpm_targets']):E.target_x[i] = x;E.target_y[i] = y
+            set_table(&E.ata, ep.get('ata', ()), 1)
+            E.shaft_min = ep.get('shaft_min', 0);E.turbo_min = ep.get('turbo_min', 0);E.turbo_max = ep.get('turbo_max', 0)
+            E.turbo_allowed = ep.get('turbo_allowed', 0);E.inverse_time = ep.get('inverse_time', 0)
+            E.direct_thrust = e.get('maximum_direct_thrust', 0.)
+            for i in range(3):
+                E.axis[i] = (e.get('axis') or (1., 0., 0.))[i];E.position[i] = (e.get('position') or (0., 0., 0.))[i]
+            if e['family'] in (2, 5):
+                if self.units == NULL:
+                    self.units = <Unit*>calloc(NP, sizeof(Unit))
+                    if self.units == NULL:raise MemoryError()
+                set_turbine(&self.units[k], e)
+            if len(ep.get('rpm_targets', ())) > 8:raise PropUnsupported('rpm targets')
+            E.ntargets = len(ep.get('rpm_targets', ()))
+            for i, (x, y) in enumerate(ep.get('rpm_targets', ())):E.target_x[i] = x;E.target_y[i] = y
         for k, prop in enumerate(p['propellers']):
             pp = prop['properties'];P = &self.props[k]
-            if (pp['coaxial'] or pp['cyclic'] or pp['differential_pitch'] or pp['active_pitch_2d'] or pp['pitch_1d_count']
-                    or pp['iterative']):
+            # 'iterative' only changes the game's dynamic rotor update: the steady model ignores it as the Python one
+            if pp['cyclic'] or pp['differential_pitch'] or pp['active_pitch_2d'] or pp['pitch_1d_count']:
                 raise PropUnsupported('propeller geometry')
+            P.coaxial = bool(pp['coaxial'])
             sections, area_unit, prepared, _, _, legacy = prepare_blades(pp)
             props_, base, mode, mrows = prepared
             Q = &P.polar
@@ -160,7 +187,9 @@ cdef class PropModel:
                 P.airflow_x[i] = row[0]
                 for j in range(3):P.airflow_v[i][j] = row[2+j]
             P.polar_base1 = pp['polar']['base'][1];P.polar_base8 = pp['polar']['base'][8]
+        for k in range(NP):self.linked[k] = False
         for k, t in enumerate(p['transmissions']):
+            for l in t['engines']:self.linked[l['index']] = True
             T = &self.trans[k]
             if len(t['engines']) > NP or len(t['propellers']) > NP:raise PropUnsupported('shaft links')
             T.ne = len(t['engines']);T.np = len(t['propellers']);T.correct_link = bool(t['correct_link'])
@@ -178,11 +207,18 @@ cdef class PropModel:
             S_.regulator = es['regulator'];S_.turbo = es['turbo'];S_.afterburner = bool(es['afterburner'])
             S_.automatic_mixture = bool(es['automatic_mixture']);S_.automatic_compressor = bool(es['automatic_compressor'])
             S_.gear = es['gear'];S_.friction = 0.;S_.torque = 0.;S_.extra_amplitude = 0.;S_.seed = 12345
-            if es.get('running') != 7:raise PropUnsupported('engine not running')
+            S_.turbo_command = es.get('turbo_command', 1.)
+            S_.throttle_ratio = 0.;S_.potential_manifold = 0.;S_.manifold = 0.;S_.consumption = 0.
+            for j in range(3):
+                S_.force[j] = 0.;S_.moment[j] = 0.
+            S_.running = es.get('running', 7)
+            if S_.running != 7 and p['engines'][k]['family'] != 3:raise PropUnsupported('engine not running')
         for k, ps in enumerate(seed['propellers']):
             self.seed_props[k].command = ps['command'];self.seed_props[k].auto = bool(ps['auto'])
             self.seed_props[k].pitch = ps['pitch']
             for j in range(3):self.seed_props[k].flow[j] = ps['flow'][j]
+            # prop_equilibrium: the coordinate-free wake component starts at zero
+            self.seed_props[k].flow[2 if self.props[k].coaxial else 1] = 0.
         for k, ts in enumerate(seed['transmissions']):self.seed_omega[k] = ts['omega']
         self.py_seed = seed;self.py_engines = p['engines'];self.py_props = p['propellers'];self.py_trans = p['transmissions']
         from prop_quasisteady import REVISION as prop_revision
@@ -211,7 +247,7 @@ cdef class PropModel:
             if links:
                 variable(('pitch', i), .5, 1., -.25, 1.25)
         for i, prop in enumerate(p['propellers']):
-            for j in (0, 2):
+            for j in ((0, 1) if self.props[i].coaxial else (0, 2)):
                 variable(('flow', i, j), 0., 20., -150. if j < 2 else 0., 150. if j < 2 else 20.)
         if len(paths) > MAXPATH:raise PropUnsupported('too many propulsion unknowns')
         self.npaths = len(paths);self.paths = paths
@@ -222,6 +258,40 @@ cdef class PropModel:
             self.path_i[k] = path[1];self.path_j[k] = path[2] if len(path) > 2 else 0
             self.scales[k] = scales[k];self.lower[k] = lo[k];self.upper[k] = hi[k];self.initial[k] = ini[k]
         self.samples = 0
+
+
+    # ------------------------------------------------------------------ turbines and rockets
+    cdef inline const Unit* unit(self, int k) noexcept nogil:
+        return &self.units[k] if self.units != NULL else NULL
+
+    cdef void seeded(self, const PropPrep* prep, EngState* states) noexcept nogil:
+        """The nominal seed engines of this flight condition (prop_equilibrium: turbine speeds at the condition)."""
+        cdef int k
+        for k in range(self.ne):
+            states[k] = self.seed_engines[k]
+            if self.engines[k].family == 5:
+                states[k].turbo = prep.tseed[k]
+            elif self.engines[k].family == 2:
+                states[k].omega = prep.tseed[k]
+
+    cdef void turbine_seeds(self, PropPrep* out) noexcept nogil:
+        """prop_equilibrium: each turbine seed at the steady scalar target of this condition (velocity, altitude)."""
+        cdef int k
+        cdef const EngineT* E
+        cdef const EngState* es
+        cdef double normalized, thrust, torque, consumption, target, next_omega
+        cdef bint active
+        for k in range(self.ne):
+            out.tseed[k] = 0.
+            E = &self.engines[k]
+            if E.family != 2 and E.family != 5:continue
+            es = &self.seed_engines[k]
+            normalized = pmin(pdiv(F(es.throttle), F(1.1) if E.throttle_boost > 1. else 1.), 1.)
+            scalar_full(&self.units[k].jet, density_at_height(F(self.altitude), F(1.225), F(18300.)), out.velocity[0],
+                        self.units[k].jet.max_omega, normalized, self.dt,
+                        boost_active(E, es.effective_throttle, es.afterburner, es.gear, self.nitro), 1e6, 1., 1.,
+                        &thrust, &torque, &consumption, &target, &next_omega, &active)
+            out.tseed[k] = F(pmin(pmax(target, 0.), E.turbo_allowed if E.family == 5 else E.omega_limit))
 
     # ------------------------------------------------------------------ helpers
     cdef void pitch_limits(self, const PropT* p, const double* velocity, const double* body_omega, double shaft_omega,
@@ -293,6 +363,7 @@ cdef class PropModel:
         turn_geometry(alpha, bank, speed, load, self.dt_aircraft, air.ias_u, G, &geom)
         for i in range(3):
             out.velocity[i] = F(out.velocity[i]); out.rates[i] = F(geom.omega[i])
+        self.turbine_seeds(out)
         for s in range(self.nt):
             out.governed_request[s] = self.ngoverned[s] > 0
             out.ncand[s] = 0
@@ -305,8 +376,7 @@ cdef class PropModel:
                 raise PropUnsupported('multi-engine shaft request enumeration')
             idx = self.trans[s].engines[0].index
             for k in range(self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1):
-                for i in range(self.ne):
-                    states[i] = self.seed_engines[i]
+                self.seeded(out, states)
                 states[idx].gear = k
                 self.requests_for(s, states, desired, &nd)
                 for i in range(nd):
@@ -326,12 +396,12 @@ cdef class PropModel:
             for i in range(npossible):
                 if not isfinite(possible[i]):raise ValueError('Nonfinite governed request; source-model calculation unresolved')
             for i in range(npossible):
-                for k in range(self.ne):
-                    states[k] = self.seed_engines[k]
+                self.seeded(out, states)
                 for k in range(self.trans[s].ne):
                     idx = self.trans[s].engines[k].index
                     states[idx].omega = possible[i]*self.trans[s].engines[k].ratio
-                    code = engine_output(&self.engines[idx], &states[idx], out.velocity[0], self.altitude, self.nitro)
+                    code = engine_output(&self.engines[idx], &states[idx], out.velocity[0], self.altitude, self.nitro,
+                                         self.unit(idx), self.cg)
                     if code:
                         raise ValueError('native steady engine output unavailable (%d)' % code)
                 self.requests_for(s, states, desired, &nd)
@@ -367,8 +437,9 @@ cdef class PropModel:
         cdef double err = 0.
         cdef bint finite = True
         self.samples += 1
+        self.seeded(prep, fr.engines)
         for k in range(self.ne):
-            fr.engines[k] = self.seed_engines[k]; fr.engines[k].regulator = -1.
+            fr.engines[k].regulator = -1.
         for k in range(self.nprops):
             fr.props[k] = self.seed_props[k]
         for k in range(self.nt):
@@ -429,12 +500,13 @@ cdef class PropModel:
             for k in range(self.trans[s].ne):
                 idx = self.trans[s].engines[k].index
                 fr.engines[idx].omega = fr.trans_omega[s]*self.trans[s].engines[k].ratio
-                if engine_output(&self.engines[idx], &fr.engines[idx], prep.velocity[0], self.altitude, self.nitro):
+                if engine_output(&self.engines[idx], &fr.engines[idx], prep.velocity[0], self.altitude, self.nitro,
+                                 self.unit(idx), self.cg):
                     raise ValueError('Steady engine requires nominal deterministic torque')
                 for i in range(3):
-                    tf[i] = tf[i]+0.
+                    tf[i] = tf[i]+fr.engines[idx].force[i]
                 for i in range(3):
-                    tm[i] = tm[i]+self.trans[s].engines[k].ratio*0.
+                    tm[i] = tm[i]+self.trans[s].engines[k].ratio*fr.engines[idx].moment[i]
             for i in range(3):
                 fr.trans_outputs[s][i] = tf[i]; fr.trans_outputs[s][3+i] = tm[i]; fr.trans_outputs[s][6+i] = th[i]
             fr.trans_outputs[s][9] = tw; fr.trans_outputs[s][10] = ts[0]; fr.trans_outputs[s][11] = ts[1]; fr.trans_outputs[s][12] = 0.
@@ -444,6 +516,13 @@ cdef class PropModel:
                 fr.wash[0] = tw
             swirl[0] = pmax(swirl[0], ts[0]); swirl[1] = pmax(swirl[1], ts[1])
         fr.wash[1] = swirl[0]-swirl[1]
+        # engines on no shaft (turbojets, rockets): their direct force and moment
+        for k in range(self.ne):
+            if self.linked[k]:continue
+            if engine_output(&self.engines[k], &fr.engines[k], prep.velocity[0], self.altitude, self.nitro, self.unit(k), self.cg):
+                raise ValueError('Steady engine requires nominal deterministic torque')
+            for i in range(3):
+                fr.force[i] = fr.force[i]+fr.engines[k].force[i]; fr.moment[i] = fr.moment[i]+fr.engines[k].moment[i]
         # torques / targets / residual
         for s in range(self.nt):
             torque = 0
@@ -556,10 +635,14 @@ cdef class PropModel:
         d['regulator'] = -1.
         d['omega'] = es.omega
         d['extra_amplitude'] = 0.
+        family = self.engines[k].family
         d.update(torque=es.torque, friction=0., regulator=es.regulator, gear=es.gear, throttle_ratio=es.throttle_ratio,
                  potential_manifold=es.potential_manifold, manifold=es.manifold, mechanical=es.mechanical, seed=int(es.seed),
                  extra_amplitude=es.extra_amplitude, consumption=es.consumption, effective_throttle=es.effective_throttle,
-                 force=[0., 0., 0.], moment=[0., 0., 0.], running=7)
+                 force=[es.force[0], es.force[1], es.force[2]], moment=[es.moment[0], es.moment[1], es.moment[2]],
+                 running=es.running)
+        if family == 5 or family == 3 or self.engines[k].compressor_type == 3:
+            d.update(turbo=es.turbo, turbo_command=es.turbo_command)
         return d
 
     cdef object record(self, const PropSample* ps, const double* q):
@@ -650,7 +733,7 @@ cdef class PropModel:
             idx = self.trans[s].engines[0].index
             npossible = 0
             for k in range(self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1):
-                for i in range(self.ne):states[i] = self.seed_engines[i]
+                self.seeded(prep, states)
                 states[idx].gear = k
                 self.requests_for(s, states, desired, &nd)
                 for i in range(nd):
@@ -663,12 +746,13 @@ cdef class PropModel:
             values = sorted([possible[i] for i in range(npossible)])
             candidates = [];excluded = []
             for speed in values:
-                for k in range(self.ne):states[k] = self.seed_engines[k]
+                self.seeded(prep, states)
                 engines = {}
                 for k in range(self.trans[s].ne):
                     i = self.trans[s].engines[k].index
                     states[i].omega = speed*self.trans[s].engines[k].ratio
-                    code = engine_output(&self.engines[i], &states[i], prep.velocity[0], self.altitude, self.nitro)
+                    code = engine_output(&self.engines[i], &states[i], prep.velocity[0], self.altitude, self.nitro,
+                                         self.unit(i), self.cg)
                     if code:raise ValueError('native steady engine output unavailable (%d)' % code)
                     engines[i] = self.engine_dict(i, &states[i])
                 self.requests_for(s, states, desired, &nd)
@@ -745,3 +829,25 @@ cdef class PropModel:
         if code:return None
         return ([inner[i] for i in range(self.nrows)], [out.row[i] for i in range(11)], bool(out.converged),
                 [[prep.cand[s][k] for k in range(prep.ncand[s])] for s in range(self.nt)])
+
+
+cdef void set_turbine(Unit* u, dict e) except *:
+    """A turbine engine's scalar table and nozzles (the jet engine Unit layout, set_unit)."""
+    j = e['turbine']
+    if len(j['density']) > 16 or len(j['speed']) > 32:raise PropUnsupported('turbine table too large')
+    if len(e.get('nozzles') or ()) > 16:raise PropUnsupported('too many turbine nozzles')
+    u.rocket = False
+    u.jet.nd = len(j['density']);u.jet.ns = len(j['speed'])
+    for i, d in enumerate(j['density']):u.jet.density[i] = d
+    for i, s in enumerate(j['speed']):u.jet.speed[i] = s
+    if not j['cells']:raise PropUnsupported('turbine table without cells')
+    for i, row in enumerate(j['cells']):
+        for k, cell in enumerate(row):
+            for q in range(4):u.jet.cells[i][k][q] = cell[q]
+    for q in range(4):u.jet.bases[q] = j['bases'][q]
+    set_table(&u.jet.modes, j['modes'], 5);set_table(&u.jet.throttle, j['throttle'], 1)
+    u.jet.throttle_scale = j['throttle_scale'];u.jet.max_omega = j['max_omega'];u.jet.consumption = j['consumption']
+    u.jet.tau = j['tau']
+    nozzles = e.get('nozzles') or ()
+    u.nnoz = len(nozzles)
+    for k, nz in enumerate(nozzles):set_nozzle(&u.noz[k], nz)

@@ -781,24 +781,32 @@ cdef class Finisher:
         axial = local[0]+.5*(flow[0]+flow[1])
         margins = [dict(name='upstream', value=upstream, strict=True),
                    dict(name='blade axial flow', value=axial, strict=True)]
-        angular = 1.*.25*flow[2]
-        blade_forces(p, omega, pitch, axial, transverse, density, sound, angular, &thrust, &torque)
-        power = omega*torque
-        rotor_margins = [];rows = []
-        for k in range(4):
-            if p.width[k] == 0.:continue
-            tangential = p.station_radius[k]*(omega-angular)
-            phi = atan2(axial, tangential) if fabs(omega) >= 1e-5 else M_PI/2
-            alpha = (pitch-phi+p.twist[k])*RAD_TO_DEG
-            mach = hypot2(tangential+transverse, axial)/sound
-            evaluate_polar(&p.polar, mach, &polar)
-            section = [dict(name='tangential flow', value=tangential, strict=True)]
-            rows.append(dict(section=k, alpha_deg=alpha, mach=mach, critical_deg=[polar.aoaCritL, polar.aoaCritH],
-                             stall_margins_deg=dict(lower_deg=alpha-polar.aoaCritL, upper_deg=polar.aoaCritH-alpha),
-                             margins=section))
-            rotor_margins.extend(dict(m, section=k) for m in section)
-        rotors = [dict(rotor=0, torque=torque, power=power, sections=rows, margins=rotor_margins)]
-        margins.extend(dict(m, rotor=0) for m in rotor_margins)
+        if p.coaxial:
+            # propeller_load's wake target[0]: the first rotor's induced flow
+            blade_forces(p, omega, pitch, axial, transverse, density, sound, .25*flow[2], &thrust, &torque)
+            wake = induced_flow(thrust, upstream, density, M_PI*.25*pow(p.diameter, 2.), airflow[2])
+            margins.append(dict(name='second rotor upstream', value=upstream+.5*wake, strict=True))
+        rotors = []
+        signs = [1., -1.] if p.coaxial else [1.]
+        for rotor, sgn in enumerate(signs):
+            angular = sgn*.25*flow[2]
+            blade_forces(p, omega, pitch, axial, transverse, density, sound, angular, &thrust, &torque)
+            power = omega*torque
+            rotor_margins = [];rows = []
+            for k in range(4):
+                if p.width[k] == 0.:continue
+                tangential = p.station_radius[k]*(omega-angular)
+                phi = atan2(axial, tangential) if fabs(omega) >= 1e-5 else M_PI/2
+                alpha = (pitch-phi+p.twist[k])*RAD_TO_DEG
+                mach = hypot2(tangential+transverse, axial)/sound
+                evaluate_polar(&p.polar, mach, &polar)
+                section = [dict(name='tangential flow', value=tangential, strict=True)]
+                rows.append(dict(section=k, alpha_deg=alpha, mach=mach, critical_deg=[polar.aoaCritL, polar.aoaCritH],
+                                 stall_margins_deg=dict(lower_deg=alpha-polar.aoaCritL, upper_deg=polar.aoaCritH-alpha),
+                                 margins=section))
+                rotor_margins.extend(dict(m, section=k) for m in section)
+            rotors.append(dict(rotor=rotor, torque=torque, power=power, sections=rows, margins=rotor_margins))
+            margins.extend(dict(m, rotor=rotor) for m in rotor_margins)
         finite_power = all(math.isfinite(r['power']) and math.isfinite(r['torque']) for r in rotors)
         available = finite_power and all(math.isfinite(m['value']) for m in margins)
         failures = [m for m in margins if not math.isfinite(m['value'])

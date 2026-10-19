@@ -9,6 +9,8 @@ DEF STATUS_OTHER = 4        # any other status (excluded / discontinuity / fallb
 
 STATUS_TEXT = ('verified limit', 'plot ceiling', 'unresolved numerical boundary', 'no feasible samples', None)
 RESCUE_REASONS = ('march correction unresolved', 'march roots disagree')
+# S5: the S3 rescue also follows an unresolved localization (the Python march sends it to the production column)
+NATIVE_RESCUE_REASONS = RESCUE_REASONS+('localization correction unresolved',)
 
 
 cdef inline int side12(double x) noexcept nogil:
@@ -440,7 +442,7 @@ cdef class NMarch:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef tuple fold_edge(self, list points):
+    cdef tuple fold_edge(self, list points, int budget=14):
         """March.fold_edge: (edge or -1, reason or None, bracket (a, p) or None)."""
         import numpy as np
         cdef int it, i, j, n, a, b, c, p
@@ -453,7 +455,7 @@ cdef class NMarch:
             else:
                 alphas.append(v);pts.append(sid)
         pts.sort(key=lambda q: self.eng.st[q].alpha)
-        for it in range(14):
+        for it in range(budget):
             n = len(pts);i = 0
             for j in range(1, n):
                 if self.eng.st[pts[j]].load > self.eng.st[pts[i]].load:i = j
@@ -505,7 +507,7 @@ cdef class NMarch:
     cdef tuple run(self, int level, bint has_predicted, double predicted):
         """RescueMarch.run(level, predicted): (boundary state or -1, status, reason)."""
         out = self.run_march(level, has_predicted, predicted)
-        if out[0] >= 0 or out[2] not in RESCUE_REASONS:return out
+        if out[0] >= 0 or out[2] not in NATIVE_RESCUE_REASONS:return out
         import numpy as np
         try:
             edge = self.rescue(level)
@@ -959,6 +961,145 @@ cdef class NMarch:
         if lo == history[-1]:
             return -1, lows
         return self.nearest_faces(lo, hi, 4), lows
+
+    # ------------------------------------------------------------------ the S5 neighbour-face rescue
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object neighbour_face(self, list seeds, int level):
+        """Where the march and its S3 rescue stay unresolved: the limit face of the nearest neighbouring
+        columns' boundaries (same kind, axis and engine), corrected at this speed from that boundary state
+        (the native counterpart of the production column's neighbouring-boundary continuation). The face
+        must lie at or beyond the highest admitted sample of this speed, and the alpha gap between them is
+        sampled so that no physical rejection lies before it. (edge, status, reason) or None."""
+        cdef int lo, b, edge, i, nev, kind, axis, engine
+        cdef double d
+        cdef Event ev[32]
+        admitted = sorted((p for p in self.samples if self.eng.st[p].valid and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+                           and self.eng.st[p].alpha >= self.eng.st[level].alpha-1e-9), key=lambda p: self.eng.st[p].alpha)
+        if not admitted:
+            if not self.eng.st[level].valid:return None
+            admitted = [level]
+        lo = admitted[-1]
+        sides = {}
+        for b in seeds:
+            if not self.eng.st[b].valid or self.eng.st[b].limit < 0 or self.eng.st[b].speed == self.speed:continue
+            side = self.eng.st[b].speed > self.speed
+            d = fabs(self.eng.st[b].speed-self.speed)
+            if side not in sides or d < sides[side][0]:sides[side] = (d, b)
+        for _, b in sorted(sides.values()):
+            limit = self.eng.limits[self.eng.st[b].limit]
+            kind = KIND_CODE.get(limit['kind'], -1)
+            axis = -1 if limit.get('axis') is None else int(limit['axis'])
+            edge = -1
+            if kind == KD_FOLD:
+                edge = self.neighbour_fold(admitted, b)
+            elif kind == KD_PITCH:
+                edge = self.neighbour_pitch(lo, b)
+            elif kind >= 0:
+                engine = int((limit.get('engine_rpm_limit') or {}).get('engine', -1))
+                nev = self.eng.nearest_events(b, ev)
+                for i in range(nev):
+                    if ev[i].kind != kind or ev[i].code <= 0:continue
+                    if kind == KD_CONTROL and ev[i].axis != axis:continue
+                    if kind == KD_RPM and ev[i].engine != engine:continue
+                    edge = self.seeded_face(lo, b, &ev[i])
+                    break
+            gap = []
+            if edge >= 0:edge = self.verify_gap(lo, edge, gap)
+            if edge >= 0:
+                self.s3_path = 's5 neighbour face'
+                self.eng.stats['s5_neighbour_face'] = self.eng.stats.get('s5_neighbour_face', 0)+1
+                return self.finish_face(admitted+gap, edge)
+        # this speed's nearest faces from the highest admitted sample, also beyond trials that failed only
+        # numerically (the S3 rescue stops at the first failed march trial)
+        edge = self.nearest_faces(lo, INFINITY, 4)
+        gap = []
+        if edge >= 0:edge = self.verify_gap(lo, edge, gap)
+        if edge >= 0:
+            self.s3_path = 's5 face'
+            self.s3_flags.add('face beyond numerically unresolved trials')
+            self.eng.stats['s5_face'] = self.eng.stats.get('s5_face', 0)+1
+            return self.finish_face(admitted+gap, edge)
+        return None
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int seeded_face(self, int lo, int b, Event* ev) except -2:
+        """event_face from a neighbouring boundary state: its active event corrected at this speed."""
+        cdef int p
+        cdef long evals = 0, fresh = 0
+        cdef Trial* t
+        p = self.correct_at(b, self.eng.st[b].sol, self.eng.st[b].load, FIX_EVENT, 0., ev.code,
+                            ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6,
+                            &self.preds, &evals, &fresh, NULL)
+        t = self.trial('s5 neighbour '+KIND_TEXT[ev.kind])
+        t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
+        t.alpha = self.eng.st[p].alpha if p >= 0 else NAN
+        if not self.accepted_face(lo, INFINITY, p):return -1
+        self.samples.append(p)
+        details = dict(method='S5 alpha-march face from a neighbouring boundary')
+        if ev.kind == KD_RPM:
+            details['engine_rpm_limit'] = dict(engine=ev.engine, rpm_limit=self.eng.st[lo].rpm_limit[ev.engine])
+        return self.eng.mark(p, ev.kind, ev.axis, details)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int neighbour_pitch(self, int lo, int b) except -2:
+        """The pitch-response limit from this speed's state at the neighbouring boundary's alpha."""
+        cdef int p, edge
+        p = self.at_state(b, self.eng.st[b].alpha, 's5 neighbour pitch')
+        if p < 0:return -1
+        if self.eng.st[p].valid:
+            if self.eng.st[p].alpha < self.eng.st[lo].alpha-1e-4:return -1
+            return self.pitch_face(p)
+        if self.eng.physical(p) and self.eng.st[p].alpha > self.eng.st[lo].alpha:
+            self.last_lo = -1
+            edge, _ = self.margin_edge(lo, p)
+            return edge
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int neighbour_fold(self, list admitted, int b) except -2:
+        """The load maximum of this speed around the neighbouring fold's alpha (fold_edge, a larger budget)."""
+        cdef int p
+        cdef double base = self.eng.st[b].alpha, d
+        points = [q for q in admitted]
+        for d in (-.8, -.4, 0., .4):
+            p = self.at_state(b, base+d, 's5 neighbour fold')
+            if p >= 0 and self.eng.st[p].valid:points.append(p)
+        edge, why, bracket = self.fold_edge(points, 28)
+        if edge >= 0:return edge
+        if bracket is not None:
+            self.last_lo = -1
+            e, _ = self.margin_edge(bracket[0], bracket[1])
+            return e
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int verify_gap(self, int lo, int edge, list gap) except -2:
+        """Samples between the highest admitted sample and a face found beyond it (at least three, at most one
+        degree apart): the face stands unless a physical rejection lies before it (then that rejection's own
+        edge, or none) or the load falls on the way (then the load maximum, fold_edge, or none). The admitted
+        gap samples join the history (finish_face)."""
+        cdef double a0 = self.eng.st[lo].alpha, a1 = self.eng.st[edge].alpha
+        cdef int n, j, p, prev = lo, e
+        if a1-a0 <= .25:return edge
+        n = <int>pmin(12., pmax(3., ceil(a1-a0)))
+        for j in range(1, n):
+            p = self.at_state(prev, a0+j*(a1-a0)/n, 's5 gap')
+            if p >= 0 and self.eng.st[p].valid:
+                if self.eng.st[p].load < self.eng.st[prev].load:
+                    e, _, bracket = self.fold_edge([lo]+gap+[p], 28)
+                    if e >= 0:self.s3_flags.add('load maximum before the face')
+                    return e
+                gap.append(p);prev = p;continue
+            if p >= 0 and self.eng.physical(p):
+                self.last_lo = -1
+                e, _ = self.margin_edge(prev, p)
+                return e
+        return edge
 
     # ------------------------------------------------------------------ the column record
     @cython.boundscheck(True)
