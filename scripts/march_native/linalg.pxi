@@ -2,7 +2,7 @@
 # math.hypot (vector_norm), which production uses for every merit and for
 # the prescribed load (hypot(1, turn)).
 
-DEF NMAX = 24
+DEF NMAX = 32
 
 cdef double vector_norm(int n, const double* values) noexcept nogil:
     # math.hypot(*values), CPython 3.11 Modules/mathmodule.c vector_norm

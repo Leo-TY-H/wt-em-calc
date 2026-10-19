@@ -96,6 +96,7 @@ cdef class NTracer:
     cdef public dict columns, work
     cdef public list witnesses, events
     cdef object N, M, S
+    cdef bint production_fallback
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -109,6 +110,8 @@ cdef class NTracer:
         self.march_tol = march_tol;self.on_column = on_column
         self.columns = {};self.witnesses = [];self.events = [];self.work = {}
         self.N = N;self.M = M;self.S = S
+        import os
+        self.production_fallback = os.environ.get('WT_MARCH_PRODUCTION_FALLBACK') == '1'
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -228,8 +231,11 @@ cdef class NTracer:
                 # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
                 # (their march from level flight reached it without a limit) instead of the production column
                 if self.interior_march(col, march, speed, seeds, 'level flight unresolved: '+reasons, started):return 0
-                self.production(col, speed, seeds, 'level flight unresolved: '+reasons)
-                return 0
+                if self.production_fallback:
+                    self.production(col, speed, seeds, 'level flight unresolved: '+reasons)
+                    return 0
+                # S5: no production column: the explicit edge of an unresolved level flight (as below)
+                self.eng.stats['withheld_production'] = self.eng.stats.get('withheld_production', 0)+1
             reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
             self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: '+reasons, started)
             col.points = [level]
@@ -239,6 +245,19 @@ cdef class NTracer:
         has_predicted = self.predicted_alpha(speed, seeds, &predicted)
         boundary, status, reason = march.run(level, has_predicted, predicted)
         if boundary < 0:
+            out = march.neighbour_face(seeds, level)
+            if out is not None and out[0] >= 0:
+                march.s3_flags.add('march unresolved: '+str(reason)[:60])
+                boundary, status, reason = out
+        if boundary < 0:
+            if not self.production_fallback:
+                # S5: the unresolved march column itself (a numerical gap in the chart, never an absence proof);
+                # WT_MARCH_PRODUCTION_FALLBACK=1 restores the Python production column search (rollback)
+                self.column_record(col, march, level, -1, STATUS_UNRESOLVED, reason, started)
+                col.region = True
+                col.evidence = march.evidence;col.evidence_list = list(getattr(self.eng.solver, 'stationary_boundary_evidence', []))
+                self.eng.stats['withheld_production'] = self.eng.stats.get('withheld_production', 0)+1
+                return 0
             self.production(col, speed, seeds, 'march unresolved: '+str(reason))
             return 0
         self.column_record(col, march, level, boundary,
