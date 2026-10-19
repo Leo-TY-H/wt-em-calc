@@ -115,6 +115,8 @@ cdef class NMarch:
     cdef int retries_left
     # S6: a face found by the S5 face rescues must lie on the branch the march follows (face_branch)
     cdef public bint strict_faces
+    # S7: no S3 rescue (the edge refinement column: where its plain march fails, the edge stays at the localized column)
+    cdef public bint no_rescue
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -142,6 +144,7 @@ cdef class NMarch:
         self.robust = False
         self.retries_left = 0
         self.strict_faces = False
+        self.no_rescue = False
 
     # ------------------------------------------------------------------ bookkeeping
     @cython.boundscheck(True)
@@ -623,7 +626,7 @@ cdef class NMarch:
     cdef tuple run(self, int level, bint has_predicted, double predicted):
         """RescueMarch.run(level, predicted): (boundary state or -1, status, reason)."""
         out = self.run_march(level, has_predicted, predicted)
-        if out[0] >= 0 or out[2] not in NATIVE_RESCUE_REASONS:return out
+        if out[0] >= 0 or out[2] not in NATIVE_RESCUE_REASONS or self.no_rescue:return out
         import numpy as np
         try:
             edge = self.rescue(level)

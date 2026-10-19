@@ -240,7 +240,7 @@ cdef class NTracer:
     cdef public dict columns, work
     cdef public list witnesses, events
     cdef object N, M, S
-    cdef bint production_fallback, nudge, s6, probing, s7
+    cdef bint production_fallback, nudge, s6, probing, s7, cheap
     cdef set check_tried, check_passed
     cdef public list knot_speeds
     cdef double tangent_delta
@@ -270,6 +270,7 @@ cdef class NTracer:
         self.s7 = os.environ.get('WT_MARCH_S7', '1') != '0' and self.s6
         self.knot_speeds = []
         self.tangent_delta = 1.
+        self.cheap = False     # S7: a column without rescues or nudges (the edge refinement column)
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -296,7 +297,7 @@ cdef class NTracer:
         w = Work({}, parent=current())
         with use(w):
             col = self.run_column(speed, seeds)
-            if col.status == STATUS_UNRESOLVED and col.march and self.nudge:
+            if col.status == STATUS_UNRESOLVED and col.march and self.nudge and not self.cheap:
                 q = .25*self.vtol
                 for k in (1., -1., 2., -2., 4., -4.):
                     s = speed+k*q
@@ -462,6 +463,7 @@ cdef class NTracer:
                     nearest = sid;bd = d
         march = NMarch(self.eng, speed, self.march_tol)
         march.strict_faces = self.s6
+        march.no_rescue = self.cheap
         col.march = True
         if nearest >= 0 and march.store:
             level = march.level_from(nearest)
@@ -473,7 +475,7 @@ cdef class NTracer:
                 reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
                 # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
                 # (their march from level flight reached it without a limit) instead of the production column
-                if self.interior_march(col, march, speed, seeds, 'level flight unresolved: '+reasons, started):return 0
+                if not self.cheap and self.interior_march(col, march, speed, seeds, 'level flight unresolved: '+reasons, started):return 0
                 if self.production_fallback:
                     self.production(col, speed, seeds, 'level flight unresolved: '+reasons)
                     return 0
@@ -487,12 +489,12 @@ cdef class NTracer:
             return 0
         has_predicted = self.predicted_alpha(speed, seeds, &predicted)
         boundary, status, reason = march.run(level, has_predicted, predicted)
-        if boundary < 0:
+        if boundary < 0 and not self.cheap:
             out = march.neighbour_face(seeds, level)
             if out is not None and out[0] >= 0:
                 march.s3_flags.add('march unresolved: '+str(reason)[:60])
                 boundary, status, reason = out
-        if boundary < 0 and self.s6 and not self.probing:
+        if boundary < 0 and self.s6 and not self.probing and not self.cheap:
             # S6: the march again with robust corrections (regime seeds, larger budget)
             out = march.robust_march(level, has_predicted, predicted)
             if out is not None:
@@ -720,33 +722,52 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int level_probe(self, int level, double speed, PredMap* preds) except -2:
+        """S7: level flight at ``speed`` continued from a level-flight state (the march's own level correction; once more
+        with fresh derivatives and the S6 robust budget when it does not close). The admitted state, -1 for a balanced
+        physical rejection, -3 where the correction did not close (no evidence either way)."""
+        cdef int p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS,
+                                      2e-6, speed, preds, NULL)
+        if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
+            p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6,
+                                 speed, NULL, NULL)
+        self.eng.flush_counts()
+        if p >= 0 and self.eng.st[p].valid:return p
+        return -1 if p >= 0 and self.eng.physical(p) else -3
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef tuple edge_probe(self, NColumn good, NColumn bad):
-        """S7: an edge beyond which level flight is infeasible, to the speed tolerance: bisection with level-flight
-        corrections continued from the verified column's own level-flight state (no march and no production level search
-        for the probes), then one column at the last probed speed whose level flight closed and was admitted. Returns
-        (the edge's verified column, the nearest probed speed beyond it). A probe that does not close counts as beyond
-        the edge (the edge never moves past a closed, admitted level flight; at worst it stays at the swept column)."""
+        """S7: an edge beyond which level flight is infeasible, to the speed tolerance, with level-flight probes
+        (level_probe: corrections continued from the verified column's own level-flight state; no march, no production
+        level search): from the verified column towards the infeasible one in steps of the placement tolerance (bands
+        without an equilibrium are sampled as finely as the S6 column bisection did), bisection inside the first step that
+        fails, then one column without rescues at the last probed speed whose level flight was admitted. Returns (the
+        edge's verified column, the nearest probed speed beyond it). A probe that does not close counts as beyond the edge;
+        where the refinement column does not verify, the S6 column bisection to the placement tolerance follows."""
         from em_trim_work import Work, use, current
-        cdef double out = bad.speed, inside = good.speed, mid
+        cdef double out = bad.speed, inside = good.speed, mid, nxt
+        cdef double direction = 1. if bad.speed > good.speed else -1.
         cdef int level = good.level, p
         cdef PredMap preds
         cdef NColumn col
         preds.n = 0
         if level < 0 or not self.eng.st[level].valid or fabs(self.eng.st[level].load-1.) > 1e-9:
-            g, b = self.localize(good, bad, 'edge', self.vtol)
+            g, b = self.localize(good, bad, 'edge')
             return g, b.speed
         w = Work({}, parent=current())
         with use(w):
+            while True:
+                nxt = inside+direction*self.place_tol
+                if (out-nxt)*direction <= 0.:break
+                p = self.level_probe(level, nxt, &preds)
+                if p < 0:
+                    out = nxt;break
+                inside = nxt;level = p
             while fabs(inside-out) > self.vtol:
                 mid = .5*(inside+out)
-                p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS, 2e-6,
-                                     mid, &preds, NULL)
-                if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
-                    # not closed: once more with fresh derivatives and the S6 robust budget before it counts as beyond
-                    p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV,
-                                         ROBUST_EVALS, 2e-6, mid, NULL, NULL)
-                self.eng.flush_counts()
-                if p >= 0 and self.eng.st[p].valid:
+                p = self.level_probe(level, mid, &preds)
+                if p >= 0:
                     inside = mid;level = p
                 else:
                     out = mid
@@ -754,12 +775,15 @@ cdef class NTracer:
         row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
         self.eng.stats['s7_edge_probes'] = self.eng.stats.get('s7_edge_probes', 0)+1
         if inside == good.speed:return good, out
-        col = self.column(inside, [good], 'edge', False, pmin(inside, out), pmax(inside, good.speed))
+        self.cheap = True
+        try:col = self.column(inside, [good], 'edge', False, pmin(inside, out), pmax(inside, good.speed))
+        finally:self.cheap = False
         if NTracer.ok(col):
             self.columns[float(col.speed)] = col
             return col, out
         self.eng.stats['s7_edge_probe_misses'] = self.eng.stats.get('s7_edge_probe_misses', 0)+1
-        return good, inside
+        g, b = self.localize(good, bad, 'edge')
+        return g, b.speed
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -775,6 +799,13 @@ cdef class NTracer:
             while abs(chain[-1].speed-bound) > 1e-9 and not ended:
                 last = chain[-1];prev = chain[-2] if len(chain) > 1 else None
                 speed = last.speed+side*min(step, abs(bound-last.speed))
+                if self.s7 and side < 0 and isfinite(last.slope_l) and last.slope_l > 0.:
+                    # S7: towards the low-speed edge the boundary falls to level flight (n = 1) where its face, continued
+                    # with its exact slope, reaches it; a column far below that is an expensive infeasible one, so the
+                    # sweep steps at most the placement tolerance past the predicted edge
+                    n = self.eng.st[last.boundary].load
+                    h = last.speed-(n-1.)/last.slope_l-self.place_tol
+                    if speed < h < last.speed:speed = h
                 if side > 0:col = self.column(speed, [last, prev], 'sweep', True, last.speed, bound+1e-9)
                 else:col = self.column(speed, [last, prev], 'sweep', True, bound-1e-9, last.speed)
                 # S6: a bound column placed inside the speed tolerance ends this direction
@@ -995,9 +1026,10 @@ cdef class NTracer:
                     col = self.column(.5*(va+vb), [a, b], 'jump', False, va, vb)
                     checks.append(dict(interval_kmh=[va, vb], speed_kmh=col.speed, passed=False, faces=[a.reason, b.reason],
                                        midpoint_face=col.reason if NTracer.ok(col) else col.status_name(), kind='jump'))
-                    added += 1
-                    self.columns[col.speed] = col
-                    if not NTracer.ok(col):tried.add(key)
+                    if NTracer.ok(col):
+                        added += 1;self.columns[col.speed] = col
+                    else:
+                        tried.add(key)     # no column inside the horizontal tolerance that is not verified
                     continue
                 corner = self.face_of(a) != self.face_of(b)
                 # a corner needs both faces' exact slopes (a PCHIP slope through another face's column says nothing)
