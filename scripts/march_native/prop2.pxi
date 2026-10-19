@@ -181,7 +181,7 @@ cdef class PropModel:
             for i in range(3):P.position[i] = pp['position'][i]
             inverse_basis(P.basis, P.inv_basis)
             P.direction = pp['direction']
-            if len(pp['airflow']) > 4:raise PropUnsupported('airflow table')
+            if len(pp['airflow']) > 16:raise PropUnsupported('airflow table')
             P.nairflow = len(pp['airflow'])
             for i, row in enumerate(pp['airflow']):
                 P.airflow_x[i] = row[0]

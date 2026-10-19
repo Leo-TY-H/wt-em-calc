@@ -44,8 +44,8 @@ cdef struct PropT:
     double position[3]
     int direction
     int nairflow
-    double airflow_x[4]
-    double airflow_v[4][3]
+    double airflow_x[16]
+    double airflow_v[16][3]
     double polar_base1, polar_base8
 
 

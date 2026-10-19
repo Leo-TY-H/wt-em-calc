@@ -592,7 +592,7 @@ cdef class CurveCorrection:
             P.fixed = nx;P.load = value;P.z[nx] = sqrt(pmax(0., value*value-1.))
         elif fixed_kind == FIX_EVENT:
             P.fixed = -3;P.ev_kind = ev_kind;P.ev_axis = ev_axis;P.ev_side = ev_side
-            if not (1 <= P.ev_kind <= EV_MAX and 0 <= P.ev_axis <= 2 and 0 <= P.ev_side <= 1):raise ValueError('native event kind')
+            if not (1 <= P.ev_kind <= EV_MAX and 0 <= P.ev_axis <= (NP-1 if P.ev_kind == 6 else 2) and 0 <= P.ev_side <= 1):raise ValueError('native event kind')
         else:
             P.fixed = -1;P.target = value
         for i in range(nz):

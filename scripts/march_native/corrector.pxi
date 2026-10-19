@@ -72,6 +72,17 @@ cdef inline bint same_br(const int* a, const int* b) noexcept nogil:
     return True
 
 
+cdef long g_pred[8]
+
+
+def predictor_counts(reset=False):
+    """Diagnostics: predictors offered, used, rejected by distance, rejected by branch."""
+    out = [g_pred[i] for i in range(8)]
+    if reset:
+        for i in range(8):g_pred[i] = 0
+    return out
+
+
 cdef class NativeCorrector:
     cdef int n, m
     cdef double lower[NMAX]
@@ -210,6 +221,8 @@ cdef class NativeCorrector:
         st.termination = T_OBJ_BUDGET
         st.fast_stagnation = fast_stagnation
         code = run_solve(&st, predictor)
+        if predictor != NULL and predictor.valid and self.reuse:
+            g_pred[4] += st.refreshes;g_pred[5] += st.used;g_pred[6] += self.evaluations-st.start;g_pred[7] += st.reuses
         if code == -2:
             res.termination = -1
             res.success = False
@@ -687,6 +700,7 @@ cdef int run_solve(SolveState* st, const Predictor* predictor) except -1:
         return code
     remember(st, st.x, c.merit(st.value.r))
     if c.reuse and predictor != NULL and predictor.valid:
+        g_pred[0] += 1
         v = 0.
         for i in range(st.n):
             v = pmax(v, fabs(predictor.x[i]-st.x[i])/c.step_limit[i])
@@ -697,6 +711,11 @@ cdef int run_solve(SolveState* st, const Predictor* predictor) except -1:
                 st.matrix_x[i] = st.x[i]
             st.matrix_value = st.value
             st.has_matrix = True
+            g_pred[1] += 1
+        elif v > 1.:
+            g_pred[2] += 1
+        else:
+            g_pred[3] += 1
     while st.used < st.max_nfev:
         if c.target >= 0.:
             pass
