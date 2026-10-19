@@ -1,5 +1,5 @@
 {
- "native_sha256": "a3cceea04ebc940a39dc2566577e97dedbf5c7eca8b5d2a2907818c9c93bce95",
+ "native_sha256": "8415e467d10be000426aa0fbc01129ca38fa5582f42e3b48d2891656653ac9ee",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -14,6 +14,7 @@
   "downwash",
   "em_accuracy",
   "em_accuracy_policy",
+  "em_aircraft_region",
   "em_backend",
   "em_cancellation",
   "em_data",
@@ -22,9 +23,16 @@
   "em_model_experiments",
   "em_numeric_core",
   "em_operating",
+  "em_ordered_work",
+  "em_pitch_limit",
   "em_pitch_response",
+  "em_prop_branch_recovery",
+  "em_recovery",
   "em_roots",
+  "em_sampling",
+  "em_sideslip",
   "em_solver",
+  "em_speed_limits",
   "em_stationary",
   "em_stationary_baseline",
   "em_stationary_boundary",
@@ -33,6 +41,7 @@
   "em_stationary_surface",
   "em_trim_numerics",
   "em_trim_work",
+  "em_workers",
   "engine_commands",
   "engine_supply",
   "flap_model",
@@ -90,15 +99,16 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "9b8e8730137a85df38c0bd0c07f4bc288f31f76c4e90117773e6cba869959575",
+ "python_sha256": "ca8a4a2441f15ab334bf50f8a62b7515e85bab57d5679cb72841de08bb4de10b",
  "verification": {
-  "date": "2026-10-18",
+  "date": "2026-10-19",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
    "f_16a_block_10:sb",
    "a6m2_zero:sb",
-   "ki_61_1a_otsu:rb"
+   "ki_61_1a_otsu:rb",
+   "f_14a_early:rb"
   ],
   "checks": {
    "bi:sb": {
@@ -1105,9 +1115,123 @@
      "worst": {},
      "examples": []
     }
+   },
+   "f_14a_early:rb": {
+    "instructor": {
+     "checked": 1049,
+     "mismatched": 135,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 1.6653345369377348e-15
+     },
+     "examples": [
+      {
+       "speed": 255.90129797363284,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.6783108184583395",
+         "0.6783108184583398"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03204381242494765",
+         "-0.03204381242494768"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.1066409457102871",
+         "-0.10664094571028711"
+        ]
+       ]
+      },
+      {
+       "speed": 255.90129797363284,
+       "load": 6.416173574939334,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.6782172937131717",
+         "0.678217293713172"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.10665220194937419",
+         "-0.10665220194937415"
+        ]
+       ]
+      },
+      {
+       "speed": 255.90129797363284,
+       "load": 6.416173574939334,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.6782172937131717",
+         "0.678217293713172"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.10665220194937419",
+         "-0.10665220194937415"
+        ]
+       ]
+      },
+      {
+       "speed": 255.90129797363284,
+       "load": 9.556889059859529,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.6780791128073698",
+         "0.6780791128073704"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03203659414557433",
+         "-0.032036594145574415"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.10667054209502658",
+         "-0.10667054209502641"
+        ]
+       ]
+      },
+      {
+       "speed": 255.90129797363284,
+       "load": 9.556889059859529,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.6780791128073698",
+         "0.6780791128073704"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03203659414557433",
+         "-0.032036594145574415"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.10667054209502658",
+         "-0.10667054209502641"
+        ]
+       ]
+      }
+     ]
+    },
+    "operating_point": {
+     "checked": 25,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
    }
   },
-  "finish_rows": 4204,
+  "finish_rows": 4716,
   "method": "scripts/verify_march_native.py"
  }
 }
