@@ -209,7 +209,18 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     native = N.attach(solver)
     loops = [solver.native_loop] if getattr(solver, 'native_loop', None) is not None else []
     total = Work({});t0 = time.process_time()
-    with use(total):envelope = tracer.run()
+    # S5: the march, its column workers and the tracer on native trial states where the compiled
+    # module covers this solver; otherwise the Python march (em_march, the reference) as in S4.
+    engine = N.engine(solver)
+    if engine is not None:
+        native_tracer = solver.native_loop.m.NTracer(engine, name, cfg, tracer.cj, tracer.ttol, tracer.vtol, tracer.place_tol,
+                                                     tracer.max_step, tracer.max_depth, tracer.march_tol, tracer.on_column)
+        with use(total):
+            envelope = native_tracer.run()
+            envelope['columns'] = [native_tracer.record(c) for c in envelope['columns']]
+        N.merge_stats(engine.stats)
+    else:
+        with use(total):envelope = tracer.run()
     envelope_cpu = time.process_time()-t0
     envelope_work = dict(total.counts)
     verified = [c for c in envelope['columns'] if tracer.ok(c)]

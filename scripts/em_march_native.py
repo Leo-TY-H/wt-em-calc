@@ -150,7 +150,8 @@ def load(build=True):
     module, status = None, None
     verifying = os.environ.get('WT_MARCH_NATIVE_VERIFY') == '1'
     if os.environ.get('WT_MARCH_NATIVE', '1') == '0':status = 'disabled by WT_MARCH_NATIVE=0'
-    if status is None and not verifying:
+    # WT_MARCH_NATIVE_UNSTAMPED=1: development builds before re-verification (never in releases).
+    if status is None and not verifying and os.environ.get('WT_MARCH_NATIVE_UNSTAMPED') != '1':
         try:
             stamp = json.loads(STAMP.read_text())
             if stamp['native_sha256'] != native_digest():status = 'disabled: native sources changed since verification'
@@ -274,6 +275,10 @@ class NativeLoop:
                     self.unsupported['finish'] = str(error)[:120];cc.finisher = None
             cc.verify = int(self.verify)
             self.entry = (cc, s2.FrozenPoint(model))
+            if cc.finisher is not None:
+                cc.finisher.loop_stats = self.stats
+                # Lean Instructor admission (S5); verify mode keeps the shadow-checked Python route.
+                if not self.verify:cc.finisher.instructor = self.instructor_for(solver)
         return self.entry or None
 
     def instructor_for(self, solver):
@@ -507,7 +512,103 @@ def summary(loops):
         add(out, loop.stats)
         if loop.entry:
             cc = loop.entry[0]
-            for k, v in cc.stats.items():
+            for k, v in cc.counters().items():
                 if isinstance(v, (int, float)):out['curve_'+k] = out.get('curve_'+k, 0)+v
         if loop.unsupported:out.setdefault('unsupported', {}).update(loop.unsupported)
     return out
+
+
+# ----- S5: the native march chart (march, tracer and column workers on native states) ---------------
+def engine(solver):
+    """The native march engine of an attached solver, or None (then the Python march runs, as S4)."""
+    if os.environ.get('WT_MARCH_NATIVE_LOOP', '1') == '0':return None
+    loop = getattr(solver, 'native_loop', None)
+    if loop is None or loop.verify:return None
+    if not hasattr(loop.m, 'MarchEngine'):return None
+    try:
+        return loop.m.MarchEngine(solver, loop)
+    except loop.m.NativeMarchUnsupported as error:
+        loop.unsupported['march'] = str(error)[:120]
+        return None
+
+
+def column_preamble(solver, speed):
+    """em_sampling.sample_with_history before the worker: per-column solver state, then the speed-limit
+    exclusion (returned as the column, as there)."""
+    from em_workers import prepare_job
+    from em_speed_limits import excluded_column
+    prepare_job()
+    if hasattr(solver, 'direct_boundary'):solver.stationary_boundary_evidence = []
+    solver.chart_load_anchors = []
+    solver._sideslip_solvers = {}
+    solver.instructor_boundaries = {}
+    solver.instructor_trim_entries = {}
+    for key in ('_trim_predictor', '_minimum_instructor_speed', '_static_instructor_trim_cache'):
+        solver.__dict__.pop(key, None)
+    excluded = excluded_column(solver, speed)
+    if excluded is not None:return excluded
+    solver.__dict__.pop('_interior_curve', None)
+    if solver.is_prop and solver.engine.automatic:
+        # The legacy engine search state; the stationary propulsion never reads it.
+        solver.engine._task_seed = None
+        solver.engine.reset_search()
+        solver.__dict__.pop('_trim_predictor', None)
+    return None
+
+
+def discontinuous(solver, speed):
+    """em_column_work.bounded_column's Mach-discontinuity column (with the sample_with_history tail)."""
+    from em_mach_events import discontinuous_column
+    column = discontinuous_column(solver, speed)
+    if column is None:return None
+    return post_column(solver, column)
+
+
+def post_column(solver, column):
+    """em_sampling.sample_with_history after the worker: boundary evidence, load-limit and Mach annotation."""
+    from em_load_limits import annotate
+    from em_mach_events import annotate as annotate_mach
+    if hasattr(solver, 'direct_boundary'):
+        retained = [];seen = set()
+        for evidence in [*column.get('stationary_boundary_evidence', ()), *getattr(solver, 'stationary_boundary_evidence', ())]:
+            if id(evidence) in seen:continue
+            seen.add(id(evidence));retained.append(evidence)
+        column['stationary_boundary_evidence'] = retained
+    return annotate_mach(solver, annotate(solver, column))
+
+
+def march_record(solver, col, points, samples, boundary, level):
+    """em_march.column_record + march_worker's region annotation + bounded_column + sample_with_history tail."""
+    from em_aircraft_region import annotate as annotate_region
+    from em_load_limits import annotate
+    from em_mach_events import annotate as annotate_mach
+    record = dict(speed_kmh=float(col.speed), points=points, boundary=boundary, lower_boundary=level,
+                  boundary_status=col.raw_status, boundary_reason=col.raw_reason,
+                  boundary_bracket_g=None, sustained=[], load_checks=[], numerical_gap_brackets=[], interior_failures=[],
+                  unresolved_load_intervals=[], mass=solver.mass, engine=solver.engine.summary, boundary_probe=True,
+                  lower_boundary_searched=False, elapsed_s=col.elapsed,
+                  s1_march=dict(trials=col.ntrials, reason=col.march_reason, trial_log=col.trial_log,
+                                samples=[[round(p['alpha_deg'], 4), round(p['load_g'], 5), round(p['ps_mps'], 3)]
+                                         for p in samples]))
+    record['s3_path'] = col.s3_path
+    if col.s3_flags:record['s3_flags'] = col.s3_flags
+    if col.region:annotate_region(solver, record)
+    record['search_work'] = col.search_work
+    if hasattr(solver, 'direct_boundary'):record['stationary_boundary_evidence'] = list(col.evidence_list)
+    return annotate_mach(solver, annotate(solver, record))
+
+
+def merge_stats(engine_stats):
+    """Book the native march's counters into em_march.STATS / RESCUE_STATS (the chart's march report)."""
+    import em_march as M
+    stats = dict(engine_stats)
+    M.STATS['columns'] += stats.pop('columns', 0)
+    M.STATS['predictors_offered'] += stats.pop('predictors_offered', 0)
+    for key, value in stats.pop('s3_paths', {}).items():
+        M.RESCUE_STATS['s3_paths'][key] = M.RESCUE_STATS['s3_paths'].get(key, 0)+value
+    for key in ('s3_face', 's3_bisect', 's3_unresolved', 'bisect_trials', 'face_trials', 'behind_face', 'fold_within_tolerance'):
+        M.RESCUE_STATS[key] = M.RESCUE_STATS.get(key, 0)+stats.pop(key, 0)
+    if 'rescue_errors' in stats:
+        errors = M.RESCUE_STATS.setdefault('rescue_errors', {})
+        for key, value in stats.pop('rescue_errors').items():errors[key] = errors.get(key, 0)+value
+    M.STATS['native_march'] = stats

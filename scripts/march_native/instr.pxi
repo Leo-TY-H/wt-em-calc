@@ -77,6 +77,40 @@ cdef struct Auto:
     double lift_error, moment_error, command_error
 
 
+cdef struct IIn:
+    # effective_limits inputs (one phase of the value record)
+    double tas, speed_squared, mach, ias_u
+    double wing_angles[2]
+    double gear_fraction
+    double delivered[3]
+    double longitudinal
+    double world_acc[3]
+    double quaternion[4]
+    double pitch_rate
+    double speed
+    bint has_prop
+    double force[3]
+    double moment[3]
+    double wash_raw[2]
+
+
+cdef struct InstrRes:
+    # effective_limits outputs; the record dict is built from these (Instructor.limits_dict)
+    bint converged, success, independent
+    double angle_margin, mechanical
+    double bounds[3][2]
+    double trim[3]
+    double sticks[3]
+    double low, high
+    double effective[2]
+    double adjusted[2]
+    double rate
+    double demand_angle[2]
+    double demand_acc[2]
+    Balance bal[2]
+    int auto_index
+
+
 cdef void axis_limits_mix(const Mix* p, const bint* inverted, double density, double speed, double out[3][3]) noexcept nogil:
     # control_mixer.axis_limits: out[axis] = (positive, center, negative)
     cdef double lim[3]
@@ -422,6 +456,11 @@ cdef class Instructor:
     cdef public bint python_trim
     cdef public long calls, fallbacks, trim_solves, trim_evaluations
     cdef public object authority_mode, authority_revision
+    cdef bint invert_elevator
+    cdef double trim_limit
+    cdef public list autos
+    cdef dict auto_ids
+    cdef object skipped_auto
 
     def __init__(self, Model model, solver):
         import json, math
@@ -543,6 +582,11 @@ cdef class Instructor:
         self.nmg = self.mg_next = self.nmw = self.mw_next = 0
         self.trim_cache = {}
         self.calls = self.fallbacks = self.trim_solves = self.trim_evaluations = 0
+        self.invert_elevator = bool(solver.controls['invert_elevator'])
+        self.trim_limit = cfg['trim_limit']
+        self.autos = [];self.auto_ids = {}
+        self.skipped_auto = dict(success=False, skipped=True, trim=[0., 0., 0.], method='trim-independent authority',
+                                 reason='Automatic trim is unnecessary for control bounds')
 
     cdef int geo_mach(self, double mach, double flap) except -1:
         cdef int i
@@ -977,10 +1021,10 @@ cdef class Instructor:
                         initial[0] = pmin(p.aoaCritH, pmax(p.aoaCritL, adjusted))
         pred.valid = False
         tc.solve(initial, 120, 0, &pred, False, &res)
-        if tc.derivative_samples:bulk_charge('derivative_samples', tc.derivative_samples)
-        if tc.nominal_comparisons:bulk_charge('nominal_sensitivity_comparisons', tc.nominal_comparisons)
-        if tc.nominal_restorations:bulk_charge('nominal_sensitivity_restorations', tc.nominal_restorations)
-        if tc.branch_secants:bulk_charge('branch_secant_predictors', tc.branch_secants)
+        if tc.derivative_samples:charge(K_DERIV, tc.derivative_samples)
+        if tc.nominal_comparisons:charge(K_NOMCMP, tc.nominal_comparisons)
+        if tc.nominal_restorations:charge(K_NOMRES, tc.nominal_restorations)
+        if tc.branch_secants:charge(K_SECANT, tc.branch_secants)
         self.trim_solves += 1;self.trim_evaluations += tc.nmemo
         if res.termination == -1:
             from em_trim_numerics import UnevaluableTrial
@@ -1087,6 +1131,99 @@ cdef class Instructor:
         out[4] = M(yr0, F(1.));out[5] = M(yr1, F(1.))
 
     cdef dict effective_limits(self, value, phase, double speed_unused):
+        """The Python-record entry (verify mode, Python events): inputs from the value record."""
+        cdef IIn inp
+        cdef InstrRes r
+        cdef int i
+        air = phase['air']
+        inp.tas = air['tas'];inp.speed_squared = air['speed_squared'];inp.mach = air['mach'];inp.ias_u = air['ias_u']
+        wa = phase['history']['wing_aoa']
+        inp.wing_angles[0] = wa[0];inp.wing_angles[1] = wa[1]
+        if value['flaps'] != self.flaps_value:raise InstructorUnsupported('flap input')
+        inp.gear_fraction = value.get('gear', 0.)
+        commands = value['allocation']['commands']
+        for i in range(3):inp.delivered[i] = commands[i]
+        inp.longitudinal = value['velocity'][0]
+        kin = value['kinematic']
+        for i in range(3):inp.world_acc[i] = kin['world_acceleration'][i]
+        geom = value['geometry']
+        for i in range(4):inp.quaternion[i] = geom['quaternion'][i]
+        inp.pitch_rate = float(geom['omega'][2])
+        inp.speed = float(value['speed'])
+        prop = value.get('propulsion')
+        inp.has_prop = prop is not None
+        if prop is not None:
+            for i in range(3):inp.force[i] = prop['force'][i];inp.moment[i] = prop['moment'][i]
+            inp.wash_raw[0] = prop['wash'][0];inp.wash_raw[1] = prop['wash'][1]
+        elif self.model.prop:raise InstructorUnsupported('propeller without propulsion record')
+        self.effective_core(&inp, &r)
+        return self.effective_dict(&r, commands[1])
+
+    cdef int eval_inputs(self, Eval* e, const PropSample* ps, IIn* inp) except -1:
+        """Inputs of the Instructor admission of a native state (value_record(..., complete=True) fields)."""
+        cdef int i
+        ensure_complete(self.model, e)
+        inp.tas = e.air.tas;inp.speed_squared = e.air.speed_squared;inp.mach = e.air.mach;inp.ias_u = e.air.ias_u
+        inp.wing_angles[0] = e.frame.history.aoa[0];inp.wing_angles[1] = e.frame.history.aoa[1]
+        if self.model.flaps != self.flaps_value:raise InstructorUnsupported('flap input')
+        inp.gear_fraction = self.model.gear
+        for i in range(3):inp.delivered[i] = e.alloc.commands[i]
+        inp.longitudinal = e.velocity[0]
+        for i in range(3):inp.world_acc[i] = e.kin.world_acceleration[i]
+        for i in range(4):inp.quaternion[i] = e.geom.quaternion[i]
+        inp.pitch_rate = e.geom.omega[2]
+        inp.speed = e.speed
+        inp.has_prop = ps != NULL
+        if ps != NULL:
+            for i in range(3):inp.force[i] = ps.frame.force[i];inp.moment[i] = ps.frame.moment[i]
+            inp.wash_raw[0] = ps.frame.wash[0];inp.wash_raw[1] = ps.frame.wash[1]
+        elif self.model.prop:raise InstructorUnsupported('propeller without propulsion record')
+        return 0
+
+    cdef int eval_limits(self, Eval* e, const PropSample* ps, InstrRes* r) except -1:
+        """limits() of a native state without building the value record (lean admission)."""
+        cdef IIn inp
+        self.eval_inputs(e, ps, &inp)
+        self.calls += 1
+        self.effective_core(&inp, r)
+        return 0
+
+    cdef dict effective_dict(self, const InstrRes* r, double delivered_pitch):
+        cdef int i
+        angle_margin = r.angle_margin;mechanical = r.mechanical
+        margins = {'Instructor effective AoA': angle_margin, 'control authority with auto trim': mechanical}
+        bounds = [[r.bounds[i][0], r.bounds[i][1]] for i in range(3)]
+        demands = [dict(target_angle=r.demand_angle[i], target_acceleration=r.demand_acc[i]) for i in range(2)]
+        balances = [dict(acceleration=r.bal[i].acceleration, tail_force=r.bal[i].tail_force,
+                         zero_acceleration_tail_force=r.bal[i].zero_force, tail_angle_deg=r.bal[i].tail_angle,
+                         tail_angle_bounds_deg=[self.tail_bounds[0], self.tail_bounds[1]], flow_angle_deg=r.bal[i].flow,
+                         direct_predictor=bool(r.bal[i].direct)) for i in range(2)]
+        success = r.success
+        return dict(converged=success or r.independent, margin=pmin(angle_margin, mechanical), margins=margins,
+            authority_mode=self.authority_mode,
+            envelope_margin=angle_margin, pitch_margin=angle_margin, angle_margin=angle_margin,
+            limiting=min(margins, key=margins.get), control_bounds=bounds,
+            auto_trim=[r.trim[0], r.trim[1], r.trim[2]] if success else None,
+            sticks=[r.sticks[0], r.sticks[1], r.sticks[2]] if success else None, static_trim=self.autos[r.auto_index],
+            control_authority_trim_independent=r.independent,
+            delivered_pitch=delivered_pitch,
+            required_pitch=delivered_pitch, angle_limits_deg=[r.low, r.high],
+            effective_angle_limits_deg=[r.effective[0], r.effective[1]], adjusted_wing_angles_deg=[r.adjusted[0], r.adjusted[1]],
+            native_angle_rate_rad_s=r.rate, model='effective AoA schedule with reduced moment balance',
+            rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
+            overload_policy='transient reserve omitted; physical strength retained')
+
+    cdef dict limits_dict(self, const InstrRes* r, double delivered_pitch):
+        """limits() result of one native state (one phase) from its stored admission."""
+        result = self.effective_dict(r, delivered_pitch)
+        a = result['adjusted_wing_angles_deg']
+        result['adjusted_wing_angles_deg'] = [min(a), max(a)]
+        result.update(model='Steady effective AoA schedule (approximation)',
+                      model_revision='steady-effective-aoa-fixed-autotrim-v9', pitch_predictor_recheck=False)
+        result['authority_revision'] = self.authority_revision
+        return result
+
+    cdef int effective_core(self, const IIn* inp, InstrRes* r) except -1:
         import math
         cdef double tas, speed_squared, mach, ias_u, longitudinal, rho, ias, sensitivity, rate, kp, mechanical
         cdef double wing_angles[2]
@@ -1115,31 +1252,22 @@ cdef class Instructor:
         cdef double x0, y0, x1, y1, kpd, mass_scale, effective_area, rudder_trim, pitch_rate, gear_fraction
         cdef bint valid, independent
         cdef int i
-        air = phase['air']
-        tas = air['tas'];speed_squared = air['speed_squared'];mach = air['mach'];ias_u = air['ias_u']
-        wa = phase['history']['wing_aoa']
-        wing_angles[0] = wa[0];wing_angles[1] = wa[1]
-        if value['flaps'] != self.flaps_value:raise InstructorUnsupported('flap input')
-        gear_fraction = value.get('gear', 0.)
-        commands = value['allocation']['commands']
-        for i in range(3):delivered[i] = commands[i]
-        longitudinal = value['velocity'][0]
-        kin = value['kinematic']
-        for i in range(3):world_acc[i] = kin['world_acceleration'][i]
-        geom = value['geometry']
-        for i in range(4):quaternion[i] = geom['quaternion'][i]
-        pitch_rate = float(geom['omega'][2])
-        world_velocity[0] = float(value['speed']);world_velocity[1] = 0.;world_velocity[2] = 0.
-        prop = value.get('propulsion')
-        if prop is not None:
-            for i in range(3):force[i] = prop['force'][i];moment[i] = prop['moment'][i]
-            wash[0] = F(prop['wash'][0]);wash[1] = F(prop['wash'][1])
+        tas = inp.tas;speed_squared = inp.speed_squared;mach = inp.mach;ias_u = inp.ias_u
+        wing_angles[0] = inp.wing_angles[0];wing_angles[1] = inp.wing_angles[1]
+        gear_fraction = inp.gear_fraction
+        for i in range(3):delivered[i] = inp.delivered[i]
+        longitudinal = inp.longitudinal
+        for i in range(3):world_acc[i] = inp.world_acc[i]
+        for i in range(4):quaternion[i] = inp.quaternion[i]
+        pitch_rate = inp.pitch_rate
+        world_velocity[0] = inp.speed;world_velocity[1] = 0.;world_velocity[2] = 0.
+        if inp.has_prop:
+            for i in range(3):force[i] = inp.force[i];moment[i] = inp.moment[i]
+            wash[0] = F(inp.wash_raw[0]);wash[1] = F(inp.wash_raw[1])
         else:
-            if self.model.prop:raise InstructorUnsupported('propeller without propulsion record')
             self.model.vectors(longitudinal, force, moment)
             wash[0] = wash[1] = 0.
-        elevator_state = delivered[1]
-        snapshot1 = -delivered[1] if self.solver.controls['invert_elevator'] else delivered[1]
+        snapshot1 = -delivered[1] if self.invert_elevator else delivered[1]
         # fixed_source
         rho = density_at_height(F(self.w_height), F(1.225), F(18300.))
         ias = F(longitudinal*F(sqrt(F(rho/self.rho0))))
@@ -1191,8 +1319,7 @@ cdef class Instructor:
             if self.alloc_props.trim_available[i] and not (ranges[2*i] == -1. and ranges[2*i+1] == 1.):
                 independent = False
         if independent and self.direct_mode:
-            auto = dict(success=False, skipped=True, trim=[0., 0., 0.], method='trim-independent authority',
-                        reason='Automatic trim is unnecessary for control bounds')
+            auto = self.skipped_auto
         else:
             ident_q[0] = ident_q[1] = ident_q[2] = 0.;ident_q[3] = 1.
             unit_v[0] = 1.;unit_v[1] = unit_v[2] = 0.
@@ -1204,34 +1331,33 @@ cdef class Instructor:
             for i in range(3):fixed_trim[i] = t[i]
         else:
             fixed_trim[0] = fixed_trim[1] = fixed_trim[2] = 0.
-        command_allocation(&self.alloc_props, delivered, ranges, False, self.solver.config['trim_limit'], fixed_trim, &alloc)
+        command_allocation(&self.alloc_props, delivered, ranges, False, self.trim_limit, fixed_trim, &alloc)
         mechanical = 0.
         for i in range(3):
             vv = pmin(delivered[i]-alloc.bounds[i][0], alloc.bounds[i][1]-delivered[i])
             mechanical = vv if i == 0 else pmin(mechanical, vv)
-        angle_margin = pmin(margins_angle[0], margins_angle[1])/10.
-        margins = {'Instructor effective AoA': angle_margin, 'control authority with auto trim': mechanical}
-        effective = [pmin(adjusted[0], adjusted[1])-margins_angle[0], pmax(adjusted[0], adjusted[1])+margins_angle[1]]
-        bounds = [[alloc.bounds[i][0], alloc.bounds[i][1]] for i in range(3)]
-        demands = [dict(target_angle=demand_angle[i], target_acceleration=demand_acc[i]) for i in range(2)]
-        balances = [dict(acceleration=bal[i].acceleration, tail_force=bal[i].tail_force,
-                         zero_acceleration_tail_force=bal[i].zero_force, tail_angle_deg=bal[i].tail_angle,
-                         tail_angle_bounds_deg=[self.tail_bounds[0], self.tail_bounds[1]], flow_angle_deg=bal[i].flow,
-                         direct_predictor=bool(bal[i].direct)) for i in range(2)]
-        success = auto['success']
-        return dict(converged=success or independent, margin=pmin(angle_margin, mechanical), margins=margins,
-            authority_mode=self.authority_mode,
-            envelope_margin=angle_margin, pitch_margin=angle_margin, angle_margin=angle_margin,
-            limiting=min(margins, key=margins.get), control_bounds=bounds,
-            auto_trim=[alloc.trim[0], alloc.trim[1], alloc.trim[2]] if success else None,
-            sticks=[alloc.sticks[0], alloc.sticks[1], alloc.sticks[2]] if success else None, static_trim=auto,
-            control_authority_trim_independent=independent,
-            delivered_pitch=commands[1],
-            required_pitch=commands[1], angle_limits_deg=[low, high],
-            effective_angle_limits_deg=effective, adjusted_wing_angles_deg=[adjusted[0], adjusted[1]],
-            native_angle_rate_rad_s=rate, model='effective AoA schedule with reduced moment balance',
-            rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
-            overload_policy='transient reserve omitted; physical strength retained')
+        r.angle_margin = pmin(margins_angle[0], margins_angle[1])/10.
+        r.mechanical = mechanical
+        r.effective[0] = pmin(adjusted[0], adjusted[1])-margins_angle[0];r.effective[1] = pmax(adjusted[0], adjusted[1])+margins_angle[1]
+        for i in range(3):
+            r.bounds[i][0] = alloc.bounds[i][0];r.bounds[i][1] = alloc.bounds[i][1]
+            r.trim[i] = alloc.trim[i];r.sticks[i] = alloc.sticks[i]
+        for i in range(2):
+            r.demand_angle[i] = demand_angle[i];r.demand_acc[i] = demand_acc[i];r.bal[i] = bal[i]
+            r.adjusted[i] = adjusted[i]
+        r.success = bool(auto['success'])
+        r.independent = independent
+        r.converged = r.success or independent
+        r.low = low;r.high = high;r.rate = rate
+        r.auto_index = self.auto_index(auto)
+        return 0
+
+    cdef int auto_index(self, auto) except -1:
+        key = id(auto)
+        index = self.auto_ids.get(key)
+        if index is None:
+            index = len(self.autos);self.autos.append(auto);self.auto_ids[key] = index
+        return index
 
     cdef object static_trim(self, double* ipa, double rudder_trim):
         cdef double key[NIP+1]
