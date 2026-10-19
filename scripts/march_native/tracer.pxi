@@ -1,6 +1,13 @@
 # S5: the march column worker (em_march.march_worker / column_record) and the speed
 # tracer (em_march.MarchTracer) on native columns. Column records (Python dicts with
 # chart rows) are built once, after the trace (NTracer.records).
+#
+# S6 (native only; the Python march is unchanged): a column every rescue leaves unresolved
+# gets the robust march (NMarch.robust_march), then the nearest verified speed within the
+# chart's speed tolerance (column); interior numerical gaps get columns on both sides
+# (resolve_gaps), and an unresolved column within twice the speed tolerance of verified
+# columns, or past an explicit edge, is dropped with a trace event (within_tolerance).
+# WT_MARCH_S6=0 restores the S5 tracer exactly.
 
 
 cdef int pchip_build(int n, const double* x, const double* y, double* c) except -1:

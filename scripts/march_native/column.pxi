@@ -1,5 +1,6 @@
 # S5: one alpha-march column on native trial states (em_march.March + RescueMarch,
 # march_worker, column_record, em_pitch_limit.limit), line by line.
+# S6: robust corrections (regime_seed, retry) and the S6 rescue (robust_march), native only.
 
 DEF STATUS_VERIFIED = 0     # 'verified limit'
 DEF STATUS_CEILING = 1      # 'plot ceiling'
