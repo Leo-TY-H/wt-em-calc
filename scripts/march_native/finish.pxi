@@ -3,10 +3,62 @@
 # and supported propeller aircraft (native propulsion record, governed requests,
 # phase-fixed pitch response; the source-value propeller admission rows are the
 # baseline prop_admission on the native record). The admission rules are
-# transliterated line by line; s2_native verify mode compares every row with the
-# Python finish.
+# transliterated line by line; verify mode compares every row with the Python
+# finish.
+#
+# S5: the finish is split in two. ``compute`` makes every admission decision
+# (all numerical work, every work charge) into a RowSrc without building Python
+# records; ``row``/``point`` build the chart row from a RowSrc afterwards, only
+# for states that are kept. ``finish`` (both together) is the S2-S4 entry.
 
 DEF NAN = float('nan')
+DEF MAXREASONS = 16
+
+# Reason codes (JointProblem.finish / certify / sample reasons, in their text)
+DEF R_BANK = 1
+DEF R_TRIM = 2
+DEF R_PROP_SETTLE = 3
+DEF R_RPM = 4
+DEF R_SHAFT = 5
+DEF R_CYCLE = 6
+DEF R_CONTROL = 7
+DEF R_STALL = 8
+DEF R_VSTEP = 9
+DEF R_WING = 10
+DEF R_IAS = 11
+DEF R_MACH = 12
+DEF R_SWEEP = 13
+DEF R_FLAP_AUTO = 14
+DEF R_FLAP_IAS = 15
+DEF R_PITCH_REV = 16
+DEF R_PITCH_UNRES = 17
+DEF R_INSTR_UNRES = 18
+DEF R_INSTR = 19
+DEF R_SIDESLIP = 20
+DEF R_PROP_ADM = 21
+DEF R_LOAD_CAP = 22
+DEF R_FIXED = 23    # first dynamically interned reason text
+
+REASON_TEXT = [None, 'bank outside [-90, 90] degrees', 'trim did not converge', 'propulsion did not settle',
+               'engine RPM limit', 'propeller shaft stopped', 'propulsion cycle unresolved', 'control authority',
+               'post-stall', 'vertical step did not close', 'wing force limit', 'IAS limit', 'Mach limit',
+               'sweep unavailable', 'flap automatic retraction', 'flap IAS limit', 'reversed pitch response',
+               'pitch response unresolved', 'Instructor boundary unresolved', 'Instructor pitch limit', 'sideslip limit',
+               'propeller admission', 'chart load search limit']
+REASON_CODE = {text: i for i, text in enumerate(REASON_TEXT) if text is not None}
+
+
+cdef int reason_code(text) except -1:
+    code = REASON_CODE.get(text)
+    if code is None:
+        code = len(REASON_TEXT);REASON_TEXT.append(text);REASON_CODE[text] = code
+    return code
+
+
+cdef inline bint physical_code(int r) noexcept nogil:
+    # em_pitch_response.PHYSICAL_REASONS
+    return r == R_STALL or r == R_CONTROL or r == R_WING or r == R_INSTR or r == R_RPM or r == R_PITCH_REV
+
 
 BRIEF_FIELDS = ('speed_kmh', 'load_g', 'solution', 'stationary_coordinates', 'stationary_coordinate_names',
                 'stationary_request_indices', 'sideslip_attitude_deg', 'source_branch', 'local_valid', 'converged',
@@ -33,6 +85,54 @@ cdef struct FrozenState:
     Predictor pred
 
 
+cdef struct PitchRes:
+    bint unresolved, normal, reversed_
+    int nsamples
+    double step[2]
+    double gain[2]
+    double margin[2]
+    double rounding[2]
+    double failed_step
+
+
+cdef struct Fin:
+    # The admission of one corrected state: every decision and every number the
+    # chart row takes from the finish (the rest comes from the Eval / propulsion sample).
+    bint finite, history_finite, converged, local_valid, row_valid
+    int nreasons
+    int reasons[MAXREASONS]
+    int nstructural
+    int structural[3]
+    bint has_pitch
+    PitchRes pitch
+    int instr          # 0 none, 1 native InstrRes, 2 Python dict (Finisher.python_instructors[instr_index])
+    int instr_index
+    InstrRes ires
+    double authority
+    double bounds[3][2]
+    bint prop_converged
+    int frames
+    bint has_sweep_range
+    double sweep_range[2]
+    long calls
+
+
+cdef struct RowSrc:
+    # Everything ``Finisher.row`` needs to rebuild the chart row of one corrected state.
+    Eval e
+    int br[BMAX]
+    double q[NMAX]
+    double resid[NMAX]
+    int nx, nres
+    int req[NP]
+    int nreq
+    double speed_kmh, load
+    PropPrep prep
+    PropSample ps
+    double qq[MAXPATH]
+    Fin fin
+
+
 cdef class Finisher:
     cdef Model model
     cdef FrozenProblem fp
@@ -40,11 +140,15 @@ cdef class Finisher:
     cdef public dict constants
     cdef public long frozen_evaluations, frozen_derivative_samples
     cdef double length, inertia_z
-    cdef bint invert_elevator, roll_leveling, structural, has_sweep
+    cdef bint invert_elevator, roll_leveling, structural, has_sweep, flaps_available, instructor_enabled
     cdef public bint is_prop, python_admission
     cdef object admission_revision
     cdef PropModel pm
     cdef public object layout
+    cdef public object instructor        # native Instructor (lean admission) or None: Python solver.instructor_at
+    cdef public dict loop_stats
+    cdef public list python_instructors
+    cdef double flaps_percent
 
     def __init__(self, Model model, solver):
         from em_model_experiments import description
@@ -61,6 +165,9 @@ cdef class Finisher:
         self.invert_elevator = bool(solver.controls['invert_elevator'])
         self.roll_leveling = bool(solver.fm.get('RollLeveling', True))
         self.structural = bool(cfg['structural_limits']);self.has_sweep = bool(solver.has_sweep)
+        self.instructor_enabled = bool(cfg['instructor'])
+        self.flaps_available = bool(solver.flap_profile['available']) and cfg['flaps_percent'] > 0
+        self.flaps_percent = cfg['flaps_percent']
         self.constants = dict(description=description(cfg), revision=REVISION, stable_revision=STABLE_POLAR_REVISION,
                               budget=float(sep_error_budget(cfg['sep_tolerance_mps'])), trim_mode=cfg['aircraft_trim_mode'],
                               governor='pitch_stops' if cfg.get('stationary_governor_mode', 'pitch_stops') == 'pitch_stops' else 'exact_rpm',
@@ -73,6 +180,7 @@ cdef class Finisher:
         self.python_admission = os.environ.get('S2_PYTHON_ADMISSION') == '1'
         from prop_admission import REVISION as admission_revision
         self.admission_revision = admission_revision
+        self.instructor = None;self.loop_stats = None;self.python_instructors = []
 
     def set_prop(self, PropModel pm, layout):
         self.pm = pm;self.layout = dict(layout)
@@ -108,11 +216,11 @@ cdef class Finisher:
             pred = st.pred
         P.solve(y, 120, 0, &pred, False, &res)
         self.frozen_evaluations += P.aircraft_evaluations;self.frozen_derivative_samples += P.derivative_samples
-        if P.aircraft_evaluations:bulk_charge('aircraft_evaluations', P.aircraft_evaluations)
-        if P.derivative_samples:bulk_charge('derivative_samples', P.derivative_samples)
-        if P.nominal_comparisons:bulk_charge('nominal_sensitivity_comparisons', P.nominal_comparisons)
-        if P.nominal_restorations:bulk_charge('nominal_sensitivity_restorations', P.nominal_restorations)
-        if P.branch_secants:bulk_charge('branch_secant_predictors', P.branch_secants)
+        if P.aircraft_evaluations:charge(K_EVAL, P.aircraft_evaluations)
+        if P.derivative_samples:charge(K_DERIV, P.derivative_samples)
+        if P.nominal_comparisons:charge(K_NOMCMP, P.nominal_comparisons)
+        if P.nominal_restorations:charge(K_NOMRES, P.nominal_restorations)
+        if P.branch_secants:charge(K_SECANT, P.branch_secants)
         if res.termination == -1:
             raise RuntimeError('native frozen history: initial state unevaluable')
         e = &P.memo_eval[res.value.slot]
@@ -127,7 +235,8 @@ cdef class Finisher:
                      and pmax(fabs(e.angle_residual[0]), fabs(e.angle_residual[1])) <= 2e-4)
         return 0
 
-    cdef dict pitch_response(self, Eval* e, object propulsion=None) :
+    cdef int pitch_core(self, Eval* e, bint jet, PitchRes* pr) except -1:
+        """The native steady pitch response at the state (phase-fixed propulsion already set on the model)."""
         cdef FrozenState st
         cdef double x[5]
         cdef double lo[5]
@@ -139,7 +248,9 @@ cdef class Finisher:
         cdef double[2] steps_ = [.002, .0005]
         previous = self.solver.__dict__.get('_stationary_frozen_predictor')
         st.valid = False;st.has_pred = False
-        if previous is not None and previous['key'][2] == 0. and previous['propulsion'] is propulsion:
+        # The propulsion record of a native finish is a fresh object, so only a
+        # direct-thrust predictor (propulsion None) can match ``previous`` (as S2-S4).
+        if previous is not None and previous['key'][2] == 0. and jet and previous['propulsion'] is None:
             st.valid = True;st.speed = previous['key'][0];st.load = previous['key'][1]
             for i in range(5):st.attitude[i] = float(previous['attitude'][i])
             st.angles[0] = float(previous['angles'][0]);st.angles[1] = float(previous['angles'][1])
@@ -149,7 +260,7 @@ cdef class Finisher:
         hist[0] = e.cycle_input.aoa[0];hist[1] = e.cycle_input.aoa[1]
         sign = 1. if self.invert_elevator else -1.
         scale = self.model.weight*self.length
-        samples = []
+        pr.nsamples = 0;pr.unresolved = False
         for k in range(2):
             step = steps_[k]
             for i in range(5):
@@ -158,22 +269,40 @@ cdef class Finisher:
             self.frozen(&st, e.speed, e.load, lo, hist, &ma, &ca)
             self.frozen(&st, e.speed, e.load, hi, hist, &mb, &cb)
             if not ca or not cb:
-                return dict(normal=False, reversed=False, unresolved=True, reason='pitch response unresolved',
-                            detail='Conditional wing history did not close', margin=NAN, gain_rad_s2=NAN,
-                            samples=samples, failed_step=step, method='Native steady pitch response unresolved')
+                pr.unresolved = True;pr.normal = False;pr.reversed_ = False;pr.failed_step = step
+                return 0
             width = hi[3]-lo[3]
             slope = sign*(mb-ma)/width
             rounding = 8.*(fabs(spacing32(ma))+fabs(spacing32(mb)))/width
-            samples.append(dict(step=step, gain_rad_s2=slope/self.inertia_z, margin=slope/scale, rounding=rounding/scale))
+            i = pr.nsamples
+            pr.step[i] = step;pr.gain[i] = slope/self.inertia_z;pr.margin[i] = slope/scale;pr.rounding[i] = rounding/scale
+            pr.nsamples += 1
             if fabs(slope) > 32.*rounding and fabs(slope/scale) > .002:
                 break
-        last = samples[len(samples)-1]
-        normal = all(p['margin'] > p['rounding'] for p in samples)
-        reversed_response = all(p['margin'] < -p['rounding'] for p in samples)
-        return dict(normal=normal, reversed=reversed_response, margin=last['margin'], gain_rad_s2=last['gain_rad_s2'],
+        pr.normal = True;pr.reversed_ = True
+        for i in range(pr.nsamples):
+            if not (pr.margin[i] > pr.rounding[i]):pr.normal = False
+            if not (pr.margin[i] < -pr.rounding[i]):pr.reversed_ = False
+        return 0
+
+    cdef dict pitch_dict(self, const PitchRes* pr):
+        samples = [dict(step=pr.step[i], gain_rad_s2=pr.gain[i], margin=pr.margin[i], rounding=pr.rounding[i])
+                   for i in range(pr.nsamples)]
+        if pr.unresolved:
+            return dict(normal=False, reversed=False, unresolved=True, reason='pitch response unresolved',
+                        detail='Conditional wing history did not close', margin=NAN, gain_rad_s2=NAN,
+                        samples=samples, failed_step=pr.failed_step, method='Native steady pitch response unresolved')
+        i = pr.nsamples-1
+        return dict(normal=pr.normal, reversed=pr.reversed_, margin=pr.margin[i], gain_rad_s2=pr.gain[i],
                     samples=samples, method='Native steady pitch moment derivative at fixed flight state; normal control sign')
 
-    cdef object branch_tuple(self, Eval* e, const int* br):
+    cdef dict pitch_response(self, Eval* e, object propulsion=None):
+        # S2-S4 entry kept for reference: the dict of pitch_core
+        cdef PitchRes pr
+        self.pitch_core(e, propulsion is None, &pr)
+        return self.pitch_dict(&pr)
+
+    cdef object branch_tuple(self, const Eval* e, const int* br):
         key = [br[1]]
         if self.roll_leveling:key.append(-1 if e.air.alpha <= -12. else 1 if e.air.alpha >= 12. else 0)
         for i in range(2, 8):key.append(decode_branch(br[i]))
@@ -181,132 +310,299 @@ cdef class Finisher:
         key.append(piece)
         return tuple(key)
 
-    def finish(self, CurveProblem P, int slot, double speed_kmh, double load, x7, long calls):
-        """Cleaned chart row for the corrected state, as BaselineSolver.sample(JointProblem.finish(x))."""
-        import math
-        from flap_model import violations as flap_violations
-        cdef Eval* e = &P.memo_eval[slot]
+    cdef void prop_flags(self, const PropSample* ps, Fin* f, int* overspeed, int* stopped) noexcept:
+        """PropModel.record's converged / overspeed_engines / stopped_shafts, without the record."""
+        cdef const PFrame* fr = &ps.frame
+        cdef PropModel pm = self.pm
+        cdef double error = 0., v
+        cdef bint converged = True
+        cdef int k, s
+        for k in range(pm.npaths):
+            v = ps.residual[k]
+            if not isfinite(v):
+                converged = False
+            elif fabs(v) > error:
+                error = fabs(v)
+        converged = converged and error <= 1e-5
+        for s in range(pm.nt):
+            if pm.ngoverned[s] and not (ps.fractions[s] <= 2e-5 or ps.fractions[s] >= 1.-2e-5
+                                        or fabs(fr.trans_omega[s]-ps.targets[s]) <= 1e-10*pmax(1., fabs(ps.targets[s]))):
+                converged = False
+        for k in range(3):
+            if not (isfinite(fr.force[k]) and isfinite(fr.moment[k]) and isfinite(fr.momentum[k])):converged = False
+        if not (isfinite(fr.wash[0]) and isfinite(fr.wash[1])):converged = False
+        f.prop_converged = converged
+        overspeed[0] = 0;stopped[0] = 0
+        for k in range(pm.ne):
+            if fr.engines[k].omega > pm.engines[k].omega_limit*(1+1e-6):overspeed[0] += 1
+        for s in range(pm.nt):
+            if fr.trans_omega[s] <= 1.:stopped[0] += 1
+
+    cdef bint admitted_native(self, const PropSample* ps, const PropPrep* prep) noexcept:
+        """all(row['admitted']) of native_admission_rows, without the rows."""
+        cdef double density, sound, omega
+        cdef Air air
+        cdef int s, k, idx
+        cdef const PFrame* fr = &ps.frame
+        air_cache(prep.velocity, self.pm.altitude, &air)
+        density = air.density
+        sound = speed_of_sound(self.pm.altitude, F(288.16), F(18300.))
+        for s in range(self.pm.nt):
+            for k in range(self.pm.trans[s].np):
+                idx = self.pm.trans[s].props[k].index
+                omega = fr.trans_omega[s]*self.pm.trans[s].props[k].ratio
+                if not self.admission_ok(&self.pm.props[idx], fr.props[idx].flow, fr.props[idx].pitch, omega, density, sound,
+                                         prep):
+                    return False
+        return True
+
+    cdef bint admission_ok(self, const PropT* p, const double* flow, double pitch, double omega, double density,
+                           double sound, const PropPrep* prep) noexcept:
+        # Finisher.admission's 'admitted' (prop_admission.evaluate)
+        cdef double local[3]
+        cdef double local_w[3]
+        cdef double airflow[3]
+        cdef double tsq, transverse, upstream, axial, angular, thrust, torque, power, tangential, t
+        cdef int i, k
+        local_flow32(p, prep.velocity, prep.rates, local, local_w, &tsq, &transverse)
+        if local[0] <= p.airflow_x[0]:
+            for i in range(3):airflow[i] = p.airflow_v[0][i]
+        else:
+            k = -1
+            for i in range(p.nairflow-1):
+                if local[0] <= p.airflow_x[i+1]:
+                    k = i;break
+            if k < 0:
+                for i in range(3):airflow[i] = p.airflow_v[p.nairflow-1][i]
+            else:
+                t = (local[0]-p.airflow_x[k])/(p.airflow_x[k+1]-p.airflow_x[k])
+                for i in range(3):airflow[i] = p.airflow_v[k][i]+(p.airflow_v[k+1][i]-p.airflow_v[k][i])*t
+        upstream = local[0]+airflow[0]
+        if not (isfinite(flow[0]) and isfinite(flow[1]) and isfinite(flow[2]) and isfinite(pitch) and isfinite(omega)
+                and isfinite(density) and isfinite(sound) and isfinite(upstream)):return False
+        if sound <= 0. or density <= 0. or p.area_unit <= 0. or p.blades <= 0:return False
+        for k in range(4):
+            if (p.station_radius[k] <= 0. or p.width[k] < 0. or not isfinite(p.station_radius[k])
+                    or not isfinite(p.twist[k]) or not isfinite(p.width[k])):return False
+        axial = local[0]+.5*(flow[0]+flow[1])
+        if not (upstream > 0.) or not (axial > 0.):return False
+        angular = 1.*.25*flow[2]
+        blade_forces(p, omega, pitch, axial, transverse, density, sound, angular, &thrust, &torque)
+        power = omega*torque
+        for k in range(4):
+            if p.width[k] == 0.:continue
+            tangential = p.station_radius[k]*(omega-angular)
+            if not (tangential > 0.):return False
+        return isfinite(power) and isfinite(torque)
+
+    cdef int compute(self, CurveProblem P, int slot, double speed_kmh, double load, long calls, RowSrc* s) except -1:
+        """Every admission decision of the corrected state at memo ``slot`` into ``s`` (no Python records)."""
+        cdef Eval* e
+        cdef Fin* f = &s.fin
         cdef const Kinematic* k
-        cdef const Frame* f = &e.frame
-        cdef double speed = speed_kmh/3.6
-        cdef double speed_cert = speed*3.6
-        cdef int i
-        cdef bint finite, history_finite, converged
-        cdef double upright, rate_max
-        cdef int* br = &P.memo_br[slot*BMAX]
-        c = self.constants
+        cdef const Frame* fr
+        cdef int i, nover = 0, nstop = 0
+        cdef bint converged
+        cdef double rate_max, upright
+        cdef PropPrep* prep
+        cdef double inner[MAXPATH]
+        s.e = P.memo_eval[slot]
+        e = &s.e
+        fr = &e.frame
+        for i in range(BMAX):s.br[i] = P.memo_br[slot*BMAX+i]
+        s.nx = P.nx;s.nres = 7+P.nprows
+        for i in range(P.nz):s.q[i] = P.memo_q[slot*NMAX+i]
+        for i in range(s.nres):s.resid[i] = P.memo_r[slot*NMAX+i]
+        s.nreq = P.nreq
+        for i in range(P.nreq):s.req[i] = P.req[i]
+        s.speed_kmh = speed_kmh;s.load = load;f.calls = calls
         ensure_complete(self.model, e)
         k = &e.kin
-        cdef PropPrep* prep
-        cdef PropSample ps
-        cdef double qq[MAXPATH]
-        cdef double inner[MAXPATH]
-        cdef double* q = &P.memo_q[slot*NMAX]
+        if self.is_prop:
+            prep = P.prepared(e.load, s.q[0], s.q[1])
+            s.prep = prep[0]
+            if self.pm.propulsion_q(prep, &s.q[7], P.req, P.nreq, inner, &s.ps, s.qq):
+                raise RuntimeError('native finish: propulsion branch unavailable')
+            charge(K_FRAMES, 1)
+            self.prop_flags(&s.ps, f, &nover, &nstop)
+            f.frames = 1 if f.prop_converged else 0
+        f.finite = True
+        for i in range(5):
+            f.finite = f.finite and isfinite(e.x[i]) and isfinite(e.residual[i])
+        for i in range(3):
+            f.finite = f.finite and isfinite(e.rate_residual[i]) and isfinite(fr.force[i]) and isfinite(fr.moment[i]) and isfinite(k.velocity[i])
+        f.finite = (f.finite and isfinite(e.history_error) and isfinite(e.stall_margin) and isfinite(k.ps)
+                    and isfinite(e.wing_ratios[0]) and isfinite(e.wing_ratios[1]) and isfinite(e.air.ias_u) and isfinite(e.air.mach))
+        f.history_finite = True
+        for i in range(2):
+            f.history_finite = (f.history_finite and isfinite(e.cycle_input.aoa[i]) and isfinite(e.cycle_input.cl[i])
+                                and isfinite(e.cycle_input.body[i]) and isfinite(fr.history.aoa[i]) and isfinite(fr.history.cl[i])
+                                and isfinite(fr.history.body[i]) and isfinite(e.angle_residual[i]))
+        f.history_finite = f.history_finite and isfinite(e.cycle_input.spin) and isfinite(fr.history.spin)
+        f.finite = f.finite and f.history_finite
+        rate_max = pmax(pmax(fabs(e.rate_residual[0])+0., fabs(e.rate_residual[1])+0.), fabs(e.rate_residual[2])+0.)
+        converged = f.finite and e.force_error_g+0. <= 2e-4 and rate_max <= 5e-5 and e.history_error <= 2e-4
+        f.converged = converged
+        f.nreasons = 0
+        upright = 90.-fabs(e.x[1]) if isfinite(e.x[1]) else -1e308*10.
+        if upright < 0.:self.add_reason(f, R_BANK)
+        if not converged:self.add_reason(f, R_TRIM)
+        if self.is_prop:
+            if not f.prop_converged:self.add_reason(f, R_PROP_SETTLE)
+            if self.constants['governor'] == 'pitch_stops' and nover:self.add_reason(f, R_RPM)
+            if nstop:self.add_reason(f, R_SHAFT)
+            if not f.prop_converged:self.add_reason(f, R_CYCLE)
+        if not self.instructor_enabled and not e.alloc.reachable:self.add_reason(f, R_CONTROL)
+        if e.stall_margin < 0:self.add_reason(f, R_STALL)
+        if fabs(k.velocity[1]) > .005:self.add_reason(f, R_VSTEP)
+        f.nstructural = 0
+        if pmax(e.wing_ratios[0], e.wing_ratios[1]) > 1:f.structural[f.nstructural] = R_WING;f.nstructural += 1
+        if e.air.ias_u > self.model.strength_ias:f.structural[f.nstructural] = R_IAS;f.nstructural += 1
+        if e.air.mach > self.model.strength_mach:f.structural[f.nstructural] = R_MACH;f.nstructural += 1
+        f.has_sweep_range = False
+        if self.has_sweep:
+            from wing_sweep import available as available_sweep
+            sweep_range = available_sweep(self.solver.fm, self.solver.sweep_rows, e.air.mach)
+            f.has_sweep_range = True;f.sweep_range[0] = sweep_range[0];f.sweep_range[1] = sweep_range[1]
+            if not sweep_range[0]-1e-7 <= self.solver.model['sweep'] <= sweep_range[1]+1e-7:self.add_reason(f, R_SWEEP)
+        if self.structural:
+            for i in range(f.nstructural):self.add_reason(f, f.structural[i])
+        if self.flaps_available:
+            from flap_model import violations as flap_violations
+            for text in flap_violations(self.solver.flap_profile, self.flaps_percent, e.air.ias_u, e.air.mach, self.structural):
+                self.add_reason(f, reason_code(text))
+        f.has_pitch = False
+        if converged and e.stall_margin >= 0. and not f.nreasons:
+            f.has_pitch = True
+            if self.is_prop:
+                set_phase(self.model, &s.ps)
+                try:
+                    self.pitch_core(e, False, &f.pitch)
+                finally:
+                    self.model.has_phase = False
+            else:
+                self.pitch_core(e, True, &f.pitch)
+            if not f.pitch.normal:
+                self.add_reason(f, R_PITCH_REV if f.pitch.reversed_ else R_PITCH_UNRES)
+        f.instr = 0
+        if self.instructor_enabled and not f.nreasons:
+            self.admit_instructor(s)
+            if f.instr == 1:
+                if not f.ires.converged:self.add_reason(f, R_INSTR_UNRES)
+                else:
+                    if f.ires.angle_margin < -2e-7:self.add_reason(f, R_INSTR)
+                    if f.ires.mechanical < -2e-7:self.add_reason(f, R_CONTROL)
+            else:
+                instructor = self.python_instructors[f.instr_index]
+                if not instructor['converged']:self.add_reason(f, R_INSTR_UNRES)
+                else:
+                    if instructor['envelope_margin'] < -2e-7:self.add_reason(f, R_INSTR)
+                    if instructor['margins']['control authority with auto trim'] < -2e-7:self.add_reason(f, R_CONTROL)
+        # control bounds and authority margin
+        if f.instr == 1:
+            for i in range(3):
+                f.bounds[i][0] = f.ires.bounds[i][0];f.bounds[i][1] = f.ires.bounds[i][1]
+        elif f.instr == 2:
+            b = self.python_instructors[f.instr_index]['control_bounds']
+            for i in range(3):
+                f.bounds[i][0] = b[i][0];f.bounds[i][1] = b[i][1]
+        else:
+            for i in range(3):
+                f.bounds[i][0] = e.alloc.bounds[i][0];f.bounds[i][1] = e.alloc.bounds[i][1]
+        f.authority = authority_margin(e.alloc.commands, f.bounds)
+        if fabs(e.air.beta) > 2.:self.add_reason(f, R_SIDESLIP)
+        if self.is_prop:
+            if self.python_admission:
+                record = self.pm.record(&s.ps, s.qq)
+                rows = self.admission_rows(record, (s.prep.velocity[0], s.prep.velocity[1], s.prep.velocity[2]),
+                                           (s.prep.rates[0], s.prep.rates[1], s.prep.rates[2]))
+                if any(not row['admitted'] for row in rows):self.add_reason(f, R_PROP_ADM)
+            elif not self.admitted_native(&s.ps, &s.prep):
+                self.add_reason(f, R_PROP_ADM)
+        f.local_valid = not f.nreasons
+        f.row_valid = f.local_valid and isfinite(k.ps)
+        return 0
+
+    cdef void add_reason(self, Fin* f, int code) noexcept:
+        if f.nreasons < MAXREASONS:
+            f.reasons[f.nreasons] = code;f.nreasons += 1
+
+    cdef int admit_instructor(self, RowSrc* s) except -1:
+        """Instructor admission of the state: native lean controller, else the Python path on the value record."""
+        cdef Fin* f = &s.fin
+        cdef Instructor inst = self.instructor
+        if inst is not None:
+            try:
+                inst.eval_limits(&s.e, &s.ps if self.is_prop else NULL, &f.ires)
+                f.instr = 1
+                if self.loop_stats is not None:self.loop_stats['native_instructor'] += 1
+                return 0
+            except InstructorUnsupported as error:
+                if self.loop_stats is not None:
+                    reasons = self.loop_stats.setdefault('python_instructor_reasons', {})
+                    reasons[str(error)] = reasons.get(str(error), 0)+1
+        value = value_record(self.model, &s.e, True, True)
+        if self.is_prop:
+            record = self.pm.record(&s.ps, s.qq)
+            value['propulsion'] = record;value['propulsion_phase_frames'] = s.fin.frames
+        instructor = self.solver.instructor_at(value, s.speed_kmh/3.6, s.load)
+        f.instr = 2;f.instr_index = len(self.python_instructors)
+        self.python_instructors.append(instructor)
+        return 0
+
+    # ------------------------------------------------------------------ the chart row
+    cdef dict point(self, RowSrc* s):
+        """JointProblem.finish(x) of the state (the certify point before the chart sample)."""
+        import math
+        cdef Eval* e = &s.e
+        cdef const Kinematic* k = &e.kin
+        cdef const Frame* f = &e.frame
+        cdef Fin* fi = &s.fin
+        cdef double speed = s.speed_kmh/3.6
+        cdef double speed_cert = speed*3.6
+        cdef double upright
+        cdef int i
+        c = self.constants
         record = None;frames = 0;requests = [];velocity = rates = None
         if self.is_prop:
-            prep = P.prepared(e.load, q[0], q[1])
-            if self.pm.propulsion_q(prep, &q[7], P.req, P.nreq, inner, &ps, qq):
-                raise RuntimeError('native finish: propulsion branch unavailable')
-            record = self.pm.record(&ps, qq)
-            bulk_charge('engine_frames', 1)
-            requests = self.pm.request_records(prep)
-            velocity = (prep.velocity[0], prep.velocity[1], prep.velocity[2])
-            rates = (prep.rates[0], prep.rates[1], prep.rates[2])
-            frames = self.model.set_propulsion(record);self.model.has_phase = False
-        finite = True
-        for i in range(5):
-            finite = finite and isfinite(e.x[i]) and isfinite(e.residual[i])
-        for i in range(3):
-            finite = finite and isfinite(e.rate_residual[i]) and isfinite(f.force[i]) and isfinite(f.moment[i]) and isfinite(k.velocity[i])
-        finite = (finite and isfinite(e.history_error) and isfinite(e.stall_margin) and isfinite(k.ps)
-                  and isfinite(e.wing_ratios[0]) and isfinite(e.wing_ratios[1]) and isfinite(e.air.ias_u) and isfinite(e.air.mach))
-        history_finite = True
-        for i in range(2):
-            history_finite = (history_finite and isfinite(e.cycle_input.aoa[i]) and isfinite(e.cycle_input.cl[i])
-                              and isfinite(e.cycle_input.body[i]) and isfinite(f.history.aoa[i]) and isfinite(f.history.cl[i])
-                              and isfinite(f.history.body[i]) and isfinite(e.angle_residual[i]))
-        history_finite = history_finite and isfinite(e.cycle_input.spin) and isfinite(f.history.spin)
-        finite = finite and history_finite
-        rate_max = pmax(pmax(fabs(e.rate_residual[0])+0., fabs(e.rate_residual[1])+0.), fabs(e.rate_residual[2])+0.)
-        converged = finite and e.force_error_g+0. <= 2e-4 and rate_max <= 5e-5 and e.history_error <= 2e-4
-        reasons = []
+            record = self.pm.record(&s.ps, s.qq)
+            requests = self.pm.request_records(&s.prep)
+            velocity = (s.prep.velocity[0], s.prep.velocity[1], s.prep.velocity[2])
+            rates = (s.prep.rates[0], s.prep.rates[1], s.prep.rates[2])
+            frames = fi.frames
+        converged = fi.converged
         upright = 90.-fabs(e.x[1]) if isfinite(e.x[1]) else -1e308*10.
-        if upright < 0.:reasons.append('bank outside [-90, 90] degrees')
-        if not converged:reasons.append('trim did not converge')
+        reasons = [REASON_TEXT[fi.reasons[i]] for i in range(fi.nreasons)]
+        structural = [REASON_TEXT[fi.structural[i]] for i in range(fi.nstructural)]
         phase_check = None
         if self.is_prop:
-            if not record['converged']:reasons.append('propulsion did not settle')
-            if c['governor'] == 'pitch_stops' and record['overspeed_engines']:reasons.append('engine RPM limit')
-            if record['stopped_shafts']:reasons.append('propeller shaft stopped')
-            phases = record.get('cycle_samples')
             phase_check = dict(checked=False, force_error_g=None, angular_error_rad_s2=None, history_error=None)
-            if not phases or frames != len(phases):
-                reasons.append('propulsion cycle unresolved')
-            elif converged:
+            if record.get('cycle_samples') and frames == len(record['cycle_samples']) and converged:
                 phase_check = dict(checked=True, model='Quasi-steady ideal-governor aircraft equilibrium',
                     force_error_g=e.force_error_g,
                     angular_error_rad_s2=float(pmax(pmax(fabs(e.rate_residual[0]), fabs(e.rate_residual[1])), fabs(e.rate_residual[2]))),
                     force_mean_uncertainty_g=0., angular_mean_uncertainty_rad_s2=[0., 0., 0.],
                     history_error=e.history_error, periodic_aircraft_trajectory_certified=False)
-        if not c['instructor'] and not e.alloc.reachable:reasons.append('control authority')
-        if e.stall_margin < 0:reasons.append('post-stall')
-        if fabs(k.velocity[1]) > .005:reasons.append('vertical step did not close')
-        structural = []
-        if pmax(e.wing_ratios[0], e.wing_ratios[1]) > 1:structural.append('wing force limit')
-        if e.air.ias_u > self.model.strength_ias:structural.append('IAS limit')
-        if e.air.mach > self.model.strength_mach:structural.append('Mach limit')
-        if self.has_sweep:
-            from wing_sweep import available as available_sweep
-            sweep_range = available_sweep(self.solver.fm, self.solver.sweep_rows, e.air.mach)
-            if not sweep_range[0]-1e-7 <= self.solver.model['sweep'] <= sweep_range[1]+1e-7:reasons.append('sweep unavailable')
-        else:
-            sweep_range = (0., 1.)
-        if self.structural:reasons += structural
-        reasons += flap_violations(self.solver.flap_profile, c['flaps_percent'], e.air.ias_u, e.air.mach, self.structural)
-        pitch = None
-        if converged and e.stall_margin >= 0. and not reasons:
-            if self.is_prop:
-                self.model.set_propulsion(record)
-                try:
-                    pitch = self.pitch_response(e, record)
-                finally:
-                    self.model.has_phase = False
-            else:
-                pitch = self.pitch_response(e)
-            if not pitch['normal']:
-                reasons.append('reversed pitch response' if pitch['reversed'] else 'pitch response unresolved')
+        sweep_range = (fi.sweep_range[0], fi.sweep_range[1]) if self.has_sweep else (0., 1.)
+        pitch = self.pitch_dict(&fi.pitch) if fi.has_pitch else None
         instructor = None
-        if c['instructor'] and not reasons:
-            # Instructor admission: the unchanged baseline controller on the native state record
-            value = value_record(self.model, e, True, True)
-            if self.is_prop:
-                value['propulsion'] = record;value['propulsion_phase_frames'] = frames
-            instructor = self.solver.instructor_at(value, speed, load)
-            if not instructor['converged']:reasons.append('Instructor boundary unresolved')
-            else:
-                if instructor['envelope_margin'] < -2e-7:reasons.append('Instructor pitch limit')
-                if instructor['margins']['control authority with auto trim'] < -2e-7:reasons.append('control authority')
+        if fi.instr == 1:
+            instructor = (<Instructor>self.instructor).limits_dict(&fi.ires, e.alloc.commands[1])
+        elif fi.instr == 2:
+            instructor = self.python_instructors[fi.instr_index]
         commands = L3(e.alloc.commands)
-        if instructor is not None:
-            bounds = instructor['control_bounds']
-        else:
-            bounds = [[e.alloc.bounds[i][0], e.alloc.bounds[i][1]] for i in range(3)]
-        authority = min(min(d-lo, hi-d) for d, (lo, hi) in zip(commands, bounds))
-        local_valid = not reasons
+        bounds = [[fi.bounds[i][0], fi.bounds[i][1]] for i in range(3)]
+        authority = fi.authority
         restrictions = []
         if self.is_prop:
             restrictions = (self.admission_rows(record, velocity, rates) if self.python_admission
-                            else self.native_admission_rows(record, prep))
-        if abs(e.air.beta) > 2.:
-            reasons.append('sideslip limit');local_valid = False
-        if any(not row['admitted'] for row in restrictions):
-            reasons.append('propeller admission')
-        local_valid = not reasons
+                            else self.native_admission_rows(record, &s.prep))
+        local_valid = fi.local_valid
         comp = {COMPONENT_NAMES[i]: L3(f.component_forces[i]) for i in range(8)}
-        branch = self.branch_tuple(e, br)
-        source_branch = [[list(b) if isinstance(b, tuple) else b for b in branch], [], [P.req[i] for i in range(P.nreq)]
+        branch = self.branch_tuple(e, s.br)
+        source_branch = [[list(b) if isinstance(b, tuple) else b for b in branch], [], [s.req[i] for i in range(s.nreq)]
                          if self.is_prop else []]
-        point = dict(speed_kmh=float(speed_cert), load_g=float(load), turn_dps=math.degrees(e.geom.turn_rate),
+        point = dict(speed_kmh=float(speed_cert), load_g=float(s.load), turn_dps=math.degrees(e.geom.turn_rate),
                      aircraft_trim_mode=c['trim_mode'], ps_definition='discrete energy step', ps_mps=fin(k.ps),
                      ps_continuous_mps=fin(k.ps_continuous), alpha_deg=e.x[0], bank_deg=e.x[1], sideslip_deg=e.air.beta,
                      sideslip_attitude_deg=0., upright_bank_margin_deg=fin(upright),
@@ -317,7 +613,7 @@ cdef class Finisher:
                      force_error_g=fin(e.force_error_g),
                      angular_error_rad_s2=fin(pmax(pmax(fabs(e.rate_residual[0]), fabs(e.rate_residual[1])), fabs(e.rate_residual[2]))),
                      history_error=fin(e.history_error), stall_margin_deg=fin(e.stall_margin),
-                     history_components_finite=bool(history_finite), negative_stall_margin_deg=fin(e.negative_stall_margin),
+                     history_components_finite=bool(fi.history_finite), negative_stall_margin_deg=fin(e.negative_stall_margin),
                      wing_load_ratios=[fin(e.wing_ratios[0]), fin(e.wing_ratios[1])], commands=commands,
                      control_bounds=bounds, authority_margin=fin(authority),
                      sticks=instructor.get('sticks', L3(e.alloc.sticks)) if instructor else L3(e.alloc.sticks),
@@ -328,7 +624,7 @@ cdef class Finisher:
                      gear_percent=c['gear_percent'], instructor=instructor, instructor_enabled=c['instructor'],
                      sweep_available_percent=[v*100 for v in sweep_range] if self.has_sweep else None,
                      force_n=L3(f.force), moment_nm=L3(f.moment), engine_force_n=L3(f.engine_force), component_forces=comp,
-                     evaluations=calls, solution=[e.x[0], e.x[1], e.x[2], e.x[3], e.x[4]],
+                     evaluations=fi.calls, solution=[e.x[0], e.x[1], e.x[2], e.x[3], e.x[4]],
                      vertical_step_velocity_mps=k.velocity[1], altitude_correction=bool(k.altitude_correction),
                      actual_turn_dps=math.degrees(math.atan2(k.velocity[2], k.velocity[0])/self.model.dt))
         if self.is_prop:
@@ -336,19 +632,18 @@ cdef class Finisher:
         if self.is_prop:
             L = self.layout;nprop = len(L['names'])-7
             names = list(L['names']);scales = list(SCALES7)+[.0001]*nprop;rscales = list(RSCALES7)+[1e-5]*nprop
-            bounds = [list(L['lower']), list(L['upper'])];request_list = [P.req[i] for i in range(P.nreq)]
-            residual_rows = 7+P.nprows
+            bounds = [list(L['lower']), list(L['upper'])];request_list = [s.req[i] for i in range(s.nreq)]
         else:
             names = list(NAMES7);scales = list(SCALES7);rscales = list(RSCALES7);bounds = [list(LOWER7), list(UPPER7)]
-            request_list = [];residual_rows = 7
+            request_list = []
         point.update(local_valid=local_valid, valid=local_valid, status='admitted' if local_valid else 'unresolved',
                      validity_scope='Numerical stationary point with original physical admission',
                      selection_status='numerical_candidate' if local_valid else 'unresolved',
-                     model_revision=c['revision'], stationary_coordinates=list(map(float, x7)),
+                     model_revision=c['revision'], stationary_coordinates=[s.q[i] for i in range(s.nx)],
                      stationary_coordinate_names=names, stationary_coordinate_scales=scales,
                      stationary_correction_residual_scales=rscales, stationary_history_domain=None,
                      source_branch=source_branch, stationary_request_indices=request_list, stationary_governor_mode=c['governor'],
-                     stationary_residual=[fin(P.memo_r[slot*NMAX+i]) for i in range(residual_rows)],
+                     stationary_residual=[fin(s.resid[i]) for i in range(s.nres)],
                      propeller_admission=restrictions,
                      request_records=requests, equilibrium_coverage_complete=False, governor_selection_certified=False,
                      aircraft_selection_certified=False, numerical_error_certified=False, absence_certified=False,
@@ -356,8 +651,14 @@ cdef class Finisher:
                      search_bounds=bounds, model_experiments=dict(c['description']),
                      history_closure_required=True, symmetry_projection=None, mach_curve_mode=c['mach_mode'])
         if c['mach_mode'] == 'stable':point['mach_curve_revision'] = c['stable_revision']
-        # BaselineSolver.sample(dict(point, stationary_candidates=[point], stationary_attempts=[])) after
-        # point['selected_candidates'] = []: chart_point, candidate summaries, clean
+        return point
+
+    cdef dict row(self, RowSrc* s):
+        """BaselineSolver.sample(dict(point, stationary_candidates=[point], stationary_attempts=[])) after
+        point['selected_candidates'] = [] (chart_point, candidate summaries, clean): the Curve.correct row."""
+        c = self.constants
+        point = self.point(s)
+        local_valid = point['local_valid']
         brief = {key: point[key] for key in BRIEF_FIELDS if key in point}
         row = dict(point)
         row.update(selected_candidates=[], stationary_candidates=[brief], stationary_attempts=[],
@@ -373,7 +674,17 @@ cdef class Finisher:
                        chart_status='nearby local candidates' if usable else 'multiple numerical candidate branches')
         row['valid'] = row['chart_usable']
         row['validity_scope'] = 'numerical equilibrium and physical admission'
-        row = fast_clean(row)
+        return fast_clean(row)
+
+    def finish(self, CurveProblem P, int slot, double speed_kmh, double load, x7, long calls):
+        """Cleaned chart row for the corrected state, as BaselineSolver.sample(JointProblem.finish(x)) (S2-S4 entry)."""
+        cdef RowSrc* s = <RowSrc*>malloc(sizeof(RowSrc))
+        if s == NULL:raise MemoryError()
+        try:
+            self.compute(P, slot, speed_kmh, load, calls, s)
+            row = self.row(s)
+        finally:
+            cfree(s)
         from em_trim_work import record_point
         record_point(row)
         return row
@@ -512,6 +823,25 @@ cdef class Finisher:
             point['propulsion']['optimization'] = dict(method='Quasi-steady selected manual pitch' if
                 any(not auto for auto in p['controls']['automatic']) else 'Quasi-steady ideal RPM governor', evaluated=0,
                 global_optimum_certified=False, radiators_closed=not (self.solver.radiator or self.solver.oil_radiator))
+
+
+cdef void set_phase(Model m, const PropSample* ps) noexcept:
+    """Model.set_propulsion(record) of the native propulsion record (its cycle row)."""
+    cdef int i
+    for i in range(3):
+        m.cur_phase[i] = ps.frame.force[i];m.cur_phase[3+i] = ps.frame.moment[i];m.cur_phase[6+i] = ps.frame.momentum[i]
+    m.cur_phase[9] = ps.frame.wash[0];m.cur_phase[10] = ps.frame.wash[1]
+    m.has_phase = True
+
+
+cdef double authority_margin(const double* commands, double bounds[3][2]) noexcept:
+    # min(min(d-lo, hi-d) for d, (lo, hi) in zip(commands, bounds)) with Python's min tie rules
+    cdef double best = 0., v
+    cdef int i
+    for i in range(3):
+        v = pmin(commands[i]-bounds[i][0], bounds[i][1]-commands[i])
+        best = v if i == 0 else pmin(best, v)
+    return best
 
 
 cdef object fast_clean(object v):

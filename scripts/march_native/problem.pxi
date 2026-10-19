@@ -298,6 +298,78 @@ def bulk_charge(kind, int count):
     for owner in chain:owner.counts[kind] += count
 
 
+# Work counters. Inside the native march (S5) every native charge goes to a C
+# counter block (``g_sink``) that the march books to the Python work records
+# once per trial and column; elsewhere they go to the Python work chain as in S2-S4.
+DEF NCOUNT = 6
+DEF K_EVAL = 0
+DEF K_DERIV = 1
+DEF K_NOMCMP = 2
+DEF K_NOMRES = 3
+DEF K_SECANT = 4
+DEF K_FRAMES = 5
+COUNT_NAMES = ('aircraft_evaluations', 'derivative_samples', 'nominal_sensitivity_comparisons',
+               'nominal_sensitivity_restorations', 'branch_secant_predictors', 'engine_frames')
+cdef long* g_sink = NULL
+
+
+cdef int charge(int kind, long count) except -1:
+    if count == 0:return 0
+    if g_sink != NULL:
+        g_sink[kind] += count
+        return 0
+    bulk_charge(COUNT_NAMES[kind], count)
+    return 0
+
+
+cdef int charge_corrector(NativeCorrector P, long aircraft_evaluations) except -1:
+    charge(K_EVAL, aircraft_evaluations)
+    charge(K_DERIV, P.derivative_samples)
+    charge(K_NOMCMP, P.nominal_comparisons)
+    charge(K_NOMRES, P.nominal_restorations)
+    charge(K_SECANT, P.branch_secants)
+    return 0
+
+
+DEF FIX_ALPHA = 0
+DEF FIX_ELEVATOR = 3
+DEF FIX_LOAD = 100
+DEF FIX_SEP = -1
+DEF FIX_EVENT = -3
+DEF EV_MAX = 3      # generic native events: 1 stall, 2 wing force, 3 control (S3)
+
+
+cdef struct Seed:
+    # The fields of a correction seed that Curve.correct reads (solution, load, own coordinates, request branch)
+    double sol[5]
+    double load
+    bint has_coords        # seed['stationary_coordinate_names'] == the solver layout
+    double coords[NMAX]
+    int nreq
+    int req[NP]
+    bint req_ok            # every request index is a plain int
+
+
+cdef int seed_from_dict(seed, list names, Seed* out) except -1:
+    cdef int i
+    sol = seed['solution']
+    for i in range(5):out.sol[i] = float(sol[i])
+    out.load = float(seed['load_g'])
+    out.has_coords = seed.get('stationary_coordinate_names') == names
+    if out.has_coords:
+        coords = seed['stationary_coordinates']
+        for i in range(len(names)):out.coords[i] = float(coords[i])
+    request = tuple(seed.get('stationary_request_indices', ()))
+    if len(request) > NP:raise ValueError('request indices')
+    out.nreq = len(request);out.req_ok = True
+    for i in range(out.nreq):
+        if isinstance(request[i], bool) or int(request[i]) != request[i]:
+            out.req_ok = False;out.req[i] = 0
+        else:
+            out.req[i] = int(request[i])
+    return 0
+
+
 cdef class CurveCorrection:
     """Native replacement for Curve.correct(seed, alpha=...) and correct(seed, load=...)."""
     cdef public Model model
@@ -306,114 +378,186 @@ cdef class CurveCorrection:
     cdef public bint charge
     cdef public object finisher, layout
     cdef public int verify
+    cdef double l_lower[NMAX]
+    cdef double l_upper[NMAX]
+    cdef double l_initial[NMAX]
+    cdef double lc[4]          # Curve.last_correction of the last solve
+    cdef public long calls, evaluations, derivative_samples, closed, unresolved
 
     def __init__(self, Model model):
         self.model = model
         self.finisher = None
         self.verify = 0
-        self.layout = dict(names=['alpha_deg', 'bank_deg', 'aileron', 'elevator', 'rudder', 'left_wing_history_deg',
-                                  'right_wing_history_deg'], lower=[-180., -90., -1., -1., -1., -1000., -1000.],
-                           upper=[180., 90., 1., 1., 1., 1000., 1000.], initial=[0.]*7)
         self.problem = CurveProblem()
         self.problem.model = model
-        self.stats = dict(calls=0, evaluations=0, derivative_samples=0, closed=0, unresolved=0, finish_python=0)
+        self.set_layout(['alpha_deg', 'bank_deg', 'aileron', 'elevator', 'rudder', 'left_wing_history_deg',
+                         'right_wing_history_deg'], [-180., -90., -1., -1., -1., -1000., -1000.],
+                        [180., 90., 1., 1., 1., 1000., 1000.], [0.]*7)
+        self.stats = dict(finish_python=0)
+        self.calls = self.evaluations = self.derivative_samples = self.closed = self.unresolved = 0
         self.charge = True
+
+    def counters(self):
+        return dict(self.stats, calls=self.calls, evaluations=self.evaluations, derivative_samples=self.derivative_samples,
+                    closed=self.closed, unresolved=self.unresolved)
+
+    cdef set_layout(self, names, lower, upper, initial):
+        cdef int i
+        if len(names) > NMAX-1:raise ValueError('coordinate layout too long')
+        self.layout = dict(names=list(names), lower=list(map(float, lower)), upper=list(map(float, upper)),
+                           initial=list(map(float, initial)))
+        for i in range(len(names)):
+            self.l_lower[i] = self.layout['lower'][i];self.l_upper[i] = self.layout['upper'][i]
+            self.l_initial[i] = self.layout['initial'][i]
 
     def set_prop_layout(self, PropModel pm, names, lower, upper, initial):
         """JointProblem coordinate layout of a propeller aircraft (attitude, histories, propulsion)."""
         cdef CurveProblem P = self.problem
         P.prop = True;P.pm = pm
         P.nprop = len(names)-7;P.nx = len(names);P.nprows = pm.nrows
-        self.layout = dict(names=list(names), lower=list(map(float, lower)), upper=list(map(float, upper)),
-                           initial=list(map(float, initial)))
+        self.set_layout(names, lower, upper, initial)
 
     def solve(self, curve, seed, alpha=None, load=None, int max_nfev=40, max_evaluations=None, double event_tolerance=2e-6,
               event_target=None, elevator=None, event_kind=None):
         """Returns (x, load, closed, info) or None (production returns None before finishing)."""
-        import math
-        cdef CurveProblem P = self.problem
-        cdef double x5[5]
-        cdef double initial[NMAX]
-        cdef double n, n0, turn, turn_upper, cap
-        cdef int i, k, nx, nz
-        cdef Result res
-        cdef Predictor pred
+        cdef Seed sd
+        cdef Predictor pred_in
+        cdef Predictor pred_out
         cdef NativePredictor np_pred
-        cdef double y[NMAX]
-        cdef double zf[NMAX]
-        cdef int slot
-        cdef Eval* e
-        self.stats['calls'] += 1
+        cdef int slot = -1, fixed_kind, kind = 0, axis = 0, side = 0, code
+        cdef double value = 0., n = 0.
+        cdef bint closed = False
         if (alpha is not None)+(load is not None)+(event_target is not None)+(elevator is not None)+(event_kind is not None) != 1:
             raise ValueError('native correction: exactly one of alpha / elevator / load / SEP event / generic event')
         if seed.get('sideslip_attitude_deg', 0.) != 0.:raise ValueError('zero sideslip only')
-        L = self.layout
-        nx = P.nx;nz = nx+1
-        cap = curve.cap
-        P.speed_kmh = curve.speed
-        sol = seed['solution']
-        for i in range(5):x5[i] = float(sol[i])
-        n0 = float(seed['load_g']);n = n0
+        seed_from_dict(seed, self.layout['names'], &sd)
         if alpha is not None:
-            n = min(cap, max(1.001, n+.15*(alpha-x5[0])))
-            x5[0] = alpha
-        if elevator is not None:
-            x5[3] = elevator
-        if load is None:
-            n = min(cap, max(1.001, n))
+            fixed_kind = FIX_ALPHA;value = alpha
+        elif elevator is not None:
+            fixed_kind = FIX_ELEVATOR;value = elevator
+        elif load is not None:
+            fixed_kind = FIX_LOAD;value = load
+        elif event_kind is not None:
+            fixed_kind = FIX_EVENT;kind = int(event_kind[0]);axis = int(event_kind[1]);side = int(event_kind[2])
         else:
-            n = load
-        x5[1] += math.degrees(math.acos(1./n)-math.acos(1./max(1., n0)))
+            fixed_kind = FIX_SEP;value = float(event_target)
+        request = tuple(seed.get('stationary_request_indices', ()))
+        key = None
+        if fixed_kind != FIX_EVENT and fixed_kind != FIX_SEP:
+            fixed = self.fixed_index(fixed_kind)
+            key = (fixed, tuple(i for i in range(self.problem.nx+1) if i != fixed), request, 0.)
+        previous = curve.predictors.get(key) if key is not None else None
+        pred_in.valid = False
+        if isinstance(previous, NativePredictor):
+            pred_in = (<NativePredictor>previous).p
+        code = self.solve_core(curve.speed, curve.cap, &sd, fixed_kind, value, kind, axis, side, max_nfev,
+                               0 if max_evaluations is None else max_evaluations, event_tolerance, &pred_in, &pred_out,
+                               &slot, &n, &closed)
+        if code < 0:
+            return None
+        if key is not None and pred_out.valid:
+            np_pred = NativePredictor();np_pred.p = pred_out;np_pred.n = self.problem.n;np_pred.m = self.problem.m
+            curve.predictors[key] = np_pred
+        curve.last_correction = self.last_correction()
+        x = [self.problem.memo_q[slot*NMAX+i] for i in range(self.problem.nx)]
+        return x, n, closed, dict(slot=slot)
+
+    cdef int fixed_index(self, int fixed_kind) noexcept:
+        if fixed_kind == FIX_ALPHA:return 0
+        if fixed_kind == FIX_ELEVATOR:return 3
+        if fixed_kind == FIX_LOAD:return self.problem.nx
+        return fixed_kind
+
+    cdef dict last_correction(self):
+        return dict(force_error_g=self.lc[0], angular_error_rad_s2=self.lc[1], residual_max=self.lc[2],
+                    constraint_residual=self.lc[3])
+
+    cdef int solve_core(self, double speed_kmh, double cap, const Seed* seed, int fixed_kind, double value, int ev_kind,
+                        int ev_axis, int ev_side, int max_nfev, int max_evaluations, double event_tolerance,
+                        const Predictor* pred_in, Predictor* pred_out, int* slot_out, double* n_out,
+                        bint* closed_out) except -2:
+        """Curve._correct numerics: returns -1 where production returns None before finishing, else 0 with the
+        memo slot of the returned state, its load and the closure decision."""
+        cdef CurveProblem P = self.problem
+        cdef double x5[5]
+        cdef double initial[NMAX]
+        cdef double n, n0, turn, turn_upper, rmax, angular, constraint
+        cdef int i, k, nx, nz, slot, nr
+        cdef Result res
+        cdef double y[NMAX]
+        cdef double zf[NMAX]
+        cdef Eval* e
+        cdef bint closed
+        cdef double[7] steps7 = [.002, .002, .0002, .0002, .0002, .002, .002]
+        cdef double[7] scales7 = [10., 30., .2, .2, .2, 10., 10.]
+        cdef double[7] limits7 = [8., 20., .4, .4, .4, 8., 8.]
+        cdef double[7] rs7 = [2e-4, 2e-4, 5e-4, 5e-4, 5e-4, 2e-5, 2e-5]
+        cdef double rs[NMAX]
+        self.calls += 1
+        pred_out.valid = False
+        nx = P.nx;nz = nx+1
+        P.speed_kmh = speed_kmh
+        for i in range(5):x5[i] = seed.sol[i]
+        n0 = seed.load;n = n0
+        if fixed_kind == FIX_ALPHA:
+            n = pmin(cap, pmax(1.001, n+.15*(value-x5[0])))
+            x5[0] = value
+        if fixed_kind == FIX_ELEVATOR:
+            x5[3] = value
+        if fixed_kind != FIX_LOAD:
+            n = pmin(cap, pmax(1.001, n))
+        else:
+            n = value
+        x5[1] += (acos(1./n)-acos(1./pmax(1., n0)))*RAD_TO_DEG
         # JointProblem(core, speed, n, x, request_indices).initial, or the seed's own coordinates
-        names = seed.get('stationary_coordinate_names')
-        if names == L['names']:
-            coords = seed['stationary_coordinates']
-            for i in range(nx):initial[i] = float(coords[i])
+        if seed.has_coords:
+            for i in range(nx):initial[i] = seed.coords[i]
             for i in range(5):initial[i] = x5[i]
         else:
             for i in range(5):initial[i] = x5[i]
             initial[5] = x5[0];initial[6] = x5[0]
-            for i in range(7, nx):initial[i] = L['initial'][i]
-            for i in range(nx):initial[i] = min(max(initial[i], L['lower'][i]), L['upper'][i])
-        request = tuple(seed.get('stationary_request_indices', ()))
-        P.nreq = len(request)
+            for i in range(7, nx):initial[i] = self.l_initial[i]
+            for i in range(nx):initial[i] = pmin(pmax(initial[i], self.l_lower[i]), self.l_upper[i])
+        P.nreq = seed.nreq
         if P.nreq > NP:raise ValueError('request indices')
-        for i in range(P.nreq):
-            if isinstance(request[i], bool) or int(request[i]) != request[i]:return None
-            P.req[i] = int(request[i])
-        turn = math.sqrt(max(0., n*n-1.));turn_upper = math.sqrt(cap**2-1.)
+        if not seed.req_ok:return -1
+        for i in range(P.nreq):P.req[i] = seed.req[i]
+        turn = sqrt(pmax(0., n*n-1.));turn_upper = sqrt(pow(cap, 2.)-1.)
         P.nz = nz
         for i in range(nx):
-            P.zlower[i] = L['lower'][i];P.zupper[i] = L['upper'][i]
+            P.zlower[i] = self.l_lower[i];P.zupper[i] = self.l_upper[i]
         P.zlower[nx] = 0.;P.zupper[nx] = turn_upper
         for i in range(nz):
-            if not P.zupper[i] > P.zlower[i]:return None
+            if not P.zupper[i] > P.zlower[i]:return -1
         for i in range(nx):P.z[i] = initial[i]
         P.z[nx] = turn
-        for i in range(nz):P.z[i] = min(max(P.z[i], P.zlower[i]+1e-10), P.zupper[i]-1e-10)
-        if alpha is not None:
-            P.fixed = 0;P.alpha = alpha;P.z[0] = alpha
-        elif elevator is not None:
-            P.fixed = 3;P.alpha = elevator;P.z[3] = elevator
-        elif load is not None:
-            P.fixed = nx;P.load = load;P.z[nx] = math.sqrt(max(0., load*load-1.))
-        elif event_kind is not None:
-            P.fixed = -3;P.ev_kind = int(event_kind[0]);P.ev_axis = int(event_kind[1]);P.ev_side = int(event_kind[2])
-            if not (1 <= P.ev_kind <= 3 and 0 <= P.ev_axis <= 2 and 0 <= P.ev_side <= 1):raise ValueError('native event kind')
+        for i in range(nz):P.z[i] = pmin(pmax(P.z[i], P.zlower[i]+1e-10), P.zupper[i]-1e-10)
+        if fixed_kind == FIX_ALPHA:
+            P.fixed = 0;P.alpha = value;P.z[0] = value
+        elif fixed_kind == FIX_ELEVATOR:
+            P.fixed = 3;P.alpha = value;P.z[3] = value
+        elif fixed_kind == FIX_LOAD:
+            P.fixed = nx;P.load = value;P.z[nx] = sqrt(pmax(0., value*value-1.))
+        elif fixed_kind == FIX_EVENT:
+            P.fixed = -3;P.ev_kind = ev_kind;P.ev_axis = ev_axis;P.ev_side = ev_side
+            if not (1 <= P.ev_kind <= EV_MAX and 0 <= P.ev_axis <= 2 and 0 <= P.ev_side <= 1):raise ValueError('native event kind')
         else:
-            P.fixed = -1;P.target = float(event_target)
+            P.fixed = -1;P.target = value
         for i in range(nz):
-            if P.z[i] < P.zlower[i] or P.z[i] > P.zupper[i]:return None
-        steps = [.002, .002, .0002, .0002, .0002, .002, .002]+[.00001]*(nx-7)+[.0002]
-        scales = [10., 30., .2, .2, .2, 10., 10.]+[1.]*(nx-7)+[5.]
-        limits = [8., 20., .4, .4, .4, 8., 8.]+[.3]*(nx-7)+[5.]
-        rs = [2e-4, 2e-4, 5e-4, 5e-4, 5e-4, 2e-5, 2e-5]+[1e-5]*P.nprows
+            if P.z[i] < P.zlower[i] or P.z[i] > P.zupper[i]:return -1
+        for i in range(7):rs[i] = rs7[i]
+        for i in range(7, 7+P.nprows):rs[i] = 1e-5
         k = 0
         for i in range(nz):
             if i == P.fixed:continue
             P.free_idx[k] = i
             P.lower[k] = P.zlower[i];P.upper[k] = P.zupper[i]
-            P.steps[k] = steps[i];P.scale[k] = scales[i];P.step_limit[k] = limits[i]
+            if i < 7:
+                P.steps[k] = steps7[i];P.scale[k] = scales7[i];P.step_limit[k] = limits7[i]
+            elif i < nx:
+                P.steps[k] = .00001;P.scale[k] = 1.;P.step_limit[k] = .3
+            else:
+                P.steps[k] = .0002;P.scale[k] = 5.;P.step_limit[k] = 5.
             k += 1
         P.n = k;P.m = 7+P.nprows+(0 if P.fixed >= 0 else 1)
         for i in range(7+P.nprows):P.rscale[i] = rs[i]
@@ -423,50 +567,45 @@ cdef class CurveCorrection:
         P.evaluations = 0;P.derivative_samples = 0;P.nominal_comparisons = 0;P.nominal_restorations = 0;P.branch_secants = 0
         slot = P.value(P.z)
         if slot < 0:
-            self._charge(P)
-            return None
+            self.charge_problem(P)
+            return -1
         for i in range(P.n):y[i] = P.z[P.free_idx[i]]
-        key = (P.fixed, tuple(P.free_idx[i] for i in range(P.n)), request, 0.) if P.fixed >= 0 else None
-        previous = curve.predictors.get(key) if key is not None else None
-        pred.valid = False
-        if isinstance(previous, NativePredictor):
-            pred = (<NativePredictor>previous).p
-        P.solve(y, max_nfev, 0 if max_evaluations is None else max_evaluations, &pred, False, &res)
+        P.solve(y, max_nfev, max_evaluations, pred_in if P.fixed >= 0 else NULL, False, &res)
         if res.termination == -1:
-            self._charge(P)
-            return None
-        if key is not None and res.predictor.valid:
-            np_pred = NativePredictor();np_pred.p = res.predictor;np_pred.n = P.n;np_pred.m = P.m
-            curve.predictors[key] = np_pred
+            self.charge_problem(P)
+            return -1
+        if P.fixed >= 0 and res.predictor.valid:
+            pred_out[0] = res.predictor
         P.expand(res.x, zf)
         slot = P.value(zf)
         e = &P.memo_eval[slot]
         nr = 7+P.nprows
-        rmax = max(abs(P.memo_r[slot*NMAX+i]) for i in range(nr))
-        angular = max(abs(e.rate_residual[i]) for i in range(3))
-        constraint = abs(P.memo_extra[slot])
-        curve.last_correction = dict(force_error_g=e.force_error_g, angular_error_rad_s2=angular,
-                                     residual_max=rmax, constraint_residual=constraint)
-        closed = (all(math.isfinite(P.memo_r[slot*NMAX+i]) for i in range(nr)) and math.isfinite(P.memo_extra[slot])
-                  and e.force_error_g <= 2e-4 and angular <= 5e-5
-                  and all(abs(P.memo_r[slot*NMAX+i]) <= rs[i] for i in range(nr)) and constraint <= event_tolerance)
+        rmax = fabs(P.memo_r[slot*NMAX])
+        for i in range(1, nr):rmax = pmax(rmax, fabs(P.memo_r[slot*NMAX+i]))
+        angular = fabs(e.rate_residual[0])
+        for i in range(1, 3):angular = pmax(angular, fabs(e.rate_residual[i]))
+        constraint = fabs(P.memo_extra[slot])
+        self.lc[0] = e.force_error_g;self.lc[1] = angular;self.lc[2] = rmax;self.lc[3] = constraint
+        closed = isfinite(P.memo_extra[slot]) and e.force_error_g <= 2e-4 and angular <= 5e-5 and constraint <= event_tolerance
+        for i in range(nr):
+            if not (isfinite(P.memo_r[slot*NMAX+i]) and fabs(P.memo_r[slot*NMAX+i]) <= rs[i]):closed = False
         # Production finish replays the returned state unless it was the last evaluation.
         if P.last_slot != slot:P.aircraft_evaluations += 1
-        self._charge(P)
-        self.stats['closed' if closed else 'unresolved'] += 1
-        x = [zf[i] for i in range(nx)]
-        return x, (P.load if P.fixed == nx else math.hypot(1., zf[nx])), closed, dict(
-            termination=res.termination, nfev=res.nfev, evaluations=res.evaluations, slot=slot)
+        self.charge_problem(P)
+        if closed:self.closed += 1
+        else:self.unresolved += 1
+        slot_out[0] = slot;closed_out[0] = closed
+        n_out[0] = P.load if P.fixed == nx else hypot2(1., zf[nx])
+        return 0
+
+    cdef int charge_problem(self, CurveProblem P) except -1:
+        self.evaluations += P.aircraft_evaluations
+        self.derivative_samples += P.derivative_samples
+        if self.charge:charge_corrector(P, P.aircraft_evaluations)
+        return 0
 
     def _charge(self, CurveProblem P):
-        self.stats['evaluations'] += P.aircraft_evaluations
-        self.stats['derivative_samples'] += P.derivative_samples
-        if not self.charge:return
-        if P.aircraft_evaluations:bulk_charge('aircraft_evaluations', P.aircraft_evaluations)
-        if P.derivative_samples:bulk_charge('derivative_samples', P.derivative_samples)
-        if P.nominal_comparisons:bulk_charge('nominal_sensitivity_comparisons', P.nominal_comparisons)
-        if P.nominal_restorations:bulk_charge('nominal_sensitivity_restorations', P.nominal_restorations)
-        if P.branch_secants:bulk_charge('branch_secant_predictors', P.branch_secants)
+        self.charge_problem(P)
 
 
 # ---------------------------------------------------------------- frozen history
@@ -570,11 +709,7 @@ cdef class FrozenPoint:
         P.solve(y, 120, 0, &pred, False, &res)
         self.stats['evaluations'] += P.aircraft_evaluations;self.stats['derivative_samples'] += P.derivative_samples
         if charge:
-            if P.aircraft_evaluations:bulk_charge('aircraft_evaluations', P.aircraft_evaluations)
-            if P.derivative_samples:bulk_charge('derivative_samples', P.derivative_samples)
-            if P.nominal_comparisons:bulk_charge('nominal_sensitivity_comparisons', P.nominal_comparisons)
-            if P.nominal_restorations:bulk_charge('nominal_sensitivity_restorations', P.nominal_restorations)
-            if P.branch_secants:bulk_charge('branch_secant_predictors', P.branch_secants)
+            charge_corrector(P, P.aircraft_evaluations)
         if res.termination == -1:
             raise RuntimeError('native frozen history: initial state unevaluable')
         slot = res.value.slot
