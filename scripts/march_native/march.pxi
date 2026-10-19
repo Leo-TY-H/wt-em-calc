@@ -184,7 +184,8 @@ cdef class MarchEngine:
     cdef RowSrc* srcs
     cdef int nsrc, cap_src
     cdef public list rows, limits, why_text, names_table
-    cdef public dict why_code
+    cdef public dict why_code, solve_of
+    cdef public object points, point_solver
     cdef long counts[NCOUNT]
     cdef bint instructor, structural, is_prop, roll_leveling
     cdef public double sep_tol
@@ -239,7 +240,9 @@ cdef class MarchEngine:
         if self.st == NULL or self.srcs == NULL or self.store == NULL or self.level_store == NULL:raise MemoryError()
         self.nst = self.nsrc = self.nstore = self.nlevel = 0
         self.has_alpha_key = self.has_level_key = False
-        self.rows = [];self.limits = [];self.names_table = [];self.why_text = [];self.why_code = {}
+        self.rows = [];self.limits = [];self.names_table = [];self.why_text = [];self.why_code = {};self.solve_of = {}
+        self.points = None
+        self.point_solver = None
         for i in range(NCOUNT):self.counts[i] = 0
         self.stats = dict(columns=0, fallback=0, predictors_offered=0, python_events=0, native_trials=0, python_calls=0,
                           rows_built=0)
@@ -481,6 +484,9 @@ cdef class MarchEngine:
         if t.base != sid:
             base = self.row_of(t.base)
             row = dict(base)
+        elif sid in self.solve_of:
+            row = (<PointSolver>self.solve_of[sid][0]).row(sid)
+            self.stats['rows_built'] += 1
         elif t.src >= 0:
             row = self.fin.row(&self.srcs[t.src])
             self.stats['rows_built'] += 1
@@ -745,6 +751,26 @@ cdef class MarchEngine:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object initial_dict(self, int anchor, list attitude):
+        """em_sampling.continuation_initial(solver, anchor, attitude) from the state's fields."""
+        cdef TState* t = &self.st[anchor]
+        cdef int i
+        if attitude is None:attitude = [t.sol[i] for i in range(5)]
+        names = self.names_of(anchor)
+        if not t.has_coords or not names or len(names) != t.nx:return attitude
+        predicted = dict(zip(('alpha_deg', 'bank_deg', 'aileron', 'elevator', 'rudder'), attitude))
+        return dict(solution=attitude, stationary_coordinate_names=list(names),
+                    stationary_coordinates=[predicted.get(name, t.coords[i]) for i, name in enumerate(names)],
+                    stationary_request_indices=[t.req[i] for i in range(t.nreq)])
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef PointSolver points_(self):
+        if self.point_solver is None:self.point_solver = PointSolver(self)
+        return <PointSolver>self.point_solver
+
     def flush_counts(self):
         """Book the native work counters to the current Python work record (and its parents)."""
         cdef int k

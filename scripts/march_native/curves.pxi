@@ -119,13 +119,9 @@ cdef class NCurves:
         if anchor >= 0:
             attitude = [self.eng.st[anchor].sol[i] for i in range(5)]
             attitude[1] += (acos(1./load)-acos(1./pmax(1., self.eng.st[anchor].load)))*RAD_TO_DEG
-            initial = self.initial_dict(anchor, attitude)
-        saved = <size_t>g_sink;g_sink = NULL
-        try:
-            point = self.eng.solver.solve(speed, load, initial=initial, exhaustive=exhaustive)
-        finally:
-            g_sink = <long*>saved
-        sid = self.eng.import_row(point)
+            initial = self.eng.initial_dict(anchor, attitude)
+        sid = self.eng.points_().solve(speed, load, initial)
+        self.eng.flush_counts()
         self.ledger.charge(phase, before, 'admitted' if self.eng.st[sid].valid else
                            'rejected' if self.balanced(sid) else 'unresolved',
                            kind='fixed_load', speed_kmh=speed, load_g=load, exhaustive=exhaustive or None)
