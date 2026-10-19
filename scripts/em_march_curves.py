@@ -696,14 +696,9 @@ class CurveSolver:
         comp['refinement_exhausted'] = True
 
     # ----- top level ---------------------------------------------------------
-    def column_roots(self, column, levels):
-        """Level roots bracketed by one envelope column's admitted states.
-
-        Brackets come from adjacent admitted, branch-compatible samples between
-        the level-flight state and the verified boundary. A level above the
-        top admitted state while the boundary is verified is reported as beyond
-        the envelope at this speed (the boundary state is the evidence)."""
-        speed = column['speed_kmh'];out = dict(speed_kmh=speed, roots=[], fallback=None, stop=None)
+    def column_samples(self, column):
+        """(admitted samples by load up to the verified boundary, boundary state or None)."""
+        speed = column['speed_kmh']
         top = column.get('boundary') if column.get('boundary_status') in ('verified limit', 'plot ceiling') else None
         cap = top['load_g'] if top else max((p['load_g'] for p in column['points'] if p.get('valid')), default=None)
         pts = sorted((p for p in column['points'] if p.get('valid') and p.get('stationary_coordinates') is not None
@@ -712,6 +707,25 @@ class CurveSolver:
         if top is not None and top.get('valid') and top.get('stationary_coordinates') is not None and \
                 all(abs(p['load_g']-top['load_g']) > 1e-12 for p in pts):
             pts.append(top)
+        return pts, top
+
+    def column_levels(self, column):
+        """Levels ``column_roots`` would find a root for at this column, from
+        the samples alone (no solves); None for an uninformative column."""
+        pts, _ = self.column_samples(column)
+        if not pts or abs(pts[0]['load_g']-1.) > 1e-9:return None
+        return frozenset(t for t in self.levels if abs(pts[0]['ps_mps']-t) <= self.allowance or any(
+            (a['ps_mps']-t)*(b['ps_mps']-t) <= 0. and compatible(a, b) for a, b in zip(pts, pts[1:])))
+
+    def column_roots(self, column, levels):
+        """Level roots bracketed by one envelope column's admitted states.
+
+        Brackets come from adjacent admitted, branch-compatible samples between
+        the level-flight state and the verified boundary. A level above the
+        top admitted state while the boundary is verified is reported as beyond
+        the envelope at this speed (the boundary state is the evidence)."""
+        speed = column['speed_kmh'];out = dict(speed_kmh=speed, roots=[], fallback=None, stop=None)
+        pts, top = self.column_samples(column)
         if not pts or abs(pts[0]['load_g']-1.) > 1e-9:
             # Without the admitted level-flight state the column cannot bracket
             # levels from below; it carries no curve evidence (not exclusion).
@@ -768,26 +782,50 @@ class CurveSolver:
         a compatible branch (closest turn rate when several qualify); a level
         absent at a column closes its component there. Continuation is then
         used only beyond each component's first and last knots to locate the
-        endpoints. Interpolation checks follow as in the default mode."""
+        endpoints. Interpolation checks follow as in the default mode.
+
+        Columns denser than ``column_min_spacing_kmh`` are not root-solved,
+        except for a level whose presence at a skipped column (read from its
+        samples, no solves) differs from both neighbouring solved columns: that
+        column solves that level only. Otherwise a component narrower than the
+        spacing that touches only the envelope, such as Ps = 0 at a corner,
+        would be missed although the envelope columns bracket it."""
         new, open_ = [], {}
         ordered = sorted(by_speed);last_used = None
+        solved, presence = [], {}
         for speed in ordered:
-            column = by_speed[speed]
             # Columns denser than the curve needs are not root-solved (the
             # interpolation checks still validate every knot interval).
             if (last_used is not None and speed-last_used < self.policy.column_min_spacing_kmh
                     and speed != ordered[-1]):continue
-            one = next((p for p in column['points'] if abs(p['load_g']-1.) <= 1e-9 and p.get('valid')
-                        and p.get('stationary_coordinates') is not None), None)
-            ones[speed] = self.ones[speed] = one if one is not None else dict(
-                valid=False, reasons=['no admitted level-flight state in column'], speed_kmh=speed)
-            seed = self.column_roots(column, self.levels)
+            presence[speed] = self.column_levels(by_speed[speed])
+            if presence[speed] is None:continue  # uninformative: keeps components open across it
+            solved.append(speed);last_used = speed
+        extra = {}
+        for a, b in zip(solved, solved[1:]):
+            for speed in ordered:
+                if not a < speed < b or speed in presence:continue
+                here = self.column_levels(by_speed[speed])
+                if here is None:continue
+                levels = [L for L in self.levels if (L in here) != (L in presence[a]) and (L in here) != (L in presence[b])]
+                if levels:extra[speed] = levels
+        for speed in ordered:
+            if speed not in presence and speed not in extra:continue
+            column = by_speed[speed]
+            levels = extra.get(speed, self.levels)
+            if speed in presence:
+                one = next((p for p in column['points'] if abs(p['load_g']-1.) <= 1e-9 and p.get('valid')
+                            and p.get('stationary_coordinates') is not None), None)
+                ones[speed] = self.ones[speed] = one if one is not None else dict(
+                    valid=False, reasons=['no admitted level-flight state in column'], speed_kmh=speed)
+            seed = self.column_roots(column, levels)
             self.ladders.append(dict(speed_kmh=speed, segment=segment['speed_kmh'], ladder=seed))
-            seeds_report.append(dict(speed_kmh=speed, provenance='envelope column',
+            seeds_report.append(dict(speed_kmh=speed, provenance='envelope column' if speed in presence else
+                                     'envelope column (level presence change)',
                                      roots=sum(r['outcome'] == 'admitted' for r in seed['roots']), stop=seed['stop']))
             if seed.get('uninformative'):continue  # keep components open across it
-            last_used = speed
-            current = {}
+            # Levels not solved at this column keep their open components.
+            current = {L: c for L, c in open_.items() if L not in levels}
             for root in seed['roots']:
                 target = root['target']
                 if root['outcome'] in ('rejected', 'beyond_load_cap'):
