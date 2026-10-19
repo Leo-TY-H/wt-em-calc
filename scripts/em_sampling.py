@@ -146,27 +146,22 @@ def interpolation_knots(x,y):
 
 
 def sweep_speed_intervals(name,config):
+    """Speeds below the aircraft's speed limit where the selected wing sweep is unavailable.
+
+    A sweep cutoff that lasts to the end of the speed range is the 'Wing sweep limit' speed
+    boundary (em_speed_limits), and nothing above the enforced limit is flown, so neither is listed."""
     from aircraft_catalog import load
-    from wing_sweep import prepare,schedule,available
-    from air_state import speed_of_sound
+    from em_speed_limits import sweep_excluded_kmh, speed_limits
     fm=load(name)
-    if len(prepare(fm))<2:return []
-    rows=schedule(fm);position=config['sweep_percent']/100.
-    scale=float(speed_of_sound(config['altitude_m']))*3.6
-    low,high=config['speed_min_kmh']/scale,config['speed_max_kmh']/scale
-    knots=[low,high]+[row[0] for row in rows if low<row[0]<high]
-    for (xa,_,va),(xb,_,vb) in zip(rows,rows[1:]):
-        for a,b in zip(va,vb):
-            if a!=b:
-                x=xa+(position-a)*(xb-xa)/(b-a)
-                if max(low,xa)<x<min(high,xb):knots.append(x)
-    knots=sorted(set(knots));excluded=[]
-    for a,b in zip(knots,knots[1:]):
-        lo,hi=available(fm,rows,(a+b)*.5)
-        if lo-1e-7<=position<=hi+1e-7:continue
-        if excluded and abs(excluded[-1][1]-a*scale)<1e-6:excluded[-1][1]=b*scale
-        else:excluded.append([a*scale,b*scale])
-    return excluded
+    excluded=sweep_excluded_kmh(fm,config)
+    if not excluded:return []
+    limit=speed_limits(fm,config)
+    top=limit['speed_kmh'] if limit['enforced'] else config['speed_max_kmh']
+    out=[]
+    for a,b in excluded:
+        if a>=top-1e-6:continue
+        out.append([a,min(b,top)])
+    return out
 
 
 @lru_cache(maxsize=8)

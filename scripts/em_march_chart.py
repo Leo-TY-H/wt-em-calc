@@ -256,6 +256,11 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
                                     columns=len(envelope['columns']), work_by_role=envelope['work_by_role'],
                                     march=M.stats(), native=N.summary(loops), native_status=native,
                                     curve_status=(result or {}).get('status'))
+    if engine is not None:
+        timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows))
+        if curve_engine is not None:
+            timers['curves'] = dict(solve_s=curve_engine.t_solve, finish_s=curve_engine.t_finish, rows_s=curve_engine.t_rows)
+        row['chart_solver_work']['native_timers'] = timers
     return row
 
 

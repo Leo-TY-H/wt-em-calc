@@ -22,6 +22,31 @@ from libc.math cimport ceil
 
 DEF INFINITY = float('inf')
 
+cdef extern from *:
+    """
+    #ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <windows.h>
+    static double s5_now(void) {
+        static LARGE_INTEGER frequency;
+        LARGE_INTEGER count;
+        if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&count);
+        return (double)count.QuadPart/(double)frequency.QuadPart;
+    }
+    #else
+    #include <time.h>
+    static double s5_now(void) {
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        return (double)t.tv_sec+1e-9*(double)t.tv_nsec;
+    }
+    #endif
+    """
+    double s5_now() nogil
+
 DEF KD_INSTR = 0
 DEF KD_CONTROL = 1
 DEF KD_RPM = 2
@@ -199,6 +224,7 @@ cdef class MarchEngine:
     cdef int nlevel
     cdef public dict stats
     cdef public object ceilings
+    cdef public double t_solve, t_finish, t_rows
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -251,6 +277,7 @@ cdef class MarchEngine:
         self.stats = dict(columns=0, fallback=0, predictors_offered=0, python_events=0, native_trials=0, python_calls=0,
                           rows_built=0)
         self.ceilings = {}
+        self.t_solve = self.t_finish = self.t_rows = 0.
         self.engine_shafts = []
         if self.is_prop:
             p = solver.engine.properties
@@ -485,6 +512,7 @@ cdef class MarchEngine:
         cdef TState* t = &self.st[sid]
         row = self.rows[sid]
         if row is not None:return row
+        cdef double t0 = s5_now()
         if t.base != sid:
             base = self.row_of(t.base)
             row = dict(base)
@@ -498,6 +526,7 @@ cdef class MarchEngine:
             raise RuntimeError('state without a row source')
         if t.limit >= 0:row['envelope_limit'] = self.limits[t.limit]
         self.rows[sid] = row
+        if t.base == sid:self.t_rows += s5_now()-t0
         return row
 
     @cython.boundscheck(True)
@@ -699,13 +728,17 @@ cdef class MarchEngine:
             for i in range(t.nreq):key.req[i] = t.req[i]
             pred_in = pm_get(preds, &key)
         self.stats['native_trials'] += 1
-        code = self.cc.solve_core(speed, self.cap(speed), &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
+        cdef double cap = self.cap(speed)
+        cdef double t0 = s5_now(), t1
+        code = self.cc.solve_core(speed, cap, &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
                                   max_evaluations, event_tolerance, pred_in, &pred_out, &slot, &n, &closed)
+        t1 = s5_now();self.t_solve += t1-t0
         if code < 0:return -1
         if pred_out.valid and preds != NULL and fixed_kind != FIX_EVENT and fixed_kind != FIX_SEP:
             pm_set(preds, &key, &pred_out)
         si = self.new_src()
         self.fin.compute(self.P, slot, speed, n, self.P.aircraft_evaluations, &self.srcs[si])
+        self.t_finish += s5_now()-t1
         f = &self.srcs[si].fin
         if not closed:
             if f.row_valid and evidence != NULL:

@@ -160,7 +160,7 @@ cdef class Model:
     cdef Cond conds[32]
     cdef int ncond, cond_next
     cdef Vec vecs[64]
-    cdef Unit units[4]
+    cdef Unit units[8]
     cdef int nunits
     cdef public bint python_vectors
     cdef public bint prop
@@ -242,7 +242,7 @@ cdef class Model:
             self.nunits = 0
         else:
             units = solver.engine.units
-            if len(units) > 4:raise ValueError('too many engines')
+            if len(units) > 8:raise ValueError('too many engines')
             self.nunits = len(units)
             for k, unit in enumerate(units):set_unit(&self.units[k], unit, cfg['throttle'])
         self.python_vectors = False

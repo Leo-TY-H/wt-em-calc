@@ -150,6 +150,7 @@ cdef class Finisher:
     cdef public list python_instructors
     cdef double flaps_percent
     cdef FrozenState* chain     # the frozen-history predictor chain of a point solve (its candidates share it), or NULL
+    cdef dict request_cache
 
     def __init__(self, Model model, solver):
         from em_model_experiments import description
@@ -183,6 +184,7 @@ cdef class Finisher:
         self.admission_revision = admission_revision
         self.instructor = None;self.loop_stats = None;self.python_instructors = []
         self.chain = NULL
+        self.request_cache = {}
 
     def set_prop(self, PropModel pm, layout):
         self.pm = pm;self.layout = dict(layout)
@@ -574,8 +576,13 @@ cdef class Finisher:
         record = None;frames = 0;requests = [];velocity = rates = None
         if self.is_prop:
             record = self.pm.record(&s.ps, s.qq)
-            requests = self.pm.request_records(&s.prep)
             velocity = (s.prep.velocity[0], s.prep.velocity[1], s.prep.velocity[2])
+            # prop_requests.enumerate_speeds depends on the flight condition only: computed once per velocity
+            requests = self.request_cache.get(velocity)
+            if requests is None:
+                requests = self.pm.request_records(&s.prep)
+                if len(self.request_cache) >= 256:self.request_cache.clear()
+                self.request_cache[velocity] = requests
             rates = (s.prep.rates[0], s.prep.rates[1], s.prep.rates[2])
             frames = fi.frames
         converged = fi.converged
