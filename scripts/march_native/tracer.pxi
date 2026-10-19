@@ -255,6 +255,7 @@ cdef class NTracer:
                 if nearest < 0 or d < bd:
                     nearest = sid;bd = d
         march = NMarch(self.eng, speed, self.march_tol)
+        march.strict_faces = self.s6
         col.march = True
         if nearest >= 0 and march.store:
             level = march.level_from(nearest)

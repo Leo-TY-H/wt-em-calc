@@ -109,6 +109,8 @@ cdef class NMarch:
     # S6 rescue of a column that every earlier rescue left unresolved
     cdef public bint robust
     cdef int retries_left
+    # S6: a face found by the S5 face rescues must lie on the branch the march follows (face_branch)
+    cdef public bint strict_faces
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -135,6 +137,7 @@ cdef class NMarch:
         self.evidence = []
         self.robust = False
         self.retries_left = 0
+        self.strict_faces = False
 
     # ------------------------------------------------------------------ bookkeeping
     @cython.boundscheck(True)
@@ -1200,7 +1203,7 @@ cdef class NMarch:
         gap samples join the history (finish_face)."""
         cdef double a0 = self.eng.st[lo].alpha, a1 = self.eng.st[edge].alpha
         cdef int n, j, p, prev = lo, e
-        if a1-a0 <= .25:return edge
+        if a1-a0 <= .25:return self.face_branch(lo, edge) if self.strict_faces else edge
         n = <int>pmin(12., pmax(3., ceil(a1-a0)))
         for j in range(1, n):
             p = self.at_state(prev, a0+j*(a1-a0)/n, 's5 gap')
@@ -1214,6 +1217,34 @@ cdef class NMarch:
                 self.last_lo = -1
                 e, _ = self.margin_edge(prev, p)
                 return e
+        return self.face_branch(prev, edge) if self.strict_faces else edge
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int face_branch(self, int prev, int edge) except -2:
+        """S6: a face from the S5 face rescues (a neighbouring boundary's face corrected at this speed, or this
+        speed's faces beyond numerically failed trials) can lie on another equilibrium branch than the march's.
+        The state at the face's alpha corrected from the last admitted sample of the march branch decides: the face
+        itself (turn rate within the march tolerance) stands; a physical rejection there means this branch's first
+        limit lies before it (margin_edge, as the march localizes); a different admitted state rejects the face.
+        A correction that does not close leaves the S5 result."""
+        cdef double a1 = self.eng.st[edge].alpha
+        cdef int q, e
+        if a1-self.eng.st[prev].alpha <= 1e-6:return edge
+        q = self.at_state(prev, a1, 's6 face branch')
+        self.eng.stats['s6_face_checks'] = self.eng.stats.get('s6_face_checks', 0)+1
+        if q < 0:return edge
+        if self.eng.st[q].valid:
+            if fabs(self.eng.st[q].turn-self.eng.st[edge].turn) <= self.turn_tol:return edge
+            self.s3_flags.add('face on another branch rejected')
+            self.eng.stats['s6_face_rejected'] = self.eng.stats.get('s6_face_rejected', 0)+1
+            return -1
+        if self.eng.physical(q):
+            self.last_lo = -1
+            e, _ = self.margin_edge(prev, q)
+            self.eng.stats['s6_face_replaced'] = self.eng.stats.get('s6_face_replaced', 0)+1
+            if e >= 0:self.s3_flags.add('face replaced by the march branch limit')
+            return e
         return edge
 
     # ------------------------------------------------------------------ the column record
