@@ -622,11 +622,11 @@ cdef class CurveCorrection:
             self.charge_problem(P)
             return -1
         for i in range(P.n):y[i] = P.z[P.free_idx[i]]
-        P.solve(y, max_nfev, max_evaluations, pred_in if P.fixed >= 0 else NULL, False, &res)
+        P.solve(y, max_nfev, max_evaluations, pred_in if (P.fixed >= 0 or fixed_kind == FIX_SEP) else NULL, False, &res)
         if res.termination == -1:
             self.charge_problem(P)
             return -1
-        if P.fixed >= 0 and res.predictor.valid:
+        if (P.fixed >= 0 or fixed_kind == FIX_SEP) and res.predictor.valid:
             pred_out[0] = res.predictor
         P.expand(res.x, zf)
         slot = P.value(zf)

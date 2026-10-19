@@ -260,6 +260,41 @@ cdef class PropModel:
         self.samples = 0
 
 
+    cdef int stage_requests(self, const PropPrep* prep, int s, double* possible) except -1:
+        """prop_requests.enumerate_speeds: the union of the shaft's requests over every product of its engines'
+        eligible stages (automatic pistons: each authored stage; turbines and rockets: their seed gear)."""
+        cdef EngState states[NP]
+        cdef double desired[NP]
+        cdef int counts[NP]
+        cdef int gears[NP]
+        cdef int ne = self.trans[s].ne, k, i, k2, nd, idx, npossible = 0
+        cdef bint dup
+        for k in range(ne):
+            idx = self.trans[s].engines[k].index
+            counts[k] = (self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1) if self.engines[idx].family <= 1 else 1
+            gears[k] = 0
+        while True:
+            self.seeded(prep, states)
+            for k in range(ne):
+                idx = self.trans[s].engines[k].index
+                if self.engines[idx].family <= 1:states[idx].gear = gears[k]
+            self.requests_for(s, states, desired, &nd)
+            for i in range(nd):
+                dup = False
+                for k2 in range(npossible):
+                    if possible[k2] == desired[i]:dup = True
+                if not dup:
+                    if npossible >= MAXCAND:raise PropUnsupported('request candidates')
+                    possible[npossible] = desired[i];npossible += 1
+            # itertools.product order: the last engine varies fastest
+            k = ne-1
+            while k >= 0:
+                gears[k] += 1
+                if gears[k] < counts[k]:break
+                gears[k] = 0;k -= 1
+            if k < 0:break
+        return npossible
+
     # ------------------------------------------------------------------ turbines and rockets
     cdef inline const Unit* unit(self, int k) noexcept nogil:
         return &self.units[k] if self.units != NULL else NULL
@@ -370,23 +405,7 @@ cdef class PropModel:
             if not self.ngoverned[s]:
                 continue
             npossible = 0
-            # engine stages: one automatic stage range per linked piston engine
-            # (stage products are enumerated for one engine per shaft here)
-            if self.trans[s].ne != 1:
-                raise PropUnsupported('multi-engine shaft request enumeration')
-            idx = self.trans[s].engines[0].index
-            for k in range(self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1):
-                self.seeded(out, states)
-                states[idx].gear = k
-                self.requests_for(s, states, desired, &nd)
-                for i in range(nd):
-                    dup = False
-                    for k2 in range(npossible):
-                        if possible[k2] == desired[i]:
-                            dup = True
-                    if not dup:
-                        if npossible >= MAXCAND:raise PropUnsupported('request candidates')
-                        possible[npossible] = desired[i]; npossible += 1
+            npossible = self.stage_requests(out, s, possible)
             # sorted(possible)
             for i in range(1, npossible):
                 tmp = possible[i]; k = i-1
@@ -729,20 +748,7 @@ cdef class PropModel:
             if not self.ngoverned[s]:
                 out.append(dict(governed=False, candidates=[], excluded=[], request_coverage_complete=True))
                 continue
-            if self.trans[s].ne != 1:raise PropUnsupported('multi-engine shaft request enumeration')
-            idx = self.trans[s].engines[0].index
-            npossible = 0
-            for k in range(self.engines[idx].nstages if self.engines[idx].nstages > 0 else 1):
-                self.seeded(prep, states)
-                states[idx].gear = k
-                self.requests_for(s, states, desired, &nd)
-                for i in range(nd):
-                    dup = False
-                    for k2 in range(npossible):
-                        if possible[k2] == desired[i]:dup = True
-                    if not dup:
-                        if npossible >= MAXCAND:raise PropUnsupported('request candidates')
-                        possible[npossible] = desired[i];npossible += 1
+            npossible = self.stage_requests(prep, s, possible)
             values = sorted([possible[i] for i in range(npossible)])
             candidates = [];excluded = []
             for speed in values:

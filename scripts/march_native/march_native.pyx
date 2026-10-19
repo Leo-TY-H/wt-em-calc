@@ -20,6 +20,7 @@ from libc.stdlib cimport malloc, free, realloc
 
 cnp.import_array()
 
+DEF NCOND = 192   # Mach conditions kept per model (S5: curve solves visit many speeds)
 include "frame.pxi"
 include "tail.pxi"
 include "op.pxi"
@@ -157,8 +158,8 @@ cdef class Model:
     cdef double fixed_trim[3]
     cdef double strength_force[2]
     cdef double strength_ias, strength_mach
-    cdef Cond conds[32]
-    cdef int ncond, cond_next
+    cdef Cond conds[NCOND]
+    cdef int ncond, cond_next, last_cond
     cdef Vec vecs[64]
     cdef Unit units[8]
     cdef int nunits
@@ -234,7 +235,7 @@ cdef class Model:
             self.drag[i].gear = d['gear'];self.drag[i].central_gear = d['central_gear'];self.drag[i].radiator = d['radiator']
             self.drag[i].oil_radiator = d['oil_radiator'];self.drag[i].fuselage = d['fuselage']
             self.drag[i].airbrake = d['airbrake'];self.drag[i].bomb_bay = d['bomb_bay']
-        self.ncond = self.cond_next = self.nvec = self.vec_next = 0
+        self.ncond = self.cond_next = self.nvec = self.vec_next = self.last_cond = 0
         self.prop = bool(solver.is_prop)
         self.has_phase = False
         if self.prop:
@@ -252,17 +253,20 @@ cdef class Model:
     # ------------------------------------------------------------ caches
     cdef int condition(self, double mach) except -1:
         cdef int i
+        if self.ncond and self.conds[self.last_cond].mach == mach:return self.last_cond
         for i in range(self.ncond):
-            if self.conds[i].mach == mach:return i
+            if self.conds[i].mach == mach:
+                self.last_cond = i
+                return i
         self.cond_misses += 1
         from aircraft_model import condition_properties
         from wing_area_normalization import intact_polars
         from em_mach_events import stable_piece_key, rough_mach
         values, wing, tp = condition_properties(self.solver.model, mach, self.flaps)
-        if self.ncond < 32:
+        if self.ncond < NCOND:
             i = self.ncond;self.ncond += 1
         else:
-            i = self.cond_next;self.cond_next = (self.cond_next+1) % 32
+            i = self.cond_next;self.cond_next = (self.cond_next+1) % NCOND
         cdef Cond* c = &self.conds[i]
         c.mach = mach
         for j in range(4):c.flap_values[j] = values[j]
@@ -287,6 +291,7 @@ cdef class Model:
         key = stable_piece_key(self.solver, mach)
         c.piece = self.pieces.setdefault(key, len(self.pieces))
         c.rough = bool(rough_mach(self.solver, mach))
+        self.last_cond = i
         return i
 
     cdef int vectors(self, double u, double* force, double* moment) except -1:

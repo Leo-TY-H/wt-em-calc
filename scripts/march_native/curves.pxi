@@ -40,10 +40,31 @@ cdef class NCurves:
     cdef int refinement_passes
     cdef list ladder_loads
     cdef dict column_ids
+    # S5: the Jacobian of the latest direct SEP correction (per request branch), the next one's predictor
+    cdef PredMap preds
+    cdef public bint reuse
+    # the Jacobian each admitted direct solve ended with, by its state (a bounded pool): the predictor of
+    # a later solve anchored at that state
+    cdef Predictor* pool
+    cdef int npool, next_pool
+    cdef dict pred_of
+    cdef list owners
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    def __cinit__(self, *args, **kwargs):
+        self.pool = NULL
+
+    def __dealloc__(self):
+        if self.pool != NULL:cfree(self.pool)
+
     def __init__(self, MarchEngine eng, py):
+        import os
+        self.preds.n = 0
+        self.reuse = os.environ.get('WT_CURVE_PREDICTORS', '1') == '1'
+        self.npool = 256;self.next_pool = 0;self.pred_of = {};self.owners = [None]*256
+        self.pool = <Predictor*>malloc(self.npool*sizeof(Predictor))
+        if self.pool == NULL:raise MemoryError()
         self.eng = eng;self.py = py
         self.levels = list(py.levels);self.allowance = py.allowance;self.band = py.band
         self.turn_tol = py.turn_tol;self.speed_tol = py.speed_tol
@@ -155,8 +176,30 @@ cdef class NCurves:
         before = self.ledger.snapshot()
         self.eng.t_ledger += s5_now()-t0
         for i in range(5):sol[i] = attitude[i]
+        cdef PKey key
+        cdef TState* t = &self.eng.st[anchor]
+        cdef Predictor* got
+        key.fixed = self.eng.cc.fixed_index(FIX_SEP);key.nreq = t.nreq
+        for i in range(t.nreq):key.req[i] = t.req[i]
+        if self.reuse:
+            slot = self.pred_of.get(self.eng.st[anchor].base)
+            if slot is not None:pm_set(&self.preds, &key, &self.pool[<int>slot])
         p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, self.max_nfev, 0, self.allowance, speed,
-                             NULL, NULL)
+                             &self.preds if self.reuse else NULL, NULL)
+        if self.reuse and phase in ('interpolation_checks', 'column_roots') and (p < 0 or (not self.eng.st[p].valid and not self.balanced(p))
+                           or (self.eng.st[p].valid and fabs(self.eng.st[p].ps-target) > self.allowance)):
+            # a predicted linearization that does not close: once more from a fresh Jacobian
+            for i in range(5):sol[i] = attitude[i]
+            p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, self.max_nfev, 0, self.allowance,
+                                 speed, NULL, NULL)
+            self.eng.stats['curve_predictor_retries'] = self.eng.stats.get('curve_predictor_retries', 0)+1
+        if self.reuse and p >= 0:
+            got = pm_get(&self.preds, &key)
+            if got != NULL and got.valid:
+                if self.owners[self.next_pool] is not None:self.pred_of.pop(self.owners[self.next_pool], None)
+                self.pool[self.next_pool] = got[0];self.pred_of[self.eng.st[p].base] = self.next_pool
+                self.owners[self.next_pool] = self.eng.st[p].base
+                self.next_pool = (self.next_pool+1) % self.npool
         self.eng.flush_counts()
         if p < 0:outcome, reason = 'unresolved', 'correction failed'
         elif self.eng.st[p].valid and fabs(self.eng.st[p].ps-target) <= self.allowance:outcome, reason = 'admitted', None

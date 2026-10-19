@@ -224,7 +224,10 @@ cdef class MarchEngine:
     cdef int nlevel
     cdef public dict stats
     cdef public object ceilings
-    cdef public double t_solve, t_finish, t_rows, t_point, t_python, t_ledger
+    # S5: the envelope engine's exact load caps (by speed), for the curve engine's cheap SEP-solve bound
+    cdef public object known_caps
+    cdef public list known_speeds
+    cdef public double t_solve, t_finish, t_rows, t_point, t_python, t_ledger, t_srows
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -277,7 +280,8 @@ cdef class MarchEngine:
         self.stats = dict(columns=0, fallback=0, predictors_offered=0, python_events=0, native_trials=0, python_calls=0,
                           rows_built=0)
         self.ceilings = {}
-        self.t_solve = self.t_finish = self.t_rows = self.t_point = self.t_python = self.t_ledger = 0.
+        self.known_caps = None;self.known_speeds = None
+        self.t_solve = self.t_finish = self.t_rows = self.t_point = self.t_python = self.t_ledger = self.t_srows = 0.
         self.engine_shafts = []
         if self.is_prop:
             p = solver.engine.properties
@@ -317,6 +321,28 @@ cdef class MarchEngine:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef double sep_cap(self, double speed, double* near) except? -1.:
+        """A cheap load bound for an SEP-fixed correction: 1.25x the exact caps interpolated between the
+        envelope's columns (``near``: that interpolation), or the exact cap where no columns bracket it."""
+        import bisect
+        from em_load_limits import configured_ceiling
+        cdef double a, b, ca, cb, t
+        value = self.ceilings.get(speed)
+        if value is not None or self.known_caps is None:
+            near[0] = -1.
+            return self.cap(speed)
+        if self.known_speeds is None or len(self.known_speeds) != len(self.known_caps):
+            self.known_speeds = sorted(self.known_caps)
+        i = bisect.bisect_left(self.known_speeds, speed)
+        if i <= 0 or i >= len(self.known_speeds):
+            near[0] = -1.
+            return self.cap(speed)
+        a = self.known_speeds[i-1];b = self.known_speeds[i]
+        ca = self.known_caps[a];cb = self.known_caps[b]
+        t = (speed-a)/(b-a) if b > a else 0.
+        near[0] = ca+t*(cb-ca)
+        return min(float(configured_ceiling(self.solver, speed)), 1.25*near[0])
+
     cdef double cap(self, double speed) except? -1.:
         value = self.ceilings.get(speed)
         if value is None:
@@ -519,6 +545,7 @@ cdef class MarchEngine:
         elif sid in self.solve_of:
             row = (<PointSolver>self.solve_of[sid][0]).row(sid)
             self.stats['rows_built'] += 1
+            self.t_srows += s5_now()-t0
         elif t.src >= 0:
             row = self.fin.row(&self.srcs[t.src])
             self.stats['rows_built'] += 1
@@ -723,18 +750,26 @@ cdef class MarchEngine:
         if fixed_kind == FIX_EVENT and ev_kind == 6:
             # engine RPM: the event point's limit, rpm_limit*pi/30 (Curve.events)
             self.P.ev_limit = t.rpm_limit[ev_axis]*M_PI/30.
-        if fixed_kind != FIX_EVENT and fixed_kind != FIX_SEP and preds != NULL:
+        # S5: SEP-fixed corrections also take a predictor (the curve solver passes its own map)
+        if fixed_kind != FIX_EVENT and preds != NULL:
             key.fixed = self.cc.fixed_index(fixed_kind);key.nreq = t.nreq
             for i in range(t.nreq):key.req[i] = t.req[i]
             pred_in = pm_get(preds, &key)
         self.stats['native_trials'] += 1
-        cdef double cap = self.cap(speed)
+        cdef double near = -1.
+        cdef double cap = self.sep_cap(speed, &near) if fixed_kind == FIX_SEP else self.cap(speed)
         cdef double t0 = s5_now(), t1
         code = self.cc.solve_core(speed, cap, &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
                                   max_evaluations, event_tolerance, pred_in, &pred_out, &slot, &n, &closed)
+        if near > 0. and code >= 0 and n > .8*near:
+            # near the interpolated cap: the correction again with the exact cap
+            self.stats['sep_cap_resolves'] = self.stats.get('sep_cap_resolves', 0)+1
+            cap = self.cap(speed)
+            code = self.cc.solve_core(speed, cap, &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
+                                      max_evaluations, event_tolerance, pred_in, &pred_out, &slot, &n, &closed)
         t1 = s5_now();self.t_solve += t1-t0
         if code < 0:return -1
-        if pred_out.valid and preds != NULL and fixed_kind != FIX_EVENT and fixed_kind != FIX_SEP:
+        if pred_out.valid and preds != NULL and fixed_kind != FIX_EVENT:
             pm_set(preds, &key, &pred_out)
         si = self.new_src()
         self.fin.compute(self.P, slot, speed, n, self.P.aircraft_evaluations, &self.srcs[si])
@@ -811,6 +846,10 @@ cdef class MarchEngine:
     cdef PointSolver points_(self):
         if self.point_solver is None:self.point_solver = PointSolver(self)
         return <PointSolver>self.point_solver
+
+    def fin_timers(self):
+        return dict(solve_rows_s=self.t_srows, record_s=self.fin.t_record, admission_s=self.fin.t_admit, report_s=self.fin.t_report,
+                    clean_s=self.fin.t_clean)
 
     def get_point_solver(self):
         return self.points_()
