@@ -235,12 +235,8 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     show(row)
     N.attach(curve_solver)
     if getattr(curve_solver, 'native_loop', None) is not None:loops.append(curve_solver.native_loop)
-    # S6: curve midpoints within the 0.5 deg/s flag (WT_MARCH_S6=0 restores the S5 check for comparison)
-    import os
-    flag = math.inf if os.environ.get('WT_MARCH_S6', '1') == '0' else C.CurvePolicy.check_flag_dps
     curves = C.MarchCurveSolver(name, cfg, solver=curve_solver, columns=verified,
-                                policy=C.CurvePolicy(tolerance_scale=CURVE_SCALE, column_min_spacing_kmh=COLUMN_SPACING_KMH,
-                                                     check_flag_dps=flag))
+                                policy=C.CurvePolicy(tolerance_scale=CURVE_SCALE, column_min_spacing_kmh=COLUMN_SPACING_KMH))
     count = [0]
 
     def check():
