@@ -5,8 +5,6 @@
 !/app/icons/
 !/app/vendor/
 !/scripts/
-!/tests/
-!/tests/test_pitch_boundary_recovery.py
 !/scripts/missile_model/
 !/scripts/missile_model/launch-profiles/
 !/.dockerignore
