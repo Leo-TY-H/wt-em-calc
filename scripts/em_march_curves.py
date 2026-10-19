@@ -56,6 +56,10 @@ class CurvePolicy:
     envelope_refinement_depth: int = 2
     min_seed_spacing_kmh: float = 12.5
     check_band_fraction: float = .5
+    # S6: a midpoint accepted by its exact SEP must also be within the 0.5 deg/s flag in turn rate (speed plan
+    # policy: nothing beyond the flag); otherwise it becomes a knot. On a flat SEP contour a SEP error within the
+    # band can be most of a degree per second of turn.
+    check_flag_dps: float = .5
     # Exhaustive ordinary-search retries for unclosed discovery samples. Off by
     # default: an unclosed sample stays an explicit unresolved record (one
     # exhaustive 1 g retry below the stall speed cost >5,000 evaluations).
@@ -1148,6 +1152,8 @@ class MarchCurveSolver(CurveSolver):
                     record.update(interpolated_point_valid=p['valid'], sep_error_mps=abs(p['ps_mps']-target),
                                   interpolated_point_reasons=p['reasons'])
                     passed = bool(p['valid'] and abs(p['ps_mps']-target) <= self.policy.check_band_fraction*self.band)
+                    if passed and turn_error > self.policy.check_flag_dps:
+                        passed = False;record['flag_exceeded'] = True
                 record['passed'] = passed
                 checks.append(record)
                 if not passed:additions.append(truth)
