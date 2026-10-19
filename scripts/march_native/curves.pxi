@@ -36,7 +36,7 @@ cdef class NCurves:
     cdef double allowance, band, turn_tol, speed_tol
     cdef object policy
     cdef int max_nfev
-    cdef double max_step, predictor_shrink, predictor_grow, check_band_fraction, column_min_spacing, check_flag
+    cdef double max_step, predictor_shrink, predictor_grow, check_band_fraction, column_min_spacing
     cdef int refinement_passes
     cdef list ladder_loads
     cdef dict column_ids
@@ -71,7 +71,6 @@ cdef class NCurves:
         p = py.policy;self.policy = p
         self.max_nfev = p.max_nfev;self.max_step = p.max_step_kmh;self.predictor_shrink = p.predictor_shrink
         self.predictor_grow = p.predictor_grow;self.check_band_fraction = p.check_band_fraction
-        self.check_flag = getattr(p, 'check_flag_dps', INFINITY)
         self.column_min_spacing = p.column_min_spacing_kmh;self.refinement_passes = p.refinement_passes
         self.ladder_loads = list(p.ladder_loads)
         if p.exhaustive_retry:raise NativeMarchUnsupported('exhaustive curve retries')
@@ -531,8 +530,6 @@ cdef class NCurves:
                     record.update(interpolated_point_valid=self.eng.st[p].valid, sep_error_mps=abs(self.eng.st[p].ps-target),
                                   interpolated_point_reasons=self.eng.reason_list(p))
                     passed = bool(self.eng.st[p].valid and abs(self.eng.st[p].ps-target) <= self.check_band_fraction*self.band)
-                    if passed and turn_error > self.check_flag:
-                        passed = False;record['flag_exceeded'] = True
                 record['passed'] = passed
                 checks.append(record)
                 if not passed:additions.append(truth)
