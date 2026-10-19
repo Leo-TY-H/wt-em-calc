@@ -690,7 +690,8 @@ cdef class NMarch:
         cdef Trial* t
         if ev.code > 0:
             p = self.correct_at(low, self.eng.st[low].sol, self.eng.st[low].load, FIX_EVENT, 0., ev.code,
-                                ev.axis-2 if ev.axis >= 0 else 0, ev.side, 16, 0, 2e-6, &self.preds, &evals, &fresh, NULL)
+                                ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6,
+                                &self.preds, &evals, &fresh, NULL)
         else:
             p = self.python_event(low, ev, &evals, &fresh)
         t = self.trial(prefix+KIND_TEXT[ev.kind])

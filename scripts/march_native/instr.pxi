@@ -460,6 +460,7 @@ cdef class Instructor:
     cdef double trim_limit
     cdef public list autos
     cdef dict auto_ids
+    cdef public object loop_stats
     cdef object skipped_auto
 
     def __init__(self, Model model, solver):
@@ -584,7 +585,7 @@ cdef class Instructor:
         self.calls = self.fallbacks = self.trim_solves = self.trim_evaluations = 0
         self.invert_elevator = bool(solver.controls['invert_elevator'])
         self.trim_limit = cfg['trim_limit']
-        self.autos = [];self.auto_ids = {}
+        self.autos = [];self.auto_ids = {};self.loop_stats = None
         self.skipped_auto = dict(success=False, skipped=True, trim=[0., 0., 0.], method='trim-independent authority',
                                  reason='Automatic trim is unnecessary for control bounds')
 

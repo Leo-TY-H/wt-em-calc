@@ -833,6 +833,18 @@ cdef class Finisher:
                 global_optimum_certified=False, radiators_closed=not (self.solver.radiator or self.solver.oil_radiator))
 
 
+cdef double instructor_event(object inst, const Eval* e, const PropSample* ps, int kind, int axis, int side) except? -1e308:
+    """Curve.events Instructor residuals on a search record (instructor_at completes it first):
+    pitch: envelope_margin-2e-6 if converged else nan; control: (+-1.)*(commands[axis]-bounds[axis][side])-3e-5."""
+    cdef InstrRes r
+    cdef Instructor native = <Instructor>inst
+    native.eval_limits(<Eval*>e, ps, &r)
+    if native.loop_stats is not None:native.loop_stats['native_instructor'] += 1
+    if kind == 4:
+        return r.angle_margin-2e-6 if r.converged else NAN
+    return (1. if side == 0 else -1.)*(e.alloc.commands[axis]-r.bounds[axis][side])-3e-5
+
+
 cdef void set_phase(Model m, const PropSample* ps) noexcept:
     """Model.set_propulsion(record) of the native propulsion record (its cycle row)."""
     cdef int i
