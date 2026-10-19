@@ -148,6 +148,7 @@ cdef class Finisher:
     cdef public object instructor        # native Instructor (lean admission) or None: Python solver.instructor_at
     cdef public dict loop_stats
     cdef public list python_instructors
+    cdef public double t_record, t_admit, t_report, t_dict, t_clean
     cdef double flaps_percent
     cdef FrozenState* chain     # the frozen-history predictor chain of a point solve (its candidates share it), or NULL
     cdef dict request_cache
@@ -574,8 +575,10 @@ cdef class Finisher:
         cdef int i
         c = self.constants
         record = None;frames = 0;requests = [];velocity = rates = None
+        cdef double tt0 = s5_now(), tt1
         if self.is_prop:
             record = self.pm.record(&s.ps, s.qq)
+            self.t_record += s5_now()-tt0
             velocity = (s.prep.velocity[0], s.prep.velocity[1], s.prep.velocity[2])
             # prop_requests.enumerate_speeds depends on the flight condition only: computed once per velocity
             requests = self.request_cache.get(velocity)
@@ -599,7 +602,9 @@ cdef class Finisher:
                     force_mean_uncertainty_g=0., angular_mean_uncertainty_rad_s2=[0., 0., 0.],
                     history_error=e.history_error, periodic_aircraft_trajectory_certified=False)
         sweep_range = (fi.sweep_range[0], fi.sweep_range[1]) if self.has_sweep else (0., 1.)
+        tt1 = s5_now()
         pitch = self.pitch_dict(&fi.pitch) if fi.has_pitch else None
+        self.t_admit += s5_now()-tt1
         instructor = None
         if fi.instr == 1:
             instructor = (<Instructor>self.instructor).limits_dict(&fi.ires, e.alloc.commands[1])
@@ -609,12 +614,16 @@ cdef class Finisher:
         bounds = [[fi.bounds[i][0], fi.bounds[i][1]] for i in range(3)]
         authority = fi.authority
         restrictions = []
+        tt1 = s5_now()
         if self.is_prop:
             restrictions = (self.admission_rows(record, velocity, rates) if self.python_admission
                             else self.native_admission_rows(record, &s.prep))
+        self.t_admit += s5_now()-tt1
         local_valid = fi.local_valid
         comp = {COMPONENT_NAMES[i]: L3(f.component_forces[i]) for i in range(8)}
+        tt1 = s5_now()
         branch = self.branch_tuple(e, s.br)
+        self.t_record += s5_now()-tt1
         source_branch = [[list(b) if isinstance(b, tuple) else b for b in branch], [], [s.req[i] for i in range(s.nreq)]
                          if self.is_prop else []]
         point = dict(speed_kmh=float(speed_cert), load_g=float(s.load), turn_dps=math.degrees(e.geom.turn_rate),
@@ -642,8 +651,10 @@ cdef class Finisher:
                      evaluations=fi.calls, solution=[e.x[0], e.x[1], e.x[2], e.x[3], e.x[4]],
                      vertical_step_velocity_mps=k.velocity[1], altitude_correction=bool(k.altitude_correction),
                      actual_turn_dps=math.degrees(math.atan2(k.velocity[2], k.velocity[0])/self.model.dt))
+        tt1 = s5_now()
         if self.is_prop:
             self.propulsion_report(point, record, converged, phase_check)
+        self.t_report += s5_now()-tt1
         if self.is_prop:
             L = self.layout;nprop = len(L['names'])-7
             names = list(L['names']);scales = list(SCALES7)+[.0001]*nprop;rscales = list(RSCALES7)+[1e-5]*nprop
@@ -689,7 +700,10 @@ cdef class Finisher:
                        chart_status='nearby local candidates' if usable else 'multiple numerical candidate branches')
         row['valid'] = row['chart_usable']
         row['validity_scope'] = 'numerical equilibrium and physical admission'
-        return fast_clean(row)
+        cdef double tt0 = s5_now()
+        out = fast_clean(row)
+        self.t_clean += s5_now()-tt0
+        return out
 
     def finish(self, CurveProblem P, int slot, double speed_kmh, double load, x7, long calls):
         """Cleaned chart row for the corrected state, as BaselineSolver.sample(JointProblem.finish(x)) (S2-S4 entry)."""
@@ -880,13 +894,34 @@ cdef double authority_margin(const double* commands, double bounds[3][2]) noexce
 
 
 cdef object fast_clean(object v):
-    # em_stationary_chart.clean (export normalization) without its per-object memo
+    """em_stationary_chart.clean (export normalization): nonfinite floats to None, tuples and arrays to lists,
+    no '_detail' keys. Copy on change: a container that is already clean is returned itself (S5)."""
     cdef type t = type(v)
+    cdef Py_ssize_t i, n
+    cdef bint changed
     if t is float:
         return v if isfinite(<double>v) else None
     if t is dict:
+        changed = False
+        for key, x in (<dict>v).items():
+            if type(key) is not str or key == '_detail':
+                changed = True;break
+            y = fast_clean(x)
+            if y is not x:
+                changed = True;break
+        if not changed:return v
         return {str(key): fast_clean(x) for key, x in (<dict>v).items() if key != '_detail'}
-    if t is list or t is tuple:
+    if t is list:
+        n = len(<list>v)
+        for i in range(n):
+            x = (<list>v)[i]
+            y = fast_clean(x)
+            if y is not x:
+                out = list(<list>v)[:i]+[y]
+                for j in range(i+1, n):out.append(fast_clean((<list>v)[j]))
+                return out
+        return v
+    if t is tuple:
         return [fast_clean(x) for x in v]
     if t is str or t is int or t is bool or v is None:
         return v

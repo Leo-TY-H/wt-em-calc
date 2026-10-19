@@ -195,10 +195,17 @@ def march_aircraft(name, condition, index, report, cancelled, show):
     tracer = M.MarchTracer(name, cfg, turn_tolerance=envelope_tolerance(cfg), max_step_kmh=MAX_STEP_KMH, on_column=on_column)
     solver = S.worker_solver(name, tracer.cj)
     curve_solver = BaselineSolver(name, cfg)
+    # S5: no cyclic garbage collection while the chart builds its rows. A collection walks every live
+    # object (the loaded aircraft data included), and the many row dicts would trigger several; the
+    # chart creates no reference cycles that need collecting before it returns.
+    import gc
+    collecting = gc.isenabled()
+    gc.disable()
     try:
         return march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started)
     finally:
         for s in (solver, curve_solver):N.detach(s)
+        if collecting:gc.enable()
 
 
 def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started):
@@ -240,6 +247,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     t0 = time.process_time()
     # S5: the curve solver on native trial states where the compiled module covers it.
     curve_engine = N.engine(curve_solver) if engine is not None else None
+    if curve_engine is not None:curve_engine.known_caps = engine.ceilings
     if verified and curve_engine is not None:
         native_curves = curve_solver.native_loop.m.NCurves(curve_engine, curves)
         native_curves.check = check
@@ -260,6 +268,8 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows, point_s=engine.t_point, python_s=engine.t_python, ledger_s=engine.t_ledger))
         if curve_engine is not None:
             timers['curves'] = dict(solve_s=curve_engine.t_solve, finish_s=curve_engine.t_finish, rows_s=curve_engine.t_rows, point_s=curve_engine.t_point, python_s=curve_engine.t_python, ledger_s=curve_engine.t_ledger)
+        f = engine.fin_timers()
+        timers['envelope'].update(f)
         row['chart_solver_work']['native_timers'] = timers
         row['chart_solver_work']['native_python'] = dict(envelope=engine.python_counts(),
                                                          curves=curve_engine.python_counts() if curve_engine is not None else None)
