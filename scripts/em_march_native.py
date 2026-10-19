@@ -254,7 +254,12 @@ class NativeLoop:
         if not supported(solver):return None
         if self.entry is None:
             s2 = self.m
-            model = s2.Model(solver)
+            try:
+                model = s2.Model(solver)
+            except ValueError as error:  # a size or table limit of the native model: the Python path
+                self.entry = False
+                self.unsupported['model'] = str(error)[:120]
+                return None
             cc = s2.CurveCorrection(model)
             self.entry = False
             if solver.is_prop:

@@ -65,11 +65,11 @@ cdef class CurveProblem(NativeCorrector):
     cdef int nz
     cdef int free_idx[NMAX]
     # memo of evaluated coordinates (Curve._correct value())
-    cdef int nmemo
-    cdef double memo_q[MEMO*NMAX]
-    cdef double memo_r[MEMO*NMAX]
-    cdef double memo_extra[MEMO]
-    cdef int memo_br[MEMO*BMAX]
+    cdef int nmemo, cap_memo
+    cdef double* memo_q
+    cdef double* memo_r
+    cdef double* memo_extra
+    cdef int* memo_br
     cdef Eval* memo_eval
     cdef public long aircraft_evaluations
     cdef int last_slot
@@ -86,16 +86,47 @@ cdef class CurveProblem(NativeCorrector):
     cdef bint* memo_conv
 
     def __cinit__(self):
-        self.memo_eval = <Eval*>malloc(MEMO*sizeof(Eval))
-        self.memo_row = <double*>malloc(MEMO*11*sizeof(double))
-        self.memo_conv = <bint*>malloc(MEMO*sizeof(bint))
-        if self.memo_eval == NULL or self.memo_row == NULL or self.memo_conv == NULL:raise MemoryError()
+        self.cap_memo = 0
+        self.memo_q = self.memo_r = self.memo_extra = self.memo_row = NULL
+        self.memo_br = NULL;self.memo_eval = NULL;self.memo_conv = NULL
+        self.grow_memo(MEMO)
         self.nx = 7;self.nprop = 0;self.nprows = 0;self.prop = False
 
     def __dealloc__(self):
+        if self.memo_q != NULL:cfree(self.memo_q)
+        if self.memo_r != NULL:cfree(self.memo_r)
+        if self.memo_extra != NULL:cfree(self.memo_extra)
+        if self.memo_br != NULL:cfree(self.memo_br)
         if self.memo_eval != NULL:cfree(self.memo_eval)
         if self.memo_row != NULL:cfree(self.memo_row)
         if self.memo_conv != NULL:cfree(self.memo_conv)
+
+    cdef int grow_memo(self, int capacity) except -1:
+        """The sample memo grows with the correction (S5: long propeller corrections exceeded a fixed one)."""
+        cdef void* p
+        p = realloc(self.memo_q, capacity*NMAX*sizeof(double))
+        if p == NULL:raise MemoryError()
+        self.memo_q = <double*>p
+        p = realloc(self.memo_r, capacity*NMAX*sizeof(double))
+        if p == NULL:raise MemoryError()
+        self.memo_r = <double*>p
+        p = realloc(self.memo_extra, capacity*sizeof(double))
+        if p == NULL:raise MemoryError()
+        self.memo_extra = <double*>p
+        p = realloc(self.memo_br, capacity*BMAX*sizeof(int))
+        if p == NULL:raise MemoryError()
+        self.memo_br = <int*>p
+        p = realloc(self.memo_eval, capacity*sizeof(Eval))
+        if p == NULL:raise MemoryError()
+        self.memo_eval = <Eval*>p
+        p = realloc(self.memo_row, capacity*11*sizeof(double))
+        if p == NULL:raise MemoryError()
+        self.memo_row = <double*>p
+        p = realloc(self.memo_conv, capacity*sizeof(bint))
+        if p == NULL:raise MemoryError()
+        self.memo_conv = <bint*>p
+        self.cap_memo = capacity
+        return 0
 
     cdef PropPrep* prepared(self, double load, double alpha, double bank) except NULL:
         cdef int i
@@ -144,8 +175,8 @@ cdef class CurveProblem(NativeCorrector):
                 self.aircraft_evaluations += 1
                 self.last_slot = k
                 return -1
-        if self.nmemo >= MEMO:
-            raise RuntimeError('native correction memo full')
+        if self.nmemo >= self.cap_memo:
+            self.grow_memo(2*self.cap_memo)
         slot = self.nmemo
         e = &self.memo_eval[slot]
         load = self.request(q)
@@ -314,15 +345,23 @@ def bulk_charge(kind, int count):
 # Work counters. Inside the native march (S5) every native charge goes to a C
 # counter block (``g_sink``) that the march books to the Python work records
 # once per trial and column; elsewhere they go to the Python work chain as in S2-S4.
-DEF NCOUNT = 6
+DEF NCOUNT = 11
 DEF K_EVAL = 0
 DEF K_DERIV = 1
 DEF K_NOMCMP = 2
 DEF K_NOMRES = 3
 DEF K_SECANT = 4
 DEF K_FRAMES = 5
+# the bounded propeller branch recovery (em_prop_branch_recovery, native since S5)
+DEF K_BPROBES = 6
+DEF K_BKERNEL = 7
+DEF K_GSAMPLES = 8
+DEF K_GPROPS = 9
+DEF K_BCORR = 10
 COUNT_NAMES = ('aircraft_evaluations', 'derivative_samples', 'nominal_sensitivity_comparisons',
-               'nominal_sensitivity_restorations', 'branch_secant_predictors', 'engine_frames')
+               'nominal_sensitivity_restorations', 'branch_secant_predictors', 'engine_frames',
+               'stationary_branch_probes', 'stationary_branch_kernel_evaluations', 'governor_samples',
+               'governor_propeller_evaluations', 'stationary_branch_corrections')
 cdef long* g_sink = NULL
 
 

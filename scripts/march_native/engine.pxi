@@ -34,7 +34,7 @@ cdef struct Unit:
     double ias_factor
     JetT jet
     int nnoz
-    NozzleT noz[8]
+    NozzleT noz[16]
 
 
 cdef void jet_bracket(const double* grid, int n, double value, bint descending, int* i_out, double* w_out) noexcept nogil:
@@ -221,7 +221,7 @@ cdef void set_unit(Unit* u, unit, double throttle) except *:
     from structural_limits import interval
     from control_mixer import curve as py_curve
     from engine_supply import available_fuel
-    if len(unit.nozzles) > 8:raise ValueError('too many nozzles')
+    if len(unit.nozzles) > 16:raise ValueError('too many nozzles')
     u.nnoz = len(unit.nozzles)
     for k, nz in enumerate(unit.nozzles):set_nozzle(&u.noz[k], nz)
     u.ias_factor = f32(math.sqrt(f32(unit.rho/f32(1.225))))

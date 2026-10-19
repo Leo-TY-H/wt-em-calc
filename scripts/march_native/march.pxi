@@ -224,7 +224,7 @@ cdef class MarchEngine:
     cdef int nlevel
     cdef public dict stats
     cdef public object ceilings
-    cdef public double t_solve, t_finish, t_rows
+    cdef public double t_solve, t_finish, t_rows, t_point, t_python, t_ledger
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -277,7 +277,7 @@ cdef class MarchEngine:
         self.stats = dict(columns=0, fallback=0, predictors_offered=0, python_events=0, native_trials=0, python_calls=0,
                           rows_built=0)
         self.ceilings = {}
-        self.t_solve = self.t_finish = self.t_rows = 0.
+        self.t_solve = self.t_finish = self.t_rows = self.t_point = self.t_python = self.t_ledger = 0.
         self.engine_shafts = []
         if self.is_prop:
             p = solver.engine.properties
@@ -811,6 +811,17 @@ cdef class MarchEngine:
     cdef PointSolver points_(self):
         if self.point_solver is None:self.point_solver = PointSolver(self)
         return <PointSolver>self.point_solver
+
+    def get_point_solver(self):
+        return self.points_()
+
+    def python_counts(self):
+        """Where this engine left native code: Python call-outs by kind (zero everywhere is fully native)."""
+        out = dict(production_columns=self.stats.get('python_calls', 0), python_events=self.stats.get('python_events', 0),
+                   python_instructor=len(self.fin.python_instructors) if self.fin is not None else 0,
+                   python_admission=bool(self.fin.python_admission) if self.fin is not None else False)
+        if self.point_solver is not None:out['prop_branch_recoveries'] = (<PointSolver>self.point_solver).stats['python_recoveries']
+        return out
 
     def flush_counts(self):
         """Book the native work counters to the current Python work record (and its parents)."""
