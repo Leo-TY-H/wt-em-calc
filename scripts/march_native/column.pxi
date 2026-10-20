@@ -137,6 +137,7 @@ cdef class NMarch:
     @cython.wraparound(True)
     def __init__(self, MarchEngine eng, double speed, double turn_tol):
         self.eng = eng;self.speed = speed;self.turn_tol = turn_tol;self.max_step = MAX_STEP_DEG
+        if eng.alpha_max_step > 0.:self.max_step = eng.alpha_max_step   # S8: the dense truth's finer alpha march
         self.max_nfev = MARCH_NFEV
         self.alpha_upper = float(eng.solver.trim_bounds[1][0])
         self.preds.n = 0
