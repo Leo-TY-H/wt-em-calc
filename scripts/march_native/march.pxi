@@ -95,6 +95,7 @@ cdef inline double turn_rate(double speed, double load) noexcept nogil:
 DEF S8_INFLECTION = .5   # S8: band_load across an inflection: the chord +- this times the larger end-slope deviation x width
 DEF S8_SAMPLES = 32      # S8: points across a piece at which its error bound is evaluated
 DEF S9_FOLD_MARGIN = .1  # S9: a level flight with every hard-limit margin above this that stops closing ends at a fold
+DEF S9_BEND = .05        # S9: a polar Mach curve overshooting its end value by more than this fraction is checked at quarters
 
 
 cdef inline void band_load(double va, double na, double sa, double vb, double nb, double sb, double x, double* lo,
