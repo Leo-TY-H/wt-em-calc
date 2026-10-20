@@ -74,6 +74,7 @@ cdef class NColumn:
     cdef public object raw_status, raw_reason
     cdef public object nudged_from     # S6: the requested speed when this column was placed within the speed tolerance
     cdef public int lower              # S8: the lower edge of a column above a forward-IAS limit at level flight (state), or -1
+    cdef public bint jump             # S8: the march met a blade-polar jump (no S6 nudges or robust retries here)
     # S7: the exact slope of the boundary, dn/dV (per km/h) from below / above the column speed (NaN: none), and its kind
     cdef public double slope_l, slope_r
     cdef public object slope_kind
@@ -83,7 +84,7 @@ cdef class NColumn:
     def __init__(self, double speed):
         self.nudged_from = None
         self.slope_l = NAN;self.slope_r = NAN;self.slope_kind = None
-        self.lower = -1
+        self.lower = -1;self.jump = False
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None
@@ -119,6 +120,8 @@ cdef class NMarch:
     cdef public bint strict_faces
     # S7: no S3 rescue (the edge refinement column: where its plain march fails, the edge stays at the localized column)
     cdef public bint no_rescue
+    # S8: a blade-polar jump within reach of a sample's shaft speed was found here (item 5: no S6 probing at such speeds)
+    cdef public bint jump_seen
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -147,6 +150,7 @@ cdef class NMarch:
         self.retries_left = 0
         self.strict_faces = False
         self.no_rescue = False
+        self.jump_seen = False
 
     # ------------------------------------------------------------------ bookkeeping
     @cython.boundscheck(True)
@@ -341,11 +345,14 @@ cdef class NMarch:
         cdef int p
         cdef long evals, fresh
         cdef Trial* t
-        if not self.eng.soft or not self.eng.is_prop:return -1
+        if not self.eng.sliding or not self.eng.is_prop:return -1
         if self.eng.st[low].slide.n > 0:
             spec.n = 0
         else:
-            self.eng.slide_candidate(low, &spec)
+            # the jump check at the correction's own target (alpha, bank and load of its seed)
+            if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value)
+            else:self.eng.slide_candidate(low, &spec, value, sol[1], load)
+
             if spec.n == 0:return -1
         self.eng.slide_override = spec;self.eng.use_override = True
         try:
@@ -359,6 +366,8 @@ cdef class NMarch:
         key = 's8_slide_closed' if spec.n else 's8_unslide_closed'
         if p >= 0 and self.eng.passable(p):
             self.eng.stats[key] = self.eng.stats.get(key, 0)+1
+            # the jump is confirmed as the cause where its sliding state closes (item 5: no S6 probing here)
+            if spec.n:self.jump_seen = True
             return p
         return -1
 

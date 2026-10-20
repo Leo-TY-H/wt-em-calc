@@ -767,7 +767,7 @@ cdef class PropModel:
         out.n = 0
         for s in range(NP):
             out.flag[s] = False;out.theta[s] = 0.;out.lo[s] = 0.;out.hi[s] = 0.
-        if self.nslide:return 0
+        if self.nslide:self.set_slide(0, NULL, NULL, NULL, NULL)
         for k in range(self.npaths):
             q[k] = self.initial[k]
         for s in range(NP):assigned[s] = 0.
@@ -795,10 +795,31 @@ cdef class PropModel:
             else:
                 frac = 0.;omega = c*300.
             if self.locate(s, prep, q, frac, omega, &lo, &hi):continue
+            if not self.straddles(prep, coords, request_indices, nrequest, s, j, c-omega/300., lo, hi):continue
             out.flag[s] = True;out.frac[s] = frac;out.hint[s] = lo
             out.c0[s] = c-(0. if omega <= lo else 1.);out.cw[s] = c-omega/300.
             out.n += 1
         return 0
+
+    cdef bint straddles(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest, int s,
+                        int j, double cw, double lo, double hi) except -1:
+        """S8: the jump blocks shaft ``s``'s torque balance here: its net torque just below and just above the jump
+        (the other coordinates held) have opposite signs, so no shaft speed balances it (the cause the sliding state
+        resolves)."""
+        cdef double c[MAXPATH]
+        cdef double q[MAXPATH]
+        cdef double inner[MAXPATH]
+        cdef double t0, t1
+        cdef PropSample ps
+        cdef int i
+        for i in range(self.nactive):c[i] = coords[i]
+        c[j] = cw+lo/300.
+        if self.propulsion_q(prep, c, request_indices, nrequest, inner, &ps, q):return False
+        t0 = ps.torques[s]
+        c[j] = cw+hi/300.
+        if self.propulsion_q(prep, c, request_indices, nrequest, inner, &ps, q):return False
+        t1 = ps.torques[s]
+        return (t0 > 0.) != (t1 > 0.)
 
     cdef unsigned long long signature(self, int s, const PropPrep* prep, const double* q, double frac, double omega) noexcept:
         """The discrete branch of every blade section of the shaft's propellers at shaft speed ``omega``: the side of
@@ -837,18 +858,18 @@ cdef class PropModel:
                     speed = hypot2(tangential+transverse, axial)
                     if speed == 0.:continue
                     mach = speed/sound
-                    evaluate_polar(&p.polar, mach, &polar)
+                    # only the branches whose change is a jump of the polar: the side of a degenerate Mach row
+                    # (mach_factor: low below its knot, high above it, low != high) and, where the lift line has
+                    # degenerated to a point (aoaLineL == aoaLineH), the side of calc_cl64's +0.01 switch
                     if p.polar.mode == 3:
                         for r in range(7):
-                            if p.polar.rows[r][1] == p.polar.rows[r][2]:
+                            if p.polar.rows[r][1] == p.polar.rows[r][2] and p.polar.rows[r][0] != p.polar.rows[r][3]:
                                 c = 0 if mach < p.polar.rows[r][1] else (1 if mach == p.polar.rows[r][1] else 2)
                                 code = (code ^ <unsigned long long>(c+1))*1099511628211ULL
-                    if polar.aoaLineL <= alpha and alpha <= polar.aoaLineH:c = 0
-                    else:
-                        sgn = 1 if alpha-polar.aoaLineH+0.01 >= 0 else -1
-                        crit = polar.aoaCritH if sgn > 0 else polar.aoaCritL
-                        c = (1 if sgn > 0 else 2)+4*(sgn*(alpha-crit) <= 0)
-                    code = (code ^ <unsigned long long>(c+16))*1099511628211ULL
+                    evaluate_polar(&p.polar, mach, &polar)
+                    if polar.aoaLineL == polar.aoaLineH:
+                        c = 1 if alpha-polar.aoaLineH+0.01 >= 0 else 2
+                        code = (code ^ <unsigned long long>(c+16))*1099511628211ULL
         return code
 
     cdef int locate(self, int s, const PropPrep* prep, const double* q, double frac, double hint, double* lo_out,

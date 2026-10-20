@@ -244,6 +244,7 @@ cdef class MarchEngine:
     # S8: an explicit sliding spec for the next corrections (the blade-polar jump check), instead of the seed's
     cdef SlideSpec slide_override
     cdef public bint use_override
+    cdef public bint sliding         # S8: the sliding state at blade-polar jumps (WT_MARCH_SLIDE=0: off)
     cdef public bint last_closed
     cdef int prop_engines
     cdef list engine_shafts
@@ -302,6 +303,8 @@ cdef class MarchEngine:
         self.t_tangent = 0.
         self.engine_shafts = []
         self.soft = bool(getattr(solver, "soft_admission", False))
+        import os
+        self.sliding = self.soft and os.environ.get("WT_MARCH_SLIDE", "1") != "0"
         from em_speed_limits import speed_limits
         value = speed_limits(solver.fm, solver.config).get("forward_ias_limit_mps")
         self.ias_limit = NAN if value is None else float(value)
@@ -685,16 +688,19 @@ cdef class MarchEngine:
             hard = True
         return hard
 
-    cdef int slide_candidate(self, int sid, SlideSpec* out) except -1:
+    cdef int slide_candidate(self, int sid, SlideSpec* out, double alpha=NAN, double bank=NAN, double load=NAN) except -1:
         """S8 (the blade-polar jump check): the sliding spec of a regular propeller state whose shafts (on a pitch stop
-        or with a fixed pitch) have a blade-polar jump within PropModel.slide_width of their speed; out.n = 0 without."""
+        or with a fixed pitch) have a blade-polar jump within PropModel.slide_width of their speed that blocks their
+        torque balance (net torque of opposite signs either side of it), at the state's flight condition or at the
+        given one (the target of a correction from it); out.n = 0 without."""
         cdef TState* t = &self.st[sid]
         cdef PropPrep* prep
         out.n = 0
         if not self.is_prop or self.fin is None or self.fin.pm is None:return 0
         if not t.has_coords or not t.layout_names or t.slide.n > 0 or not t.req_ok:return 0
         self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
-        prep = self.P.prepared(t.load, t.coords[0], t.coords[1])
+        prep = self.P.prepared(t.load if not isfinite(load) else load, t.coords[0] if not isfinite(alpha) else alpha,
+                               t.coords[1] if not isfinite(bank) else bank)
         self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out)
         self.stats['s8_jump_checks'] = self.stats.get('s8_jump_checks', 0)+1
         if out.n:self.stats['s8_jumps_found'] = self.stats.get('s8_jumps_found', 0)+1
@@ -1140,6 +1146,116 @@ cdef class MarchEngine:
         cdef int p = self.correct(sid, self.st[sid].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, nfev, evals, 2e-6, speed, NULL, NULL)
         if p < 0:return None
         return p, bool(self.st[p].valid), bool(self.physical(p)), self.reason_list(p)
+
+    def debug_jump(self, int sid):
+        """Diagnostics (S8): the blade-polar jump check of a state (its sliding spec record, or None)."""
+        cdef SlideSpec spec
+        self.slide_candidate(sid, &spec)
+        if spec.n == 0:return None
+        for i in range(NP):
+            if spec.flag[i]:
+                spec.lo[i] = spec.hint[i];spec.hi[i] = spec.hint[i];spec.theta[i] = 0.
+        return slide_record(&spec)
+
+    def debug_slide_level(self, int sid, double speed):
+        """Diagnostics (S8): level flight at ``speed`` from state ``sid`` sliding on its jump: (state, valid, reasons,
+        sliding record) or None."""
+        cdef SlideSpec spec
+        cdef int p
+        self.slide_candidate(sid, &spec)
+        if spec.n == 0:return 'no jump'
+        self.slide_override = spec;self.use_override = True
+        try:
+            p = self.correct(sid, self.st[sid].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, 30, 120, 2e-6, speed, NULL, NULL)
+        finally:
+            self.use_override = False
+        if p < 0:return None
+        return p, bool(self.st[p].valid), self.reason_list(p), slide_record(&self.st[p].slide)
+
+    def debug_slide_alpha(self, int sid, double alpha, int nfev=30, int evals=120, bint slide=True):
+        """Diagnostics (S8): the prescribed-alpha correction at the state's speed from ``sid``, sliding on its jump
+        (``slide``) or regular: (state or -1, valid, reasons, last correction, sliding record)."""
+        cdef SlideSpec spec
+        cdef int p
+        cdef double sol[5]
+        if slide:
+            self.slide_candidate(sid, &spec)
+            if spec.n == 0:return 'no jump'
+        else:spec.n = 0
+        for i in range(5):sol[i] = self.st[sid].sol[i]
+        sol[0] = alpha
+        self.slide_override = spec;self.use_override = True
+        try:
+            p = self.correct(sid, sol, self.st[sid].load, True, FIX_ALPHA, alpha, 0, 0, 0, nfev, evals, 2e-6, self.st[sid].speed,
+                             NULL, NULL)
+        finally:
+            self.use_override = False
+        lc = self.last_correction()
+        if p < 0:return -1, None, None, lc, None
+        return p, bool(self.st[p].valid), self.reason_list(p), lc, slide_record(&self.st[p].slide)
+
+    def debug_torque_scan(self, int sid, int shaft, double alpha_shift, list deltas):
+        """Diagnostics (S8): at the state's flight condition (alpha shifted by ``alpha_shift``, the rest held), the
+        propulsion residual rows and the signature of shaft ``shaft`` with its coordinate moved by each delta."""
+        cdef TState* t = &self.st[sid]
+        cdef PropPrep* prep
+        cdef PropSample ps
+        cdef double c[NMAX]
+        cdef double qq[MAXPATH]
+        cdef double inner[MAXPATH]
+        cdef int j, i, code
+        cdef PropModel pm = self.fin.pm
+        out = []
+        self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
+        prep = self.P.prepared(t.load, t.coords[0]+alpha_shift, t.coords[1])
+        j = pm.shaft_coordinate(shaft)
+        pm.use_slide(NULL)
+        for d in deltas:
+            for i in range(t.nx-7):c[i] = t.coords[7+i]
+            c[j] += d
+            code = pm.propulsion_q(prep, c, t.req, t.nreq, inner, &ps, qq)
+            if code:
+                out.append((d, None));continue
+            out.append((d, ps.frame.trans_omega[shaft]*30./M_PI, [inner[i] for i in range(pm.nrows)], ps.torques[shaft],
+                        pm.signature(shaft, prep, qq, ps.fractions[shaft], ps.frame.trans_omega[shaft])))
+        return out
+
+    def debug_slide_sample(self, int sid, double theta):
+        """Diagnostics (S8): the sliding propulsion sample of the state (every jump shaft at ``theta``) against the regular
+        samples just below and above the jump: (sliding row, inner, regular row below, regular row above)."""
+        cdef TState* t = &self.st[sid]
+        cdef SlideSpec spec
+        cdef PropPrep* prep
+        cdef PropSample ps
+        cdef double c[NMAX]
+        cdef double qq[MAXPATH]
+        cdef double inner[MAXPATH]
+        cdef int j, i, s, code
+        cdef PropModel pm = self.fin.pm
+        self.slide_candidate(sid, &spec)
+        if spec.n == 0:return None
+        self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
+        prep = self.P.prepared(t.load, t.coords[0], t.coords[1])
+        out = {}
+        for i in range(t.nx-7):c[i] = t.coords[7+i]
+        for s in range(NP):
+            if spec.flag[s]:c[pm.shaft_coordinate(s)] = spec.c0[s]+theta
+        pm.use_slide(&spec)
+        code = pm.propulsion_q(prep, c, t.req, t.nreq, inner, &ps, qq)
+        pm.slide_result(&spec)
+        out['slide'] = None if code else ([ps.row[i] for i in range(11)], [inner[i] for i in range(pm.nrows)],
+                                          [(s, spec.lo[s]*30/M_PI, spec.hi[s]*30/M_PI) for s in range(NP) if spec.flag[s]])
+        pm.use_slide(NULL)
+        for side in (0, 1):
+            for i in range(t.nx-7):c[i] = t.coords[7+i]
+            for s in range(NP):
+                if spec.flag[s]:c[pm.shaft_coordinate(s)] = spec.cw[s]+(spec.lo[s] if side == 0 else spec.hi[s])/300.
+            code = pm.propulsion_q(prep, c, t.req, t.nreq, inner, &ps, qq)
+            out['below' if side == 0 else 'above'] = None if code else ([ps.row[i] for i in range(11)], [inner[i] for i in range(pm.nrows)])
+        return out
+
+    def debug_state_slide(self, int sid):
+        return slide_record(&self.st[sid].slide)
 
     def debug_events(self, int sid):
         cdef Event ev[32]

@@ -62,6 +62,7 @@ cdef class PointProblem:
         cdef int i, k, code
         cdef bint same
         prep = P.prepared(self.load, q[0], q[1])
+        P.pm.use_slide(NULL)
         code = P.pm.propulsion_q(prep, &q[7], self.req, self.nreq, inner, &ps, qq)
         if code:return 1
         for k in range(self.ncache):
@@ -224,6 +225,7 @@ cdef class PointSolver:
                 for i in range(nx):v = max(v, abs(anchor[i]-x0[i])/self.limits[i])
                 if v <= 1.:
                     for i in range(5, nx):x0[i] = anchor[i]
+        P.slide.n = 0     # S8: point solves are regular (no blade-polar sliding)
         P.nreq = pr.nreq
         for i in range(pr.nreq):P.req[i] = pr.req[i]
         P.speed_kmh = pr.speed_kmh;P.load = pr.load;P.fixed = -2
@@ -570,9 +572,10 @@ cdef class PointSolver:
         seeds = []
         for i in range(nx):q[i] = x[i]
         # problem.residual(x): the corrected state's propulsion sample (its frame and equilibrium coordinates)
-        P.speed_kmh = pr.speed_kmh;P.nprep = 0;P.prep_next = 0
+        P.speed_kmh = pr.speed_kmh;P.nprep = 0;P.prep_next = 0;P.slide.n = 0
         prep = P.prepared(pr.load, q[0], q[1])
         prep_copy = prep[0]
+        pm.use_slide(NULL)
         if pm.propulsion_q(&prep_copy, &q[7], pr.req, pr.nreq, inner, &ps, qq):
             from em_stationary import BranchUnavailable
             raise BranchUnavailable('Governed request branch changed or is inconsistent')
