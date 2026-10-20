@@ -37,14 +37,15 @@ DEF R_INSTR = 19
 DEF R_SIDESLIP = 20
 DEF R_PROP_ADM = 21
 DEF R_LOAD_CAP = 22
-DEF R_FIXED = 23    # first dynamically interned reason text
+DEF R_PROP_BRAKE = 23   # S10: the propellers' net thrust is negative under power (Leo, 2026-10-20)
+DEF R_FIXED = 24    # first dynamically interned reason text
 
 REASON_TEXT = [None, 'bank outside [-90, 90] degrees', 'trim did not converge', 'propulsion did not settle',
                'engine RPM limit', 'propeller shaft stopped', 'propulsion cycle unresolved', 'control authority',
                'post-stall', 'vertical step did not close', 'wing force limit', 'IAS limit', 'Mach limit',
                'sweep unavailable', 'flap automatic retraction', 'flap IAS limit', 'reversed pitch response',
                'pitch response unresolved', 'Instructor boundary unresolved', 'Instructor pitch limit', 'sideslip limit',
-               'propeller admission', 'chart load search limit']
+               'propeller admission', 'chart load search limit', 'propeller braking']
 REASON_CODE = {text: i for i, text in enumerate(REASON_TEXT) if text is not None}
 
 
@@ -56,8 +57,9 @@ cdef int reason_code(text) except -1:
 
 
 cdef inline bint physical_code(int r) noexcept nogil:
-    # em_pitch_response.PHYSICAL_REASONS
-    return r == R_STALL or r == R_CONTROL or r == R_WING or r == R_INSTR or r == R_RPM or r == R_PITCH_REV
+    # em_pitch_response.PHYSICAL_REASONS; S10: propeller braking (a state's own physical rejection under the chart rule)
+    return (r == R_STALL or r == R_CONTROL or r == R_WING or r == R_INSTR or r == R_RPM or r == R_PITCH_REV
+            or r == R_PROP_BRAKE)
 
 
 cdef inline bint soft_code(int r) noexcept nogil:
@@ -153,6 +155,9 @@ cdef class Finisher:
     # soft limits (engine RPM, forward-IAS limits) still gets the hard checks (pitch response, Instructor), so the
     # march can tell a transient soft rejection from the first hard limit along alpha
     cdef public bint soft
+    # S10 (WT_MARCH_S10=0 restores S9): under the chart rule a state whose propellers' net thrust is negative while the
+    # engines deliver power (a braking propeller) is rejected (Leo, 2026-10-20: off the chart everywhere)
+    cdef public bint brake
     cdef public bint is_prop, python_admission
     cdef object admission_revision
     cdef PropModel pm
@@ -198,6 +203,8 @@ cdef class Finisher:
         self.instructor = None;self.loop_stats = None;self.python_instructors = []
         self.chain = NULL
         self.soft = bool(getattr(solver, "soft_admission", False))
+        from em_stationary import braking_rule
+        self.brake = self.is_prop and braking_rule(solver)
         self.request_cache = {}
 
     def set_prop(self, PropModel pm, layout):
@@ -555,9 +562,26 @@ cdef class Finisher:
                 if any(not row['admitted'] for row in rows):self.add_reason(f, R_PROP_ADM)
             elif not self.admitted_native(&s.ps, &s.prep):
                 self.add_reason(f, R_PROP_ADM)
+            if self.brake and self.braking(&s.ps):self.add_reason(f, R_PROP_BRAKE)
         f.local_valid = not f.nreasons
         f.row_valid = f.local_valid and isfinite(k.ps)
         return 0
+
+    cdef bint braking(self, const PropSample* ps) noexcept:
+        """S10: em_stationary.propeller_braking on the native sample: the net thrust of the shafts' propellers (each
+        propeller's force along its axis) is negative while their engines deliver power (sum of torque x shaft speed)."""
+        cdef const PFrame* fr = &ps.frame
+        cdef PropModel pm = self.pm
+        cdef double thrust = 0., power = 0.
+        cdef int s, k, idx, i
+        for s in range(pm.nt):
+            for k in range(pm.trans[s].np):
+                idx = pm.trans[s].props[k].index
+                for i in range(3):thrust += fr.props[idx].outputs[i]*pm.props[idx].basis[i]
+            for k in range(pm.trans[s].ne):
+                idx = pm.trans[s].engines[k].index
+                power += fr.engines[idx].torque*fr.engines[idx].omega
+        return thrust < 0. and power > 0.
 
     cdef void add_reason(self, Fin* f, int code) noexcept:
         if f.nreasons < MAXREASONS:

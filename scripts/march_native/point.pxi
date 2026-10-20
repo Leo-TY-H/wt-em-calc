@@ -328,7 +328,13 @@ cdef class PointSolver:
         finally:
             self.eng.fin.chain = NULL
             self.eng.t_point += s5_now()-t0
-        return self.result(speed_kmh, load, candidates, attempts, recovery_records, started)
+        sid = self.result(speed_kmh, load, candidates, attempts, recovery_records, started)
+        if self.eng.s10 and self.eng.has_code(sid, R_PROP_BRAKE):
+            # S10: the representative state brakes: the prescribed-load correction from it with coarser governor pitch
+            # (MarchEngine.brake_reseed) for the pulling state of this speed and load
+            q = self.eng.brake_reseed(sid, FIX_LOAD, load, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed_kmh)
+            if q >= 0:return q
+        return sid
 
     @cython.boundscheck(True)
     @cython.wraparound(True)

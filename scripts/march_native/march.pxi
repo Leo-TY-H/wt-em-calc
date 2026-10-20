@@ -56,10 +56,11 @@ DEF KD_STALL = 5
 DEF KD_FOLD = 6
 DEF KD_WING = 7
 DEF KD_IAS = 8      # S8: a forward-IAS limit face (wing VNE, flap retraction or damage by IAS; native event 7)
-DEF NKD = 9
+DEF KD_BRAKE = 9    # S10: propeller braking (net propeller thrust negative under power) met along alpha
+DEF NKD = 10
 # Kind names in the lexical order of the Python strings (sorted() of (root, kind) ties)
 KIND_TEXT = ('Instructor pitch', 'control', 'engine RPM', 'pitch response', 'propeller pitch', 'stall', 'trim fold',
-             'wing force', 'IAS limit')
+             'wing force', 'IAS limit', 'propeller braking')
 KIND_CODE = {k: i for i, k in enumerate(KIND_TEXT)}
 
 DEF G_TURN = 9.8100004196167
@@ -84,6 +85,7 @@ cdef inline int reason_kind(int r) noexcept nogil:
     if r == R_INSTR:return KD_INSTR
     if r == R_RPM:return KD_RPM
     if r == R_PITCH_REV:return KD_PITCH
+    if r == R_PROP_BRAKE:return KD_BRAKE
     return -1
 
 
@@ -277,6 +279,10 @@ cdef class MarchEngine:
     cdef public int ncut
     cdef double cut[8]
     cdef public bint last_closed
+    # S10 (WT_MARCH_S10=0 restores S9 exactly): a braking propeller state (net thrust negative under power) is rejected,
+    # and a correction that lands on one is tried again from coarser governor pitch (brake_reseed)
+    cdef public bint s10
+    cdef bint brake_retry
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -339,6 +345,8 @@ cdef class MarchEngine:
         self.s9 = self.soft and os.environ.get("WT_MARCH_S9", "1") != "0"
         self.ncut = 0
         if self.fin is not None and self.fin.pm is not None:self.fin.pm.s9 = self.s9
+        self.s10 = self.s9 and self.fin is not None and self.fin.brake
+        self.brake_retry = False
         from em_speed_limits import speed_limits
         value = speed_limits(solver.fm, solver.config).get("forward_ias_limit_mps")
         self.ias_limit = NAN if value is None else float(value)
@@ -1028,7 +1036,53 @@ cdef class MarchEngine:
             # keeps it: the chart rule can admit it, as a transient over-rev, after the march)
             if si == self.nsrc-1:
                 self.nsrc -= 1;self.st[sid].src = -1
+        if self.s10 and not self.brake_retry and self.has_code(sid, R_PROP_BRAKE):
+            k = self.brake_reseed(sid, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
+                                  event_tolerance, speed)
+            if k >= 0:return k
+            self.last_load = n;self.last_cap = cap;self.last_closed = True
         return sid
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int brake_reseed(self, int sid, int fixed_kind, double value, int ev_kind, int ev_axis, int ev_side,
+                          int max_nfev, int max_evaluations, double event_tolerance, double speed) except -2:
+        """S10: a correction that closed on a braking propeller state (its governed propellers near the fine pitch stop,
+        their blade sections at negative incidence) is tried again with the same equations from that state with every
+        governor coordinate moved towards the coarse stop (halfway, then a quarter of the way; on the fine stop: to mid
+        travel), where the pulling state of the same shaft speed lies (ER-2 ACh-30B SB 515 km/h: 24.6 against 33.4 deg).
+        The first such correction that closes on a state that does not brake, or -1 (the braking state is the only one
+        found: pulling flight ends there)."""
+        cdef int j, cid, q, attempt
+        cdef double g
+        cdef double sol[5]
+        cdef bint moved
+        if not self.st[sid].has_coords or not self.st[sid].layout_names:return -1
+        self.stats['s10_brake_states'] = self.stats.get('s10_brake_states', 0)+1
+        for attempt in range(2):
+            cid = self.new_state()
+            self.st[cid] = self.st[sid]
+            self.st[cid].src = -1;self.st[cid].row = -1;self.st[cid].base = cid;self.st[cid].limit = -1
+            self.st[cid].valid = False
+            moved = False
+            for j in range(self.st[cid].nx):
+                if j >= self.layout_nx or not self.layout_names[j].startswith('governor:'):continue
+                g = self.st[sid].coords[j]
+                if g < 0.:self.st[cid].coords[j] = .5
+                elif g < 1.:self.st[cid].coords[j] = .5*(g+1.) if attempt == 0 else g+.25*(1.-g)
+                moved = moved or self.st[cid].coords[j] != g
+            if not moved:return -1
+            for j in range(5):sol[j] = self.st[sid].sol[j]
+            self.brake_retry = True
+            try:
+                q = self.correct(cid, sol, self.st[sid].load, True, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
+                                 max_evaluations, event_tolerance, speed, NULL, NULL)
+            finally:
+                self.brake_retry = False
+            if q >= 0 and not self.has_code(q, R_PROP_BRAKE):
+                self.stats['s10_brake_reseeded'] = self.stats.get('s10_brake_reseeded', 0)+1
+                return q
+        return -1
 
     # ------------------------------------------------------------------ S7: exact slopes
     @cython.boundscheck(True)
