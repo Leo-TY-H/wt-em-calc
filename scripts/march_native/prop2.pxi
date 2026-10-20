@@ -17,6 +17,36 @@ cdef struct PropPrep:
     double tseed[NP]
 
 
+cdef unsigned long long cl_jump_sides(const BPolar* p, double alpha, unsigned long long code) noexcept nogil:
+    """S9 (the blade-polar jump check): the side of ``alpha`` of every breakpoint of calc_cl64 where the lift jumps (the
+    ends of the lift line, the +0.01 branch switch below its upper end, the critical angles and the post-stall
+    breakpoints): a legacy polar keeps its stall-shape parabolas from the base polar while its lift line follows the
+    Mach rows, so the lift can jump where a section leaves the lift line (Do 17 Z-7 propellers at 147-153 km/h, 1 g).
+    A breakpoint where the lift is continuous is left out (no torque jump there)."""
+    cdef double pts[12]
+    cdef double b, d, lo, hi, mx = pmax(40., p.maxDistAng)
+    cdef int k, n = 0
+    pts[n] = p.aoaLineL;n += 1
+    pts[n] = p.aoaLineH;n += 1
+    pts[n] = p.aoaLineH-0.01;n += 1
+    pts[n] = p.aoaCritH;n += 1
+    pts[n] = p.aoaCritL;n += 1
+    pts[n] = p.aoaCritH+p.parabAngle;n += 1
+    pts[n] = p.aoaCritL-p.parabAngle;n += 1
+    pts[n] = p.maxDistAng;n += 1
+    pts[n] = -p.maxDistAng;n += 1
+    pts[n] = mx;n += 1
+    pts[n] = -mx;n += 1
+    for k in range(n):
+        b = pts[k]
+        if not isfinite(b):continue
+        d = 1e-7*(1.+fabs(b))
+        lo = calc_cl64(p, b-d);hi = calc_cl64(p, b+d)
+        if fabs(hi-lo) > 1e-4*(1.+fabs(lo)):
+            code = (code ^ <unsigned long long>(32+2*k+(1 if alpha >= b else 0)))*1099511628211ULL
+    return code
+
+
 cdef struct SlideSpec:
     # S8: the shafts sliding on a blade-polar jump (PropModel.set_slide) and, for a state, where (theta, shaft speeds)
     int n
@@ -121,9 +151,12 @@ cdef class PropModel:
     cdef double slide_theta[NP]
     cdef double slide_lo[NP]
     cdef double slide_hi[NP]
+    # S9: theta's coordinate range kept inside the shaft coordinate's bounds (set by MarchEngine; False: S8)
+    cdef public bint s9
 
     def __cinit__(self, *args, **kwargs):
         self.units = NULL
+        self.s9 = False
 
     def __dealloc__(self):
         if self.units != NULL:pfree(self.units)
@@ -799,6 +832,15 @@ cdef class PropModel:
             if straddle and not self.straddles(prep, coords, request_indices, nrequest, s, j, c-omega/300., lo, hi):continue
             out.flag[s] = True;out.frac[s] = frac;out.hint[s] = lo
             out.c0[s] = c-(0. if omega <= lo else 1.);out.cw[s] = c-omega/300.
+            if self.s9:
+                # S9: theta in [0, 1] is the coordinate minus c0, and the coordinate keeps its own bounds in the
+                # correction (a shaft speed's are [min, max] shaft speed / 300): c0 is placed so that [c0, c0+1] lies
+                # inside them (an S8 c0 at the shaft speed itself cut theta off well inside [0, 1] on fast shafts); the
+                # correction starts the coordinate at c0 plus the side of the jump the state is on (theta here)
+                out.theta[s] = 0. if omega <= lo else 1.
+                k = self.active[j]
+                if self.upper[k]-self.lower[k] > 1.+2e-9:
+                    out.c0[s] = pmin(pmax(out.c0[s], self.lower[k]+1e-9), self.upper[k]-1.-1e-9)
             out.n += 1
         return 0
 
@@ -871,7 +913,48 @@ cdef class PropModel:
                     if polar.aoaLineL == polar.aoaLineH:
                         c = 1 if alpha-polar.aoaLineH+0.01 >= 0 else 2
                         code = (code ^ <unsigned long long>(c+16))*1099511628211ULL
+                    elif self.s9:
+                        code = cl_jump_sides(&polar, alpha, code)
         return code
+
+    cdef list debug_stations(self, int s, const PropPrep* prep, const double* q, double frac, double omega):
+        """Diagnostics (S9): the blade sections of shaft ``s`` at shaft speed ``omega`` (signature()'s inputs and the
+        polar there): (prop, rotor, station, mach, alpha, aoaLineL, aoaLineH, aoaCritL, aoaCritH, cl, cd)."""
+        cdef int kk, idx, k, rotor, nrot
+        cdef const PropT* p
+        cdef PropState st
+        cdef double local[3]
+        cdef double local_w[3]
+        cdef double tsq, transverse, axial, lo, hi, pitch, om, angular, radius, tangential, phi, alpha, speed, mach
+        cdef double sound = speed_of_sound(self.altitude, F(288.16), F(18300.))
+        cdef BPolar polar
+        out = []
+        for kk in range(self.trans[s].np):
+            idx = self.trans[s].props[kk].index;p = &self.props[idx]
+            st = self.seed_props[idx]
+            for k in range(self.npaths):
+                if self.path_kind[k] == 2 and self.path_i[k] == idx:st.flow[self.path_j[k]] = q[k]*self.scales[k]
+            om = omega*self.trans[s].props[kk].ratio
+            self.pitch_limits(p, prep.velocity, prep.rates, om, &lo, &hi)
+            pitch = lo+pmin(1., pmax(0., frac))*(hi-lo)
+            if p.governor and not st.auto and not (p.governor == 1 or p.governor == 2):
+                pitch = p.pitch_max+st.command*(p.pitch_min-p.pitch_max)
+            local_flow32(p, prep.velocity, prep.rates, local, local_w, &tsq, &transverse)
+            axial = local[0]+.5*(st.flow[0]+st.flow[1])
+            nrot = 2 if p.coaxial else 1
+            for rotor in range(nrot):
+                angular = (.25 if rotor == 0 else -.25)*st.flow[2]
+                for k in range(4):
+                    radius = p.station_radius[k]
+                    tangential = radius*(om-angular)
+                    phi = atan2(axial, tangential) if fabs(om) >= 1e-5 else M_PI/2
+                    alpha = (pitch-phi+p.twist[k])*RAD_TO_DEG
+                    speed = hypot2(tangential+transverse, axial)
+                    mach = speed/sound
+                    evaluate_polar(&p.polar, mach, &polar)
+                    out.append((idx, rotor, k, mach, alpha, polar.aoaLineL, polar.aoaLineH, polar.aoaCritL, polar.aoaCritH,
+                                calc_cl64(&polar, alpha), calc_cd64(&polar, alpha), pitch*RAD_TO_DEG, lo*RAD_TO_DEG, hi*RAD_TO_DEG))
+        return out
 
     cdef int locate(self, int s, const PropPrep* prep, const double* q, double frac, double hint, double* lo_out,
                     double* hi_out) noexcept:

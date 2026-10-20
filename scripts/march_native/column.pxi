@@ -12,6 +12,9 @@ DEF REGIME_REACH = .35
 DEF ROBUST_NFEV = 30
 DEF ROBUST_EVALS = 120
 DEF ROBUST_RETRIES = 16     # retried corrections per S6 rescue of one column (the resolving rescues needed at most 13)
+DEF S9_TRIM_DEV = .02       # S9: elevator-command distance (of its [-1, 1] travel) from the step's linear prediction ...
+DEF S9_TRIM_SLOPE = .02     # ... with a secant-slope change (per deg) above the previous secant's, or this, splits the step
+DEF S9_TRIM_PITCH = .8      # ... where the pitch-response margin fell below this fraction over the step before
 
 STATUS_TEXT = ('verified limit', 'plot ceiling', 'unresolved numerical boundary', 'no feasible samples', None)
 RESCUE_REASONS = ('march correction unresolved', 'march roots disagree')
@@ -123,6 +126,8 @@ cdef class NMarch:
     cdef public bint no_rescue
     # S8: a blade-polar jump within reach of a sample's shaft speed was found here (item 5: no S6 probing at such speeds)
     cdef public bint jump_seen
+    # S9: the next march step approaches a hard limit's predicted root (no warm start from another speed then)
+    cdef bint approach
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -153,6 +158,7 @@ cdef class NMarch:
         self.strict_faces = False
         self.no_rescue = False
         self.jump_seen = False
+        self.approach = False
 
     # ------------------------------------------------------------------ bookkeeping
     @cython.boundscheck(True)
@@ -350,10 +356,16 @@ cdef class NMarch:
         if not self.eng.sliding or not self.eng.is_prop:return -1
         if self.eng.st[low].slide.n > 0:
             spec.n = 0
+            if self.eng.s9:
+                # S9: from a sliding seed, the jump check again at the target: the shafts still blocked keep sliding, the
+                # others are regular (a set equal to the seed's is the correction that failed: then all regular, as S8)
+                if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value, True, self.speed, True)
+                else:self.eng.slide_candidate(low, &spec, value, sol[1], load, True, self.speed, True)
+                if spec.n > 0 and self.eng.same_slide(&spec, &self.eng.st[low].slide):spec.n = 0
         else:
             # the jump check at the correction's own target (alpha, bank and load of its seed)
-            if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value)
-            else:self.eng.slide_candidate(low, &spec, value, sol[1], load)
+            if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value, True, self.speed)
+            else:self.eng.slide_candidate(low, &spec, value, sol[1], load, True, self.speed)
 
             if spec.n == 0:return -1
         self.eng.slide_override = spec;self.eng.use_override = True
@@ -397,6 +409,7 @@ cdef class NMarch:
         for i in range(self.eng.nstore):
             r = &self.eng.store[i]
             if r.speed == self.speed or fabs(r.speed-self.speed) > REUSE_WINDOW:continue
+            if self.eng.ncut and self.eng.across(r.speed, self.speed):continue
             if side12(r.alpha) != side12(alpha):continue
             q = &self.eng.st[r.state]
             if q.nreq != s.nreq:continue
@@ -419,6 +432,7 @@ cdef class NMarch:
         for i in range(self.eng.nstore):
             r = &self.eng.store[i]
             if r.speed == self.speed or fabs(r.speed-self.speed) > REUSE_WINDOW:continue
+            if self.eng.ncut and self.eng.across(r.speed, self.speed):continue
             if lo <= r.alpha and r.alpha <= target and fabs(r.speed-self.speed) <= REUSE_WINDOW/2:
                 if not found or r.alpha > best:best = r.alpha
                 found = True
@@ -439,6 +453,7 @@ cdef class NMarch:
             for i in range(self.eng.nlevel):
                 r = &self.eng.level_store[i]
                 if r.speed == self.speed or (self.eng.dive_seed and r.speed > self.speed):continue
+                if self.eng.ncut and self.eng.across(r.speed, self.speed):continue
                 d = fabs(r.speed-self.speed)
                 if best == NULL or d < bd:
                     best = r;bd = d
@@ -536,17 +551,37 @@ cdef class NMarch:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint trim_jump(self, int h0, int h1, int h2) noexcept:
+        """S9: the elevator command over the march step [h1, h2] (h0 the sample before) does not continue the previous
+        step: off the linear prediction by more than S9_TRIM_DEV, with a secant slope that differs from the previous one
+        by more than that slope's size (or S9_TRIM_SLOPE). A smooth trim branch passes once the steps are short; a fold
+        or a jump to another branch does not."""
+        cdef double x0 = self.eng.st[h0].alpha, x1 = self.eng.st[h1].alpha, x2 = self.eng.st[h2].alpha
+        cdef double e0 = self.eng.st[h0].sol[3], e1 = self.eng.st[h1].sol[3], e2 = self.eng.st[h2].sol[3], d1, d2
+        if not (x0 < x1-1e-9 and x1 < x2-1e-9):return False
+        # a trim fold is where the pitch response vanishes: only while its margin is falling (by S9_TRIM_PITCH over the
+        # step before; the elevator's own bend towards the stall leaves it flat)
+        if not ((self.eng.st[h0].mset >> KD_PITCH) & 1 and (self.eng.st[h1].mset >> KD_PITCH) & 1
+                and self.eng.st[h1].m[KD_PITCH] < S9_TRIM_PITCH*self.eng.st[h0].m[KD_PITCH]):return False
+        d1 = (e1-e0)/(x1-x0);d2 = (e2-e1)/(x2-x1)
+        if fabs(e2-e1-d1*(x2-x1)) <= S9_TRIM_DEV:return False
+        return fabs(d2-d1) > pmax(fabs(d1), S9_TRIM_SLOPE)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef double next_alpha(self, list history, double step, bint has_predicted, double predicted) except? -1e300:
         """RescueMarch.next_alpha."""
         cdef int low = history[-1], k
         cdef double a = self.eng.st[low].alpha, target, root, c[3], vertex, c2, c1
         cdef TState* t = &self.eng.st[low]
         target = a+step
+        self.approach = False
         if has_predicted and predicted > a+.05:target = pmin(target, predicted+pmax(OVERSHOOT_DEG, .02*(predicted-a)))
         if len(history) >= 2:
             for k in range(NKD):
                 if not (t.mset >> k) & 1 or self.eng.soft_kind(k):continue
                 if not self.margin_root(history, k, &root):continue
+                if root-a <= 2*self.max_step:self.approach = True
                 if root-a > APPROACH_DEG:target = pmin(target, a+.75*(root-a))
                 else:target = pmin(target, root+pmax(OVERSHOOT_DEG, .03*(root-a)))
         if len(history) >= 3:
@@ -568,7 +603,12 @@ cdef class NMarch:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef bint closed(self, int lo, int hi) noexcept:
-        return fabs(turn_rate(self.speed, self.eng.st[hi].load)-turn_rate(self.speed, self.eng.st[lo].load)) <= self.turn_tol
+        if fabs(turn_rate(self.speed, self.eng.st[hi].load)-turn_rate(self.speed, self.eng.st[lo].load)) > self.turn_tol:return False
+        # S9: the turn rates of the two states bound the face's only where the rejected state continues the admitted
+        # one's branch; past a stall it lies on another (the load drops back, J35A SB 152.6 km/h), so the bracket
+        # closes in alpha too (0.1 deg)
+        if self.eng.s9 and fabs(self.eng.st[hi].alpha-self.eng.st[lo].alpha) > .1:return False
+        return True
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -579,7 +619,7 @@ cdef class NMarch:
         cdef int side = 0, it, p, kind, axis
         cdef bint done = False
         has_flo = self.eng.combined(lo, &flo);has_fhi = self.eng.combined(hi, &fhi)
-        for it in range(16):
+        for it in range(24 if self.eng.s9 else 16):
             if self.closed(lo, hi):
                 done = True;break
             w = self.eng.st[hi].alpha-self.eng.st[lo].alpha
@@ -751,7 +791,11 @@ cdef class NMarch:
             else:
                 for i in range(5):sol[i] = self.eng.st[low].sol[i]
                 load = self.eng.st[low].load
-            p = self.at(seed_state, sol, load, self.eng.st[seed_state].alpha, target, 'march', True, self.eng.st[low].alpha)
+            # S9: approaching a hard limit, the step is corrected from this column's own samples only: a warm start from
+            # another speed's state at the same alpha can land on another equilibrium branch and pass the limit the
+            # branch continued from level flight meets (F-16XL SB 174 km/h: the pitch-response reversal)
+            p = self.at(seed_state, sol, load, self.eng.st[seed_state].alpha, target,
+                        'march near' if self.eng.s9 and self.approach else 'march', True, self.eng.st[low].alpha)
             # S8: a prescribed-alpha correction that ends on the load cap (its turn coordinate is bounded there) shows
             # that the cap lies before this alpha
             at_cap = p < 0 and isfinite(self.eng.last_load) and self.eng.last_load >= self.eng.last_cap*(1.-1e-6)
@@ -776,6 +820,17 @@ cdef class NMarch:
                 if step < .05:return -1, 'unresolved numerical boundary', 'march correction unresolved'
                 has_predicted = False
                 continue
+            if self.eng.s9 and self.eng.passable(p) and len(history) >= 2 and self.trim_jump(history[-2], low, p):
+                # S9: the elevator command leaves the branch continued from level flight between the samples (its secant
+                # slope more than doubles and the step lands off its linear prediction): a trim fold (pitch-response
+                # reversal) or a jump to another trim branch can lie between them (Hunter SB 1110-1124 km/h: the fold at
+                # 7.03 deg, no trim to 7.2 deg, a second branch above): the step is halved; a correction past a fold
+                # fails there and the pitch face is found from the last sample (hard_face)
+                self.eng.stats['s9_trim_splits'] = self.eng.stats.get('s9_trim_splits', 0)+1
+                step = .5*(self.eng.st[p].alpha-self.eng.st[low].alpha);has_predicted = False
+                if step >= .01:continue
+                edge = self.hard_face(history, self.eng.st[p].alpha)
+                if edge >= 0:return self.finish_face(history, edge)
             if self.eng.soft and self.eng.passable(p) and len(history) >= 2:
                 # S8: the split rule along alpha: where a hard limit could lie between the samples, a sample there
                 dip = self.margin_dip(history[-2], low, p)
@@ -903,13 +958,16 @@ cdef class NMarch:
         cdef bint has_lo, has_hi
         cdef long evals, fresh
         if kind == KD_IAS and isfinite(self.eng.ias_limit):
-            q = self.correct_at(lo, self.eng.st[lo].sol, self.eng.st[lo].load, FIX_EVENT, 0., 7, 0, 0, 16, 0, 2e-6,
-                                &self.preds, &evals, &fresh, NULL)
-            if (q >= 0 and self.eng.st[q].valid and pmin(self.eng.st[lo].alpha, self.eng.st[hi].alpha)-.5 <= self.eng.st[q].alpha
-                    and self.eng.st[q].alpha <= pmax(self.eng.st[lo].alpha, self.eng.st[hi].alpha)+.5):
-                self.samples.append(q)
-                return self.eng.mark(q, KD_IAS, -1, dict(method='S8 forward-IAS face (event correction)',
-                                                         ias_limit_kmh=self.eng.ias_limit*3.6))
+            # S9: from the sample over the limit too (an event correction from level flight starts where the turn
+            # coordinate is singular)
+            for seed in ([lo, hi] if self.eng.s9 else [lo]):
+                q = self.correct_at(seed, self.eng.st[seed].sol, self.eng.st[seed].load, FIX_EVENT, 0., 7, 0, 0, 16, 0, 2e-6,
+                                    &self.preds, &evals, &fresh, NULL)
+                if (q >= 0 and self.eng.st[q].valid and pmin(self.eng.st[lo].alpha, self.eng.st[hi].alpha)-.5 <= self.eng.st[q].alpha
+                        and self.eng.st[q].alpha <= pmax(self.eng.st[lo].alpha, self.eng.st[hi].alpha)+.5):
+                    self.samples.append(q)
+                    return self.eng.mark(q, KD_IAS, -1, dict(method='S8 forward-IAS face (event correction)',
+                                                             ias_limit_kmh=self.eng.ias_limit*3.6))
         for it in range(24):
             if self.closed(lo, hi):break
             w = self.eng.st[hi].alpha-self.eng.st[lo].alpha
@@ -919,6 +977,13 @@ cdef class NMarch:
             t = flo/(flo-fhi) if has_lo and has_hi and flo > 0. and 0. > fhi and it % 3 != 2 else .5
             t = pmin(.9, pmax(.1, t))
             p = self.at_state(lo, self.eng.st[lo].alpha+t*w, 's8 soft-limit stretch')
+            if p < 0 and self.eng.s9:
+                # S9: a correction that does not close over a long alpha step: the same alpha from the sample over the
+                # limit, then a quarter of the bracket from the one within it
+                p = self.at_state(hi, self.eng.st[lo].alpha+t*w, 's9 soft-limit stretch')
+                if p < 0:
+                    t = .25
+                    p = self.at_state(lo, self.eng.st[lo].alpha+t*w, 's9 soft-limit stretch')
             if p < 0:return -1
             if self.eng.passable(p) and not self.over(p, mask):lo = p
             elif self.eng.passable(p):hi = p
@@ -988,6 +1053,11 @@ cdef class NMarch:
                     if edge >= 0:return edge
                 continue
             edge = self.active_face(low, target, k)
+            if edge >= 0 and self.eng.s9 and len(history) >= 2 and self.trim_jump(history[-2], low, edge):
+                # S9: a face corrected from the last sample onto another trim branch (past a fold the march failed at:
+                # Hunter SB 1121-1124 km/h, the wing-force face above the pitch-response fold) is not this column's face
+                self.eng.stats['s9_trim_faces'] = self.eng.stats.get('s9_trim_faces', 0)+1
+                continue
             if edge >= 0:return edge
         nev = self.eng.nearest_events(low, ev)
         for i in range(min(3, nev)):
@@ -1212,7 +1282,7 @@ cdef class NMarch:
             t = &self.trials[i]
             if t.ok != -1 or not isfinite(t.alpha):continue
             why = self.eng.why_text[t.why]
-            if why not in ('march', 'march confirm'):continue
+            if why not in ('march', 'march confirm', 'march near'):continue
             a = round(t.alpha, 4)
             if a > self.eng.st[low].alpha:failed.append(a)
         if not failed:return None
