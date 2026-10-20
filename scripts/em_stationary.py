@@ -29,6 +29,30 @@ class BranchUnavailable(UnevaluableTrial):
     """A search branch is unavailable; not a proof of aircraft absence."""
 
 
+def braking_rule(solver):
+    """S10 (Leo, 2026-10-20; WT_MARCH_S10=0 or WT_MARCH_S9=0 removes it): under the march chart's admission rule
+    (solver.soft_admission) a propeller state whose net thrust is negative under power is rejected ('propeller braking')."""
+    import os
+    return (bool(getattr(solver, 'soft_admission', False)) and os.environ.get('WT_MARCH_S10', '1') != '0'
+            and os.environ.get('WT_MARCH_S9', '1') != '0')
+
+
+def propeller_braking(properties, state):
+    """S10: the net thrust of the shafts' propellers (each propeller's force along its own axis) is negative while
+    their engines deliver power (the sum of engine torque x shaft speed is positive). The native Finisher.braking."""
+    thrust = power = 0.
+    for i, shaft in enumerate(properties['transmissions']):
+        for link in shaft['propellers']:
+            index = link['index']
+            force = state['propellers'][index]['outputs']
+            basis = properties['propellers'][index]['properties']['basis']
+            for k in range(3):thrust += force[k]*basis[k]
+        for link in shaft['engines']:
+            engine = state['engines'][link['index']]
+            power += engine.get('torque', 0.)*engine['omega']
+    return thrust < 0. and power > 0.
+
+
 def prepare(solver, speed, load, attitude):
     velocity, _, geometry, _ = flight_condition(solver, speed, load, attitude)
     velocity = tuple(map(f32, velocity))
@@ -346,6 +370,9 @@ class JointProblem:
             point['reasons'].append('sideslip limit')
         if any(not row['admitted'] for row in restrictions):
             point['reasons'].append('propeller admission')
+        if (self.solver.is_prop and braking_rule(self.solver)
+                and propeller_braking(self.solver.engine.properties, value['propulsion']['state'])):
+            point['reasons'].append('propeller braking')
         point['local_valid'] = not point['reasons']
         point.update(valid=point['local_valid'],
             status='admitted' if point['local_valid'] else 'unresolved',
