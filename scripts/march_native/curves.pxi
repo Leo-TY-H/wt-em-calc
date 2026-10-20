@@ -61,11 +61,11 @@ cdef class NCurves:
     cdef list owners
     # S7: exact knot slopes (state id -> (left, right) dw/dV per km/h, NaN where unavailable) and the switch
     cdef public dict slopes
-    cdef public bint s7
+    cdef public bint s7, s8
     cdef double tangent_delta
     cdef public list segs
     # S8: the envelope boundary (verified columns: speed, limiting load) for the transient over-rev rule
-    cdef public list env_v, env_n
+    cdef public list env_v, env_n, env_ps
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -95,6 +95,8 @@ cdef class NCurves:
         self.column_ids = {}
         self.slopes = {}
         self.s7 = os.environ.get('WT_CURVE_S7', '1') != '0'
+        # S8: WT_MARCH_S8=0 restores the S7 curve solver (no rescue of failing stretches)
+        self.s8 = os.environ.get('WT_MARCH_S8', '1') != '0' and self.s7
         self.tangent_delta = .5
 
     # ------------------------------------------------------------------ states
@@ -256,6 +258,65 @@ cdef class NCurves:
                            seed_load_g=load, reason=reason)
         self.eng.t_ledger += s5_now()-t0
         return outcome, (None if p < 0 else p), reason
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int rescue_direct(self, double speed, double target, int anchor, list attitude, double load, phase) except -2:
+        """S8 (item 3): a stretch of a curve that does not solve: the sliding state where the anchor's blade polar jump
+        blocks its torque balance at the target, then the S6 corrections (governor coordinates on their regime boundary,
+        a larger budget). An admitted state at the level compatible with the anchor, or -1."""
+        cdef SlideSpec spec
+        cdef double sol[5]
+        cdef int p = -1, i, rs
+        cdef double offset
+        cdef NMarch m
+        if not self.s8:return -1
+        for i in range(5):sol[i] = attitude[i]
+        if self.eng.sliding and self.eng.is_prop:
+            self.eng.slide_candidate(anchor, &spec, sol[0], sol[1], load)
+            if spec.n:
+                self.eng.slide_override = spec;self.eng.use_override = True
+                try:
+                    p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, ROBUST_NFEV, 0, self.allowance, speed,
+                                         NULL, NULL)
+                finally:
+                    self.eng.use_override = False
+                if self.ok_root(p, anchor, target):
+                    self.eng.stats['s8_curve_slides'] = self.eng.stats.get('s8_curve_slides', 0)+1
+                    return p
+        m = NMarch(self.eng, speed, self.turn_tol)
+        for offset in (0., .01):
+            rs = m.regime_seed(anchor, offset)
+            if rs < 0:break
+            p = self.eng.correct(rs, sol, load, True, FIX_SEP, target, 0, 0, 0, ROBUST_NFEV, 0, self.allowance, speed, NULL, NULL)
+            if self.ok_root(p, anchor, target):
+                self.eng.stats['s8_curve_regime'] = self.eng.stats.get('s8_curve_regime', 0)+1
+                return p
+        p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, ROBUST_NFEV, 0, self.allowance, speed, NULL, NULL)
+        if self.ok_root(p, anchor, target):
+            self.eng.stats['s8_curve_budget'] = self.eng.stats.get('s8_curve_budget', 0)+1
+            return p
+        self.eng.flush_counts()
+        return -1
+
+    cdef int edge_root(self, int k, double v_out, double target) except -2:
+        """S8: where a curve leaves the envelope between knot ``k`` and the rejected speed ``v_out``: bisection in speed
+        (SEP-fixed corrections from the last admitted state) to the speed tolerance; the last admitted state, or -1."""
+        cdef int good = k
+        cdef double lo = self.eng.st[k].speed, hi = v_out, mid, w
+        while fabs(hi-lo) > self.speed_tol:
+            mid = .5*(lo+hi)
+            w = pow(self.eng.st[good].load, 2.)-1.
+            outcome, q, reason = self.direct_seed(mid, target, sqrt(1.+pmax(w, 1e-6)), [good], None, 'interpolation_checks')
+            if outcome == 'admitted' and q is not None and self.eng.compatible(q, good):
+                lo = mid;good = q
+            else:hi = mid
+        return good if good != k else -1
+
+    cdef bint ok_root(self, int p, int anchor, double target) except -1:
+        if p < 0:return False
+        self.admit_transient(p)
+        return self.eng.st[p].valid and fabs(self.eng.st[p].ps-target) <= self.allowance and self.eng.compatible(p, anchor)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -448,6 +509,17 @@ cdef class NCurves:
                 outcome, reason = 'incompatible', 'branch changed during continuation'
             failure = dict(speed_kmh=speed, outcome=outcome, reason=reason, point=point)
             if abs(speed-self.eng.st[last].speed) <= self.speed_tol:
+                if self.s8 and outcome != 'rejected':
+                    # S8 (item 3): before the curve ends here, sliding on a confirmed blade-polar jump and the S6 retries
+                    self.eng.flush_counts();before = self.ledger.snapshot()
+                    rescued = self.rescue_direct(speed, target, last, attitude, n, 'continuation')
+                    self.eng.flush_counts()
+                    self.ledger.charge('continuation', before, 'admitted' if rescued >= 0 else 'unresolved', kind='rescue',
+                                       speed_kmh=speed, target_mps=target)
+                    if rescued >= 0:
+                        self.add_knot(comp, rescued, side)
+                        failure = None
+                        continue
                 return self.classify_end(comp, last, failure, side)
             step = .5*abs(speed-self.eng.st[last].speed)
 
@@ -621,8 +693,37 @@ cdef class NCurves:
                                                                      'interpolation_checks')
                         if retry_outcome == 'admitted' and self.eng.compatible(retry_p, a) and self.eng.compatible(retry_p, b):
                             retry = retry_p;break
+                    if retry is None and self.s8:
+                        # S8 (item 3): a failing stretch: sliding on a confirmed blade-polar jump, then the S6 retries
+                        self.eng.flush_counts();before = self.ledger.snapshot()
+                        retry = self.rescue_direct(speed, target, a, attitude, n, 'interpolation_checks')
+                        if retry < 0 or not self.eng.compatible(retry, b):retry = None
+                        self.eng.flush_counts()
+                        self.ledger.charge('interpolation_checks', before, 'admitted' if retry is not None else 'unresolved',
+                                           kind='rescue', speed_kmh=speed, target_mps=target)
                     if retry is not None:
                         additions.append(retry);continue
+                    if self.s8:
+                        # S8 (item 3): the curve leaves the envelope between these knots (its exact state at the midpoint
+                        # is physically rejected): it ends at the envelope on both sides, each end located to the speed
+                        # tolerance, and the stretch between is excluded (a break with a physical cause, not a gap); a
+                        # stretch that stays numerically unresolved is narrowed the same way (an unresolved break)
+                        ea = self.edge_root(a, speed, target);eb = self.edge_root(b, speed, target)
+                        lo_v = self.eng.st[ea].speed if ea >= 0 else self.eng.st[a].speed
+                        hi_v = self.eng.st[eb].speed if eb >= 0 else self.eng.st[b].speed
+                        if ea >= 0:additions.append(ea)
+                        if eb >= 0:additions.append(eb)
+                        if outcome != 'rejected':
+                            # a stretch where the envelope boundary's own SEP is above the level throughout: the level
+                            # lies past the boundary there (the curve is outside the envelope), whatever the solve did
+                            inside = [ps for v, ps in zip(self.env_v, self.env_ps) if lo_v+1e-9 < v < hi_v-1e-9 and ps is not None]
+                            if inside and all(ps > target for ps in inside):
+                                outcome, reason = 'rejected', 'level above the envelope boundary SEP'
+                        unresolved.append(dict(interval_kmh=[lo_v, hi_v], reason=reason,
+                                               outcome='excluded' if outcome == 'rejected' else outcome))
+                        key2 = 's8_curve_exits' if outcome == 'rejected' else 's8_curve_narrowed'
+                        self.eng.stats[key2] = self.eng.stats.get(key2, 0)+1
+                        continue
                     unresolved.append(dict(interval_kmh=list(key), reason=reason, outcome=outcome))
                     continue
                 interp_turn = curve_turn(speed, n);turn_error = abs(interp_turn-self.eng.st[truth].turn)
@@ -867,6 +968,7 @@ cdef class NCurves:
         columns = sorted(columns, key=lambda c: c['speed_kmh'])
         self.env_v = [float(c['speed_kmh']) for c in columns if c.get('boundary')]
         self.env_n = [float(c['boundary']['load_g']) for c in columns if c.get('boundary')]
+        self.env_ps = [c['boundary'].get('ps_mps') for c in columns if c.get('boundary')]
         components, seeds_report, unresolved_targets, excluded = [], [], [], []
         status = 'completed';junctions = []
         global g_sink
