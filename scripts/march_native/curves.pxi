@@ -979,6 +979,12 @@ cdef class NCurves:
             m = pmax(fabs(l), fabs(r))
             if fabs(l-r) <= .05*m or m < 1e-9:
                 l = .5*(l+r);r = l
+        if self.s9:
+            # S9: a tangent next to level flight (its turn coordinate is singular there) can come out far too steep
+            # (T-2 SB +100 m/s: -160 per km/h at 1.05 g, the level set's own slope there about -0.5): no slope beyond
+            # the steepest a drawn piece takes (S9_END_VERTICAL; a vertical end has its own, end_slope)
+            if fabs(l) > S9_END_VERTICAL:l = NAN
+            if fabs(r) > S9_END_VERTICAL:r = NAN
         got = (l, r);self.slopes[base] = got
         return got
 
