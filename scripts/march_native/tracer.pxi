@@ -1734,7 +1734,7 @@ cdef class NTracer:
         chart draws it vertical). A column that is not verified ends the splitting of its piece (the S6 gap rules take
         it from there)."""
         cdef NColumn a, b, col
-        cdef double va, vb, x, sa, sb, ka, kb, pa, pb, na, nb, e
+        cdef double va, vb, x, sa, sb, ka, kb, pa, pb, na, nb, e, vc, tc
         cdef bint corner, exact
         cdef int i
         cdef long splits = 0, steps = 0
@@ -1782,6 +1782,22 @@ cdef class NTracer:
                             if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
                             e = INFINITY;x = kx;knot_split = True
                             break
+                if (self.eng.s10 and corner and exact and not knot_split and e <= tol and vb-va > self.vtol+1e-9
+                        and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc)):
+                    # S10: the bound takes both faces as continued from their columns up to the corner. A long steep stretch
+                    # of one (longer than the speed tolerance, the chart's horizontal slack, its turn rate changing by more
+                    # than twice the turn tolerance) can hide a jump the columns do not see (D.520 RB 608-610.6 km/h: the
+                    # control face continued 2.3 km/h and 9 deg/s up to the Instructor pitch face, which in fact holds to
+                    # 610.5 and drops there): a column at the middle of that stretch
+                    vc = pmin(pmax(vc, va), vb)
+                    tc = turn_rate(vc, interval_load(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, vc))
+                    if vc-va > self.vtol and fabs(tc-turn_rate(va, na)) > 2.*self.ttol:
+                        e = INFINITY;x = .5*(va+vc)
+                    elif vb-vc > self.vtol and fabs(tc-turn_rate(vb, nb)) > 2.*self.ttol:
+                        e = INFINITY;x = .5*(vc+vb)
+                    if not isfinite(e):
+                        bound = None
+                        self.eng.stats['s10_corner_stretch'] = self.eng.stats.get('s10_corner_stretch', 0)+1
                 if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= width+1e-9):
                     passed_set.add(key)
                     kind = 'bound' if e <= tol else 'narrow'

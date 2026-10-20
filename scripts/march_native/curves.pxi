@@ -703,17 +703,19 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef object one_g_root(self, double target, int above, int below, phase):
+    cdef object one_g_root(self, double target, int above, int below, phase, int avoid=-1):
         """S9: the level-flight speed where SEP equals ``target`` between the 1 g states ``above`` (SEP over it) and
         ``below``: Illinois regula falsi to S9_END_SEP x the allowance in SEP or S9_END_SPEED x the speed tolerance in
-        speed; the state nearer the target. None where a sample is not admitted or changes branch."""
+        speed; the state nearer the target. None where a sample is not admitted or changes branch. S10: never the state
+        ``avoid`` while the bracket is wider (level flight at a contour's last knot: an end there leaves no knot to draw
+        it by)."""
         cdef int a = above, b = below, p, it, last_side = 0
         cdef double fa = self.eng.st[above].ps-target, fb = self.eng.st[below].ps-target, lo, hi, mid
         for it in range(S9_END_STEPS):
             lo = self.eng.st[a].speed;hi = self.eng.st[b].speed
             self.root_dsdv = (self.eng.st[b].ps-self.eng.st[a].ps)/(hi-lo) if hi != lo else NAN
-            if fabs(fa) <= S9_END_SEP*self.allowance:return a
-            if fabs(fb) <= S9_END_SEP*self.allowance:return b
+            if fabs(fa) <= S9_END_SEP*self.allowance and a != avoid:return a
+            if fabs(fb) <= S9_END_SEP*self.allowance and b != avoid:return b
             if fabs(hi-lo) <= S9_END_SPEED*self.speed_tol:break
             mid = lo+(hi-lo)*fa/(fa-fb) if fa != fb else .5*(lo+hi)
             if not (pmin(lo, hi) < mid < pmax(lo, hi)):mid = .5*(lo+hi)
@@ -729,6 +731,8 @@ cdef class NCurves:
                 b = p;fb = self.eng.st[p].ps-target
                 if last_side < 0:fa *= .5
                 last_side = -1
+        if a == avoid:return b
+        if b == avoid:return a
         return a if fabs(self.eng.st[a].ps-target) <= fabs(self.eng.st[b].ps-target) else b
 
     # ------------------------------------------------------------------ continuation
@@ -768,8 +772,11 @@ cdef class NCurves:
                     end = self.fold_turn(comp, inside, side, p)
                     if end is not None:return end
             if self.eng.st[a_in].load == 1.:
-                r_ = (self.one_g_root(target, a_in, a_out, 'endpoint') if sgn > 0. else
-                      self.one_g_root(target, a_out, a_in, 'endpoint'))
+                # (S10: not at level flight at the last knot's own speed while the bracket is wider: Sunderland Mk5 SB
+                # +10 m/s, where SEP along level flight is flat, the S9 SEP test took it 0.12 km/h from the end)
+                avoid = a_in if self.s10 and a_in != inside else -1
+                r_ = (self.one_g_root(target, a_in, a_out, 'endpoint', avoid) if sgn > 0. else
+                      self.one_g_root(target, a_out, a_in, 'endpoint', avoid))
                 if r_ is not None:
                     p = r_
                     self.end_slope(p, side)
@@ -821,6 +828,15 @@ cdef class NCurves:
                        side*(speed-v) > 1e-9]
             if between:speed = min(between, key=lambda v: abs(v-self.eng.st[last].speed))
             w, attitude = self.predict(comp, speed, side)
+            if below and w > 0.:
+                # S10: level flight at every step of a 'below' branch (the slope found next to its fold is a poor guide to
+                # where it meets 1 g): outside the level there, the 1 g end lies within the step
+                one = self.fixed(speed, 1., last, 'endpoint')
+                if self.eng.st[one].valid and self.sense(comp)*(self.eng.st[one].ps-target) < 0.:
+                    end = self.one_g_endpoint(comp, target, last, one, side)
+                    if end.get('state') is not None and end['kind'] == 'one_g':
+                        self.add_knot(comp, end['state'], side)
+                    return end
             if w <= 0. and self.eng.st[last].load == 1. and abs(self.eng.st[last].ps-target) <= self.allowance:
                 if self.s9 and abs(self.eng.st[last].ps-target) > S9_END_SEP*self.allowance:
                     # S9: a 1 g knot within the allowance is not yet the end: the end to a quarter of the speed tolerance
@@ -999,7 +1015,9 @@ cdef class NCurves:
         cdef double v = self.eng.st[p].speed, n = self.eng.st[p].load, w = n*n-1., dv = .5*self.speed_tol, dw, a = NAN, b = NAN
         got = self.grads.get(base)
         if got is not None:return got
-        dw = .02*pmax(1., w)
+        # (next to 1 g a fold can lie within a few thousandths of w: Sunderland Mk5 SB +10 m/s at 229 km/h; the step in w
+        # stays within a quarter of the state's own w there)
+        dw = pmin(.02*pmax(1., w), pmax(.25*w, 1e-4))
         q = self.fixed(v+dv, n, p, 'fold')
         if self.eng.st[q].valid and self.eng.compatible(q, p):a = (self.eng.st[q].ps-self.eng.st[p].ps)/dv
         q = self.fixed(v, sqrt(1.+w+dw), p, 'fold')
@@ -1049,61 +1067,107 @@ cdef class NCurves:
     cdef object fold_turn(self, dict comp, int last, int side, int one):
         """S10: the contour turns back in speed beyond its knot ``last`` (on a branch where SEP falls with load), where level
         flight at that knot's speed (``one``) lies outside the level too: the level's second root at that speed, between
-        level flight and the knot (fixed-load samples at 0.8, 0.6, 0.4 and 0.2 times the knot's w until one lies above
-        the level, then the bracketed solve). Found, the component ends at the fold ('fold' end; its fold piece joins
-        ``last`` to that root, refined by check_fold) and the other branch (a 'below' component: SEP rises with load
-        there) is followed away from the fold. None where no second root is found (the S9 ends then)."""
-        cdef double target = comp['level'], v = self.eng.st[last].speed, wk = self.eng.st[last].load**2-1., f, sv
-        cdef int prev = last, p, hit = -1, other_root
+        level flight and the knot (fold_sample, then the bracketed solve). Where the knot itself lies just past the turn
+        (within the SEP allowance of the level, below it: no second root at its speed), at the speed of one of the three
+        knots before it instead, the first whose level flight lies outside the level too. Found, the component ends at the
+        fold ('fold' end; its fold piece joins ``last`` to that root, refined by check_fold) and the other branch (a 'below'
+        component: SEP rises with load there) is followed away from the fold. None where no second root is found (the S9
+        ends then)."""
+        cdef double target = comp['level'], vk = self.eng.st[last].speed, v = vk, fo, fh, sv
+        cdef int hit = -1, other_root = -1, top = last, k, q, i
         if not self.s10 or self.eng.st[last].load <= 1.+1e-6:return None
-        for f in (.8, .6, .4, .2):
-            p = self.fixed(v, sqrt(1.+f*wk), prev, 'fold')
-            if not (self.eng.st[p].valid and self.eng.compatible(p, last)):break
-            if self.eng.st[p].ps > target:
-                hit = p;break
-            prev = p
+        hit = self.fold_sample(v, target, last, (.8, .6, .4, .2))
+        if hit < 0 and self.eng.st[last].ps < target:
+            # the knot lies past the turn (Do 17Z-2 SB -20 m/s: 491.87 km/h, 0.047 m/s under the level): the turn lies
+            # between it and the knots before it, whose speeds have both roots (samples from next to the knot down)
+            knots = comp['knots'] if side > 0 else comp['knots'][::-1]
+            for i in range(2, 5):
+                if i > len(knots):break
+                k = knots[-i]
+                if self.eng.st[k].load <= 1.+1e-6:break
+                q = self.fixed(self.eng.st[k].speed, 1., k, 'fold')
+                if not (self.eng.st[q].valid and self.eng.compatible(q, k)):break
+                if self.eng.st[q].ps >= target:
+                    if i == 2:
+                        # level flight at the knot before lies inside the level: the turn and the 1 g end of the other
+                        # branch both lie between the two knots, closer than the march steps (XP-55 SB +10 m/s, 461-462
+                        # km/h): the fold piece runs from the knot down to that 1 g end
+                        r_ = self.one_g_root(target, q, one, 'fold')
+                        if r_ is not None:
+                            k = r_
+                            if (self.eng.compatible(k, last) and self.eng.st[k].load == 1.
+                                    and pmin(self.eng.st[q].speed, vk) < self.eng.st[k].speed < pmax(self.eng.st[q].speed, vk)):
+                                comp['fold'] = dict(knots=[last, k], side=side)
+                                self.eng.stats['s10_fold_ends'] = self.eng.stats.get('s10_fold_ends', 0)+1
+                                return dict(kind='fold', speed_kmh=vk, other_load_g=1.)
+                    break
+                hit = self.fold_sample(self.eng.st[k].speed, target, k, (.95, .8, .6, .4, .2))
+                if hit >= 0:
+                    one = q;top = k;v = self.eng.st[k].speed
+                    self.eng.stats['s10_fold_retreats'] = self.eng.stats.get('s10_fold_retreats', 0)+1
+                    break
         if hit < 0:
             self.eng.stats['s10_fold_misses'] = self.eng.stats.get('s10_fold_misses', 0)+1
             return None
-        r = self.bracketed(v, target, one, hit, 'fold')
-        other_root = r['point'] if r['outcome'] == 'admitted' and r['point'] is not None else -1
-        if other_root >= 0 and not (self.eng.compatible(other_root, last)
-                                    and self.eng.st[one].load-1e-9 <= self.eng.st[other_root].load <= self.eng.st[hit].load+1e-9):
-            other_root = -1
+        fo = self.eng.st[one].ps-target;fh = self.eng.st[hit].ps-target
+        if fh > self.allowance:
+            r = self.bracketed(v, target, one, hit, 'fold')
+            other_root = r['point'] if r['outcome'] == 'admitted' and r['point'] is not None else -1
+            if other_root >= 0 and not (self.eng.compatible(other_root, last)
+                                        and self.eng.st[one].load-1e-9 <= self.eng.st[other_root].load <= self.eng.st[hit].load+1e-9):
+                other_root = -1
         if other_root < 0:
-            # the SEP-fixed correction left the bracket (it can converge to the knot's own root): fixed-load solves
-            other_root = self.load_root(v, target, one, hit)
+            # the SEP-fixed correction left the bracket (it can converge to the knot's own root), or the whole bracket lies
+            # within the SEP allowance of the level (a fold a few thousandths of a m/s deep next to 1 g: Sunderland Mk5 SB
+            # +10 m/s at 229 km/h): fixed-load solves, to a tenth of the bracket's own SEP spread
+            other_root = self.load_root(v, target, one, hit, pmin(self.allowance, .1*pmin(-fo, fh)))
         if other_root < 0:return None
-        if not (self.eng.compatible(other_root, last) and 1.+1e-9 < self.eng.st[other_root].load < self.eng.st[last].load-1e-9):
+        if not (self.eng.compatible(other_root, last) and 1.+1e-9 < self.eng.st[other_root].load < self.eng.st[top].load-1e-9):
             return None
         other = dict(level=target, segment=comp['segment'], knots=[other_root], discovered_at_kmh=v, provenance='fold',
                      below=True)
-        other['end' if side > 0 else 'start'] = dict(kind='fold', speed_kmh=v)
+        other['end' if side > 0 else 'start'] = dict(kind='fold', speed_kmh=vk)
         sv = self.fold_dvdw(other_root)
         # (away from the fold w falls on that branch: a slope of the other sign, from a root next to the turn, is not used)
         if isfinite(sv) and sv != 0. and side/sv > 0.:other['w_slope'] = 1./sv
         comp['fold'] = dict(knots=[last, other_root], side=side)
         self.pending.append(other)
         self.eng.stats['s10_folds'] = self.eng.stats.get('s10_folds', 0)+1
-        return dict(kind='fold', speed_kmh=v, other_load_g=self.eng.st[other_root].load)
+        return dict(kind='fold', speed_kmh=vk, other_load_g=self.eng.st[other_root].load)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef int load_root(self, double v, double target, int lo, int hi) except -2:
+    cdef int fold_sample(self, double v, double target, int knot, tuple fractions) except -2:
+        """S10: a state above the level at speed ``v`` between level flight and the curve state ``knot`` (fixed-load solves at
+        the given fractions of the knot's w, each from the one before), or -1."""
+        cdef double wk = self.eng.st[knot].load**2-1., f
+        cdef int prev = knot, p
+        for f in fractions:
+            p = self.fixed(v, sqrt(1.+f*wk), prev, 'fold')
+            if not (self.eng.st[p].valid and self.eng.compatible(p, knot)):return -1
+            if self.eng.st[p].ps > target:return p
+            prev = p
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int load_root(self, double v, double target, int lo, int hi, double tol=-1.) except -2:
         """S10: the level at speed ``v`` between two states there (``lo`` below the level, ``hi`` above it): Illinois steps
         in w of fixed-load solves, each from the bracket end nearer in w; the state within the SEP allowance of the level,
-        or -1 (a solve not admitted or on another branch, or 16 steps without closure)."""
+        or -1 (a solve not admitted or on another branch, or 16 steps without closure). ``tol``: the SEP closure where
+        given (the allowance otherwise)."""
         cdef double wl = self.eng.st[lo].load**2-1., wh = self.eng.st[hi].load**2-1., fl = self.eng.st[lo].ps-target
         cdef double fh = self.eng.st[hi].ps-target, w, f
         cdef int p, k, last_side = 0
         if not (fl < 0. < fh):return -1
+        if tol < 0.:tol = self.allowance
         for k in range(16):
             w = wl-fl*(wh-wl)/(fh-fl)
             if not (pmin(wl, wh) < w < pmax(wl, wh)):w = .5*(wl+wh)
             p = self.fixed(v, sqrt(1.+pmax(w, 0.)), lo if fabs(w-wl) <= fabs(w-wh) else hi, 'fold')
             if not (self.eng.st[p].valid and self.eng.compatible(p, lo)):return -1
             f = self.eng.st[p].ps-target
-            if fabs(f) <= self.allowance:return p
+            if fabs(f) <= tol:return p
             if f < 0.:
                 wl = w;fl = f;lo = p
                 if last_side < 0:fh *= .5
@@ -1640,6 +1704,9 @@ cdef class NCurves:
             v0, v1 = self.eng.st[comp['knots'][0]].speed, self.eng.st[comp['knots'][-1]].speed
             for other in out:
                 if other['level'] != comp['level'] or other['segment'] != comp['segment']:continue
+                # S10: a branch where SEP rises with load and one where it falls are two halves of a contour that turns back,
+                # never one contour found twice (next to 1 g they can lie within the turn-rate test: Sunderland Mk5 SB)
+                if self.s10 and bool(other.get('below')) != bool(comp.get('below')):continue
                 w0, w1 = self.eng.st[other['knots'][0]].speed, self.eng.st[other['knots'][-1]].speed
                 lo, hi = max(v0, w0), min(v1, w1)
                 if hi < lo-1e-9:continue
@@ -1705,6 +1772,17 @@ cdef class NCurves:
         dv = self.eng.st[above].speed-self.eng.st[below].speed
         if dv == 0.:return None
         d1 = (self.eng.st[above].ps-self.eng.st[below].ps)/dv
+        if self.s10:
+            # S10: SEP rising with load at the crossing (a level-turn solve at w = S9_END_DW): the lower half of a contour that
+            # turns back meets 1 g here (Do 17 Z-7 RB -40 m/s at 567.8 km/h, the plot ending at 570 before the turn): a
+            # 'below' component
+            two = self.fixed(v, sqrt(1.+S9_END_DW), crossing, 'one_g_discovery')
+            if (self.eng.st[two].valid and self.eng.compatible(two, crossing) and self.eng.st[two].ps > self.eng.st[crossing].ps
+                    and d1 != 0.):
+                dw = (self.eng.st[two].ps-self.eng.st[crossing].ps)/S9_END_DW
+                self.eng.stats['s10_below_from_one_g'] = self.eng.stats.get('s10_below_from_one_g', 0)+1
+                return dict(level=target, segment=segment['speed_kmh'], knots=[crossing], discovered_at_kmh=v,
+                            provenance='1 g crossing', w_slope=-d1/dw, below=True)
         two = self.fixed(v, 2., crossing, 'one_g_discovery')
         if not (self.eng.st[two].valid and self.eng.compatible(two, crossing)):return None
         dw = (self.eng.st[two].ps-self.eng.st[crossing].ps)/3.
@@ -1754,6 +1832,11 @@ cdef class NCurves:
                                     e and e.get('kind') == 'one_g' and va-self.speed_tol <= (
                                         e['speed_kmh'] if not isinstance(e['speed_kmh'], list) else e['speed_kmh'][0]) <= vb+self.speed_tol
                                     for e in (c.get('start'), c.get('end'))) for c in components)
+                                if self.s10 and not explained:
+                                    # S10: or a fold piece that runs down to 1 g there (NCurves.fold_turn)
+                                    explained = any(c['level'] == target and c.get('fold') is not None and any(
+                                        self.eng.st[q].load == 1. and va-self.speed_tol <= self.eng.st[q].speed <= vb+self.speed_tol
+                                        for q in c['fold']['knots']) for c in components)
                                 if explained:continue
                                 above, below = (pa, pb) if self.eng.st[pa].ps > target else (pb, pa)
                                 crossing = self.locate_one_g(target, above, below)
