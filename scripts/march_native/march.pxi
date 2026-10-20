@@ -285,10 +285,6 @@ cdef class MarchEngine:
     cdef public bint s10
     cdef public bint brake               # S10: the braking rule is on (Finisher.brake)
     cdef bint brake_retry
-    # S10: the coordinate slopes d(coordinate)/dV of the latest tangent (left / right side; NaN where unavailable): the
-    # outline's continuity check between columns (NTracer.continuous)
-    cdef double tq_l[NMAX]
-    cdef double tq_r[NMAX]
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -1053,7 +1049,7 @@ cdef class MarchEngine:
             if si == self.nsrc-1:
                 self.nsrc -= 1;self.st[sid].src = -1
         if self.brake and not self.brake_retry and self.has_code(sid, R_PROP_BRAKE):
-            k = self.brake_reseed(sid, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
+            k = self.brake_reseed(sid, seed, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
                                   event_tolerance, speed)
             if k >= 0:return k
             self.last_load = n;self.last_cap = cap;self.last_closed = True
@@ -1061,33 +1057,45 @@ cdef class MarchEngine:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef int brake_reseed(self, int sid, int fixed_kind, double value, int ev_kind, int ev_axis, int ev_side,
+    cdef int brake_reseed(self, int sid, int seed, int fixed_kind, double value, int ev_kind, int ev_axis, int ev_side,
                           int max_nfev, int max_evaluations, double event_tolerance, double speed) except -2:
         """S10: a correction that closed on a braking propeller state (its governed propellers near the fine pitch stop,
-        their blade sections at negative incidence) is tried again with the same equations from that state with every
-        governor coordinate moved towards the coarse stop (halfway, then a quarter of the way; on the fine stop: to mid
-        travel), where the pulling state of the same shaft speed lies (ER-2 ACh-30B SB 515 km/h: 24.6 against 33.4 deg).
-        The first such correction that closes on a state that does not brake, or -1 (the braking state is the only one
-        found: pulling flight ends there)."""
-        cdef int j, cid, q, attempt
-        cdef double g
+        their blade sections at negative incidence) is tried again with the same equations from coarser governor pitch,
+        where the pulling state of the same shaft speed lies (ER-2 ACh-30B SB 515 km/h: 24.6 against 33.4 deg): first from
+        the correction's own seed where that one pulls (its propulsion coordinates, every governor coordinate moved
+        half its distance from the braking state's further away from it: the braking state's induced flows are no seed
+        for the pulling one), then from the braking state with every governor coordinate moved halfway, then a quarter
+        of the way towards the coarse stop (on the fine stop: to mid travel). The first such correction that closes on a
+        state that does not brake, or -1 (the braking state is the only one found: pulling flight ends there)."""
+        cdef int j, cid, q, attempt, src
+        cdef double g, gs
         cdef double sol[5]
         cdef bint moved
         if not self.st[sid].has_coords or not self.st[sid].layout_names:return -1
         self.stats['s10_brake_states'] = self.stats.get('s10_brake_states', 0)+1
-        for attempt in range(2):
+        for attempt in range(3):
+            if attempt == 0:
+                # the seed: a pulling state with the same coordinate layout and request branch
+                if (seed < 0 or not self.st[seed].has_coords or not self.st[seed].layout_names or self.st[seed].nx != self.st[sid].nx
+                        or self.has_code(seed, R_PROP_BRAKE) or self.st[seed].nreq != self.st[sid].nreq):continue
+                src = seed
+            else:src = sid
             cid = self.new_state()
             self.st[cid] = self.st[sid]
             self.st[cid].src = -1;self.st[cid].row = -1;self.st[cid].base = cid;self.st[cid].limit = -1
             self.st[cid].valid = False
             moved = False
+            for j in range(7, self.st[cid].nx):self.st[cid].coords[j] = self.st[src].coords[j]
             for j in range(self.st[cid].nx):
                 if j >= self.layout_nx or not self.layout_names[j].startswith('governor:'):continue
                 g = self.st[sid].coords[j]
-                if g < 0.:self.st[cid].coords[j] = .5
-                elif g < 1.:self.st[cid].coords[j] = .5*(g+1.) if attempt == 0 else g+.25*(1.-g)
+                if attempt == 0:
+                    gs = self.st[seed].coords[j]
+                    self.st[cid].coords[j] = pmin(1., pmax(0., gs+.5*(gs-g))) if 0. <= g < 1. else gs
+                elif g < 0.:self.st[cid].coords[j] = .5
+                elif g < 1.:self.st[cid].coords[j] = .5*(g+1.) if attempt == 1 else g+.25*(1.-g)
                 moved = moved or self.st[cid].coords[j] != g
-            if not moved:return -1
+            if not moved:continue
             for j in range(5):sol[j] = self.st[sid].sol[j]
             self.brake_retry = True
             try:
@@ -1133,8 +1141,6 @@ cdef class MarchEngine:
         cdef double rs[NMAX]
         cdef double h, w0, wp, step, value
         cdef int br0[BMAX]
-        cdef double dub[NMAX]
-        cdef double duf[NMAX]
         cdef Sample base
         cdef bint ok = True, same, governor
         cdef double sgn, first, best, best_w
@@ -1143,8 +1149,6 @@ cdef class MarchEngine:
         cdef double[7] rs7 = [2e-4, 2e-4, 5e-4, 5e-4, 5e-4, 2e-5, 2e-5]
         cdef double t0 = s5_now()
         left[0] = NAN;right[0] = NAN
-        for i in range(NMAX):
-            self.tq_l[i] = NAN;self.tq_r[i] = NAN
         if not t.has_coords or not t.layout_names or t.nx != nx or not t.req_ok:return False
         # level flight (w = 0): bank and turn rate scale with sqrt(w) there, so no slope in these coordinates
         # (the interpolant's end rule takes over: fill_slopes)
@@ -1282,7 +1286,6 @@ cdef class MarchEngine:
                         rv[nr] = (P.memo_extra[slot]-r0[nr])/rs[nr];step = pmax(step, fabs(rv[nr]))
                     if it > 0 and step < best:
                         best = step;best_w = du[n-1]
-                        for i in range(n):dub[i] = du[i]
                     if (it > 0 and step <= .05) or (it >= 2 and step <= .5):break
                     if it == 5:
                         # the rows' own noise floor (Instructor and propulsion rows): the best iterate within half the
@@ -1295,9 +1298,7 @@ cdef class MarchEngine:
                         h = 0.
                         for k in range(n):h += D[i*n+k]*z[k]
                         du[i] += h
-                    if it == 0:
-                        first = du[n-1]/(sgn*delta)
-                        for i in range(n):duf[i] = du[i]
+                    if it == 0:first = du[n-1]/(sgn*delta)
                 if best <= .5:value = best_w/(sgn*delta)
                 else:
                     value = first
@@ -1305,16 +1306,6 @@ cdef class MarchEngine:
                 if not isfinite(value):continue
                 if side == 1:right[0] = value
                 else:left[0] = value
-                # S10: every coordinate's slope from the same solution (the fixed alpha of mode 2 does not move)
-                for i in range(n):
-                    ci = P.free_idx[i]
-                    if ci < nx:
-                        h = (dub[i] if best <= .5 else duf[i])/(sgn*delta)
-                        if side == 1:self.tq_r[ci] = h
-                        else:self.tq_l[ci] = h
-                if mode == 2:
-                    if side == 1:self.tq_r[0] = 0.
-                    else:self.tq_l[0] = 0.
         finally:
             P.speed_kmh = speed
             self.stats['s7_tangent_evals'] = self.stats.get('s7_tangent_evals', 0)+P.aircraft_evaluations

@@ -193,8 +193,6 @@ DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope
 DEF S8_MAX_WIDTH = 25.   # S8: the widest outline piece (km/h; the validation's general-rule setting, 50 left features unseen)
 DEF S8_BOUND = .6666666666666666   # S8: an outline piece is finished when its error bound is within 2/3 of the envelope
                                    # turn tolerance (the headroom of S7's curve checks)
-DEF S10_CONT = 2.        # S10: a coordinate's change between two columns may leave its slopes' band by this factor ...
-DEF S10_CONT_FLOOR = .02 # ... or by this fraction of its size (at least 1) before the piece counts as discontinuous
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -268,6 +266,7 @@ cdef class NTracer:
     cdef public list ias_knots      # S9: forward-IAS breakpoints of the control authority (m/s): effective speeds, floors
     cdef double sigma               # S9: sqrt(density ratio) at the chart altitude (forward IAS = u sigma)
     cdef public list s9_knots       # S9: the model breakpoints in speed the outline is checked at (model knots, Mach tables)
+    cdef int brake_level            # S10: a braking level flight found from an interior start (interior_march), or -1
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -299,6 +298,7 @@ cdef class NTracer:
         self.cheap = False     # S7: a column without rescues or nudges (the edge refinement column)
         self.forced_level = -1
         self.ias_knots = [];self.sigma = 1.;self.s9_knots = []
+        self.brake_level = -1
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -418,12 +418,6 @@ cdef class NTracer:
         if not self.eng.tangent(base, mode, code, axis, side, self.eng.st[base].speed, d, self.slope_sides(col.speed), &wl, &wr):
             col.slope_kind = 'unavailable: '+str(limit.get('kind'))
             return 0
-        if self.eng.s10:
-            # S10: the face's coordinate slopes from the same solves (a missing side takes the other's)
-            for i in range(NMAX):
-                col.qs_l[i] = self.eng.tq_l[i] if isfinite(self.eng.tq_l[i]) else self.eng.tq_r[i]
-                col.qs_r[i] = self.eng.tq_r[i] if isfinite(self.eng.tq_r[i]) else self.eng.tq_l[i]
-            col.has_qs = True
         if isfinite(wl) and isfinite(wr) and fabs(wl-wr) <= .05*pmax(fabs(wl), fabs(wr)):
             wl = .5*(wl+wr);wr = wl
         col.slope_l = wl/(2.*n);col.slope_r = wr/(2.*n)
@@ -560,7 +554,15 @@ cdef class NTracer:
                 reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
                 # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
                 # (their march from level flight reached it without a limit) instead of the production column
+                self.brake_level = -1
                 if not self.cheap and self.interior_march(col, march, speed, seeds, 'level flight unresolved: '+reasons, started):return 0
+                if self.brake_level >= 0:
+                    # S10: level flight at this speed brakes (found from the interior start): an edge, not a gap
+                    level = self.brake_level
+                    reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
+                    self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: '+reasons, started)
+                    col.points = [level];col.region = False
+                    return 0
                 if self.production_fallback:
                     self.production(col, speed, seeds, 'level flight unresolved: '+reasons)
                     return 0
@@ -628,7 +630,7 @@ cdef class NTracer:
         limit along alpha from that state; the neighbours' paths from level flight to it had none. False when
         no such state closes or the march from it is unresolved (then the production column, as before)."""
         cdef int sid, start = -1, p, boundary
-        cdef double d, best = INFINITY, predicted
+        cdef double d, best = INFINITY, predicted, w, f
         cdef bint has_predicted
         above = [sid for sid in seeds if self.eng.st[sid].valid and self.eng.st[sid].has_coords
                  and self.eng.st[sid].load > 1.+1e-9 and self.eng.st[sid].speed != speed]
@@ -649,6 +651,22 @@ cdef class NTracer:
             if p >= 0 and self.eng.st[p].valid:
                 start = p;break
         if start < 0:return False
+        if self.eng.brake:
+            # S10: the boundary is the first limit along alpha from level flight: where level flight at this speed, continued
+            # in load from the interior start (w halved, then to a quarter, a tenth and level flight), brakes (and no pulling
+            # level flight is found: MarchEngine.brake_reseed), level flight is physically rejected here, whatever the
+            # states at higher alpha do (F2G-1 RB 786 km/h: braking at 1 g, pulling at 3.8 g), so the column is an edge
+            p = start
+            w = self.eng.st[start].load**2-1.
+            for f in (.5, .25, .1, 0.):
+                p = self.eng.correct(p, self.eng.st[p].sol, self.eng.st[p].load, True, FIX_LOAD, sqrt(1.+f*w), 0, 0, 0, ROBUST_NFEV,
+                                     ROBUST_EVALS, 2e-6, speed, NULL, NULL)
+                if p < 0 or not (self.eng.st[p].valid or self.eng.has_code(p, R_PROP_BRAKE)):break
+            self.eng.flush_counts()
+            if p >= 0 and fabs(self.eng.st[p].load-1.) <= 1e-9 and self.eng.has_code(p, R_PROP_BRAKE) and self.eng.level_physical(p):
+                self.brake_level = p
+                self.eng.stats['s10_interior_brake'] = self.eng.stats.get('s10_interior_brake', 0)+1
+                return False
         has_predicted = self.predicted_alpha(speed, seeds, &predicted)
         boundary, status, reason = march.run(start, has_predicted, predicted)
         if boundary < 0 and self.s6 and not self.probing:
@@ -1706,38 +1724,6 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef bint continuous(self, list good, int j) except -1:
-        """S10: whether the boundary states of the verified columns good[j], good[j+1] can lie on one smooth branch: every
-        wing-history and propulsion coordinate (the ones a branch jump moves) changes between them by its exact end slopes'
-        mean times the width, within S10_CONT times half the width times the slopes' difference (where a coordinate's slope
-        changes monotonically, a kink anywhere included, its change lies within that band: band_load) or S10_CONT_FLOOR of
-        its size (at least 1). A column without coordinate slopes takes those of its neighbouring column on the same face
-        (as interval_slopes does for the boundary slope). True where a column has none (pitch-response faces, the load cap)
-        or the coordinate layouts differ."""
-        cdef NColumn a = good[j], b = good[j+1], pa = a, pb = b, c
-        cdef TState* x
-        cdef TState* y
-        cdef double h = b.speed-a.speed, sa, sb, du, allow
-        cdef int i
-        if not a.has_qs and j >= 1:
-            c = good[j-1]
-            if c.has_qs and self.face_of(c) == self.face_of(a):pa = c
-        if not b.has_qs and j+2 < len(good):
-            c = good[j+2]
-            if c.has_qs and self.face_of(c) == self.face_of(b):pb = c
-        if not (pa.has_qs and pb.has_qs) or a.boundary < 0 or b.boundary < 0:return True
-        x = &self.eng.st[a.boundary];y = &self.eng.st[b.boundary]
-        if not (x.has_coords and y.has_coords) or x.nx != y.nx or not (x.layout_names and y.layout_names):return True
-        for i in range(5, x.nx):
-            sa = pa.qs_r[i];sb = pb.qs_l[i]
-            if not (isfinite(sa) and isfinite(sb)):continue
-            du = y.coords[i]-x.coords[i]
-            allow = pmax(S10_CONT*.5*fabs(h*(sb-sa)), S10_CONT_FLOOR*pmax(1., pmax(fabs(x.coords[i]), fabs(y.coords[i]))))
-            if fabs(du-.5*h*(sa+sb)) > allow:return False
-        return True
-
-    @cython.boundscheck(True)
-    @cython.wraparound(True)
     cdef list check_s8(self):
         """S8: the split rule on every outline piece between verified columns of one segment (no Mach seam or segment
         end inside). A piece whose error bound (piece_error) is within S8_BOUND of the envelope turn tolerance and which
@@ -1796,14 +1782,6 @@ cdef class NTracer:
                             if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
                             e = INFINITY;x = kx;knot_split = True
                             break
-                if (self.eng.s10 and not knot_split and vb-va > self.vtol+1e-9 and e <= tol and vb-va <= width+1e-9
-                        and not self.continuous(good, i)):
-                    # S10: the bound assumes the boundary is continuous between the columns; where the state jumps between
-                    # them (a coordinate off the band its exact end slopes allow: Ki-43-I SB 123.55 km/h, the propeller's
-                    # wash and pitch jump on the stall face) the piece is split at its middle until the jump lies within
-                    # the speed tolerance (drawn as a step where the bound then fails)
-                    self.eng.stats['s10_continuity_splits'] = self.eng.stats.get('s10_continuity_splits', 0)+1
-                    e = INFINITY;x = .5*(va+vb);knot_split = True
                 if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= width+1e-9):
                     passed_set.add(key)
                     kind = 'bound' if e <= tol else 'narrow'
@@ -2246,11 +2224,6 @@ cdef class NTracer:
                              self.eng.reason_list(q)) for q in col.points],
                     turn=self.eng.st[col.boundary].turn if col.boundary >= 0 else None,
                     load=self.eng.st[col.boundary].load if col.boundary >= 0 else None, boundary=col.boundary)
-
-    def debug_continuous(self, double va, double vb):
-        """Diagnostics (S10): NTracer.continuous between the trace's columns at speeds va and vb."""
-        good = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c)]
-        return self.continuous(good, [c.speed for c in good].index(va))
 
     def debug_probe(self, int level, double speed):
         """Diagnostics (S8): level_probe from state ``level`` at ``speed`` (state id, -1 physical rejection, -3 open)."""

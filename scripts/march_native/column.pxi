@@ -83,29 +83,18 @@ cdef class NColumn:
     # S7: the exact slope of the boundary, dn/dV (per km/h) from below / above the column speed (NaN: none), and its kind
     cdef public double slope_l, slope_r
     cdef public object slope_kind
-    # S10: each coordinate's slope d(coordinate)/dV along the boundary face from below / above the column speed (the same
-    # tangent solves as slope_l / slope_r; NaN: none) for the outline's continuity check (NTracer.continuous)
-    cdef double qs_l[NMAX]
-    cdef double qs_r[NMAX]
-    cdef public bint has_qs
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
     def __init__(self, double speed):
         self.nudged_from = None
         self.slope_l = NAN;self.slope_r = NAN;self.slope_kind = None
-        self.has_qs = False
         self.lower = -1;self.jump = False;self.lower_slope = NAN
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None
         self.role = None;self.evaluations = 0;self.withheld = False;self.march = False;self.region = False
         self.sample_points = [];self.raw_status = None;self.raw_reason = None;self.evidence_list = []
-
-    def debug_qs(self, int n):
-        """Diagnostics (S10): (has coordinate slopes, left slopes, right slopes) of the first n coordinates."""
-        cdef int i
-        return self.has_qs, [self.qs_l[i] for i in range(n)], [self.qs_r[i] for i in range(n)]
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
