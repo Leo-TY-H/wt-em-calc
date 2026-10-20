@@ -1033,9 +1033,11 @@ cdef class NTracer:
                     out = nxt
             if self.eng.s9 and isfinite(halved_from) and fabs(inside-halved_from) < self.vtol*(1.-1e-9):
                 # S9: halved steps that walked less than the speed tolerance past the last full step place the edge no
-                # better than that step did: the edge columns start there (the bracket stays the halved one)
-                admitted = [x for x in admitted if (x-halved_from)*direction <= 1e-9]
-                inside = halved_from
+                # better than S8's one halving did: the edge columns start where S8's would (the last full step, or
+                # half a speed tolerance past it where that was admitted); the bracket stays the halved one
+                v = halved_from+.5*self.vtol*direction
+                inside = v if any(fabs(x-v) <= 1e-6 for x in admitted) else halved_from
+                admitted = [x for x in admitted if (x-inside)*direction <= 1e-9]
         row = self.work.setdefault('edge probe', dict(columns=0, evaluations=0))
         row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
         self.eng.stats['s7_edge_probes'] = self.eng.stats.get('s7_edge_probes', 0)+1
@@ -1665,14 +1667,15 @@ cdef class NTracer:
         """S9: whether the outline piece good[i]..good[i+1], drawn as interval_load, holds at the model breakpoint ``k``
         inside it: the limiting face of the nearer column corrected at ``k`` (its own event equations from its boundary
         state) is admitted and lies within S8_BOUND of the turn tolerance of the drawn line there (allowing the chart's
-        horizontal slack). A face change, or a face without a native event, is no evidence (False: split at ``k``)."""
+        horizontal slack). A face change, or a face without a native event (pitch response, load maximum), has no such
+        check: the piece stands on S8's rule there (splitting such pieces at every knot doubled their cost)."""
         cdef NColumn a = good[i], b = good[i+1], c
         cdef Event ev
         cdef int base, p
         cdef double x, t, lo_t = INFINITY, hi_t = -INFINITY, box, na, nb
-        if corner:return False
+        if corner:return True
         c = a if k-a.speed <= b.speed-k else b
-        if not self.face_event(c, &ev):return False
+        if not self.face_event(c, &ev):return True
         base = self.eng.st[c.boundary].base
         p = self.eng.correct(base, self.eng.st[base].sol, self.eng.st[base].load, True, FIX_EVENT, 0., ev.code,
                              ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6, k, NULL, NULL)
@@ -1731,10 +1734,10 @@ cdef class NTracer:
                 bound = e if isfinite(e) else None
                 knot_split = False
                 if self.eng.s9 and vb-va > self.vtol+1e-9 and e <= tol and vb-va <= width+1e-9:
-                    # S9: the bound assumes the boundary's slope changes monotonically inside the piece; at a model
-                    # breakpoint (jet thrust-table speed, Mach polynomial end) it can kink either way (A-6E RB 1200 km/h):
-                    # the face there from the nearer column (its event correction) must lie on the drawn line, else
-                    # the piece is split at the breakpoint
+                    # S9: the bound assumes the boundary's slope changes monotonically inside the piece; where a polar's
+                    # Mach curve bends back between its breakpoints it can rise and fall inside one piece (A-6E RB,
+                    # 1180-1200 km/h): the face at those bends from the nearer column (its event correction) must lie on
+                    # the drawn line, else the piece is split there
                     for kx in self.s9_knots:
                         if not (va+self.vtol < kx < vb-self.vtol):continue
                         if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
@@ -2048,14 +2051,15 @@ cdef class NTracer:
                 if len(rows) > 1:mach_knots.update(float(r[0]) for r in rows)
             # the polars' Mach curves (polar_model.mach_factor): a cubic Hermite from MachCrit to MachMax whose end slope
             # turns it back inside (A-6E RB, horizontal tail curve 7: up to x3 and down at -200 per Mach) bends the
-            # chart strongly between those knots (the control face peaks at Mach 0.967): its quarter points and its
-            # extremum are checked as knots too
+            # chart strongly between those knots (the control face peaks at Mach 0.967): its middle and its extremum
+            # are checked as knots too (its quarter points where it overshoots strongly)
             def polars(d):
                 if isinstance(d, dict):
                     if 'MachCrit1' in d:yield d
                     for v in d.values():yield from polars(v)
                 elif isinstance(d, list):
                     for v in d:yield from polars(v)
+            bends = set()
             for props in polars(getattr(self.eng.solver, 'fm', None)):
                 for i in range(1, 10):
                     try:
@@ -2064,13 +2068,23 @@ cdef class NTracer:
                     except (KeyError, TypeError, ValueError):continue
                     if not b > a or 6*hh-3*ss == 0.:continue
                     ts = (6*hh-2*ss)/(6*hh-3*ss)
-                    if 0. < ts < 1.:mach_knots.update([a+(b-a)*ts, a+.25*(b-a), a+.5*(b-a), a+.75*(b-a)])
-            self.ias_knots = sorted(k for k in knots if k > 0.)
+                    if not 0. < ts < 1.:continue
+                    bends.update([a+(b-a)*ts, a+.5*(b-a)])
+                    # a curve that overshoots its end value by more than S9_BEND of it (A-6E: 3.46 against 3) is checked
+                    # at its quarter points too
+                    lo0 = 0. if i == 6 else 1.
+                    peak = lo0+hh*(-2*ts**3+3*ts**2)+ss*(ts**3-ts**2)
+                    if abs(peak-(lo0+hh)) > S9_BEND*max(abs(lo0), abs(lo0+hh), 1e-9):
+                        bends.update([a+.25*(b-a), a+.75*(b-a)])
+            # only those bends are checked: a single breakpoint (thrust tables, Mach curve ends, control tables by IAS)
+            # is a kink the split rule's band already covers, and checking every breakpoint cost about 30 face
+            # corrections per chart for two splits in 384 charts (the IAS breakpoints stay listed, unchecked)
+            self.ias_knots = []
             self.sigma = sqrt(float(density_at_height(float(self.config['altitude_m'])))/1.225)
             from air_state import speed_of_sound
             sound = float(speed_of_sound(float(self.config['altitude_m'])))*3.6
             lo_v, hi_v = float(self.config['speed_min_kmh']), float(self.config['speed_max_kmh'])
-            self.s9_knots = sorted({float(v) for v in self.knot_speeds} | {m*sound for m in mach_knots if lo_v < m*sound < hi_v})
+            self.s9_knots = sorted({m*sound for m in bends if lo_v < m*sound < hi_v})
         # S8: past the zero-alpha speed of a forward-IAS limit (the top segment's start hint) the segments are traced
         # upwards from the one below (they hold only states inside the limit at higher alpha), the rest top-down as before
         hint = next((s['start_kmh'] for s in segments if 'start_kmh' in s), None) if self.s8 else None

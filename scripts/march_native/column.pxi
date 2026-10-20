@@ -619,7 +619,7 @@ cdef class NMarch:
             for k in range(NKD):
                 if not (t.mset >> k) & 1 or self.eng.soft_kind(k):continue
                 if not self.margin_root(history, k, &root):continue
-                if root-a <= 2*self.max_step:self.approach = True
+                if k == KD_PITCH and root-a <= 2*self.max_step:self.approach = True
                 if root-a > APPROACH_DEG:target = pmin(target, a+.75*(root-a))
                 else:target = pmin(target, root+pmax(OVERSHOOT_DEG, .03*(root-a)))
         if len(history) >= 3:
@@ -644,8 +644,9 @@ cdef class NMarch:
         if fabs(turn_rate(self.speed, self.eng.st[hi].load)-turn_rate(self.speed, self.eng.st[lo].load)) > self.turn_tol:return False
         # S9: the turn rates of the two states bound the face's only where the rejected state continues the admitted
         # one's branch; past a stall it lies on another (the load drops back, J35A SB 152.6 km/h), so the bracket
-        # closes in alpha too (0.1 deg)
-        if self.eng.s9 and fabs(self.eng.st[hi].alpha-self.eng.st[lo].alpha) > .1:return False
+        # closes in alpha too (0.1 deg) where the rejected state's load is below the admitted one's
+        if (self.eng.s9 and self.eng.st[hi].load < self.eng.st[lo].load
+                and fabs(self.eng.st[hi].alpha-self.eng.st[lo].alpha) > .1):return False
         return True
 
     @cython.boundscheck(True)
