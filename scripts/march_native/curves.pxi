@@ -9,6 +9,12 @@
 # midpoint turn rate within the curve tolerance of the drawn line, allowing the chart's 1 km/h horizontal slack, on the
 # piecewise cubic Hermite through values and slopes that the chart draws (em_march_chart.polyline). The SEP band no
 # longer passes an interval; it stays the acceptance check of the chart against the reference.
+#
+# S8 (WT_MARCH_S8=0 restores S7): the envelope's split rule on every contour piece (check_intervals, piece_bound): a
+# piece is finished when the bound of its error from its two knots' values and slopes alone (band_load in w) is within
+# the curve tolerance, allowing the horizontal slack, and it is at most the maximum step wide; otherwise the level is
+# solved where that bound is largest and becomes a knot. No withheld solve; a piece narrower than the speed tolerance
+# whose bound still fails is a discontinuity (the component's 'steps', drawn vertical).
 
 STATE_FIELDS = ('speed_kmh', 'load_g', 'turn_dps', 'ps_mps', 'alpha_deg', 'bank_deg', 'solution',
                 'stationary_coordinates', 'stationary_coordinate_names', 'stationary_request_indices',
@@ -644,9 +650,31 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef double piece_bound(self, HermiteCurve hf, int i, double* at) noexcept:
+        """S8: the error bound of contour piece i (knots i, i+1 of ``hf``, the drawn Hermite in w = n^2-1) from its end
+        values and slopes alone: the largest turn-rate distance from the drawn line (over x +- the speed tolerance) to
+        the band the level set lies in (band_load in w), at S8_SAMPLES points; ``at``: where it is largest."""
+        cdef double va = hf.x[i], vb = hf.x[i+1], x, xl, xr, lo, hi, t, tl, tr, e, best = 0.
+        cdef int j
+        at[0] = .5*(va+vb)
+        for j in range(1, S8_SAMPLES):
+            x = va+(vb-va)*j/S8_SAMPLES
+            xl = pmax(va, x-self.speed_tol);xr = pmin(vb, x+self.speed_tol)
+            t = curve_turn(x, sqrt(1.+pmax(hf.eval(x), 0.)))
+            tl = curve_turn(xl, sqrt(1.+pmax(hf.eval(xl), 0.)));tr = curve_turn(xr, sqrt(1.+pmax(hf.eval(xr), 0.)))
+            band_load(va, hf.y[i], hf.dr[i], vb, hf.y[i+1], hf.dl[i+1], x, &lo, &hi)
+            e = pmax(curve_turn(x, sqrt(1.+pmax(hi, 0.)))-pmax(t, pmax(tl, tr)),
+                     pmin(t, pmin(tl, tr))-curve_turn(x, sqrt(1.+pmax(lo, 0.))))
+            if not isfinite(e):e = INFINITY
+            if e > best:
+                best = e;at[0] = x
+        return best
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef check_intervals(self, dict comp):
-        """MarchCurveSolver.check_intervals: withheld exact checks, kink-placed."""
-        cdef double target = comp['level'], speed, w, n, t, w0, interp_turn, turn_error
+        """MarchCurveSolver.check_intervals: withheld exact checks, kink-placed (S8: the split rule, piece_bound)."""
+        cdef double target = comp['level'], speed, w, n, t, w0, interp_turn, turn_error, e = 0., xm = 0., h
         cdef int a, b, i, p
         cdef PchipCurve f
         cdef HermiteCurve hf
@@ -668,8 +696,24 @@ cdef class NCurves:
                 a = knots[i];b = knots[i+1]
                 key = (self.eng.st[a].speed, self.eng.st[b].speed)
                 if key in done or key in blocked:continue
-                if self.eng.st[b].speed-self.eng.st[a].speed <= self.speed_tol:continue
-                speed = self.check_speed(self.eng.st[a].speed, self.eng.st[b].speed)
+                if self.s8:
+                    # S8: the split rule: no solve where the piece's error bound is within the tolerance
+                    h = key[1]-key[0]
+                    e = self.piece_bound(hf, i, &xm) if h > 0. else 0.
+                    bound = e if isfinite(e) else None
+                    if h <= self.speed_tol or (e <= self.turn_tol and h <= self.max_step):
+                        if e > self.turn_tol:
+                            comp.setdefault('steps', []).append(dict(interval_kmh=list(key), bound_dps=bound))
+                            self.eng.stats['s8_curve_steps'] = self.eng.stats.get('s8_curve_steps', 0)+1
+                        checks.append(dict(interval_kmh=list(key), speed_kmh=None, passed=True,
+                                           route='step' if e > self.turn_tol else 'bound', bound_dps=bound))
+                        continue
+                    if e <= self.turn_tol:xm = .5*(key[0]+key[1])
+                    speed = pmin(pmax(xm, key[0]+.1*h), key[1]-.1*h)
+                    self.eng.stats['s8_curve_splits'] = self.eng.stats.get('s8_curve_splits', 0)+1
+                else:
+                    if self.eng.st[b].speed-self.eng.st[a].speed <= self.speed_tol:continue
+                    speed = self.check_speed(self.eng.st[a].speed, self.eng.st[b].speed)
                 w = hf.eval(speed) if self.s7 else f.eval(speed);n = sqrt(1.+pmax(w, 0.))
                 t = (speed-self.eng.st[a].speed)/(self.eng.st[b].speed-self.eng.st[a].speed)
                 attitude = [self.eng.st[a].sol[k]*(1-t)+self.eng.st[b].sol[k]*t for k in range(5)]
@@ -726,6 +770,12 @@ cdef class NCurves:
                         continue
                     unresolved.append(dict(interval_kmh=list(key), reason=reason, outcome=outcome))
                     continue
+                if self.s8:
+                    # S8: the solved state is a knot (the split), not a withheld check
+                    checks.append(dict(interval_kmh=list(key), speed_kmh=speed, passed=False, route='split', bound_dps=bound,
+                                       holdout=self.compact(truth)))
+                    additions.append(truth)
+                    continue
                 interp_turn = curve_turn(speed, n);turn_error = abs(interp_turn-self.eng.st[truth].turn)
                 record = dict(interval_kmh=list(key), speed_kmh=speed, interpolated_turn_dps=interp_turn,
                               exact_turn_dps=self.eng.st[truth].turn, turn_error_dps=turn_error,
@@ -763,7 +813,7 @@ cdef class NCurves:
             comp['knots'].sort(key=lambda q: self.eng.st[q].speed)
             speeds = {self.eng.st[p].speed for p in additions}
             for c in checks:
-                if c['holdout']['speed_kmh'] in speeds:c['became_knot'] = True
+                if c.get('holdout') is not None and c['holdout']['speed_kmh'] in speeds:c['became_knot'] = True
         comp['refinement_exhausted'] = True
 
     # ------------------------------------------------------------------ top level
@@ -1099,7 +1149,7 @@ cdef class NCurves:
                     provenance=comp.get('provenance'),
                     knots=knots, start=end(comp.get('start')), end=end(comp.get('end')),
                     checks=comp.get('checks', []), unresolved_intervals=comp.get('unresolved_intervals', []),
-                    refinement_exhausted=comp.get('refinement_exhausted', False))
+                    steps=comp.get('steps', []), refinement_exhausted=comp.get('refinement_exhausted', False))
 
 
 cdef class PchipCurve:

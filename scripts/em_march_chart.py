@@ -41,6 +41,7 @@ the baseline for every aircraft.
 from __future__ import annotations
 
 import math
+import os
 import time
 
 import numpy as np
@@ -146,6 +147,12 @@ def compute(config, progress=None, cancelled=None, preview=None):
             fallback[name] = 'march chart failed: '+type(error).__name__+': '+str(error)[:200]
             continue
         if not any(c.get('boundary_status') in ('verified limit', 'plot ceiling') for c in rows[name]['columns']):
+            # S8: a chart whose speed limit lies below its speed range (e.g. flaps that the selected wing sweep retracts)
+            # is empty by that limit, not a march failure
+            limit = (rows[name].get('speed_limit') or {}).get('speed_kmh')
+            if limit is not None and limit <= conditions[name]['speed_min_kmh'] and os.environ.get('WT_MARCH_S8', '1') != '0':
+                rows[name]['chart_empty_reason'] = rows[name]['speed_limit']['kind']
+                continue
             fallback[name] = 'march chart found no verified boundary'
             rows.pop(name)
     baseline = None
@@ -383,7 +390,8 @@ def compact_component(comp):
                        for k in comp['knots']],
                 unresolved_intervals=[dict(interval_kmh=list(u['interval_kmh']), reason=str(u.get('reason'))[:120])
                                       for u in comp.get('unresolved_intervals', [])],
-                start=(comp.get('start') or {}).get('kind'), end=(comp.get('end') or {}).get('kind'))
+                start=(comp.get('start') or {}).get('kind'), end=(comp.get('end') or {}).get('kind'),
+                **({'steps': [list(u['interval_kmh']) for u in comp['steps']]} if comp.get('steps') else {}))
 
 
 def ok(c):
@@ -557,8 +565,21 @@ def outline(data, aircraft):
         speeds = np.array([c['speed_kmh'] for c in run])
         exact = {c['speed_kmh']: c for c in run}
         xs = np.unique(np.r_[grid[(grid > speeds[0]) & (grid < speeds[-1])], speeds])
+        # S8: a discontinuity of the boundary (a column interval narrower than the speed tolerance whose error bound
+        # fails: a 'step' event) is drawn vertical at its middle: no grid speeds inside, the middle twice
+        steps = [e['speed_kmh'] for e in (aircraft.get('envelope_trace') or {}).get('events', [])
+                 if e['kind'] == 'step' and speeds[0] <= e['speed_kmh'][0] and e['speed_kmh'][1] <= speeds[-1]]
+        for lo, hi in steps:xs = xs[~((xs > lo) & (xs < hi))]
         loads = run_loads(run, xs)
         rates = turn_rate(xs, loads)
+        if steps:
+            add = []
+            for lo, hi in steps:
+                mid = .5*(lo+hi)
+                add += [(mid, float(exact[lo]['boundary']['turn_dps']) if lo in exact else float(np.interp(lo, xs, rates))),
+                        (mid, float(exact[hi]['boundary']['turn_dps']) if hi in exact else float(np.interp(hi, xs, rates)))]
+            order = sorted([(x, 0, t) for x, t in zip(xs.tolist(), rates.tolist())]+[(x, 1+k, t) for k, (x, t) in enumerate(add)])
+            xs = np.array([q[0] for q in order]);rates = np.array([q[2] for q in order])
         index = np.searchsorted(speeds, xs)
         if run[0]['speed_kmh'] in starts and run[0]['speed_kmh'] != low:
             boundary.append(dict(speed_kmh=run[0]['speed_kmh'], turn_dps=0., at_plot_ceiling=False,
@@ -693,6 +714,21 @@ def polyline(component, samples=200):
     open_ = [tuple(u['interval_kmh']) for u in component.get('unresolved_intervals', [])]
     inside = np.zeros(len(xs), dtype=bool)
     for lo, hi in open_:inside |= (xs > lo) & (xs < hi)
+    # S8: a discontinuity of the level set (a knot interval narrower than the speed tolerance whose error bound fails)
+    # is drawn as a vertical step at its middle
+    steps = [tuple(u) for u in component.get('steps', [])]
+    if steps:
+        keep = np.ones(len(xs), dtype=bool)
+        extra = []
+        for lo, hi in steps:
+            keep &= ~((xs > lo) & (xs < hi))
+            mid = .5*(lo+hi)
+            extra += [(mid, float(np.interp(lo, xs, turns))), (mid, float(np.interp(hi, xs, turns)))]
+        pts = sorted([(x, 0, t) for x, t in zip(xs[keep].tolist(), turns[keep].tolist())]
+                     + [(x, 1+k, t) for k, (x, t) in enumerate(extra)])
+        xs = np.array([q[0] for q in pts]);turns = np.array([q[2] for q in pts])
+        inside = np.zeros(len(xs), dtype=bool)
+        for lo, hi in open_:inside |= (xs > lo) & (xs < hi)
     pieces, piece = [], []
     for x, t, cut in zip(xs.tolist(), turns.tolist(), inside.tolist()):
         if cut:

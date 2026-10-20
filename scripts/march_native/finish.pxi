@@ -504,7 +504,8 @@ cdef class Finisher:
             for i in range(f.nstructural):self.add_reason(f, f.structural[i])
         if self.flaps_available:
             from flap_model import violations as flap_violations
-            for text in flap_violations(self.solver.flap_profile, self.flaps_percent, e.air.ias_u, e.air.mach, self.structural):
+            for text in flap_violations(self.solver.flap_profile, self.flaps_percent, e.air.ias_u, e.air.mach, self.structural,
+                                        self.solver.model['sweep'] if self.has_sweep else None):
                 self.add_reason(f, reason_code(text))
         f.has_pitch = False
         if converged and e.stall_margin >= 0. and (not f.nreasons or (self.soft and self.only_soft(f))):

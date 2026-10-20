@@ -21,6 +21,14 @@
 # quarter of the speed tolerance. The sweep predicts its next column with the face's slope and
 # curvature and stops a step past the predicted low-speed edge; infeasible edges are refined to the speed tolerance
 # with level-flight probes (edge_probe).
+#
+# S8 (WT_MARCH_S8=0 restores S7): one split rule replaces the withheld checks (check_s8). A drawn piece between two
+# verified columns is finished when the bound of its error from its two exact end loads and slopes alone (band_load:
+# the true boundary lies between the chord and the two tangents where its slope changes monotonically, a kink
+# anywhere included; across an inflection within half the larger slope deviation times the width of the chord) is
+# within 2/3 of the envelope turn tolerance, allowing the chart's horizontal slack, and the piece is at most the maximum
+# step wide; otherwise a column is solved where that bound is largest. A piece narrower than the speed tolerance
+# whose bound still fails is a discontinuity, drawn as a step.
 
 
 cdef int pchip_build(int n, const double* x, const double* y, double* c) except -1:
@@ -182,6 +190,8 @@ cdef double pchip_eval(int n, const double* x, const double* c, double xv) noexc
 
 
 DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope turn tolerance (the outline aims at it)
+DEF S8_BOUND = .6666666666666666   # S8: an outline piece is finished when its error bound is within 2/3 of the envelope
+                                   # turn tolerance (the headroom of S7's curve checks)
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -925,6 +935,43 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int dive_path(self, list segments) except -1:
+        """S8 (item 4): where two stable 1 g states exist at one speed (either side of a blade-polar jump), the chart
+        takes the one reached by speeding up at 1 g, as in a dive. Ascending through each segment, a verified march
+        column whose level flight has a blade-polar jump within the jump check's width gets level flight continued
+        from its lower verified neighbour's; where that state differs (SEP by more than 0.01 m/s), the column is traced
+        again from level flight continued from below and replaces the first ('dive path' event)."""
+        cdef NColumn c, low, col
+        cdef SlideSpec spec
+        cdef int p, k
+        if not self.eng.is_prop:return 0
+        for seg in segments:
+            lo, hi = seg['speed_kmh']
+            cols = sorted([c for c in self.columns.values() if NTracer.ok(c) and c.march and c.level >= 0
+                           and lo-1e-9 <= c.speed <= hi+1e-9], key=lambda c: c.speed)
+            for k in range(1, len(cols)):
+                c = cols[k];low = cols[k-1]
+                self.eng.slide_candidate(c.level, &spec, NAN, NAN, NAN, False)
+                if spec.n == 0:continue
+                self.eng.stats['s8_dive_checks'] = self.eng.stats.get('s8_dive_checks', 0)+1
+                p = self.eng.correct(low.level, self.eng.st[low.level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, 12, 40, 2e-6,
+                                     c.speed, NULL, NULL)
+                if p < 0 or not self.eng.st[p].valid or fabs(self.eng.st[p].ps-self.eng.st[c.level].ps) <= .01:continue
+                self.eng.dive_seed = True
+                try:
+                    col = self.column(c.speed, [low], 'dive path', False, low.speed, hi+1e-9)
+                finally:
+                    self.eng.dive_seed = False
+                if not (NTracer.ok(col) and col.speed == c.speed and col.level >= 0
+                        and fabs(self.eng.st[col.level].ps-self.eng.st[p].ps) <= .01):continue
+                self.events.append(dict(kind='dive path', speed_kmh=c.speed, level_ps_mps=[self.eng.st[c.level].ps,
+                                                                                         self.eng.st[col.level].ps]))
+                self.eng.stats['s8_dive_paths'] = self.eng.stats.get('s8_dive_paths', 0)+1
+                self.columns[float(c.speed)] = col;cols[k] = col
+        return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef int upper_segment(self, dict segment) except -1:
         """S8: a segment wholly past the zero-alpha speed of a forward-IAS limit: started at its low end from the
         nearest verified column below (across the seam) and swept; past the high-speed edge the trace found below it
@@ -1100,6 +1147,7 @@ cdef class NTracer:
 
         def seam(lo, hi):
             return any(lo < x < hi or lo < y < hi for x, y in seams)
+        if self.s8:return self.check_s8()
         if self.s7:return self.check_s7()
         for depth in range(self.max_depth):
             good = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c)]
@@ -1251,6 +1299,153 @@ cdef class NTracer:
             self.eng.stats['s7_stretch_failed'] = self.eng.stats.get('s7_stretch_failed', 0)+1
             if NTracer.ok(mid):self.columns[vm] = mid
         return ok
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double piece_error(self, double va, double na, double sa, double ka, double pa, double vb, double nb, double sb,
+                            double kb, double pb, bint corner, bint exact, double* at) noexcept:
+        """S8: the error bound of the outline piece [va, vb] (interval_load, as the chart draws it) from its end loads
+        and slopes alone: at S8_SAMPLES points the largest turn-rate distance from the drawn line (allowing the chart's
+        horizontal slack: the drawn line over x +- the speed tolerance) to the band the true boundary lies in
+        (band_load, from the slopes the piece is drawn with: exact, or a missing one from the same face's neighbouring
+        column or PCHIP on one face). ``at``: where it is largest."""
+        cdef double x, xl, xr, lo, hi, w, wl, wr, e, best = 0., vc
+        cdef int j
+        at[0] = .5*(va+vb)
+        # a face change is drawn as its two faces meeting; without both faces' exact slopes, or where they do not meet
+        # (a jump), nothing bounds it (it is split down to the speed tolerance)
+        if corner and not (exact and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc)):return INFINITY
+        for j in range(1, S8_SAMPLES):
+            x = va+(vb-va)*j/S8_SAMPLES
+            xl = pmax(va, x-self.vtol);xr = pmin(vb, x+self.vtol)
+            w = turn_rate(x, interval_load(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, x))
+            wl = turn_rate(xl, interval_load(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, xl))
+            wr = turn_rate(xr, interval_load(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, xr))
+            band_load(va, na, sa, vb, nb, sb, x, &lo, &hi)
+            e = pmax(turn_rate(x, hi)-pmax(w, pmax(wl, wr)), pmin(w, pmin(wl, wr))-turn_rate(x, lo))
+            if not isfinite(e):e = INFINITY
+            if e > best:
+                best = e;at[0] = x
+        return best
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int lower_split(self, list checks, double tol) except -1:
+        """S8: the split rule on the leaning forward-IAS edge (em_march_chart.ias_edge: PCHIP in load through the
+        columns' lower edges, from level flight at the located 'ias edge' speed): each piece between neighbouring lower
+        edges of one segment is judged by its error bound from its end loads and PCHIP slopes; a failing one gets a
+        column where the bound is largest. Returns the columns added."""
+        cdef NColumn c, col
+        cdef int n, k, added = 0
+        cdef double va, vb, na, nb, e, x
+        cdef double* xs
+        cdef double* ns
+        cdef double* ds
+        tried, passed_set = self.check_tried, self.check_passed
+        lows = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c) and c.lower >= 0]
+        if not lows:return 0
+        seg = next((g['speed_kmh'] for g in self.segments_ or () if g['speed_kmh'][0]-1e-9 <= (<NColumn>lows[0]).speed
+                    <= g['speed_kmh'][1]+1e-9), None)
+        if seg is not None:lows = [c for c in lows if seg[0]-1e-9 <= c.speed <= seg[1]+1e-9]
+        pts = [(c.speed, self.eng.st[c.lower].load, c) for c in lows]
+        foot = next((max(e['speed_kmh']) for e in self.events if e['kind'] == 'ias edge'
+                     and min(e['speed_kmh']) <= pts[0][0]+1e-9), None)
+        if foot is not None and foot < pts[0][0]-1e-9:pts.insert(0, (foot, 1., None))
+        n = len(pts)
+        if n < 2:return 0
+        xs = <double*>malloc(n*sizeof(double));ns = <double*>malloc(n*sizeof(double));ds = <double*>malloc(n*sizeof(double))
+        if xs == NULL or ns == NULL or ds == NULL:
+            if xs != NULL:cfree(xs)
+            if ns != NULL:cfree(ns)
+            if ds != NULL:cfree(ds)
+            raise MemoryError()
+        try:
+            for k in range(n):
+                xs[k] = pts[k][0];ns[k] = pts[k][1]
+            pchip_slopes(n, xs, ns, ds)
+            for k in range(n-1):
+                va, vb = xs[k], xs[k+1];na, nb = ns[k], ns[k+1]
+                key = ('lower edge', va, vb)
+                if key in passed_set or key in tried:continue
+                e = self.piece_error(va, na, ds[k], 0., ds[k], vb, nb, ds[k+1], 0., ds[k+1], False, False, &x)
+                if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= self.max_step+1e-9):
+                    passed_set.add(key)
+                    checks.append(dict(interval_kmh=[va, vb], passed=True, kind='lower edge bound', bound_dps=e if isfinite(e) else None))
+                    continue
+                if e <= tol:x = .5*(va+vb)
+                x = pmin(pmax(x, va+.1*(vb-va)), vb-.1*(vb-va))
+                near = [q[2] for q in (pts[k], pts[k+1]) if q[2] is not None]
+                col = self.column(x, near, 'split', False, va, vb)
+                checks.append(dict(interval_kmh=[va, vb], speed_kmh=col.speed, passed=False, kind='lower edge split',
+                                   bound_dps=e if isfinite(e) else None))
+                self.columns[col.speed] = col;added += 1
+                if not NTracer.ok(col) or col.lower < 0:tried.add(key)
+        finally:
+            cfree(xs);cfree(ns);cfree(ds)
+        return added
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef list check_s8(self):
+        """S8: the split rule on every outline piece between verified columns of one segment (no Mach seam or segment
+        end inside). A piece whose error bound (piece_error) is within S8_BOUND of the envelope turn tolerance and which
+        is at most the maximum step wide is finished; otherwise a column is solved where the bound is largest (at the
+        middle of a piece that is only too wide), at least a tenth of the piece from its ends, and both halves are
+        judged again. A piece narrower than the speed tolerance is finished; if its bound still fails and each end's
+        tangent misses the other end by more than the turn tolerance, the boundary jumps there (a 'step' event: the
+        chart draws it vertical). A column that is not verified ends the splitting of its piece (the S6 gap rules take
+        it from there)."""
+        cdef NColumn a, b, col
+        cdef double va, vb, x, sa, sb, ka, kb, pa, pb, na, nb, e
+        cdef bint corner, exact
+        cdef int i
+        cdef long splits = 0, steps = 0
+        cdef double tol = S8_BOUND*self.ttol
+        checks, tried, passed_set = [], self.check_tried, self.check_passed
+        seams = self.seams
+
+        def seam(lo, hi):
+            return any(lo < x < hi or lo < y < hi for x, y in seams)
+        for depth in range(self.max_depth+8):
+            good = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c)]
+            added = 0
+            for i in range(len(good)-1):
+                a = good[i];b = good[i+1]
+                va, vb = a.speed, b.speed
+                key = (va, vb)
+                if key in passed_set or key in tried or seam(va, vb):continue
+                sa, sb, ka, kb, pa, pb = self.interval_slopes(good, i)
+                na = self.eng.st[a.boundary].load;nb = self.eng.st[b.boundary].load
+                corner = self.face_of(a) != self.face_of(b);exact = self.exact_a and self.exact_b
+                e = self.piece_error(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, &x)
+                bound = e if isfinite(e) else None
+                if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= self.max_step+1e-9):
+                    passed_set.add(key)
+                    kind = 'bound' if e <= tol else 'narrow'
+                    # narrower than the speed tolerance and still failing: where each end's tangent misses the other end
+                    # by more than the turn tolerance, the difference did not shrink with the piece: a discontinuity
+                    if e > tol and pmin(fabs(turn_rate(vb, nb)-turn_rate(vb, na+sa*(vb-va))),
+                                              fabs(turn_rate(va, na)-turn_rate(va, nb-sb*(vb-va)))) > self.ttol:
+                        kind = 'step';steps += 1
+                        self.events.append(dict(kind='step', speed_kmh=[va, vb], faces=[a.reason, b.reason], bound_dps=bound))
+                    checks.append(dict(interval_kmh=[va, vb], passed=True, kind=kind, bound_dps=bound, faces=[a.reason, b.reason]))
+                    if corner:self.events.append(dict(kind='corner', speed_kmh=[va, vb], faces=[a.reason, b.reason]))
+                    continue
+                if e <= tol:x = .5*(va+vb)
+                x = pmin(pmax(x, va+.1*(vb-va)), vb-.1*(vb-va))
+                col = self.column(x, [a, b], 'split', False, va, vb)
+                splits += 1
+                checks.append(dict(interval_kmh=[va, vb], speed_kmh=col.speed, passed=False, kind='split', bound_dps=bound,
+                                   faces=[a.reason, b.reason], split_face=col.reason if NTracer.ok(col) else col.status_name()))
+                added += 1
+                self.columns[col.speed] = col
+                if not NTracer.ok(col):tried.add(key)
+            n = self.lower_split(checks, tol)
+            added += n;splits += n
+            if not added:break
+        self.eng.stats['s8_splits'] = self.eng.stats.get('s8_splits', 0)+splits
+        self.eng.stats['s8_steps'] = self.eng.stats.get('s8_steps', 0)+steps
+        return checks
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -1531,6 +1726,7 @@ cdef class NTracer:
                 self.events.append(dict(kind='segment unresolved', speed_kmh=segment['speed_kmh'], status=start.status_name()))
         if self.s8:self.seam_restarts(segments)
         for segment in upper:self.upper_segment(segment)
+        if self.s8:self.dive_path(segments)
         self.ias_one_g()
         checks = self.check()
         if self.nudge:checks += self.resolve_gaps(segments)

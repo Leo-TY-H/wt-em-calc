@@ -91,6 +91,27 @@ cdef inline double turn_rate(double speed, double load) noexcept nogil:
     return G_TURN*sqrt(pmax(0., load*load-1.))/(speed/3.6)*RAD_TO_DEG
 
 
+DEF S8_INFLECTION = .5   # S8: band_load across an inflection: the chord +- this times the larger end-slope deviation x width
+DEF S8_SAMPLES = 32      # S8: points across a piece at which its error bound is evaluated
+
+
+cdef inline void band_load(double va, double na, double sa, double vb, double nb, double sb, double x, double* lo,
+                           double* hi) noexcept nogil:
+    """S8: the values a function can take at x on [va, vb] given its values and slopes at both ends (sa at va, sb at
+    vb). Where the chord slope lies between the end slopes (a slope that changes monotonically: smooth, or with a kink
+    anywhere inside) the function lies between the chord and the nearer tangent line; otherwise (an inflection
+    inside) within S8_INFLECTION times the larger end-slope deviation from the chord, times the width, of the chord."""
+    cdef double h = vb-va, m = (nb-na)/h, chord = na+m*(x-va), ta = na+sa*(x-va), tb = nb+sb*(x-vb), b
+    if (sa-m)*(m-sb) >= 0.:
+        if sa >= m:
+            lo[0] = chord;hi[0] = pmin(ta, tb)
+        else:
+            lo[0] = pmax(ta, tb);hi[0] = chord
+    else:
+        b = S8_INFLECTION*pmax(fabs(sa-m), fabs(sb-m))*h
+        lo[0] = chord-b;hi[0] = chord+b
+
+
 cdef struct TState:
     int src            # RowSrc index (native) or -1
     int row            # index into MarchEngine.rows (built or imported Python row) or -1
@@ -221,6 +242,7 @@ cdef class MarchEngine:
     cdef bint instructor, structural, is_prop, roll_leveling, native_instructor
     # S8: the soft chart limits (solver.soft_admission): engine RPM and the forward-IAS limits pass the march through
     cdef public bint soft
+    cdef public bint dive_seed   # S8: level flight continued only from stored level states at lower speeds (dive path)
     cdef unsigned long long soft_mask, ias_mask
     cdef public double ias_limit      # the lowest enforced forward-IAS limit (m/s), NaN without one
     cdef public double sep_tol
@@ -688,11 +710,12 @@ cdef class MarchEngine:
             hard = True
         return hard
 
-    cdef int slide_candidate(self, int sid, SlideSpec* out, double alpha=NAN, double bank=NAN, double load=NAN) except -1:
+    cdef int slide_candidate(self, int sid, SlideSpec* out, double alpha=NAN, double bank=NAN, double load=NAN,
+                             bint straddle=True) except -1:
         """S8 (the blade-polar jump check): the sliding spec of a regular propeller state whose shafts (on a pitch stop
         or with a fixed pitch) have a blade-polar jump within PropModel.slide_width of their speed that blocks their
-        torque balance (net torque of opposite signs either side of it), at the state's flight condition or at the
-        given one (the target of a correction from it); out.n = 0 without."""
+        torque balance (net torque of opposite signs either side of it; any jump there without ``straddle``), at the
+        state's flight condition or at the given one (the target of a correction from it); out.n = 0 without."""
         cdef TState* t = &self.st[sid]
         cdef PropPrep* prep
         out.n = 0
@@ -701,7 +724,7 @@ cdef class MarchEngine:
         self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
         prep = self.P.prepared(t.load if not isfinite(load) else load, t.coords[0] if not isfinite(alpha) else alpha,
                                t.coords[1] if not isfinite(bank) else bank)
-        self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out)
+        self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out, straddle)
         self.stats['s8_jump_checks'] = self.stats.get('s8_jump_checks', 0)+1
         if out.n:self.stats['s8_jumps_found'] = self.stats.get('s8_jumps_found', 0)+1
         return 0
