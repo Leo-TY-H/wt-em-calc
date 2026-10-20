@@ -259,6 +259,7 @@ cdef class NTracer:
     cdef bint production_fallback, nudge, s6, probing, s7, cheap, s8
     cdef set check_tried, check_passed
     cdef public list knot_speeds
+    cdef public list seg_starts     # S9: (lo, hi, start speed) of every swept segment
     cdef double tangent_delta
     cdef bint exact_a, exact_b      # S7: interval_slopes found face slopes (exact or the face neighbour's) at both ends
     cdef int forced_level           # S9: the level flight the next column marches from (the dive path's walked state), or -1
@@ -291,6 +292,7 @@ cdef class NTracer:
         # S8: WT_MARCH_S8=0 restores the S7 edge search (no rescue columns at the edge)
         self.s8 = os.environ.get('WT_MARCH_S8', '1') != '0' and self.s7
         self.knot_speeds = []
+        self.seg_starts = []
         self.tangent_delta = 1.
         self.cheap = False     # S7: a column without rescues or nudges (the edge refinement column)
         self.forced_level = -1
@@ -505,6 +507,17 @@ cdef class NTracer:
                 if nearest < 0 or d < bd:
                     nearest = sid;bd = d
         march = NMarch(self.eng, speed, self.march_tol)
+        if self.eng.s9:
+            # S9: where two level-flight branches overlap, the column follows the branch its sweep follows (the one
+            # continued from the segment's start; the dense truth's own continuation): level flight from the nearest
+            # seed on the start's side, the other side only where that side has none (P1Y1 SB 194-196 km/h)
+            march.pref_side = self.start_side(speed)
+            if march.pref_side != 0.:
+                for sid in seeds+level_seeds:
+                    if (fabs(self.eng.st[sid].load-1.) <= 1e-12 and (self.eng.st[sid].speed-speed)*march.pref_side > 0.
+                            and (nearest < 0 or (self.eng.st[nearest].speed-speed)*march.pref_side <= 0.
+                                 or fabs(self.eng.st[sid].speed-speed) < fabs(self.eng.st[nearest].speed-speed))):
+                        nearest = sid
         march.strict_faces = self.s6
         march.no_rescue = self.cheap
         col.march = True
@@ -832,6 +845,15 @@ cdef class NTracer:
             q = self.slide_probe(level, speed)
             if q >= 0:return q
         return -1 if p >= 0 and self.eng.level_physical(p) else -3
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double start_side(self, double speed):
+        """S9: +1 / -1 where the segment holding ``speed`` started its sweep above / below it, 0 elsewhere."""
+        for lo, hi, s0 in self.seg_starts:
+            if lo-1e-9 <= speed <= hi+1e-9:
+                return 1. if s0 > speed+1e-9 else -1. if s0 < speed-1e-9 else 0.
+        return 0.
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -1260,6 +1282,7 @@ cdef class NTracer:
         cdef int skipped
         cdef bint ended
         lo, hi = segment['speed_kmh']
+        self.seg_starts.append((float(lo), float(hi), float(start.speed)))
         for side in (-1., 1.):
             bound = lo if side < 0 else hi
             chain = [start];step = self.max_step;skipped = 0;ended = False

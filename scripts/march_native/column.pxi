@@ -15,6 +15,7 @@ DEF ROBUST_RETRIES = 16     # retried corrections per S6 rescue of one column (t
 DEF S9_TRIM_DEV = .02       # S9: elevator-command distance (of its [-1, 1] travel) from the step's linear prediction ...
 DEF S9_TRIM_SLOPE = .02     # ... with a secant-slope change (per deg) above the previous secant's, or this, splits the step
 DEF S9_TRIM_PITCH = .8      # ... where the pitch-response margin fell below this fraction over the step before
+DEF S9_PROP_JUMP = .05      # S9: a propulsion coordinate change (of its size, at least 1) that marks another propeller branch
 
 STATUS_TEXT = ('verified limit', 'plot ceiling', 'unresolved numerical boundary', 'no feasible samples', None)
 RESCUE_REASONS = ('march correction unresolved', 'march roots disagree')
@@ -128,6 +129,9 @@ cdef class NMarch:
     cdef public bint jump_seen
     # S9: the next march step approaches a hard limit's predicted root (no warm start from another speed then)
     cdef bint approach
+    # S9: the side (+1 higher speeds, -1 lower, 0 none) of the column's segment start: level flight is continued from
+    # that side first (the branch the sweep follows), the cross-speed level store on that side first
+    cdef public double pref_side
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -308,7 +312,7 @@ cdef class NMarch:
         cdef int p, i, q, warm_state = -1
         cdef double wsol[5]
         cdef double wload
-        cdef long evals, fresh
+        cdef long evals, fresh, evals2 = 0, fresh2 = 0
         cdef Trial* t
         cdef Predictor* warm_pred = NULL
         cdef StoreRow* best = NULL
@@ -326,6 +330,16 @@ cdef class NMarch:
         if warm_state >= 0:
             p = self.correct_at(warm_state, wsol, wload, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS, 2e-6,
                                 &self.preds, &evals, &fresh, NULL)
+            if self.eng.s9 and p >= 0 and self.eng.is_prop and self.prop_jump(seed, p):
+                # S9: the warm start from another speed landed on another propeller branch (wash / governor state) than
+                # the column's own samples (Ki-43-III SB 137-143 km/h): the step from the column's own sample instead,
+                # where that closes on its own branch
+                q = self.correct_at(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS, 2e-6,
+                                    NULL, &evals2, &fresh2, NULL)
+                evals += evals2;fresh += fresh2
+                if q >= 0 and not self.prop_jump(seed, q):
+                    self.eng.stats['s9_warm_branches'] = self.eng.stats.get('s9_warm_branches', 0)+1
+                    p = q
         else:
             p = self.correct_at(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS, 2e-6,
                                 &self.preds, &evals, &fresh, NULL)
@@ -384,6 +398,20 @@ cdef class NMarch:
             if spec.n:self.jump_seen = True
             return p
         return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint prop_jump(self, int a, int b) noexcept:
+        """S9: the propulsion coordinates of state ``b`` (shaft, governor and wash coordinates, after the seven attitude and
+        wing-history ones) differ from those of ``a`` by more than S9_PROP_JUMP of their size (at least 1): another
+        propeller branch. False where the layouts differ or either state slides on a blade-polar jump."""
+        cdef TState* s = &self.eng.st[a]
+        cdef TState* t = &self.eng.st[b]
+        cdef int i
+        if not (s.has_coords and t.has_coords) or s.nx != t.nx or s.nx <= 7 or s.slide.n > 0 or t.slide.n > 0:return False
+        for i in range(7, s.nx):
+            if fabs(t.coords[i]-s.coords[i]) > S9_PROP_JUMP*pmax(1., fabs(s.coords[i])):return True
+        return False
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -457,6 +485,16 @@ cdef class NMarch:
                 d = fabs(r.speed-self.speed)
                 if best == NULL or d < bd:
                     best = r;bd = d
+            if self.pref_side != 0.:
+                # S9: the nearest stored level flight on the segment start's side (within the reuse window), if any
+                for i in range(self.eng.nlevel):
+                    r = &self.eng.level_store[i]
+                    if r.speed == self.speed or (self.eng.dive_seed and r.speed > self.speed):continue
+                    if self.eng.ncut and self.eng.across(r.speed, self.speed):continue
+                    if (r.speed-self.speed)*self.pref_side <= 0. or fabs(r.speed-self.speed) > REUSE_WINDOW:continue
+                    d = fabs(r.speed-self.speed)
+                    if (best.speed-self.speed)*self.pref_side <= 0. or d < bd:
+                        best = r;bd = d
             if best != NULL and fabs(best.speed-self.speed) <= REUSE_WINDOW:
                 neighbour = best.state
                 pm_set(&self.preds, &self.eng.level_key, &best.pred)
