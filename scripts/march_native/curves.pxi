@@ -701,7 +701,7 @@ cdef class NCurves:
                     h = key[1]-key[0]
                     e = self.piece_bound(hf, i, &xm) if h > 0. else 0.
                     bound = e if isfinite(e) else None
-                    if h <= self.speed_tol or (e <= self.turn_tol and h <= self.max_step):
+                    if h <= self.speed_tol or (e <= self.turn_tol and h <= pmin(self.max_step, S8_MAX_WIDTH)):
                         if e > self.turn_tol:
                             comp.setdefault('steps', []).append(dict(interval_kmh=list(key), bound_dps=bound))
                             self.eng.stats['s8_curve_steps'] = self.eng.stats.get('s8_curve_steps', 0)+1
