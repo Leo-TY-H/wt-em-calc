@@ -882,15 +882,20 @@ cdef class NTracer:
                     if self.s8 and p == -3 and inside != leapt:
                         # S8: a level flight that does not close is no evidence of the edge (a band without a steady
                         # state at a blade-polar jump, or a stiff stretch): probes leaping 2, 4 and 8 speed tolerances
-                        # past the last admitted level flight; one that is admitted continues the probes from there
+                        # (at least 1 km/h each) past the last admitted level flight; one that is admitted, with no
+                        # physical rejection of level flight halfway back to the failed probe, continues the probes there
                         leapt = inside
                         for k in range(1, 4):
-                            v = inside+direction*pmin((2 << (k-1))*self.vtol, fabs(bad.speed-inside))
+                            v = inside+direction*pmin((2 << (k-1))*pmax(self.vtol, 1.), fabs(bad.speed-inside))
                             if fabs(bad.speed-v) <= 1e-9:break
                             p = self.level_probe(level, v, &preds)
                             if p >= 0:break
                             if p == -1:
                                 out = v;break
+                        if p >= 0 and self.level_probe(p, .5*(nxt+v), &preds) == -1:
+                            # a physical rejection of level flight inside the leapt band (an engine over-rev at 1 g, a
+                            # stall): the edge is there, whatever lies beyond it
+                            out = .5*(nxt+v);p = -1
                         if p >= 0:
                             self.eng.stats['s8_probe_leaps'] = self.eng.stats.get('s8_probe_leaps', 0)+1
                             inside = v;level = p;admitted.append(v);failed = v;step = self.vtol
@@ -1790,14 +1795,18 @@ cdef class NTracer:
                     neighbours = [seed]
             start = self.column(segment.get('start_kmh', hi), neighbours, 'start', True, lo-1e-9, hi+1e-9)
             starts = [start]
+            # S8: past the zero-alpha speed of a forward-IAS limit (the start hint) the chart is traced upwards from below
+            # only (the dive path: a state there that the sweep from below does not reach is not drawn), so the other
+            # start speeds lie below the hint
+            top = segment['start_kmh'] if self.s8 and 'start_kmh' in segment else hi
             if not NTracer.ok(start):
-                start = self.column(.5*(lo+hi), neighbours, 'start', True, lo-1e-9, hi+1e-9)
+                start = self.column(.5*(lo+top), neighbours, 'start', True, lo-1e-9, hi+1e-9)
                 starts.append(start)
             # S5: where neither start closes (level flight unresolved there), more start speeds across the
             # segment before it is given up (the Python march would leave the chart to the old sampler)
             for fraction in (.25, .75, .125, .375, .625, .875):
                 if NTracer.ok(start):break
-                start = self.column(lo+fraction*(hi-lo), neighbours, 'start', True, lo-1e-9, hi+1e-9)
+                start = self.column(lo+fraction*(top-lo), neighbours, 'start', True, lo-1e-9, hi+1e-9)
                 starts.append(start)
             if NTracer.ok(start):
                 self.sweep(segment, start)
