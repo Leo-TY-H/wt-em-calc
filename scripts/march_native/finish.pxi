@@ -60,6 +60,13 @@ cdef inline bint physical_code(int r) noexcept nogil:
     return r == R_STALL or r == R_CONTROL or r == R_WING or r == R_INSTR or r == R_RPM or r == R_PITCH_REV
 
 
+cdef inline bint soft_code(int r) noexcept nogil:
+    # S8: the soft chart limits (em_solver.SOFT_REASONS): engine RPM (an over-rev passed on the way to a hard limit is
+    # transient) and the forward-IAS limits (wing VNE, automatic flap retraction, flap damage: judged on each state's
+    # own forward IAS, so the chart's high-speed edge leans with alpha)
+    return r == R_RPM or r == R_IAS or r == R_FLAP_AUTO or r == R_FLAP_IAS
+
+
 BRIEF_FIELDS = ('speed_kmh', 'load_g', 'solution', 'stationary_coordinates', 'stationary_coordinate_names',
                 'stationary_request_indices', 'sideslip_attitude_deg', 'source_branch', 'local_valid', 'converged',
                 'reasons', 'ps_mps', 'turn_dps', 'force_error_g', 'angular_error_rad_s2', 'history_error',
@@ -130,6 +137,7 @@ cdef struct RowSrc:
     PropPrep prep
     PropSample ps
     double qq[MAXPATH]
+    SlideSpec slide      # S8: the shafts sliding on a blade-polar jump, with theta and shaft speeds
     Fin fin
 
 
@@ -141,6 +149,10 @@ cdef class Finisher:
     cdef public long frozen_evaluations, frozen_derivative_samples
     cdef double length, inertia_z
     cdef bint invert_elevator, roll_leveling, structural, has_sweep, flaps_available, instructor_enabled
+    # S8: the chart admission rule (solver.soft_admission, set by the march chart): a state whose only rejections are
+    # soft limits (engine RPM, forward-IAS limits) still gets the hard checks (pitch response, Instructor), so the
+    # march can tell a transient soft rejection from the first hard limit along alpha
+    cdef public bint soft
     cdef public bint is_prop, python_admission
     cdef object admission_revision
     cdef PropModel pm
@@ -185,6 +197,7 @@ cdef class Finisher:
         self.admission_revision = admission_revision
         self.instructor = None;self.loop_stats = None;self.python_instructors = []
         self.chain = NULL
+        self.soft = bool(getattr(solver, "soft_admission", False))
         self.request_cache = {}
 
     def set_prop(self, PropModel pm, layout):
@@ -317,8 +330,11 @@ cdef class Finisher:
         key = [br[1]]
         if self.roll_leveling:key.append(-1 if e.air.alpha <= -12. else 1 if e.air.alpha >= 12. else 0)
         for i in range(2, 8):key.append(decode_branch(br[i]))
-        piece = [k for k, v in self.model.pieces.items() if v == br[0]][0]
-        key.append(piece)
+        # JointProblem.derivative_branch(value)[1:]: the stable mode ends with its Mach piece key; the native and
+        # continuous modes lead with the exact Mach, which the source branch drops (S8)
+        if not self.model.exact_mach:
+            piece = [k for k, v in self.model.pieces.items() if v == br[0]][0]
+            key.append(piece)
         return tuple(key)
 
     cdef void prop_flags(self, const PropSample* ps, Fin* f, int* overspeed, int* stopped) noexcept:
@@ -427,15 +443,23 @@ cdef class Finisher:
         s.nreq = P.nreq
         for i in range(P.nreq):s.req[i] = P.req[i]
         s.speed_kmh = speed_kmh;s.load = load;f.calls = calls
+        s.slide.n = 0
         ensure_complete(self.model, e)
         k = &e.kin
         if self.is_prop:
             prep = P.prepared(e.load, s.q[0], s.q[1])
             s.prep = prep[0]
+            self.pm.use_slide(&P.slide)
             if self.pm.propulsion_q(prep, &s.q[7], P.req, P.nreq, inner, &s.ps, s.qq):
                 raise RuntimeError('native finish: propulsion branch unavailable')
             charge(K_FRAMES, 1)
             self.prop_flags(&s.ps, f, &nover, &nstop)
+            # S8: a sliding state lies on its jump only with theta in [0, 1] (else the regular state exists: no closure)
+            s.slide = P.slide
+            if s.slide.n > 0:
+                self.pm.slide_result(&s.slide)
+                for i in range(NP):
+                    if s.slide.flag[i] and not (-1e-9 <= s.slide.theta[i] <= 1.+1e-9):f.prop_converged = False
             f.frames = 1 if f.prop_converged else 0
         f.finite = True
         for i in range(5):
@@ -483,7 +507,7 @@ cdef class Finisher:
             for text in flap_violations(self.solver.flap_profile, self.flaps_percent, e.air.ias_u, e.air.mach, self.structural):
                 self.add_reason(f, reason_code(text))
         f.has_pitch = False
-        if converged and e.stall_margin >= 0. and not f.nreasons:
+        if converged and e.stall_margin >= 0. and (not f.nreasons or (self.soft and self.only_soft(f))):
             f.has_pitch = True
             if self.is_prop:
                 set_phase(self.model, &s.ps)
@@ -496,7 +520,7 @@ cdef class Finisher:
             if not f.pitch.normal:
                 self.add_reason(f, R_PITCH_REV if f.pitch.reversed_ else R_PITCH_UNRES)
         f.instr = 0
-        if self.instructor_enabled and not f.nreasons:
+        if self.instructor_enabled and (not f.nreasons or (self.soft and self.only_soft(f))):
             self.admit_instructor(s)
             if f.instr == 1:
                 if not f.ires.converged:self.add_reason(f, R_INSTR_UNRES)
@@ -537,6 +561,13 @@ cdef class Finisher:
     cdef void add_reason(self, Fin* f, int code) noexcept:
         if f.nreasons < MAXREASONS:
             f.reasons[f.nreasons] = code;f.nreasons += 1
+
+    cdef bint only_soft(self, const Fin* f) noexcept:
+        """S8: every reason so far is a soft chart limit (engine RPM, a forward-IAS limit)."""
+        cdef int i
+        for i in range(f.nreasons):
+            if not soft_code(f.reasons[i]):return False
+        return True
 
     cdef int admit_instructor(self, RowSrc* s) except -1:
         """Instructor admission of the state: native lean controller, else the Python path on the value record."""
@@ -677,6 +708,7 @@ cdef class Finisher:
                      search_bounds=bounds, model_experiments=dict(c['description']),
                      history_closure_required=True, symmetry_projection=None, mach_curve_mode=c['mach_mode'])
         if c['mach_mode'] == 'stable':point['mach_curve_revision'] = c['stable_revision']
+        if s.slide.n > 0:point['propeller_sliding'] = slide_record(&s.slide)
         return point
 
     cdef dict row(self, RowSrc* s):

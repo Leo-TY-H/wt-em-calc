@@ -169,6 +169,8 @@ cdef class Model:
     cdef double cur_phase[11]
     cdef int nvec, vec_next
     cdef public object solver, pieces, stats
+    # S8: native / continuous Mach curves: the derivative branch holds the exact binary32 Mach (the stable mode its piece)
+    cdef public bint exact_mach
     cdef public bint instructor
     cdef public long evaluations, cond_misses, vec_misses
 
@@ -213,7 +215,7 @@ cdef class Model:
             raise ValueError('S2 native evaluator: full model only')
         if cfg.get('aircraft_trim_mode', 'discrete') != 'discrete':raise ValueError('discrete aircraft trim only')
         if getattr(solver, 'sideslip_attitude_deg', 0.) != 0.:raise ValueError('zero sideslip only')
-        if model.get('mach_curve_mode') != 'stable':raise ValueError('stable Mach mode only')
+        self.exact_mach = model.get('mach_curve_mode') != 'stable'
         self.mass = solver.mass['mass'];self.weight = solver.weight
         for i in range(3):self.cog[i] = solver.mass['cog'][i];self.inertia[i] = solver.mass['inertia'][i]
         from body_dynamics import G
@@ -288,8 +290,14 @@ cdef class Model:
         c.tp.a_right_main = a['right_main'];c.tp.a_right_elevator = a['right_elevator'];c.tp.a_v_main = a['v_main']
         c.tp.a_rudder = a['rudder']
         c.tp.slipstream_distance = tp.get('slipstream_distance', 5.72);c.tp.downwash_aspect = tp['downwash_aspect']
-        key = stable_piece_key(self.solver, mach)
-        c.piece = self.pieces.setdefault(key, len(self.pieces))
+        cdef float fm
+        cdef int bits
+        if self.exact_mach:
+            # the derivative branch of the native and continuous Mach curves is the exact (binary32) Mach itself
+            fm = <float>mach;memcpy(&bits, &fm, 4);c.piece = bits
+        else:
+            key = stable_piece_key(self.solver, mach)
+            c.piece = self.pieces.setdefault(key, len(self.pieces))
         c.rough = bool(rough_mach(self.solver, mach))
         self.last_cond = i
         return i

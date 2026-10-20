@@ -54,7 +54,12 @@ REVISION = 'alpha-march-chart-v1'
 
 
 def eligible(condition):
-    """(True, None) when the march chart covers this aircraft condition, else (False, reason)."""
+    """(True, None) when the march chart covers this aircraft condition, else (False, reason).
+
+    S8: manual engine controls (the march's own engine RPM rule draws the over-rev edges), every chart load cap (the
+    march's load ceiling), every Mach curve mode and any wing sweep (stretches where the selected sweep is unavailable
+    are cut out of the speed range: chart_segments) are in the domain; what stays outside are the diagnostic and
+    experimental model modes."""
     c = condition
     checks = [
         (c['trim_solver_mode'] == 'stationary', 'nested or uncorrected trim'),
@@ -62,17 +67,10 @@ def eligible(condition):
         (c['stationary_execution'] == 'baseline', 'diagnostic stationary execution mode'),
         (not c['experimental_instantaneous_aero'] and c['experimental_lateral_trim'] == 'full', 'model experiment'),
         (c['aircraft_trim_mode'] == 'discrete' and c['turn_response_mode'] == 'settled', 'trim or turn-response mode'),
-        (c['mach_curve_mode'] == 'stable', 'Mach curve mode other than stable'),
         (c['stationary_governor_mode'] == 'pitch_stops', 'governor mode other than pitch stops'),
-        (not c['manual_engine_controls'], 'manual engine controls (over-rev boundaries)'),
-        (c['max_load_g'] is None and not c['reference_load_cap'] and not c['low_speed_load_cap']
-         and c['aircraft_search_region'] and c['global_load_cap_g'] == 64., 'non-default chart load caps'),
     ]
     for ok, reason in checks:
         if not ok:return False, reason
-    from em_sampling import sweep_speed_intervals
-    name = c['aircraft'][0]
-    if sweep_speed_intervals(name, c):return False, 'speeds where the selected wing sweep is unavailable'
     return True, None
 
 
@@ -80,6 +78,41 @@ def envelope_tolerance(config):
     from em_accuracy import turn_tolerance
     # The ratio first, so the standard precision gives exactly 0.15 deg/s.
     return ENVELOPE_TOLERANCE_DPS*(turn_tolerance(config['sep_tolerance_mps'])/turn_tolerance(.5))
+
+
+SWEEP_GUARD_KMH = .0036   # a sweep-limit segment end lies this far inside the available speeds (as the speed limit's sample)
+
+
+def chart_segments(solver):
+    """(segments, speed limit, Mach seams, sweep gaps) of the march chart's speed range: the chart range up to the
+    enforced speed limit, split at the native Mach discontinuities (seams, 'mach_seam' ends) and, S8, around every
+    stretch where the selected wing sweep is unavailable ('sweep_limit' ends: the game's sweep schedule runs on
+    total-speed Mach, so the edge is vertical; S5 made a stretch reaching the end of the range the speed limit
+    'Wing sweep limit'). Each segment is traced on its own, so a vertical edge stands at every sweep-limit end."""
+    from em_speed_limits import speed_limits, sweep_excluded_kmh, march_domain
+    from em_mach_events import solver_regions
+    config = solver.config
+    lo, hi = float(config['speed_min_kmh']), float(config['speed_max_kmh'])
+    limit = speed_limits(solver.fm, config)
+    end, hint = 'range_end', None
+    if limit['enforced'] and getattr(solver, 'soft_admission', False):
+        # S8: vertical edges only at the Mach and sweep limits; a forward-IAS limit is judged on each state (the range
+        # runs on past its zero-alpha speed, the 'hint' where the top segment's trace starts)
+        hi, end, hint = march_domain(limit, hi)
+    elif limit['enforced'] and limit['sample_speed_kmh'] < hi:
+        hi, end = limit['sample_speed_kmh'], 'speed_limit'
+    seams = sorted((a, b) for a, b in (r['speed_interval_kmh'] for r in solver_regions(solver)) if b > lo and a < hi)
+    gaps = sorted([a-SWEEP_GUARD_KMH, b+SWEEP_GUARD_KMH] for a, b in sweep_excluded_kmh(solver.fm, config)
+                  if b > lo and a < hi and b < float(config['speed_max_kmh'])-1e-6)
+    blocks = sorted([(a, b, 'mach_seam') for a, b in seams]+[(a, b, 'sweep_limit') for a, b in gaps])
+    out, start, kind = [], lo, 'range_end'
+    for a, b, why in blocks:
+        if a > start:out.append(dict(speed_kmh=[start, a], ends=[kind, why]))
+        if b > start:start, kind = b, why
+    if hi > start:out.append(dict(speed_kmh=[start, hi], ends=[kind, end]))
+    for s in out:
+        if hint is not None and s['speed_kmh'][0] < hint < s['speed_kmh'][1]:s['start_kmh'] = hint
+    return out, limit, seams, [list(g) for g in gaps]
 
 
 def compute(config, progress=None, cancelled=None, preview=None):
@@ -205,6 +238,11 @@ def march_aircraft(name, condition, index, report, cancelled, show):
     tracer = M.MarchTracer(name, cfg, turn_tolerance=envelope_tolerance(cfg), max_step_kmh=MAX_STEP_KMH, on_column=on_column)
     solver = S.worker_solver(name, tracer.cj)
     curve_solver = BaselineSolver(name, cfg)
+    # S8: the chart's admission rule for soft limits (engine RPM, forward IAS): hard checks also on soft-rejected states
+    # (WT_MARCH_S8=0: the S7 rule, every soft limit a hard one)
+    import os
+    if os.environ.get('WT_MARCH_S8', '1') != '0':
+        for s in (solver, curve_solver):s.soft_admission = True
     # S5: no cyclic garbage collection while the chart builds its rows. A collection walks every live
     # object (the loaded aircraft data included), and the many row dicts would trigger several; the
     # chart creates no reference cycles that need collecting before it returns.
@@ -214,7 +252,8 @@ def march_aircraft(name, condition, index, report, cancelled, show):
     try:
         return march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started)
     finally:
-        for s in (solver, curve_solver):N.detach(s)
+        for s in (solver, curve_solver):
+            N.detach(s);s.__dict__.pop('soft_admission', None)
         if collecting:gc.enable()
 
 
@@ -320,6 +359,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                 # The complete curve solver record (knots, withheld checks, ends) for exports and replay.
                 curves=None if curves is None else {k: v for k, v in curves.items() if k not in ('seeds',)},
                 envelope_trace=dict(segments=envelope['segments'], mach_seams_kmh=envelope['mach_seams_kmh'],
+                                    sweep_gaps_kmh=envelope.get('sweep_gaps_kmh', []),
+                                    soft_limits=bool(getattr(solver, 'soft_admission', False)),
                                     events=envelope['events'], checks=len(envelope['checks']),
                                     speed_limit=envelope['speed_limit'], turn_tolerance_dps=tracer.ttol,
                                     placement_tolerance_kmh=tracer.place_tol),
@@ -374,8 +415,12 @@ def low_speed_edge(cfg, envelope, columns, tracer):
                  or e['kind'] == 'edge' and abs(min(e['speed_kmh'])-first['speed_kmh']) < 1e-9), None)
     clipped = abs(first['speed_kmh']-cfg['speed_min_kmh']) < 1e-8
     kind = 'speed-range edge' if clipped else 'low-speed feasibility edge'
+    # S8: the first column at a segment start where the selected wing sweep becomes available
+    sweep = any(s['ends'][0] == 'sweep_limit' and abs(s['speed_kmh'][0]-first['speed_kmh']) < 1e-9
+                for s in envelope.get('segments') or ())
+    if sweep:kind = 'Wing sweep limit'
     reason, load = first.get('boundary_reason'), first['boundary']['load_g']
-    if not clipped and below and below[-1].get('boundary_status') == 'no feasible samples':
+    if not clipped and not sweep and below and below[-1].get('boundary_status') == 'no feasible samples':
         if reason == 'stall' and load <= 1.01:kind = 'stall-speed edge'
         elif reason == 'Instructor pitch' and load <= 1.01:kind = 'Instructor pitch minimum-speed edge'
     return dict(speed_kmh=first['speed_kmh'], kind=kind, bracket_kmh=[below[-1]['speed_kmh'], first['speed_kmh']] if below else None,
@@ -393,9 +438,11 @@ def runs(aircraft):
     """Runs of neighbouring verified columns that may be joined by one smooth outline piece."""
     columns = sorted(aircraft['columns'], key=lambda c: c['speed_kmh'])
     trace = aircraft.get('envelope_trace') or {}
-    seams = trace.get('mach_seams_kmh', [])
+    seams = trace.get('mach_seams_kmh', [])+trace.get('sweep_gaps_kmh', [])
     events = trace.get('events', [])
     gaps = [tuple(x) for x in aircraft.get('interpolation', {}).get('unresolved_speed_intervals', [])]
+    # S8: segment ends (Mach seams, wing-sweep limits) are never drawn across
+    ends = sorted({v for s in (trace.get('segments') or []) for v in s['speed_kmh']})
     out, run = [], []
     for c in columns:
         if not ok(c):
@@ -404,6 +451,7 @@ def runs(aircraft):
         if run:
             a, b = run[-1]['speed_kmh'], c['speed_kmh']
             cut = (any(a <= x+1e-9 and b >= y-1e-9 or a < x < b or a < y < b for x, y in seams)
+                   or any(a+1e-9 < v < b-1e-9 for v in ends)
                    or any(e['kind'] == 'edge' and a <= min(e['speed_kmh']) and b >= max(e['speed_kmh']) for e in events)
                    or any(e['kind'] == 'unresolved' and a < e['speed_kmh'] < b for e in events)
                    or any(lo < b and hi > a for lo, hi in gaps))
@@ -499,6 +547,12 @@ def outline(data, aircraft):
     if data.get('preview'):nx = min(nx, 241)
     grid = np.linspace(cfg['speed_min_kmh'], cfg['speed_max_kmh'], nx)
     boundary = []
+    # S8: a vertical edge where the selected wing sweep becomes unavailable inside the chart range (a segment end of
+    # kind 'sweep_limit'; the low-speed edge and the speed limit draw their own)
+    segments = (aircraft.get('envelope_trace') or {}).get('segments') or []
+    low = (aircraft.get('low_speed_edge') or {}).get('speed_kmh')
+    starts = {s['speed_kmh'][0] for s in segments if s['ends'][0] == 'sweep_limit'}
+    stops = {s['speed_kmh'][1] for s in segments if s['ends'][1] == 'sweep_limit'}
     for k, run in enumerate(pieces):
         speeds = np.array([c['speed_kmh'] for c in run])
         exact = {c['speed_kmh']: c for c in run}
@@ -506,6 +560,9 @@ def outline(data, aircraft):
         loads = run_loads(run, xs)
         rates = turn_rate(xs, loads)
         index = np.searchsorted(speeds, xs)
+        if run[0]['speed_kmh'] in starts and run[0]['speed_kmh'] != low:
+            boundary.append(dict(speed_kmh=run[0]['speed_kmh'], turn_dps=0., at_plot_ceiling=False,
+                                 edge_kind='Wing sweep limit', vertical_edge=True))
         for x, t, j in zip(xs.tolist(), rates.tolist(), index.tolist()):
             c = exact.get(x)
             if c is not None:
@@ -517,6 +574,11 @@ def outline(data, aircraft):
                 p = dict(speed_kmh=x, turn_dps=t,
                          at_plot_ceiling=left['boundary_status'] == 'plot ceiling' and right['boundary_status'] == 'plot ceiling')
             boundary.append(p)
+        if run[-1]['speed_kmh'] in stops:
+            boundary[-1].update(edge_kind='Wing sweep limit', vertical_edge=True)
+            boundary.append(dict(speed_kmh=run[-1]['speed_kmh'], turn_dps=0., at_plot_ceiling=False,
+                                 edge_kind='Wing sweep limit', vertical_edge=True))
+        boundary.extend(ias_edge(aircraft, run, grid))
         if k < len(pieces)-1:
             # An explicit gap: never a smooth line to the next run.
             nxt = pieces[k+1][0]['speed_kmh'];here = run[-1]['speed_kmh']
@@ -532,6 +594,10 @@ def outline(data, aircraft):
                                      edge_kind=edge['kind'], vertical_edge=True))
             boundary[at+1].update(edge_kind=edge['kind'], vertical_edge=True)
     redline = aircraft.get('speed_limit')
+    if redline and 'vertical_limit' in redline and (aircraft.get('envelope_trace') or {}).get('soft_limits'):
+        # S8: only a Mach or sweep limit is a vertical edge (a forward-IAS limit leans: ias_edge)
+        vertical = redline['vertical_limit']
+        redline = None if vertical is None else dict(vertical, enforced=True, sample_speed_kmh=max(0., vertical['speed_kmh']-.0036))
     if redline and redline['enforced'] and pieces:
         sample = redline['sample_speed_kmh'];column = next((c for c in pieces[-1] if c['speed_kmh'] == sample), None)
         if column is not None and cfg['speed_min_kmh'] <= redline['speed_kmh'] <= cfg['speed_max_kmh']:
@@ -541,6 +607,30 @@ def outline(data, aircraft):
                               vertical_edge=True, edge_kind=redline['kind']+' speed boundary')
                 boundary[at+1:at+1] = [dict(common, turn_dps=column['boundary']['turn_dps']), dict(common, turn_dps=0.)]
     return boundary
+
+
+def ias_edge(aircraft, run, grid):
+    """S8: the leaning forward-IAS edge of one outline run: where level flight is over the lowest forward-IAS limit
+    (wing VNE, flap retraction or damage by IAS) the columns carry their lower edge (the first state inside the limit
+    along alpha); the edge runs from the last column's lower edge back down through the others to level flight at the
+    speed the trace located ('ias edge' event), interpolated in load (PCHIP) on the chart grid. [] without one."""
+    from scipy.interpolate import PchipInterpolator
+    lows = [c for c in run if c.get('lower_edge')]
+    if not lows:return []
+    kind = (aircraft.get('speed_limit') or {}).get('forward_ias_limits') or []
+    kind = min(kind, key=lambda c: c['speed_kmh'])['kind'] if kind else 'Forward IAS limit'
+    v = [c['speed_kmh'] for c in lows];n = [c['lower_edge']['load_g'] for c in lows]
+    events = (aircraft.get('envelope_trace') or {}).get('events', [])
+    one = next((e for e in events if e['kind'] == 'ias edge' and min(e['speed_kmh']) <= v[0]+1e-9), None)
+    if one is not None and max(one['speed_kmh']) < v[0]-1e-9:
+        v.insert(0, float(max(one['speed_kmh'])));n.insert(0, 1.)
+    xs = np.unique(np.r_[grid[(grid > v[0]) & (grid < v[-1])], v])
+    loads = PchipInterpolator(v, n)(xs) if len(v) > 1 else np.array(n)
+    rates = turn_rate(xs, loads)
+    common = dict(at_plot_ceiling=False, edge_kind=kind+' (forward IAS) speed boundary', leaning_edge=True)
+    out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs[::-1].tolist(), rates[::-1].tolist())]
+    if n[0] > 1.:out.append(dict(common, speed_kmh=float(v[0]), turn_dps=0.))
+    return out
 
 
 def pchip_slopes(x, y):

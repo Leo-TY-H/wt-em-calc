@@ -239,13 +239,13 @@ cdef inline double interval_load(double va, double na, double sa, double ka, dou
 cdef class NTracer:
     """em_march.MarchTracer on native columns."""
     cdef MarchEngine eng
-    cdef public object aircraft, config, cj, on_column, segments_, limit, seams
+    cdef public object aircraft, config, cj, on_column, segments_, limit, seams, mach_seams, sweep_gaps
     cdef public double ttol, vtol, place_tol, max_step, march_tol
     cdef public int max_depth
     cdef public dict columns, work
     cdef public list witnesses, events
     cdef object N, M, S
-    cdef bint production_fallback, nudge, s6, probing, s7, cheap
+    cdef bint production_fallback, nudge, s6, probing, s7, cheap, s8
     cdef set check_tried, check_passed
     cdef public list knot_speeds
     cdef double tangent_delta
@@ -273,6 +273,8 @@ cdef class NTracer:
         self.probing = False   # nudge and gap probes run without the S6 robust march (they look for speeds outside a band)
         # S7: WT_MARCH_S7=0 restores the S6 tracer exactly (PCHIP checks, corners bisected to the placement tolerance)
         self.s7 = os.environ.get('WT_MARCH_S7', '1') != '0' and self.s6
+        # S8: WT_MARCH_S8=0 restores the S7 edge search (no rescue columns at the edge)
+        self.s8 = os.environ.get('WT_MARCH_S8', '1') != '0' and self.s7
         self.knot_speeds = []
         self.tangent_delta = 1.
         self.cheap = False     # S7: a column without rescues or nudges (the edge refinement column)
@@ -299,6 +301,8 @@ cdef class NTracer:
             if c is None:continue
             for sid in c.points:
                 if self.eng.st[sid].valid:seeds.append(sid)
+            # S8: a level flight over a forward-IAS limit seeds the next column's level flight
+            if c.level >= 0 and self.eng.ias_soft(c.level):seeds.append(c.level)
         w = Work({}, parent=current())
         with use(w):
             col = self.run_column(speed, seeds)
@@ -460,8 +464,9 @@ cdef class NTracer:
         cdef double d, bd = 0., predicted
         cdef bint has_predicted, healthy
         self.eng.stats['columns'] += 1
+        level_seeds = [sid for sid in seeds if self.eng.ias_soft(sid) and self.eng.st[sid].has_coords]
         seeds = [sid for sid in seeds if self.eng.st[sid].valid and self.eng.st[sid].has_coords]
-        for sid in seeds:
+        for sid in seeds+level_seeds:
             if fabs(self.eng.st[sid].load-1.) <= 1e-12:
                 d = fabs(self.eng.st[sid].speed-speed)
                 if nearest < 0 or d < bd:
@@ -475,7 +480,9 @@ cdef class NTracer:
         if level < 0:
             level = self.python_level(march, speed, nearest)
         healthy = nearest >= 0 and speed > self.eng.st[nearest].speed
-        if not self.eng.st[level].valid:
+        # S8: a level flight over a forward-IAS limit only is no edge: the march starts from it (states at higher
+        # alpha can lie inside the limit; the column's lower edge is where they begin)
+        if not (self.eng.st[level].valid or self.eng.ias_soft(level)):
             if not self.eng.physical(level) and healthy:
                 reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
                 # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
@@ -505,6 +512,14 @@ cdef class NTracer:
             if out is not None:
                 march.s3_flags.add('march unresolved: '+str(reason)[:60])
                 boundary, status, reason = out
+        # S8: the soft limits at the stop (NMarch.settle)
+        if boundary >= 0:boundary, status, reason = march.settle((boundary, status, reason))
+        if boundary < 0 and status == 'no feasible samples':
+            # S8: nothing inside the forward-IAS limit up to the first hard limit: past the leaning edge
+            self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: '+str(reason), started)
+            col.points = [level]
+            col.region = False
+            return 0
         if boundary < 0:
             if not self.production_fallback:
                 # S5: the unresolved march column itself (a numerical gap in the chart, never an absence proof);
@@ -516,6 +531,12 @@ cdef class NTracer:
                 return 0
             self.production(col, speed, seeds, 'march unresolved: '+str(reason))
             return 0
+        if self.eng.ias_soft(level):
+            col.lower = march.lower_edge(level, boundary)
+            if col.lower < 0:
+                self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: forward-IAS limit', started)
+                col.points = [level];col.region = False
+                return 0
         self.column_record(col, march, level, boundary,
                            STATUS_VERIFIED if status == 'verified limit' else STATUS_CEILING if status == 'plot ceiling' else STATUS_UNRESOLVED,
                            reason, started)
@@ -560,6 +581,7 @@ cdef class NTracer:
             if out is not None:
                 boundary, status, reason = out
                 march.s3_flags.add('s6 robust march')
+        if boundary >= 0:boundary, status, reason = march.settle((boundary, status, reason))
         if boundary < 0:return False
         march.s3_path = 'interior start'
         march.s3_flags.add(why[:80])
@@ -592,7 +614,7 @@ cdef class NTracer:
         t = march.trial('level');t.ok = int(self.eng.st[level].valid)
         t.evals = self.eng.counts[K_EVAL]-e0+w.counts.get('aircraft_evaluations', 0)
         t.fresh = -1
-        if (not self.eng.st[level].valid and not self.eng.physical(level) and nearest >= 0
+        if (not self.eng.st[level].valid and not self.eng.physical(level) and not self.eng.ias_soft(level) and nearest >= 0
                 and speed > self.eng.st[nearest].speed):
             e0 = self.eng.counts[K_EVAL]
             w = Work({}, parent=current())
@@ -653,6 +675,17 @@ cdef class NTracer:
         import time
         cdef int sid
         cdef double ba = 0., bl = 0.
+        if boundary >= 0 and self.eng.soft:
+            # S8: below a verified stop, an over-rev state (rejected for engine RPM only, its hard checks passed) is a
+            # transient over-rev: admitted by the chart rule, drawn and seeded like any admitted state
+            ba = self.eng.st[boundary].alpha
+            for sid in march.samples:
+                if (not self.eng.st[sid].valid and fabs(self.eng.st[sid].speed-col.speed) <= 1e-9
+                        and self.eng.st[sid].alpha <= ba+1e-9 and self.eng.only_reasons(sid, (<unsigned long long>1) << R_RPM)):
+                    self.eng.st[sid].valid = True;self.eng.st[sid].rule = 1
+                    self.eng.stats['s8_transient_over_rev'] = self.eng.stats.get('s8_transient_over_rev', 0)+1
+            if self.eng.st[boundary].base != boundary and self.eng.st[self.eng.st[boundary].base].rule == 1:
+                self.eng.st[boundary].valid = True;self.eng.st[boundary].rule = 1
         keep = [sid for sid in march.samples if self.eng.st[sid].valid and fabs(self.eng.st[sid].speed-col.speed) <= 1e-9]
         if boundary >= 0:
             ba = self.eng.st[boundary].alpha;bl = self.eng.st[boundary].load
@@ -696,20 +729,12 @@ cdef class NTracer:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     def segments(self):
-        from em_speed_limits import speed_limits
-        from em_mach_events import solver_regions
-        solver = self.eng.solver
-        lo, hi = float(self.config['speed_min_kmh']), float(self.config['speed_max_kmh'])
-        limit = speed_limits(solver.fm, solver.config)
-        end = 'range_end'
-        if limit['enforced'] and limit['sample_speed_kmh'] < hi:hi, end = limit['sample_speed_kmh'], 'speed_limit'
-        cuts = sorted((a, b) for a, b in (r['speed_interval_kmh'] for r in solver_regions(solver)) if b > lo and a < hi)
-        out, start, kind = [], lo, 'range_end'
-        for a, b in cuts:
-            if a > start:out.append(dict(speed_kmh=[start, a], ends=[kind, 'mach_seam']))
-            start, kind = max(start, b), 'mach_seam'
-        if hi > start:out.append(dict(speed_kmh=[start, hi], ends=[kind, end]))
-        return out, limit, cuts
+        """(segments, speed limit, cuts): em_march_chart.chart_segments; the cuts (no interpolation or withheld check
+        across them) are the Mach seams and, S8, the stretches where the selected wing sweep is unavailable."""
+        import em_march_chart as K
+        out, limit, seams, gaps = K.chart_segments(self.eng.solver)
+        self.mach_seams = seams;self.sweep_gaps = gaps
+        return out, limit, sorted([tuple(s) for s in seams]+[tuple(g) for g in gaps])
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -810,11 +835,112 @@ cdef class NTracer:
                 if NTracer.ok(near):
                     self.columns[float(near.speed)] = near
                     return near, out
+                if self.s8 and fabs(out-col.speed) > self.vtol*(1.+1e-9):
+                    # S8 (item 1): the bracket is still wider than the speed tolerance: the same column with the S6
+                    # rescue steps (only here, so charts whose edge closes without them never pay for it)
+                    near = self.column(v, [col, good], 'edge', False, pmin(v, out), pmax(v, col.speed))
+                    self.eng.stats['s8_edge_rescues'] = self.eng.stats.get('s8_edge_rescues', 0)+1
+                    if NTracer.ok(near):
+                        self.columns[float(near.speed)] = near
+                        return near, out
                 return col, out
             self.eng.stats['s7_edge_column_misses'] = self.eng.stats.get('s7_edge_column_misses', 0)+1
+        if self.s8:
+            # S8 (item 1): no rescue-free column next to the edge verifies: columns with the S6 rescue steps at the
+            # admitted speeds nearest the edge, until one verifies (the S6 bisection to the placement tolerance only
+            # where none does)
+            for k in range(len(admitted)-1, max(-1, len(admitted)-4), -1):
+                v = admitted[k]
+                col = self.column(v, [good], 'edge', False, pmin(v, out), pmax(v, good.speed))
+                self.eng.stats['s8_edge_rescues'] = self.eng.stats.get('s8_edge_rescues', 0)+1
+                if NTracer.ok(col):
+                    self.columns[float(col.speed)] = col
+                    return col, out
         self.eng.stats['s7_edge_probe_misses'] = self.eng.stats.get('s7_edge_probe_misses', 0)+1
         g, b = self.localize(good, bad, 'edge')
         return g, b.speed
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object gap_probe(self, NColumn upper, double hi):
+        """S8: level flight continued from the lowest verified column of the segment above down through a stretch where
+        the selected wing sweep is unavailable (the selected sweep's aerodynamics are the same there; 'sweep unavailable'
+        is the only extra reason, so such states carry the continuation) to the segment below, whose top is ``hi``, in
+        steps of the placement tolerance. ('infeasible', speed) where level flight is physically rejected above that
+        segment (no level flight below a low-speed edge, the tracer's edge rule), ('seed', state) with the admitted level
+        flight at its top, or None (a correction that does not close: no evidence)."""
+        from em_trim_work import Work, use, current
+        cdef double v, h, step, last
+        cdef int level = upper.level, p
+        cdef PredMap preds
+        cdef unsigned long long soft = (<unsigned long long>1) << R_SWEEP
+        preds.n = 0
+        if level < 0 or not self.eng.st[level].valid or fabs(self.eng.st[level].load-1.) > 1e-9:return None
+        v = upper.speed;step = self.place_tol
+        w = Work({}, parent=current())
+        try:
+            with use(w):
+                while v > hi+1e-9:
+                    last = v
+                    h = pmin(step, v-hi);v = v-h
+                    if v-hi < .25*self.vtol:v = hi
+                    p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS,
+                                         2e-6, v, &preds, NULL)
+                    if p < 0 or not (self.eng.st[p].valid or self.eng.only_reasons(p, soft)):
+                        p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV,
+                                             ROBUST_EVALS, 2e-6, v, NULL, NULL)
+                    self.eng.flush_counts()
+                    if p >= 0 and (self.eng.st[p].valid or self.eng.only_reasons(p, soft)):
+                        level = p;continue
+                    if step > self.vtol*(1.+1e-9) and not (p >= 0 and self.eng.physical_except(p, soft)):
+                        # as the edge probes: a correction that does not close over a long step is no evidence;
+                        # on from the last admitted level flight in steps of the speed tolerance
+                        v = last;step = self.vtol;continue
+                    self.events.append(dict(kind='sweep gap probe', speed_kmh=v, from_kmh=upper.speed,
+                                            reasons=self.eng.reason_list(p) if p >= 0 else 'correction unresolved'))
+                    # the low-speed edge of level flight (the edge probes' rule: a failure at the speed tolerance's
+                    # step, physical or not, is the edge; the tracer never charts past an edge)
+                    return ('infeasible', v) if v > hi+1e-9 else None
+        finally:
+            row = self.work.setdefault('sweep gap probe', dict(columns=0, evaluations=0))
+            row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
+        return ('seed', level) if self.eng.st[level].valid else None
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int ias_one_g(self) except -1:
+        """S8: where level flight first passes the lowest forward-IAS limit: between neighbouring verified columns, the
+        lower with its level flight inside the limit and the upper with it over (a lower edge), level flight continued
+        from the lower in steps of the placement tolerance, then halved to 0.05 km/h ('ias edge' event; the leaning
+        edge's foot, em_march_chart.ias_edge)."""
+        from em_trim_work import Work, use, current
+        cdef NColumn a, b
+        cdef double lo, hi, v
+        cdef int level, p
+        cdef PredMap preds
+        good = sorted((c for c in self.columns.values() if NTracer.ok(c)), key=lambda c: c.speed)
+        for a, b in zip(good, good[1:]):
+            if a.lower >= 0 or b.lower < 0 or a.level < 0 or not self.eng.st[a.level].valid:continue
+            preds.n = 0
+            level = a.level;lo = a.speed;hi = b.speed
+            w = Work({}, parent=current())
+            with use(w):
+                while hi-lo > .05:
+                    v = pmin(lo+self.place_tol, .5*(lo+hi)) if hi-lo > 2*self.place_tol else .5*(lo+hi)
+                    p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV,
+                                         MARCH_EVALS, 2e-6, v, &preds, NULL)
+                    if p < 0 or not (self.eng.st[p].valid or self.eng.ias_soft(p)):
+                        p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV,
+                                             ROBUST_EVALS, 2e-6, v, NULL, NULL)
+                    self.eng.flush_counts()
+                    if p >= 0 and self.eng.st[p].valid:
+                        lo = v;level = p
+                    elif p >= 0 and self.eng.ias_soft(p):hi = v
+                    else:break
+            row = self.work.setdefault('ias edge probe', dict(columns=0, evaluations=0))
+            row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
+            self.events.append(dict(kind='ias edge', speed_kmh=[lo, hi], located_by='level-flight probes'))
+        return 0
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -849,6 +975,13 @@ cdef class NTracer:
                     continue
                 skipped = 0 if NTracer.ok(col) else skipped
                 if not NTracer.ok(col):
+                    if col.status == STATUS_NOFEASIBLE and (last.lower >= 0 or (col.points and self.eng.ias_soft(col.points[0]))):
+                        # S8: past the leaning forward-IAS edge (no state inside the limit up to the first hard
+                        # limit): the top corner of that edge, by columns to the speed tolerance
+                        good, bad = self.localize(last, col, 'edge', self.vtol)
+                        self.events.append(dict(kind='edge', speed_kmh=[good.speed, bad.speed], status=bad.status_name(),
+                                                reason=bad.reason, located_by='columns (forward-IAS edge)'))
+                        break
                     # S6: an unresolved (not infeasible) column ends the sweep only to the speed tolerance
                     if self.s7 and col.status == STATUS_NOFEASIBLE:
                         # S7: an infeasible edge to the speed tolerance (it was drawn up to the placement tolerance inside)
@@ -1152,7 +1285,9 @@ cdef class NTracer:
         flight that did not close for a reason that is not a physical rejection."""
         if not c.march:return False
         if c.status == STATUS_UNRESOLVED:return True
-        return c.status == STATUS_NOFEASIBLE and len(c.points) > 0 and not self.eng.physical(c.points[0])
+        # S8: level flight over a forward-IAS limit with nothing inside it up to the first hard limit is an edge
+        return (c.status == STATUS_NOFEASIBLE and len(c.points) > 0 and not self.eng.physical(c.points[0])
+                and not self.eng.ias_soft(c.points[0]))
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -1284,21 +1419,42 @@ cdef class NTracer:
                                                    float(self.config['speed_max_kmh']), self.vtol)
         for segment in sorted(segments, key=lambda s: -s['speed_kmh'][1]):
             lo, hi = segment['speed_kmh']
-            start = self.column(hi, [previous] if previous is not None else [], 'start', True, lo-1e-9, hi+1e-9)
+            neighbours = [previous] if previous is not None else []
+            if previous is not None and segment['ends'][1] == 'sweep_limit':
+                # S8: the segment below a stretch of unavailable wing sweep: level flight continued down through it
+                probe = self.gap_probe(previous, hi)
+                if probe is not None and probe[0] == 'infeasible':
+                    self.events.append(dict(kind='segment infeasible', speed_kmh=segment['speed_kmh'], status='no feasible samples',
+                                            reason='low-speed edge of level flight at %.2f km/h (continued through the '
+                                                   'unavailable wing sweep)' % probe[1]))
+                    self.eng.stats['s8_infeasible_segments'] = self.eng.stats.get('s8_infeasible_segments', 0)+1
+                    continue
+                if probe is not None:
+                    seed = NColumn(hi);seed.points = [probe[1]]
+                    neighbours = [seed]
+            start = self.column(segment.get('start_kmh', hi), neighbours, 'start', True, lo-1e-9, hi+1e-9)
+            starts = [start]
             if not NTracer.ok(start):
-                start = self.column(.5*(lo+hi), [previous] if previous is not None else [], 'start', True, lo-1e-9, hi+1e-9)
+                start = self.column(.5*(lo+hi), neighbours, 'start', True, lo-1e-9, hi+1e-9)
+                starts.append(start)
             # S5: where neither start closes (level flight unresolved there), more start speeds across the
             # segment before it is given up (the Python march would leave the chart to the old sampler)
             for fraction in (.25, .75, .125, .375, .625, .875):
                 if NTracer.ok(start):break
-                start = self.column(lo+fraction*(hi-lo), [previous] if previous is not None else [], 'start', True, lo-1e-9,
-                                    hi+1e-9)
+                start = self.column(lo+fraction*(hi-lo), neighbours, 'start', True, lo-1e-9, hi+1e-9)
+                starts.append(start)
             if NTracer.ok(start):
                 self.sweep(segment, start)
                 inside = [c for c in self.columns.values() if lo-1e-9 <= c.speed <= hi+1e-9 and NTracer.ok(c)]
                 if inside:previous = min(inside, key=lambda c: c.speed)
+            elif all(c.status == STATUS_NOFEASIBLE and not self.numerical_gap(c) for c in starts):
+                # S8: level flight physically rejected at every start (e.g. a sliver of available wing sweep below the
+                # stall speed): nothing to draw there, no gap
+                self.events.append(dict(kind='segment infeasible', speed_kmh=segment['speed_kmh'], status=start.status_name(),
+                                        reason=str(start.raw_reason)[:80]))
             else:
                 self.events.append(dict(kind='segment unresolved', speed_kmh=segment['speed_kmh'], status=start.status_name()))
+        self.ias_one_g()
         checks = self.check()
         if self.nudge:checks += self.resolve_gaps(segments)
         for c in self.witnesses:
@@ -1306,8 +1462,8 @@ cdef class NTracer:
             self.columns.setdefault(float(c.speed), c)
         if self.nudge:self.within_tolerance(segments)
         cols = sorted(self.columns.values(), key=lambda c: c.speed)
-        return dict(columns=cols, segments=segments, mach_seams_kmh=cuts, events=self.events, checks=checks,
-                    work_by_role=self.work, elapsed_s=time.perf_counter()-started,
+        return dict(columns=cols, segments=segments, mach_seams_kmh=self.mach_seams, sweep_gaps_kmh=self.sweep_gaps,
+                    events=self.events, checks=checks, work_by_role=self.work, elapsed_s=time.perf_counter()-started,
                     speed_limit=dict(kind=limit['kind'], speed_kmh=limit['speed_kmh'], enforced=limit['enforced']))
 
     # ------------------------------------------------------------------ column records
@@ -1335,6 +1491,9 @@ cdef class NTracer:
                 out['lower_boundary'] = next((p for p in out['points'] if abs(p['load_g']-1.) <= 1e-9 and p.get('valid')), None)
             out['s1_role'] = col.role;out['s1_evaluations'] = col.evaluations
         if col.withheld:out['withheld_check'] = True
+        if col.lower >= 0:
+            # S8: the column's lower edge (level flight over a forward-IAS limit): the chart's leaning edge
+            out['lower_edge'] = self.eng.row_of(col.lower);out['lower_edge_kind'] = 'forward IAS limit'
         if col.nudged_from is not None:out['s6_requested_speed_kmh'] = float(col.nudged_from)
         if col.slope_kind is not None:
             out['boundary_slope'] = [col.slope_l if isfinite(col.slope_l) else None, col.slope_r if isfinite(col.slope_r) else None]

@@ -76,19 +76,53 @@ def speed_limits(fm,config):
             deployment.append(flaps['deployment_ias_kmh']/factor)
         if flaps['deployment_mach'] is not None:
             deployment.append(flaps['deployment_mach']*speed_of_sound(config['altitude_m'])*3.6)
+    # S8: the game's own inputs (aces.exe traced 2026-10-19): wing VNE, flap damage and automatic flap retraction by IAS
+    # read the forward IAS (body-forward airspeed x sqrt(density ratio)); MNE, automatic flap retraction by Mach and the
+    # sweep schedule read the Mach of the total airspeed. A Mach limit is a vertical chart edge (exact in TAS); a
+    # forward-IAS limit is judged on each state's own forward IAS, so above its zero-alpha speed a turn at higher alpha
+    # stays inside it (the march chart's edge leans; this record's speed_kmh keeps the old zero-alpha convention).
+    ias_mps={'VNE':strength['ias'],'Flap IAS limit':(flaps or {}).get('destruction_ias_kmh',0.)/3.6,
+             'Flap automatic IAS limit':((flaps or {}).get('automatic_ias_kmh') or 0.)/3.6}
+    forward=[dict(c,ias_mps=float(ias_mps[c['kind']])) for c in active if c['kind'] in ias_mps]
+    vertical=[c for c in active if c['kind'] not in ias_mps]
+    vertical=min(vertical,key=lambda c:c['speed_kmh']) if vertical else None
     return dict(speed_kmh=limit,sample_speed_kmh=inside,
         kind=selected['kind'],vne_ias_kmh=strength['ias']*3.6,
         vne_tas_kmh=vne,mne_tas_kmh=mne,mne=strength['mach'],
         enforced=bool(active),flaps=flaps,candidates=candidates,
         deployment_speed_kmh=min(deployment,default=None),
+        forward_ias_limits=forward,vertical_limit=vertical,
+        forward_ias_limit_mps=min((c['ias_mps'] for c in forward),default=None),
         convention='Total-speed IAS converted to TAS; lowest enforced wing, Mach, flap damage or automatic flap-extension limit; native pointwise checks retained')
+
+
+IAS_DOMAIN_ALPHA_DEG=30.   # S8: the march chart follows a forward-IAS limit up to its zero-alpha speed / cos(30 deg)
+
+
+def march_domain(limit, speed_max):
+    """S8: (end speed, end kind, start speed hint) of the march chart's speed range: the lowest vertical (Mach, sweep)
+    limit, and past the zero-alpha speed of the lowest forward-IAS limit up to that speed / cos(30 deg) (states at
+    higher alpha stay inside a forward-IAS limit; the trace finds where none does)."""
+    hi,end,start=float(speed_max),'range_end',None
+    vertical=limit.get('vertical_limit')
+    if vertical is not None and vertical['speed_kmh']-.0036<hi:hi,end=max(0.,vertical['speed_kmh']-.0036),'speed_limit'
+    forward=limit.get('forward_ias_limits') or []
+    if forward:
+        zero=min(c['speed_kmh'] for c in forward)
+        bound=zero/math.cos(math.radians(IAS_DOMAIN_ALPHA_DEG))
+        if bound<hi:hi,end=bound,'ias_domain'
+        if zero-.0036<hi:start=max(0.,zero-.0036)
+    return hi,end,start
 
 
 def excluded_column(solver, speed):
     if not hasattr(solver,'plot_speed_limits'):
         solver.plot_speed_limits=speed_limits(solver.fm,solver.config)
     limit=solver.plot_speed_limits
-    if not limit['enforced'] or speed<=limit['sample_speed_kmh']:return None
+    if getattr(solver,'soft_admission',False):
+        # S8: the march chart's own domain (forward-IAS limits are judged on each state)
+        if not limit['enforced'] or speed<=march_domain(limit,math.inf)[0]:return None
+    elif not limit['enforced'] or speed<=limit['sample_speed_kmh']:return None
     return dict(speed_kmh=float(speed),points=[],boundary=None,sustained=[],load_checks=[],
         boundary_bracket_g=None,boundary_reason=limit['kind'],boundary_status='speed limit',
         lower_boundary=None,numerical_gap_brackets=[],interior_failures=[],unresolved_load_intervals=[],

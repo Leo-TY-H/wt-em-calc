@@ -222,9 +222,11 @@ def events_supported():
 # ----- per-solver option ----------------------------------------------------------
 def supported(solver):
     cfg = solver.config
+    # S8: every Mach curve mode (the native and continuous modes carry the exact Mach in the derivative branch)
     return (cfg.get('trim_solver_mode') == 'stationary' and not cfg.get('experimental_instantaneous_aero', False)
             and cfg.get('experimental_lateral_trim', 'full') == 'full' and cfg.get('aircraft_trim_mode', 'discrete') == 'discrete'
-            and solver.model.get('mach_curve_mode') == 'stable' and getattr(solver, 'sideslip_attitude_deg', 0.) == 0.)
+            and solver.model.get('mach_curve_mode') in ('stable', 'native', 'continuous')
+            and getattr(solver, 'sideslip_attitude_deg', 0.) == 0.)
 
 
 def attach(solver, verify=None):

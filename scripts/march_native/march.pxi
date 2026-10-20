@@ -55,10 +55,11 @@ DEF KD_PROPPITCH = 4
 DEF KD_STALL = 5
 DEF KD_FOLD = 6
 DEF KD_WING = 7
-DEF NKD = 8
+DEF KD_IAS = 8      # S8: a forward-IAS limit face (wing VNE, flap retraction or damage by IAS; native event 7)
+DEF NKD = 9
 # Kind names in the lexical order of the Python strings (sorted() of (root, kind) ties)
 KIND_TEXT = ('Instructor pitch', 'control', 'engine RPM', 'pitch response', 'propeller pitch', 'stall', 'trim fold',
-             'wing force')
+             'wing force', 'IAS limit')
 KIND_CODE = {k: i for i, k in enumerate(KIND_TEXT)}
 
 DEF G_TURN = 9.8100004196167
@@ -130,6 +131,8 @@ cdef struct TState:
     bint pitch_stops
     int roll_branch    # -1, 0, 1, or 9 for None
     long evaluations
+    int rule           # S8: admitted by the chart rule only: 1 a transient over-rev (engine RPM over its limit on the way to a hard limit)
+    SlideSpec slide    # S8: shafts sliding on a blade-polar jump (n = 0: a regular state)
 
 
 cdef struct PKey:
@@ -216,6 +219,10 @@ cdef class MarchEngine:
     cdef public object points, point_solver
     cdef long counts[NCOUNT]
     cdef bint instructor, structural, is_prop, roll_leveling, native_instructor
+    # S8: the soft chart limits (solver.soft_admission): engine RPM and the forward-IAS limits pass the march through
+    cdef public bint soft
+    cdef unsigned long long soft_mask, ias_mask
+    cdef public double ias_limit      # the lowest enforced forward-IAS limit (m/s), NaN without one
     cdef public double sep_tol
     cdef public list layout_names
     cdef int layout_nx
@@ -231,6 +238,13 @@ cdef class MarchEngine:
     cdef public object known_caps
     cdef public list known_speeds
     cdef public double t_solve, t_finish, t_rows, t_point, t_python, t_ledger, t_srows, t_tangent
+    # S8: the load and closure of the latest correction (also where it did not close: a fixed-alpha correction ending at
+    # the load cap shows that the cap lies before its alpha)
+    cdef public double last_load, last_cap
+    # S8: an explicit sliding spec for the next corrections (the blade-polar jump check), instead of the seed's
+    cdef SlideSpec slide_override
+    cdef public bint use_override
+    cdef public bint last_closed
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -287,6 +301,12 @@ cdef class MarchEngine:
         self.t_solve = self.t_finish = self.t_rows = self.t_point = self.t_python = self.t_ledger = self.t_srows = 0.
         self.t_tangent = 0.
         self.engine_shafts = []
+        self.soft = bool(getattr(solver, "soft_admission", False))
+        from em_speed_limits import speed_limits
+        value = speed_limits(solver.fm, solver.config).get("forward_ias_limit_mps")
+        self.ias_limit = NAN if value is None else float(value)
+        self.ias_mask = ((<unsigned long long>1) << R_IAS) | ((<unsigned long long>1) << R_FLAP_AUTO) | ((<unsigned long long>1) << R_FLAP_IAS)
+        self.soft_mask = ((<unsigned long long>1) << R_RPM) | ((<unsigned long long>1) << R_IAS) | ((<unsigned long long>1) << R_FLAP_AUTO) | ((<unsigned long long>1) << R_FLAP_IAS)
         if self.is_prop:
             p = solver.engine.properties
             for shaft in p['transmissions']:self.engine_shafts.append([link['index'] for link in shaft['engines']])
@@ -367,7 +387,10 @@ cdef class MarchEngine:
         cdef Fin* f = &s.fin
         cdef int i, k
         cdef double v, best
-        t.src = si;t.row = -1;t.base = sid;t.limit = -1
+        t.src = si;t.row = -1;t.base = sid;t.limit = -1;t.rule = 0
+        t.slide = s.slide
+        for k in range(NP if t.slide.n > 0 else 0):
+            if t.slide.flag[k] and t.slide.lo[k] > 0.:t.slide.hint[k] = t.slide.lo[k]
         t.speed = s.speed_kmh/3.6*3.6;t.load = s.load;t.alpha = e.x[0];t.bank = e.x[1]
         t.turn = e.geom.turn_rate*RAD_TO_DEG
         t.ps = e.kin.ps if isfinite(e.kin.ps) else NAN
@@ -460,6 +483,8 @@ cdef class MarchEngine:
         cdef double v
         self.rows[sid] = row
         t.src = -1;t.row = sid;t.base = sid;t.limit = -1
+        t.rule = 1 if row.get('chart_rule') == 'transient over-rev' else 0
+        slide_from_row(row.get('propeller_sliding'), &t.slide)
         t.speed = row['speed_kmh'];t.load = row['load_g']
         sol = row.get('solution')
         t.alpha = row.get('alpha_deg', sol[0] if sol else NAN);t.bank = row.get('bank_deg', sol[1] if sol else NAN)
@@ -556,6 +581,9 @@ cdef class MarchEngine:
         else:
             raise RuntimeError('state without a row source')
         if t.limit >= 0:row['envelope_limit'] = self.limits[t.limit]
+        if t.rule == 1 and not row.get('valid'):
+            # S8: admitted by the chart rule (a transient over-rev); its own admission record stays as it is
+            row = dict(row, valid=True, chart_usable=True, chart_rule='transient over-rev')
         self.rows[sid] = row
         if t.base == sid:self.t_rows += s5_now()-t0
         return row
@@ -613,6 +641,7 @@ cdef class MarchEngine:
                    force_error_g=t.force_error_g if isfinite(t.force_error_g) else None,
                    angular_error_rad_s2=t.angular_error if isfinite(t.angular_error) else None,
                    history_error=t.history_error if isfinite(t.history_error) else None, converged=bool(t.converged))
+        if t.rule == 1:out['chart_rule'] = 'transient over-rev'
         return out
 
     cdef bint physical(self, int sid) noexcept:
@@ -624,6 +653,79 @@ cdef class MarchEngine:
             if not physical_code(t.reasons[i]):return False
         return True
 
+    cdef bint only_reasons(self, int sid, unsigned long long mask) noexcept:
+        """S8: a converged state rejected for reasons in ``mask`` only (bit r: reason code r)."""
+        cdef TState* t = &self.st[sid]
+        cdef int i, r
+        if not t.converged or not t.nreasons:return False
+        for i in range(t.nreasons):
+            r = t.reasons[i]
+            if r >= 64 or not (mask >> r) & 1:return False
+        return True
+
+    cdef bint passable(self, int sid) noexcept:
+        """S8: a state the alpha march passes through: admitted, or (under the chart's soft-limit rule) rejected only for
+        soft limits after its hard checks (pitch response, Instructor) passed."""
+        if self.st[sid].valid:return True
+        return self.soft and self.only_reasons(sid, self.soft_mask)
+
+    cdef bint hard_rejected(self, int sid) noexcept:
+        """em_march.physical under the soft-limit rule: a balanced physical rejection by at least one hard limit
+        (stall, wing force, control, Instructor, pitch response; engine RPM too without the rule), every other reason
+        physical or soft."""
+        cdef TState* t = &self.st[sid]
+        cdef int i, r
+        cdef bint hard = False
+        if not self.soft:return self.physical(sid)
+        if not t.converged or not t.nreasons:return False
+        for i in range(t.nreasons):
+            r = t.reasons[i]
+            if r < 64 and (self.soft_mask >> r) & 1:continue
+            if not physical_code(r):return False
+            hard = True
+        return hard
+
+    cdef int slide_candidate(self, int sid, SlideSpec* out) except -1:
+        """S8 (the blade-polar jump check): the sliding spec of a regular propeller state whose shafts (on a pitch stop
+        or with a fixed pitch) have a blade-polar jump within PropModel.slide_width of their speed; out.n = 0 without."""
+        cdef TState* t = &self.st[sid]
+        cdef PropPrep* prep
+        out.n = 0
+        if not self.is_prop or self.fin is None or self.fin.pm is None:return 0
+        if not t.has_coords or not t.layout_names or t.slide.n > 0 or not t.req_ok:return 0
+        self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
+        prep = self.P.prepared(t.load, t.coords[0], t.coords[1])
+        self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out)
+        self.stats['s8_jump_checks'] = self.stats.get('s8_jump_checks', 0)+1
+        if out.n:self.stats['s8_jumps_found'] = self.stats.get('s8_jumps_found', 0)+1
+        return 0
+
+    cdef bint ias_soft(self, int sid) noexcept:
+        """S8: rejected only for forward-IAS limits (its hard checks passed): below a leaning forward-IAS edge."""
+        return self.soft and not self.st[sid].valid and self.only_reasons(sid, self.ias_mask)
+
+    cdef bint has_code(self, int sid, int code) noexcept:
+        cdef int i
+        for i in range(self.st[sid].nreasons):
+            if self.st[sid].reasons[i] == code:return True
+        return False
+
+    cdef bint soft_kind(self, int k) noexcept:
+        """S8: a margin kind that is soft under the chart's rule (engine RPM): no march step, face or bracket on it."""
+        return self.soft and k == KD_RPM
+
+    cdef bint physical_except(self, int sid, unsigned long long soft) noexcept:
+        """S8: a converged state with at least one physical reason, every other reason in ``soft``."""
+        cdef TState* t = &self.st[sid]
+        cdef int i, r
+        cdef bint hard = False
+        if not t.converged or not t.nreasons:return False
+        for i in range(t.nreasons):
+            r = t.reasons[i]
+            if physical_code(r):hard = True
+            elif r >= 64 or not (soft >> r) & 1:return False
+        return hard
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef bint combined(self, int sid, double* out) noexcept:
@@ -631,7 +733,7 @@ cdef class MarchEngine:
         cdef int k
         cdef bint found = False
         for k in range(NKD):
-            if t.mset & (1 << k):
+            if t.mset & (1 << k) and not self.soft_kind(k):
                 out[0] = t.m[k] if not found else pmin(out[0], t.m[k])
                 found = True
         return found
@@ -646,7 +748,7 @@ cdef class MarchEngine:
         cdef double v = 0.
         for i in range(t.nreasons):
             k = reason_kind(t.reasons[i])
-            if k >= 0:crossed |= 1 << k
+            if k >= 0 and not self.soft_kind(k):crossed |= 1 << k
         if crossed & (1 << KD_INSTR):return KD_INSTR
         for k in range(NKD):
             if crossed & (1 << k):
@@ -736,7 +838,7 @@ cdef class MarchEngine:
         correction does not close but its state is admitted, the stored state id (Curve.retain), else -1."""
         cdef Seed sd
         cdef TState* t = &self.st[seed]
-        cdef int i, slot, code, si, sid
+        cdef int i, slot, code, si, sid, k
         cdef double n
         cdef bint closed
         cdef PKey key
@@ -750,10 +852,20 @@ cdef class MarchEngine:
         if sd.has_coords:
             for i in range(t.nx):sd.coords[i] = t.coords[i]
         sd.nreq = t.nreq;sd.req_ok = t.req_ok
+        # S8: the seed's sliding shafts (or the march's explicit choice: slide_override)
+        sd.slide = self.slide_override if self.use_override else t.slide
+        if sd.has_coords and t.slide.n > 0 and sd.slide.n == 0 and self.fin is not None and self.fin.pm is not None:
+            # leaving the jump: the shaft coordinate back to its regular meaning at the shaft speed of the jump
+            for i in range(NP):
+                if t.slide.flag[i]:
+                    slot = self.fin.pm.shaft_coordinate(i)
+                    if slot >= 0:sd.coords[7+slot] = t.slide.cw[i]+t.slide.lo[i]/300.
         for i in range(t.nreq):sd.req[i] = t.req[i]
         if fixed_kind == FIX_EVENT and ev_kind == 6:
             # engine RPM: the event point's limit, rpm_limit*pi/30 (Curve.events)
             self.P.ev_limit = t.rpm_limit[ev_axis]*M_PI/30.
+        elif fixed_kind == FIX_EVENT and ev_kind == 7:
+            self.P.ev_limit = self.ias_limit
         # S5: SEP-fixed corrections also take a predictor (the curve solver passes its own map)
         if fixed_kind != FIX_EVENT and preds != NULL:
             key.fixed = self.cc.fixed_index(fixed_kind);key.nreq = t.nreq
@@ -771,7 +883,18 @@ cdef class MarchEngine:
             cap = self.cap(speed)
             code = self.cc.solve_core(speed, cap, &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
                                       max_evaluations, event_tolerance, pred_in, &pred_out, &slot, &n, &closed)
+        if code < 0 and sd.slide.n > 0 and not self.use_override and sd.has_coords and self.fin.pm is not None:
+            # S8: no jump within reach of a sliding seed here (no sliding sample at its start): the regular correction
+            for i in range(NP):
+                if t.slide.flag[i]:
+                    k = self.fin.pm.shaft_coordinate(i)
+                    if k >= 0:sd.coords[7+k] = t.slide.cw[i]+t.slide.lo[i]/300.
+            sd.slide.n = 0
+            self.stats['s8_slide_dropped'] = self.stats.get('s8_slide_dropped', 0)+1
+            code = self.cc.solve_core(speed, cap, &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
+                                      max_evaluations, event_tolerance, pred_in, &pred_out, &slot, &n, &closed)
         t1 = s5_now();self.t_solve += t1-t0
+        self.last_load = n if code >= 0 else NAN;self.last_cap = cap;self.last_closed = code >= 0 and closed
         if code < 0:return -1
         if pred_out.valid and preds != NULL and fixed_kind != FIX_EVENT:
             pm_set(preds, &key, &pred_out)
@@ -789,8 +912,9 @@ cdef class MarchEngine:
             self.nsrc -= 1
             return -1
         sid = self.state_from_src(si)
-        if not f.row_valid:
-            # Rejected trials never become rows: release the stored source.
+        if not f.row_valid and not (self.soft and self.only_reasons(sid, self.soft_mask)):
+            # Rejected trials never become rows: release the stored source (S8: a state rejected only for soft limits
+            # keeps it: the chart rule can admit it, as a transient over-rev, after the march)
             if si == self.nsrc-1:
                 self.nsrc -= 1;self.st[sid].src = -1
         return sid
@@ -842,6 +966,7 @@ cdef class MarchEngine:
         if not t.load*t.load-1. > 1e-6:return False
         self.stats['s7_tangents'] = self.stats.get('s7_tangents', 0)+1
         # the problem at the state (CurveCorrection.solve_core's layout, turn coordinate q[nx])
+        P.slide = t.slide
         P.nreq = t.nreq
         for i in range(t.nreq):P.req[i] = t.req[i]
         P.nz = nx+1;P.speed_kmh = speed
@@ -854,6 +979,7 @@ cdef class MarchEngine:
         elif mode == 1:
             P.fixed = -3;P.ev_kind = ev_code;P.ev_axis = ev_axis;P.ev_side = ev_side
             if ev_code == 6:P.ev_limit = t.rpm_limit[ev_axis]*M_PI/30.
+            elif ev_code == 7:P.ev_limit = self.ias_limit
         else:
             P.fixed = 0;P.alpha = q0[0]
         k = 0
@@ -948,7 +1074,8 @@ cdef class MarchEngine:
                     if slot < 0:
                         self.stats['s7_chord_unevaluable'] = self.stats.get('s7_chord_unevaluable', 0)+1;break
                     same = True
-                    for i in range(BMAX):
+                    # S8: the exact-Mach branch (native and continuous Mach curves) changes with the speed itself
+                    for i in range(1 if self.model.exact_mach else 0, BMAX):
                         if P.memo_br[slot*BMAX+i] != br0[i]:
                             same = False;break
                     if not same:
@@ -1042,7 +1169,7 @@ cdef class MarchEngine:
                     self.alpha_key = preds.key[i];self.has_alpha_key = True;break
             if not self.has_alpha_key:return
         p = pm_get(preds, &self.alpha_key)
-        if p == NULL or sid < 0 or not self.st[sid].valid:return
+        if p == NULL or sid < 0 or not self.passable(sid):return
         if self.nstore >= 601:return
         self.store[self.nstore].speed = speed;self.store[self.nstore].alpha = self.st[sid].alpha
         self.store[self.nstore].state = sid;self.store[self.nstore].has_pred = True
