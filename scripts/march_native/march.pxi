@@ -64,6 +64,7 @@ KIND_CODE = {k: i for i, k in enumerate(KIND_TEXT)}
 
 DEF G_TURN = 9.8100004196167
 DEF MAX_STEP_DEG = 8.
+DEF S8_MAX_STEP_DEG = 4.   # S8: the alpha march's maximum step under the split rule (its maximum piece width along alpha)
 DEF APPROACH_DEG = 2.
 DEF OVERSHOOT_DEG = .1
 DEF SWITCH_DEG = 12.
@@ -733,6 +734,16 @@ cdef class MarchEngine:
     cdef bint ias_soft(self, int sid) noexcept:
         """S8: rejected only for forward-IAS limits (its hard checks passed): below a leaning forward-IAS edge."""
         return self.soft and not self.st[sid].valid and self.only_reasons(sid, self.ias_mask)
+
+    cdef bint ias_any(self, int sid) noexcept:
+        """S8: rejected for a forward-IAS limit among other reasons (a level flight past a forward-IAS limit that also
+        did not close numerically: the leaning edge may still continue above it)."""
+        cdef int i, r
+        if not self.soft or self.st[sid].valid:return False
+        for i in range(self.st[sid].nreasons):
+            r = self.st[sid].reasons[i]
+            if r < 64 and (self.ias_mask >> r) & 1:return True
+        return False
 
     cdef bint has_code(self, int sid, int code) noexcept:
         cdef int i
