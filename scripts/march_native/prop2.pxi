@@ -1297,6 +1297,29 @@ cdef class PropModel:
                 [[prep.cand[s][k] for k in range(prep.ncand[s])] for s in range(self.nt)])
 
 
+cdef double net_thrust(PropModel pm, const PFrame* fr) noexcept:
+    """S10: the net thrust (N) of the shafts' propellers in a propulsion frame: each propeller's force along its own axis
+    (em_stationary.propeller_braking's sum)."""
+    cdef double thrust = 0.
+    cdef int s, k, idx, i
+    for s in range(pm.nt):
+        for k in range(pm.trans[s].np):
+            idx = pm.trans[s].props[k].index
+            for i in range(3):thrust += fr.props[idx].outputs[i]*pm.props[idx].basis[i]
+    return thrust
+
+
+cdef double shaft_power(PropModel pm, const PFrame* fr) noexcept:
+    """S10: the power (W) the shafts' engines deliver in a propulsion frame (torque x shaft speed)."""
+    cdef double power = 0.
+    cdef int s, k, idx
+    for s in range(pm.nt):
+        for k in range(pm.trans[s].ne):
+            idx = pm.trans[s].engines[k].index
+            power += fr.engines[idx].torque*fr.engines[idx].omega
+    return power
+
+
 cdef void set_turbine(Unit* u, dict e) except *:
     """A turbine engine's scalar table and nozzles (the jet engine Unit layout, set_unit)."""
     j = e['turbine']

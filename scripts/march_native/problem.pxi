@@ -246,6 +246,10 @@ cdef class CurveProblem(NativeCorrector):
         if self.ev_kind == 7:
             # S8: a forward-IAS limit (ev_limit: the limit in m/s of forward IAS), inside where positive
             return 1.-e.air.ias_u/self.ev_limit-5e-6
+        if self.ev_kind == 8:
+            # S10: the propellers' net thrust in weights (the braking limit), inside where positive
+            if ps == NULL or self.pm is None:return float("nan")
+            return net_thrust(self.pm, &ps.frame)/self.model.weight-5e-6
         # Instructor pitch (4) and Instructor control bound (5): instructor_at on the search record
         return self.instr_event(self.inst, e, ps, self.ev_kind, self.ev_axis, self.ev_side)
 
@@ -393,7 +397,8 @@ DEF FIX_ELEVATOR = 3
 DEF FIX_LOAD = 100
 DEF FIX_SEP = -1
 DEF FIX_EVENT = -3
-DEF EV_MAX = 7      # generic native events: 1 stall, 2 wing force, 3 control (S3); 4-6 Instructor pitch / bounds, RPM (S5); 7 forward IAS (S8)
+DEF EV_MAX = 8      # generic native events: 1 stall, 2 wing force, 3 control (S3); 4-6 Instructor pitch / bounds, RPM (S5); 7 forward IAS (S8);
+                    # 8 net propeller thrust (S10: the braking face)
 
 
 cdef struct Seed:
