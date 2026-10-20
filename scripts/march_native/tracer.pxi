@@ -193,6 +193,8 @@ DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope
 DEF S8_MAX_WIDTH = 25.   # S8: the widest outline piece (km/h; the validation's general-rule setting, 50 left features unseen)
 DEF S8_BOUND = .6666666666666666   # S8: an outline piece is finished when its error bound is within 2/3 of the envelope
                                    # turn tolerance (the headroom of S7's curve checks)
+DEF S10_CONT = 2.        # S10: a coordinate's change between two columns may leave its slopes' band by this factor ...
+DEF S10_CONT_FLOOR = .02 # ... or by this fraction of its size (at least 1) before the piece counts as discontinuous
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -399,7 +401,7 @@ cdef class NTracer:
         if limit.get('axis') is not None:laxis = int(limit['axis'])
         if kind == KD_FOLD:
             mode = 2
-        elif kind in (KD_STALL, KD_WING, KD_CONTROL, KD_INSTR, KD_RPM):
+        elif kind in (KD_STALL, KD_WING, KD_CONTROL, KD_INSTR, KD_RPM, KD_BRAKE):
             engine = int((limit.get('engine_rpm_limit') or {}).get('engine', -1))
             nev = self.eng.nearest_events(base, ev)
             for i in range(nev):
@@ -416,6 +418,12 @@ cdef class NTracer:
         if not self.eng.tangent(base, mode, code, axis, side, self.eng.st[base].speed, d, self.slope_sides(col.speed), &wl, &wr):
             col.slope_kind = 'unavailable: '+str(limit.get('kind'))
             return 0
+        if self.eng.s10:
+            # S10: the face's coordinate slopes from the same solves (a missing side takes the other's)
+            for i in range(NMAX):
+                col.qs_l[i] = self.eng.tq_l[i] if isfinite(self.eng.tq_l[i]) else self.eng.tq_r[i]
+                col.qs_r[i] = self.eng.tq_r[i] if isfinite(self.eng.tq_r[i]) else self.eng.tq_l[i]
+            col.has_qs = True
         if isfinite(wl) and isfinite(wr) and fabs(wl-wr) <= .05*pmax(fabs(wl), fabs(wr)):
             wl = .5*(wl+wr);wr = wl
         col.slope_l = wl/(2.*n);col.slope_r = wr/(2.*n)
@@ -1648,7 +1656,7 @@ cdef class NTracer:
         base = self.eng.st[b].base
         limit = self.eng.limits[self.eng.st[b].limit]
         kind = KIND_CODE.get(limit.get('kind'), -1)
-        if kind not in (KD_STALL, KD_WING, KD_CONTROL, KD_INSTR, KD_RPM):return False
+        if kind not in (KD_STALL, KD_WING, KD_CONTROL, KD_INSTR, KD_RPM, KD_BRAKE):return False
         if limit.get('axis') is not None:laxis = int(limit['axis'])
         engine = int((limit.get('engine_rpm_limit') or {}).get('engine', -1))
         nev = self.eng.nearest_events(base, ev)
@@ -1694,6 +1702,38 @@ cdef class NTracer:
         if box > S8_BOUND*self.ttol:
             self.eng.stats['s9_knot_splits'] = self.eng.stats.get('s9_knot_splits', 0)+1
             return False
+        return True
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint continuous(self, list good, int j) except -1:
+        """S10: whether the boundary states of the verified columns good[j], good[j+1] can lie on one smooth branch: every
+        wing-history and propulsion coordinate (the ones a branch jump moves) changes between them by its exact end slopes'
+        mean times the width, within S10_CONT times half the width times the slopes' difference (where a coordinate's slope
+        changes monotonically, a kink anywhere included, its change lies within that band: band_load) or S10_CONT_FLOOR of
+        its size (at least 1). A column without coordinate slopes takes those of its neighbouring column on the same face
+        (as interval_slopes does for the boundary slope). True where a column has none (pitch-response faces, the load cap)
+        or the coordinate layouts differ."""
+        cdef NColumn a = good[j], b = good[j+1], pa = a, pb = b, c
+        cdef TState* x
+        cdef TState* y
+        cdef double h = b.speed-a.speed, sa, sb, du, allow
+        cdef int i
+        if not a.has_qs and j >= 1:
+            c = good[j-1]
+            if c.has_qs and self.face_of(c) == self.face_of(a):pa = c
+        if not b.has_qs and j+2 < len(good):
+            c = good[j+2]
+            if c.has_qs and self.face_of(c) == self.face_of(b):pb = c
+        if not (pa.has_qs and pb.has_qs) or a.boundary < 0 or b.boundary < 0:return True
+        x = &self.eng.st[a.boundary];y = &self.eng.st[b.boundary]
+        if not (x.has_coords and y.has_coords) or x.nx != y.nx or not (x.layout_names and y.layout_names):return True
+        for i in range(5, x.nx):
+            sa = pa.qs_r[i];sb = pb.qs_l[i]
+            if not (isfinite(sa) and isfinite(sb)):continue
+            du = y.coords[i]-x.coords[i]
+            allow = pmax(S10_CONT*.5*fabs(h*(sb-sa)), S10_CONT_FLOOR*pmax(1., pmax(fabs(x.coords[i]), fabs(y.coords[i]))))
+            if fabs(du-.5*h*(sa+sb)) > allow:return False
         return True
 
     @cython.boundscheck(True)
@@ -1756,6 +1796,14 @@ cdef class NTracer:
                             if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
                             e = INFINITY;x = kx;knot_split = True
                             break
+                if (self.eng.s10 and not knot_split and vb-va > self.vtol+1e-9 and e <= tol and vb-va <= width+1e-9
+                        and not self.continuous(good, i)):
+                    # S10: the bound assumes the boundary is continuous between the columns; where the state jumps between
+                    # them (a coordinate off the band its exact end slopes allow: Ki-43-I SB 123.55 km/h, the propeller's
+                    # wash and pitch jump on the stall face) the piece is split at its middle until the jump lies within
+                    # the speed tolerance (drawn as a step where the bound then fails)
+                    self.eng.stats['s10_continuity_splits'] = self.eng.stats.get('s10_continuity_splits', 0)+1
+                    e = INFINITY;x = .5*(va+vb);knot_split = True
                 if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= width+1e-9):
                     passed_set.add(key)
                     kind = 'bound' if e <= tol else 'narrow'
@@ -2198,6 +2246,11 @@ cdef class NTracer:
                              self.eng.reason_list(q)) for q in col.points],
                     turn=self.eng.st[col.boundary].turn if col.boundary >= 0 else None,
                     load=self.eng.st[col.boundary].load if col.boundary >= 0 else None, boundary=col.boundary)
+
+    def debug_continuous(self, double va, double vb):
+        """Diagnostics (S10): NTracer.continuous between the trace's columns at speeds va and vb."""
+        good = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c)]
+        return self.continuous(good, [c.speed for c in good].index(va))
 
     def debug_probe(self, int level, double speed):
         """Diagnostics (S8): level_probe from state ``level`` at ``speed`` (state id, -1 physical rejection, -3 open)."""

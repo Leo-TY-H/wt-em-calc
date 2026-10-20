@@ -98,6 +98,7 @@ DEF S8_INFLECTION = .5   # S8: band_load across an inflection: the chord +- this
 DEF S8_SAMPLES = 32      # S8: points across a piece at which its error bound is evaluated
 DEF S9_FOLD_MARGIN = .1  # S9: a level flight with every hard-limit margin above this that stops closing ends at a fold
 DEF S9_BEND = .05        # S9: a polar Mach curve overshooting its end value by more than this fraction is checked at quarters
+DEF S10_BRAKE_MARGIN = .05   # S10: the braking margin (net propeller thrust in weights) is a march margin below this
 
 
 cdef inline void band_load(double va, double na, double sa, double vb, double nb, double sb, double x, double* lo,
@@ -282,7 +283,12 @@ cdef class MarchEngine:
     # S10 (WT_MARCH_S10=0 restores S9 exactly): a braking propeller state (net thrust negative under power) is rejected,
     # and a correction that lands on one is tried again from coarser governor pitch (brake_reseed)
     cdef public bint s10
+    cdef public bint brake               # S10: the braking rule is on (Finisher.brake)
     cdef bint brake_retry
+    # S10: the coordinate slopes d(coordinate)/dV of the latest tangent (left / right side; NaN where unavailable): the
+    # outline's continuity check between columns (NTracer.continuous)
+    cdef double tq_l[NMAX]
+    cdef double tq_r[NMAX]
     cdef int prop_engines
     cdef list engine_shafts
 
@@ -345,7 +351,8 @@ cdef class MarchEngine:
         self.s9 = self.soft and os.environ.get("WT_MARCH_S9", "1") != "0"
         self.ncut = 0
         if self.fin is not None and self.fin.pm is not None:self.fin.pm.s9 = self.s9
-        self.s10 = self.s9 and self.fin is not None and self.fin.brake
+        self.s10 = self.s9 and os.environ.get("WT_MARCH_S10", "1") != "0"
+        self.brake = self.s10 and self.fin is not None and self.fin.brake
         self.brake_retry = False
         from em_speed_limits import speed_limits
         value = speed_limits(solver.fm, solver.config).get("forward_ias_limit_mps")
@@ -484,6 +491,11 @@ cdef class MarchEngine:
             if t.ne:
                 t.mset |= 1 << KD_RPM;t.m[KD_RPM] = best
             self.mark_regulated(t)
+            if self.brake:
+                # S10: the braking margin, where the propellers' net thrust is within S10_BRAKE_MARGIN weights of zero
+                v = net_thrust(self.fin.pm, &s.ps.frame)/self.model.weight
+                if v < S10_BRAKE_MARGIN:
+                    t.mset |= 1 << KD_BRAKE;t.m[KD_BRAKE] = v
         t.has_instr_rec = f.instr != 0;t.instr_has_env = False
         if f.instr == 1:
             t.instr_has_env = True;t.instr_env = f.ires.angle_margin
@@ -918,6 +930,10 @@ cdef class MarchEngine:
         if t.has_pitch_rec:
             out[n].kind = KD_PITCH;out[n].axis = -1;out[n].side = 0;out[n].engine = -1;out[n].code = 0
             out[n].distance = fabs(t.pitch_margin) if t.pitch_margin_ok else NAN;n += 1
+        if self.brake and (t.mset >> KD_BRAKE) & 1:
+            # S10: the braking face (native event 8: the net propeller thrust)
+            out[n].kind = KD_BRAKE;out[n].axis = -1;out[n].side = 0;out[n].engine = -1;out[n].code = 8
+            out[n].distance = fabs(t.m[KD_BRAKE]);n += 1
         for axis in range(3):
             for side in range(2):
                 out[n].kind = KD_CONTROL;out[n].axis = axis+2;out[n].side = side;out[n].engine = -1
@@ -1036,7 +1052,7 @@ cdef class MarchEngine:
             # keeps it: the chart rule can admit it, as a transient over-rev, after the march)
             if si == self.nsrc-1:
                 self.nsrc -= 1;self.st[sid].src = -1
-        if self.s10 and not self.brake_retry and self.has_code(sid, R_PROP_BRAKE):
+        if self.brake and not self.brake_retry and self.has_code(sid, R_PROP_BRAKE):
             k = self.brake_reseed(sid, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
                                   event_tolerance, speed)
             if k >= 0:return k
@@ -1117,6 +1133,8 @@ cdef class MarchEngine:
         cdef double rs[NMAX]
         cdef double h, w0, wp, step, value
         cdef int br0[BMAX]
+        cdef double dub[NMAX]
+        cdef double duf[NMAX]
         cdef Sample base
         cdef bint ok = True, same, governor
         cdef double sgn, first, best, best_w
@@ -1125,6 +1143,8 @@ cdef class MarchEngine:
         cdef double[7] rs7 = [2e-4, 2e-4, 5e-4, 5e-4, 5e-4, 2e-5, 2e-5]
         cdef double t0 = s5_now()
         left[0] = NAN;right[0] = NAN
+        for i in range(NMAX):
+            self.tq_l[i] = NAN;self.tq_r[i] = NAN
         if not t.has_coords or not t.layout_names or t.nx != nx or not t.req_ok:return False
         # level flight (w = 0): bank and turn rate scale with sqrt(w) there, so no slope in these coordinates
         # (the interpolant's end rule takes over: fill_slopes)
@@ -1162,14 +1182,18 @@ cdef class MarchEngine:
         P.evaluations = 0;P.derivative_samples = 0;P.nominal_comparisons = 0;P.nominal_restorations = 0;P.branch_secants = 0
         try:
             slot0 = P.value(q0)
-            if slot0 < 0:return False
+            if slot0 < 0:
+                self.stats['s10_tangent_fail_unevaluable'] = self.stats.get('s10_tangent_fail_unevaluable', 0)+1
+                return False
             for i in range(nr):r0[i] = P.memo_r[slot0*NMAX+i]
             if m > nr:r0[nr] = P.memo_extra[slot0]
             for i in range(BMAX):br0[i] = P.memo_br[slot0*BMAX+i]
             # the coordinates must reproduce a closed state of these rows (the SEP and event rows by construction:
             # their level is the state's own)
             for i in range(nr):
-                if not fabs(r0[i]) <= 20.*rs[i]:return False
+                if not fabs(r0[i]) <= 20.*rs[i]:
+                    self.stats['s10_tangent_fail_closure'] = self.stats.get('s10_tangent_fail_closure', 0)+1
+                    return False
             base.slot = slot0
             for j in range(n):
                 ci = P.free_idx[j]
@@ -1181,8 +1205,10 @@ cdef class MarchEngine:
                 else:h = .0004*pmax(sqrt(w0), .25)
                 h *= TANGENT_SCALE
                 same = False
-                for side in range(2):
-                    step = h if side == 0 else -h
+                # S10: where both stencils change the polar branch (a state between two branch points within the step: the
+                # stall face's alpha), both again at an eighth of the step
+                for side in range(4 if self.s10 else 2):
+                    step = (h if side % 2 == 0 else -h)*(1. if side < 2 else .125)
                     if governor:
                         # one governor coordinate spans three regimes with kinks at 0 and 1: stay in the state's regime
                         if (q0[ci] < 0.) != (q0[ci]+step < 0.) or (q0[ci] > 1.) != (q0[ci]+step > 1.):continue
@@ -1211,7 +1237,11 @@ cdef class MarchEngine:
                         if ci == nx:D[i*n+j] = q[nx]*q[nx]-w0
                         else:D[i*n+j] = q[ci]-q0[ci]
                     break
-                if not same:return False
+                if not same:
+                    # (S10 diagnostics: the coordinate whose stencil changes the polar branch on both sides)
+                    key = 's10_tangent_fail_stencil_%d' % ci
+                    self.stats[key] = self.stats.get(key, 0)+1
+                    return False
             # each side: the state's own rows F = F(state) solved at speed +- delta by chord Newton steps with this
             # Jacobian from the state (the first step is the linear tangent); the slope is the secant of the two exact
             # solutions, so neither the Jacobian's noise nor the state's closure residual enters it
@@ -1252,6 +1282,7 @@ cdef class MarchEngine:
                         rv[nr] = (P.memo_extra[slot]-r0[nr])/rs[nr];step = pmax(step, fabs(rv[nr]))
                     if it > 0 and step < best:
                         best = step;best_w = du[n-1]
+                        for i in range(n):dub[i] = du[i]
                     if (it > 0 and step <= .05) or (it >= 2 and step <= .5):break
                     if it == 5:
                         # the rows' own noise floor (Instructor and propulsion rows): the best iterate within half the
@@ -1264,7 +1295,9 @@ cdef class MarchEngine:
                         h = 0.
                         for k in range(n):h += D[i*n+k]*z[k]
                         du[i] += h
-                    if it == 0:first = du[n-1]/(sgn*delta)
+                    if it == 0:
+                        first = du[n-1]/(sgn*delta)
+                        for i in range(n):duf[i] = du[i]
                 if best <= .5:value = best_w/(sgn*delta)
                 else:
                     value = first
@@ -1272,6 +1305,16 @@ cdef class MarchEngine:
                 if not isfinite(value):continue
                 if side == 1:right[0] = value
                 else:left[0] = value
+                # S10: every coordinate's slope from the same solution (the fixed alpha of mode 2 does not move)
+                for i in range(n):
+                    ci = P.free_idx[i]
+                    if ci < nx:
+                        h = (dub[i] if best <= .5 else duf[i])/(sgn*delta)
+                        if side == 1:self.tq_r[ci] = h
+                        else:self.tq_l[ci] = h
+                if mode == 2:
+                    if side == 1:self.tq_r[0] = 0.
+                    else:self.tq_l[0] = 0.
         finally:
             P.speed_kmh = speed
             self.stats['s7_tangent_evals'] = self.stats.get('s7_tangent_evals', 0)+P.aircraft_evaluations

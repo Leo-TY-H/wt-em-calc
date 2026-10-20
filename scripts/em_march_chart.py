@@ -405,7 +405,10 @@ def compact_component(comp):
                                            **({'outcome': u.get('outcome')} if S9 and u.get('outcome') else {}))
                                       for u in comp.get('unresolved_intervals', [])],
                 start=(comp.get('start') or {}).get('kind'), end=(comp.get('end') or {}).get('kind'),
-                **({'steps': [list(u['interval_kmh']) for u in comp['steps']]} if comp.get('steps') else {}))
+                **({'steps': [list(u['interval_kmh']) for u in comp['steps']]} if comp.get('steps') else {}),
+                # S10: the fold piece where the contour turns back in speed: knots by load, [speed, load, Ps, dV/dw]
+                **({'fold': [[k['speed_kmh'], k['load_g'], k.get('ps_mps'), k.get('fold_dv_dw')] for k in comp['fold']['knots']]}
+                   if comp.get('fold') else {}))
 
 
 def ok(c):
@@ -734,7 +737,9 @@ def polyline(component, samples=200):
     (curve_interpolant), split at unresolved knot intervals (as em_march_curves.polyline)."""
     knots = component['knots']
     if not knots:return []
-    if len(knots) == 1:return [[(knots[0][0], float(turn_rate(knots[0][0], knots[0][1])))]]
+    if len(knots) == 1:
+        return [[(knots[0][0], float(turn_rate(knots[0][0], knots[0][1])))]]+(
+            [fold_path(component['fold'])] if component.get('fold') else [])
     v = np.array([k[0] for k in knots], dtype=float)
     f = curve_interpolant(knots);xs = np.unique(np.r_[np.linspace(v[0], v[-1], samples), v])
     turns = turn_rate(xs, np.sqrt(1.+np.maximum(np.asarray(f(xs), dtype=float), 0.)))
@@ -763,7 +768,22 @@ def polyline(component, samples=200):
             piece = [];continue
         piece.append((x, t))
     if piece:pieces.append(piece)
+    if component.get('fold'):pieces.append(fold_path(component['fold']))
     return pieces
+
+
+def fold_path(knots, samples=40):
+    """S10: the drawn fold piece of a contour that turns back in speed (NCurves.check_fold): the speed as the cubic
+    Hermite V(w) through the fold knots [speed, load, Ps, dV/dw] in w = n^2-1 (PCHIP slopes where none was solved), so
+    the line turns back smoothly (dV/dw = 0 at the turn); points in w order, from the lower load to the upper."""
+    ks = sorted(knots, key=lambda k: k[1])
+    w = np.array([k[1]**2-1. for k in ks], dtype=float);v = np.array([k[0] for k in ks], dtype=float)
+    if len(ks) == 1:return [(float(v[0]), float(turn_rate(v[0], ks[0][1])))]
+    dl, dr = hermite_slopes(w, v, [k[3] for k in ks], [k[3] for k in ks])
+    wq = np.unique(np.r_[np.linspace(w[0], w[-1], samples+1), w])
+    vq = hermite(w, v, dl, dr, wq)
+    tq = turn_rate(vq, np.sqrt(1.+np.maximum(wq, 0.)))
+    return [(float(a), float(b)) for a, b in zip(vq.tolist(), tq.tolist())]
 
 
 def contours(aircraft, levels=None):

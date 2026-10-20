@@ -30,11 +30,12 @@ class BranchUnavailable(UnevaluableTrial):
 
 
 def braking_rule(solver):
-    """S10 (Leo, 2026-10-20; WT_MARCH_S10=0 or WT_MARCH_S9=0 removes it): under the march chart's admission rule
+    """S10 (Leo, 2026-10-20; WT_MARCH_S10=0 or WT_MARCH_S9=0 removes it, WT_MARCH_S10_BRAKE=0 this rule alone, for
+    attributing chart changes to it): under the march chart's admission rule
     (solver.soft_admission) a propeller state whose net thrust is negative under power is rejected ('propeller braking')."""
     import os
     return (bool(getattr(solver, 'soft_admission', False)) and os.environ.get('WT_MARCH_S10', '1') != '0'
-            and os.environ.get('WT_MARCH_S9', '1') != '0')
+            and os.environ.get('WT_MARCH_S9', '1') != '0' and os.environ.get('WT_MARCH_S10_BRAKE', '1') != '0')
 
 
 def propeller_braking(properties, state):

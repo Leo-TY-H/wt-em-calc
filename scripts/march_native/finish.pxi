@@ -570,18 +570,7 @@ cdef class Finisher:
     cdef bint braking(self, const PropSample* ps) noexcept:
         """S10: em_stationary.propeller_braking on the native sample: the net thrust of the shafts' propellers (each
         propeller's force along its axis) is negative while their engines deliver power (sum of torque x shaft speed)."""
-        cdef const PFrame* fr = &ps.frame
-        cdef PropModel pm = self.pm
-        cdef double thrust = 0., power = 0.
-        cdef int s, k, idx, i
-        for s in range(pm.nt):
-            for k in range(pm.trans[s].np):
-                idx = pm.trans[s].props[k].index
-                for i in range(3):thrust += fr.props[idx].outputs[i]*pm.props[idx].basis[i]
-            for k in range(pm.trans[s].ne):
-                idx = pm.trans[s].engines[k].index
-                power += fr.engines[idx].torque*fr.engines[idx].omega
-        return thrust < 0. and power > 0.
+        return net_thrust(self.pm, &ps.frame) < 0. and shaft_power(self.pm, &ps.frame) > 0.
 
     cdef void add_reason(self, Fin* f, int code) noexcept:
         if f.nreasons < MAXREASONS:
