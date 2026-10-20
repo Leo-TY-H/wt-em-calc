@@ -954,7 +954,8 @@ class TrimSolver:
         if self.config['structural_limits']:reasons+=structural
         from flap_model import violations as flap_violations
         reasons+=flap_violations(self.flap_profile,self.config['flaps_percent'],
-            aero['air']['ias_u'],aero['air']['mach'],self.config['structural_limits'])
+            aero['air']['ias_u'],aero['air']['mach'],self.config['structural_limits'],
+            self.model['sweep'] if self.has_sweep else None)
         pitch=None
         # S8: under the march chart's admission rule (soft_admission) a state rejected only for soft limits still gets
         # the hard checks, so a transient over-rev or forward-IAS rejection is told from the first hard limit

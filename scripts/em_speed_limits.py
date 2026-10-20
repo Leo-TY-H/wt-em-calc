@@ -45,11 +45,16 @@ def speed_limits(fm,config):
     structural=bool(config['structural_limits'])
     candidates=[dict(kind='VNE',speed_kmh=vne,enforced=structural),
                 dict(kind='Mach limit',speed_kmh=mne,enforced=structural)]
-    flaps=flap_limits(flap_profile(fm),config.get('flaps_percent',0.))
+    sweep=config.get('sweep_percent',0.)/100. if config.get('sweep_percent') is not None else None
+    flaps=flap_limits(flap_profile(fm),config.get('flaps_percent',0.),sweep)
     if flaps:
+        # S8: flap damage is checked only above 5% extension
         candidates.append(dict(kind='Flap IAS limit',
-            speed_kmh=flaps['destruction_ias_kmh']/factor,enforced=structural))
-        if flaps['automatic_ias_kmh'] is not None:
+            speed_kmh=flaps['destruction_ias_kmh']/factor,enforced=structural and flaps.get('damage',True)))
+        if flaps.get('sweep_locked'):
+            # S8: the selected wing sweep retracts these flaps at every speed (flapsLimits.secondaryMech)
+            candidates.append(dict(kind='Flaps retracted at this wing sweep',speed_kmh=0.,enforced=True))
+        elif flaps['automatic_ias_kmh'] is not None:
             candidates.append(dict(kind='Flap automatic IAS limit',
                 speed_kmh=flaps['automatic_ias_kmh']/factor,enforced=True))
         if flaps['automatic_mach'] is not None:

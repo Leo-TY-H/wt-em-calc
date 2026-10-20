@@ -436,7 +436,7 @@ cdef class NMarch:
         if self.eng.has_level_key:
             for i in range(self.eng.nlevel):
                 r = &self.eng.level_store[i]
-                if r.speed == self.speed:continue
+                if r.speed == self.speed or (self.eng.dive_seed and r.speed > self.speed):continue
                 d = fabs(r.speed-self.speed)
                 if best == NULL or d < bd:
                     best = r;bd = d
@@ -506,6 +506,31 @@ cdef class NMarch:
                 found = True
         root[0] = best
         return found
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double margin_dip(self, int h0, int h1, int h2) noexcept:
+        """S8: the split rule along alpha on the march step [h1, h2] (h0 the sample before): a hard-limit margin
+        positive at both ends whose band (band_load from its values and slopes at both ends; the slopes of the parabola
+        through the three samples' margins) reaches zero inside the step could hide a limit between the samples: the
+        alpha where the lowest such band is lowest, NaN where none."""
+        cdef double x0 = self.eng.st[h0].alpha, x1 = self.eng.st[h1].alpha, x2 = self.eng.st[h2].alpha
+        cdef double y0, y1, y2, c[3], s1, s2, x, lo, hi, best = 0., at = NAN
+        cdef bint p0, p1, p2
+        cdef int k, j
+        if not (x0 < x1 < x2):return NAN
+        for k in range(NKD):
+            if self.eng.soft_kind(k):continue
+            y0 = self.margin(h0, k, &p0);y1 = self.margin(h1, k, &p1);y2 = self.margin(h2, k, &p2)
+            if not (p0 and p1 and p2) or y1 <= 0. or y2 <= 0.:continue
+            if not parabola(x0, y0, x1, y1, x2, y2, c):continue
+            s1 = 2*c[0]*x1+c[1];s2 = 2*c[0]*x2+c[1]
+            for j in range(1, S8_SAMPLES):
+                x = x1+(x2-x1)*j/S8_SAMPLES
+                band_load(x1, y1, s1, x2, y2, s2, x, &lo, &hi)
+                if lo < best:
+                    best = lo;at = x
+        return at
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -697,7 +722,7 @@ cdef class NMarch:
     @cython.wraparound(True)
     cdef tuple run_march(self, int level, bint has_predicted, double predicted, list start=None):
         """March.run(level, predicted, history=start)."""
-        cdef double span, step, cap, target
+        cdef double span, step, cap, target, dip
         cdef int low, p, q, tried_active = -1, lo, edge, seed_state
         cdef double sol[5]
         cdef double load
@@ -749,6 +774,17 @@ cdef class NMarch:
                 if step < .05:return -1, 'unresolved numerical boundary', 'march correction unresolved'
                 has_predicted = False
                 continue
+            if self.eng.soft and self.eng.passable(p) and len(history) >= 2:
+                # S8: the split rule along alpha: where a hard limit could lie between the samples, a sample there
+                dip = self.margin_dip(history[-2], low, p)
+                if isfinite(dip):
+                    self.eng.stats['s8_alpha_splits'] = self.eng.stats.get('s8_alpha_splits', 0)+1
+                    q = self.at_state(low, dip, 'march split')
+                    if q >= 0 and self.eng.hard_rejected(q):
+                        self.eng.stats['s8_alpha_split_limits'] = self.eng.stats.get('s8_alpha_split_limits', 0)+1
+                        p = q
+                    elif q >= 0 and self.eng.passable(q) and self.eng.st[q].load >= self.eng.st[low].load:
+                        history.append(q);low = q
             if not self.eng.passable(p):
                 self.last_lo = -1
                 edge, why = self.margin_edge(low, p)

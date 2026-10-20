@@ -756,10 +756,11 @@ cdef class PropModel:
                 sp.theta[s] = self.slide_theta[s];sp.lo[s] = self.slide_lo[s];sp.hi[s] = self.slide_hi[s]
 
     cdef int jump_near(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest,
-                       SlideSpec* out) except -1:
+                       SlideSpec* out, bint straddle=True) except -1:
         """S8 (the blade-polar jump check): the shafts of a regular state (on a pitch stop or with a fixed pitch) whose
-        propellers' blade polar jumps within slide_width of the shaft speed at this flight condition and induced flow;
-        ``out`` is the sliding spec that starts on the state's side of the jump (theta 0 below it, 1 above)."""
+        propellers' blade polar jumps within slide_width of the shaft speed at this flight condition and induced flow
+        (and, with ``straddle``, blocks its torque balance there); ``out`` is the sliding spec that starts on the
+        state's side of the jump (theta 0 below it, 1 above)."""
         cdef double q[MAXPATH]
         cdef double assigned[NP]
         cdef double lo, hi, c, omega, frac
@@ -795,7 +796,7 @@ cdef class PropModel:
             else:
                 frac = 0.;omega = c*300.
             if self.locate(s, prep, q, frac, omega, &lo, &hi):continue
-            if not self.straddles(prep, coords, request_indices, nrequest, s, j, c-omega/300., lo, hi):continue
+            if straddle and not self.straddles(prep, coords, request_indices, nrequest, s, j, c-omega/300., lo, hi):continue
             out.flag[s] = True;out.frac[s] = frac;out.hint[s] = lo
             out.c0[s] = c-(0. if omega <= lo else 1.);out.cw[s] = c-omega/300.
             out.n += 1
