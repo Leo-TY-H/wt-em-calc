@@ -83,6 +83,7 @@ cdef class CurveProblem(NativeCorrector):
     cdef double prep_key[8][3]
     cdef int nprep, prep_next
     cdef double* memo_row
+    cdef SlideSpec slide      # S8: the sliding shafts of the current correction
     cdef bint* memo_conv
 
     def __cinit__(self):
@@ -182,6 +183,7 @@ cdef class CurveProblem(NativeCorrector):
         load = self.request(q)
         if self.prop:
             prep = self.prepared(load, q[0], q[1])
+            self.pm.use_slide(&self.slide)
             if self.pm.propulsion_at(prep, &q[7], self.req, self.nreq, inner, &ps):
                 # BranchUnavailable before the aircraft evaluation: never memoized or charged
                 return -1
@@ -241,6 +243,9 @@ cdef class CurveProblem(NativeCorrector):
         if self.ev_kind == 6:
             # rpm_limit: 1.-v['propulsion']['state']['engines'][engine]['omega']/limit-5e-6
             return 1.-ps.frame.engines[self.ev_axis].omega/self.ev_limit-5e-6
+        if self.ev_kind == 7:
+            # S8: a forward-IAS limit (ev_limit: the limit in m/s of forward IAS), inside where positive
+            return 1.-e.air.ias_u/self.ev_limit-5e-6
         # Instructor pitch (4) and Instructor control bound (5): instructor_at on the search record
         return self.instr_event(self.inst, e, ps, self.ev_kind, self.ev_axis, self.ev_side)
 
@@ -388,7 +393,7 @@ DEF FIX_ELEVATOR = 3
 DEF FIX_LOAD = 100
 DEF FIX_SEP = -1
 DEF FIX_EVENT = -3
-DEF EV_MAX = 6      # generic native events: 1 stall, 2 wing force, 3 control (S3); 4-6 Instructor pitch / bounds, RPM (S5)
+DEF EV_MAX = 7      # generic native events: 1 stall, 2 wing force, 3 control (S3); 4-6 Instructor pitch / bounds, RPM (S5); 7 forward IAS (S8)
 
 
 cdef struct Seed:
@@ -400,6 +405,7 @@ cdef struct Seed:
     int nreq
     int req[NP]
     bint req_ok            # every request index is a plain int
+    SlideSpec slide        # S8: shafts sliding on a blade-polar jump (n = 0: none)
 
 
 cdef int seed_from_dict(seed, list names, Seed* out) except -1:
@@ -414,6 +420,8 @@ cdef int seed_from_dict(seed, list names, Seed* out) except -1:
     request = tuple(seed.get('stationary_request_indices', ()))
     if len(request) > NP:raise ValueError('request indices')
     out.nreq = len(request);out.req_ok = True
+    # S8: a seed sliding on a blade-polar jump (its chart row's propeller_sliding)
+    slide_from_row(seed.get("propeller_sliding"), &out.slide)
     for i in range(out.nreq):
         if isinstance(request[i], bool) or int(request[i]) != request[i]:
             out.req_ok = False;out.req[i] = 0
@@ -570,6 +578,7 @@ cdef class CurveCorrection:
             initial[5] = x5[0];initial[6] = x5[0]
             for i in range(7, nx):initial[i] = self.l_initial[i]
             for i in range(nx):initial[i] = pmin(pmax(initial[i], self.l_lower[i]), self.l_upper[i])
+        P.slide = seed.slide      # S8: the shafts sliding on a blade-polar jump in this correction
         P.nreq = seed.nreq
         if P.nreq > NP:raise ValueError('request indices')
         if not seed.req_ok:return -1

@@ -165,21 +165,11 @@ class CurveSolver:
                     backend=BACKEND, model_revision=revision, policy=asdict(self.policy))
 
     def segments(self):
-        from em_speed_limits import speed_limits
-        from em_mach_events import solver_regions
-        lo, hi = float(self.config['speed_min_kmh']), float(self.config['speed_max_kmh'])
-        limit = speed_limits(self.solver.fm, self.config)
-        end_kind = 'range_end'
-        if limit['enforced'] and limit['sample_speed_kmh'] < hi:
-            hi, end_kind = limit['sample_speed_kmh'], 'speed_limit'
-        cuts = sorted((a, b) for a, b in (r['speed_interval_kmh'] for r in solver_regions(self.solver))
-                      if b > lo and a < hi)
-        segments, start, start_kind = [], lo, 'range_end'
-        for a, b in cuts:
-            if a > start:segments.append(dict(speed_kmh=[start, a], ends=[start_kind, 'mach_seam']))
-            start, start_kind = max(start, b), 'mach_seam'
-        if hi > start:segments.append(dict(speed_kmh=[start, hi], ends=[start_kind, end_kind]))
-        return segments, limit, cuts
+        """(segments, speed limit, Mach seams): em_march_chart.chart_segments (S8: also split where the selected wing
+        sweep is unavailable)."""
+        from em_march_chart import chart_segments
+        segments, limit, seams, _ = chart_segments(self.solver)
+        return segments, limit, seams
 
     # ----- primitive solves ----------------------------------------------
     def event(self, target):

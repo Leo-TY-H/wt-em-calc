@@ -73,6 +73,7 @@ cdef class NColumn:
     cdef public list sample_points, evidence_list
     cdef public object raw_status, raw_reason
     cdef public object nudged_from     # S6: the requested speed when this column was placed within the speed tolerance
+    cdef public int lower              # S8: the lower edge of a column above a forward-IAS limit at level flight (state), or -1
     # S7: the exact slope of the boundary, dn/dV (per km/h) from below / above the column speed (NaN: none), and its kind
     cdef public double slope_l, slope_r
     cdef public object slope_kind
@@ -82,6 +83,7 @@ cdef class NColumn:
     def __init__(self, double speed):
         self.nudged_from = None
         self.slope_l = NAN;self.slope_r = NAN;self.slope_kind = None
+        self.lower = -1
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None
@@ -258,10 +260,10 @@ cdef class NMarch:
         S3 rescue with them. Same step control, localization, face guards and first-limit rule; the columns
         that resolve without it never reach it. (edge, status, reason) or None."""
         cdef int lo
-        admitted = sorted((p for p in self.samples if self.eng.st[p].valid and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+        admitted = sorted((p for p in self.samples if self.eng.passable(p) and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
                            and self.eng.st[p].alpha >= self.eng.st[level].alpha-1e-9), key=lambda p: self.eng.st[p].alpha)
         if not admitted:
-            if not self.eng.st[level].valid:return None
+            if not self.eng.passable(level):return None
             admitted = [level]
         start = [admitted[0]]
         for sid in admitted[1:]:
@@ -291,7 +293,7 @@ cdef class NMarch:
                 bint has_base, double base_alpha) except -2:
         """March.at(seed, alpha, why, base_alpha=...). ``seed``/``sol``/``load``/``seed_alpha``: the seed dict
         (a state with its solution and load replaced; seed_alpha its 'alpha_deg')."""
-        cdef int p, i, warm_state = -1
+        cdef int p, i, q, warm_state = -1
         cdef double wsol[5]
         cdef double wload
         cdef long evals, fresh
@@ -317,19 +319,58 @@ cdef class NMarch:
                                 &self.preds, &evals, &fresh, NULL)
         if p < 0 and self.robust:
             p = self.retry(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS)
+        if (p < 0 or (not self.eng.passable(p) and not self.eng.hard_rejected(p))) and self.eng.soft and self.eng.is_prop:
+            # S8: next to a blade-polar jump, the sliding state (from a sliding seed, the regular one)
+            q = self.slide_at(seed, sol, load, FIX_ALPHA, alpha, 's8 sliding '+str(why))
+            if q >= 0:p = q
         if self.store:self.eng.store_keep(p, self.speed, &self.preds)
         t = self.trial(why)
         t.alpha = alpha;t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
         t.warm = 1 if (best != NULL and best.has_pred) else 0
-        if p >= 0 and self.eng.st[p].valid:self.samples.append(p)
+        if p >= 0 and self.eng.passable(p):self.samples.append(p)
         return p
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int slide_at(self, int low, const double* sol, double load, int fixed_kind, double value, why) except -2:
+        """S8 (items 2-3): a correction that did not close next to a blade-polar jump. From a regular propeller seed whose
+        blade polar jumps within reach of its shaft speed (MarchEngine.slide_candidate), the same correction with the
+        shafts sliding on the jump (the Filippov state: theta in [0, 1]); from a sliding seed, the same correction regular
+        (the band may end there). The state, or -1."""
+        cdef SlideSpec spec
+        cdef int p
+        cdef long evals, fresh
+        cdef Trial* t
+        if not self.eng.soft or not self.eng.is_prop:return -1
+        if self.eng.st[low].slide.n > 0:
+            spec.n = 0
+        else:
+            self.eng.slide_candidate(low, &spec)
+            if spec.n == 0:return -1
+        self.eng.slide_override = spec;self.eng.use_override = True
+        try:
+            p = self.correct_at(low, sol, load, fixed_kind, value, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, NULL, &evals,
+                                &fresh, NULL)
+        finally:
+            self.eng.use_override = False
+        t = self.trial(why)
+        t.alpha = value if fixed_kind == FIX_ALPHA else (self.eng.st[p].alpha if p >= 0 else NAN)
+        t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
+        key = 's8_slide_closed' if spec.n else 's8_unslide_closed'
+        if p >= 0 and self.eng.passable(p):
+            self.eng.stats[key] = self.eng.stats.get(key, 0)+1
+            return p
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef int at_state(self, int seed, double alpha, why) except -2:
-        """at(state, alpha, why) with the state itself as the seed."""
-        cdef TState* t = &self.eng.st[seed]
-        return self.at(seed, t.sol, t.load, t.alpha, alpha, why, False, 0.)
+        """at(state, alpha, why) with the state itself as the seed. S8: the solution is copied (the state pool can
+        move when a correction adds states, and the robust retry reads the seed's solution again)."""
+        cdef double sol[5]
+        cdef int i
+        for i in range(5):sol[i] = self.eng.st[seed].sol[i]
+        return self.at(seed, sol, self.eng.st[seed].load, self.eng.st[seed].alpha, alpha, why, False, 0.)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -378,7 +419,7 @@ cdef class NMarch:
         """March.level_from: level flight by the prescribed-load correction from a neighbouring level state."""
         cdef StoreRow* r
         cdef StoreRow* best = NULL
-        cdef int i, p, k
+        cdef int i, p, k, q
         cdef long evals, fresh
         cdef Trial* t
         cdef double d, bd = 0.
@@ -395,9 +436,13 @@ cdef class NMarch:
                 pm_set(&self.preds, &self.eng.level_key, &best.pred)
         p = self.correct_at(neighbour, self.eng.st[neighbour].sol, self.eng.st[neighbour].load, FIX_LOAD, 1., 0, 0, 0,
                             self.max_nfev, MARCH_EVALS, 2e-6, &self.preds, &evals, &fresh, NULL)
+        if (p < 0 or not (self.eng.st[p].valid or self.eng.ias_soft(p))) and self.eng.soft and self.eng.is_prop:
+            # S8: level flight next to a blade-polar jump: the sliding state (from a sliding level flight, the regular one)
+            q = self.slide_at(neighbour, self.eng.st[neighbour].sol, self.eng.st[neighbour].load, FIX_LOAD, 1., 's8 sliding level')
+            if q >= 0:p = q
         t = self.trial('level correction')
         t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
-        if p >= 0 and self.eng.st[p].valid:
+        if p >= 0 and (self.eng.st[p].valid or self.eng.ias_soft(p)):
             k = -1
             for i in range(self.preds.n):
                 if self.preds.key[i].fixed != 0:
@@ -412,7 +457,8 @@ cdef class NMarch:
                 if self.eng.nlevel > 200:
                     for i in range(self.eng.nlevel-50):self.eng.level_store[i] = self.eng.level_store[i+50]
                     self.eng.nlevel -= 50
-        return p if p >= 0 and self.eng.st[p].valid else -1
+        # S8: a level flight over a forward-IAS limit (only) starts the march too (its states at higher alpha can be inside)
+        return p if p >= 0 and (self.eng.st[p].valid or self.eng.ias_soft(p)) else -1
 
     # ------------------------------------------------------------------ step control
     @cython.boundscheck(True)
@@ -463,7 +509,7 @@ cdef class NMarch:
         if has_predicted and predicted > a+.05:target = pmin(target, predicted+pmax(OVERSHOOT_DEG, .02*(predicted-a)))
         if len(history) >= 2:
             for k in range(NKD):
-                if not (t.mset >> k) & 1:continue
+                if not (t.mset >> k) & 1 or self.eng.soft_kind(k):continue
                 if not self.margin_root(history, k, &root):continue
                 if root-a > APPROACH_DEG:target = pmin(target, a+.75*(root-a))
                 else:target = pmin(target, root+pmax(OVERSHOOT_DEG, .03*(root-a)))
@@ -513,12 +559,12 @@ cdef class NMarch:
                 t = t-d if side >= 0 else t+d
                 t = pmin(.95, pmax(.05, t))
             p = self.at_state(lo, self.eng.st[lo].alpha+t*w, 'localize')
-            if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
+            if p < 0 or (not self.eng.passable(p) and not self.eng.hard_rejected(p)):
                 p = self.at_state(lo, self.eng.st[lo].alpha+.5*w, 'localize bisect')
-                if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
+                if p < 0 or (not self.eng.passable(p) and not self.eng.hard_rejected(p)):
                     self.last_lo = lo
                     return -1, 'localization correction unresolved'
-            if self.eng.st[p].valid:
+            if self.eng.passable(p):
                 lo = p;has_flo = self.eng.combined(p, &flo)
                 if side == 1 and has_fhi:fhi *= .5
                 side = 1
@@ -597,9 +643,9 @@ cdef class NMarch:
                 vv = .5*(xs[0]+xs[1]) if xs[1]-xs[0] > xs[2]-xs[1] else .5*(xs[1]+xs[2])
             p = self.at_state(b, float(vv), 'fold')
             if p < 0:return -1, 'fold correction unresolved', None
-            if not self.eng.st[p].valid:
-                if self.eng.physical(p) and vv < xs[1]:return -1, 'rejection before load maximum', (a, p)
-                return -1, ('fold bracket inconsistent' if self.eng.physical(p) else 'fold correction unresolved'), None
+            if not self.eng.passable(p):
+                if self.eng.hard_rejected(p) and vv < xs[1]:return -1, 'rejection before load maximum', (a, p)
+                return -1, ('fold bracket inconsistent' if self.eng.hard_rejected(p) else 'fold correction unresolved'), None
             pts.append(p);pts.sort(key=lambda q: self.eng.st[q].alpha)
         return -1, 'fold budget', None
 
@@ -646,7 +692,7 @@ cdef class NMarch:
         cdef int low, p, q, tried_active = -1, lo, edge, seed_state
         cdef double sol[5]
         cdef double load
-        cdef bint extrapolated_seed
+        cdef bint extrapolated_seed, at_cap = False
         cdef int it, i
         history = list(start) if start else [level]
         for h in history:
@@ -670,28 +716,31 @@ cdef class NMarch:
                 for i in range(5):sol[i] = self.eng.st[low].sol[i]
                 load = self.eng.st[low].load
             p = self.at(seed_state, sol, load, self.eng.st[seed_state].alpha, target, 'march', True, self.eng.st[low].alpha)
-            if p >= 0 and not self.eng.st[p].valid and self.eng.physical(p) and (extrapolated_seed or self.trials[self.ntrials-1].warm == 1):
+            # S8: a prescribed-alpha correction that ends on the load cap (its turn coordinate is bounded there) shows
+            # that the cap lies before this alpha
+            at_cap = p < 0 and isfinite(self.eng.last_load) and self.eng.last_load >= self.eng.last_cap*(1.-1e-6)
+            if p >= 0 and self.eng.hard_rejected(p) and (extrapolated_seed or self.trials[self.ntrials-1].warm == 1):
                 q = self.at_state(low, target, 'march confirm')
-                if q >= 0 and self.eng.st[q].valid:
+                if q >= 0 and self.eng.passable(q):
                     step = .5*(target-self.eng.st[low].alpha);has_predicted = False
                     if step < .05:return -1, 'unresolved numerical boundary', 'march roots disagree'
                     continue
-                if q >= 0 and self.eng.physical(q):p = q
-            if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
+                if q >= 0 and self.eng.hard_rejected(q):p = q
+            if p < 0 or (not self.eng.passable(p) and not self.eng.hard_rejected(p)):
                 if low != tried_active:
                     tried_active = low
                     edge = self.hard_face(history, target)
                     if edge >= 0:return self.finish_face(history, edge)
-                if self.eng.st[low].load >= cap-1e-6 or (p >= 0 and self.has_reason(p, R_LOAD_CAP)):
+                if self.eng.st[low].load >= cap-1e-6 or (p >= 0 and self.has_reason(p, R_LOAD_CAP)) or at_cap:
                     q = self.correct_plain(low, FIX_LOAD, cap)
-                    if q >= 0 and self.eng.st[q].valid and self.eng.st[q].alpha >= self.eng.st[low].alpha-1e-6:
+                    if q >= 0 and self.eng.passable(q) and self.eng.st[q].alpha >= self.eng.st[low].alpha-1e-6:
                         self.samples.append(q)
                         return q, 'plot ceiling', None
                 step = .5*(target-self.eng.st[low].alpha)
                 if step < .05:return -1, 'unresolved numerical boundary', 'march correction unresolved'
                 has_predicted = False
                 continue
-            if not self.eng.st[p].valid:
+            if not self.eng.passable(p):
                 self.last_lo = -1
                 edge, why = self.margin_edge(low, p)
                 if edge < 0 and why == 'false bracket':
@@ -706,7 +755,7 @@ cdef class NMarch:
             if self.eng.st[p].load < self.eng.st[low].load:
                 if len(history) < 2:
                     q = self.at_state(low, .5*(self.eng.st[low].alpha+self.eng.st[p].alpha), 'march')
-                    if q < 0 or not self.eng.st[q].valid or self.eng.st[q].load <= self.eng.st[low].load:
+                    if q < 0 or not self.eng.passable(q) or self.eng.st[q].load <= self.eng.st[low].load:
                         return -1, 'unresolved numerical boundary', 'load decreases from level flight'
                     history.append(q)
                 return self.finish_fold(history+[p], -1)
@@ -756,6 +805,113 @@ cdef class NMarch:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint over(self, int sid, unsigned long long mask) noexcept:
+        """S8: rejected (among others) for a reason in ``mask``."""
+        cdef int i, r
+        for i in range(self.eng.st[sid].nreasons):
+            r = self.eng.st[sid].reasons[i]
+            if r < 64 and (mask >> r) & 1:return True
+        return False
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef tuple settle(self, tuple out):
+        """S8: the soft limits at the march's stop. The hard limits stop the march where they first appear; the engine
+        RPM limit (Leo, 2026-10-19) and the forward-IAS limits are checked only at that stop. Within them there, an
+        over-rev stretch passed on the way is transient (drawn; a forward-IAS stretch is not drawn: its states stand on
+        their own forward IAS); over one there, the boundary is where its final stretch begins (the soft face between the
+        last sample within it and the first of that stretch), or there is nothing to draw above level flight (a column
+        past the leaning forward-IAS edge). Level flight over the RPM limit stays an edge (the column is infeasible)."""
+        cdef int edge = out[0], j, w, o, face, kind
+        cdef unsigned long long mask
+        if edge < 0 or not self.eng.soft or self.eng.st[edge].valid:return out
+        if self.eng.has_code(edge, R_RPM):
+            mask = (<unsigned long long>1) << R_RPM;kind = KD_RPM
+        elif self.over(edge, self.eng.ias_mask):
+            mask = self.eng.ias_mask;kind = KD_IAS
+        else:return out
+        pts = sorted((p for p in self.samples if self.eng.passable(p) and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+                      and self.eng.st[p].alpha < self.eng.st[edge].alpha-1e-9), key=lambda p: self.eng.st[p].alpha)
+        j = len(pts)-1
+        while j >= 0 and self.over(pts[j], mask):j -= 1
+        if j < 0:
+            if kind == KD_IAS:return -1, 'no feasible samples', 'forward-IAS limit up to the first hard limit'
+            return -1, 'unresolved numerical boundary', 'over-rev from the lowest sample'
+        w = pts[j];o = pts[j+1] if j+1 < len(pts) else edge
+        face = self.soft_edge(w, o, mask, kind)
+        key = 's8_rpm_final_stretch' if kind == KD_RPM else 's8_ias_final_stretch'
+        self.eng.stats[key] = self.eng.stats.get(key, 0)+1
+        if face < 0:return -1, 'unresolved numerical boundary', 'final soft-limit stretch unresolved'
+        return face, 'verified limit', None
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int soft_edge(self, int lo, int hi, unsigned long long mask, int kind) except -2:
+        """S8: a soft-limit face between ``lo`` (within it) and ``hi`` (over it): for a forward-IAS limit the event
+        correction from ``lo`` (native event 7, exact), else (and where that fails) prescribed-alpha bisection, the secant
+        of the limit's margin first, to the march tolerance in turn rate; the face is the last state within the limit
+        (a hard rejection found inside is that hard limit's own edge). Marked with ``kind``."""
+        cdef int it, p, k, engine = 0, q
+        cdef double w, t, flo, fhi
+        cdef bint has_lo, has_hi
+        cdef long evals, fresh
+        if kind == KD_IAS and isfinite(self.eng.ias_limit):
+            q = self.correct_at(lo, self.eng.st[lo].sol, self.eng.st[lo].load, FIX_EVENT, 0., 7, 0, 0, 16, 0, 2e-6,
+                                &self.preds, &evals, &fresh, NULL)
+            if (q >= 0 and self.eng.st[q].valid and pmin(self.eng.st[lo].alpha, self.eng.st[hi].alpha)-.5 <= self.eng.st[q].alpha
+                    and self.eng.st[q].alpha <= pmax(self.eng.st[lo].alpha, self.eng.st[hi].alpha)+.5):
+                self.samples.append(q)
+                return self.eng.mark(q, KD_IAS, -1, dict(method='S8 forward-IAS face (event correction)',
+                                                         ias_limit_kmh=self.eng.ias_limit*3.6))
+        for it in range(24):
+            if self.closed(lo, hi):break
+            w = self.eng.st[hi].alpha-self.eng.st[lo].alpha
+            if fabs(w) <= 1e-6:break
+            has_lo = (self.eng.st[lo].mset >> kind) & 1;has_hi = (self.eng.st[hi].mset >> kind) & 1
+            flo = self.eng.st[lo].m[kind];fhi = self.eng.st[hi].m[kind]
+            t = flo/(flo-fhi) if has_lo and has_hi and flo > 0. and 0. > fhi and it % 3 != 2 else .5
+            t = pmin(.9, pmax(.1, t))
+            p = self.at_state(lo, self.eng.st[lo].alpha+t*w, 's8 soft-limit stretch')
+            if p < 0:return -1
+            if self.eng.passable(p) and not self.over(p, mask):lo = p
+            elif self.eng.passable(p):hi = p
+            elif self.eng.hard_rejected(p):
+                e, _ = self.margin_edge(lo, p)
+                return e
+            else:return -1
+        if not self.closed(lo, hi):return -1
+        details = dict(method='S8 final soft-limit stretch', alpha_bracket_deg=[self.eng.st[lo].alpha, self.eng.st[hi].alpha],
+                       limiting_load_interval_g=[self.eng.st[lo].load, self.eng.st[hi].load],
+                       turn_interval_dps=[self.eng.st[lo].turn, self.eng.st[hi].turn],
+                       rejected_endpoint=self.endpoint(hi, False))
+        if kind == KD_RPM:
+            for k in range(self.eng.st[hi].ne):
+                if self.eng.st[hi].rpm[k] > self.eng.st[hi].rpm_limit[k]*(1.+1e-6):
+                    engine = k;break
+            details['engine_rpm_limit'] = dict(engine=engine, rpm_limit=self.eng.st[hi].rpm_limit[engine])
+        return self.eng.mark(lo, kind, -1, details)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int lower_edge(self, int level, int boundary) except -2:
+        """S8: the lower edge of a column whose level flight is over a forward-IAS limit (only): the forward-IAS face
+        between the last such sample of the march and the first admitted one above it (soft_edge from the admitted side).
+        -1 where no admitted sample lies at or below the boundary."""
+        cdef int j, u, v, face
+        pts = sorted((p for p in self.samples if self.eng.passable(p) and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+                      and self.eng.st[p].alpha <= self.eng.st[boundary].alpha+1e-9 and p != boundary),
+                     key=lambda p: self.eng.st[p].alpha)+[boundary]
+        j = 0
+        while j < len(pts) and not self.eng.st[pts[j]].valid:j += 1
+        if j >= len(pts):return -1
+        v = pts[j];u = pts[j-1] if j >= 1 else level
+        if not self.over(u, self.eng.ias_mask):return v
+        face = self.soft_edge(v, u, self.eng.ias_mask, KD_IAS)
+        if face < 0:return v
+        return face
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef bint crossing(self, list history, int kind, double* root) except -1:
         if len(history) < 2:return False
         return self.margin_root(history, kind, root)
@@ -765,22 +921,22 @@ cdef class NMarch:
     cdef int hard_face(self, list history, double target) except -2:
         """March.hard_face."""
         cdef int low = history[-1], first = history[0], k, edge, i
-        cdef TState* t = &self.eng.st[low]
-        cdef TState* t0 = &self.eng.st[first]
         cdef double root, m0k
         cdef bint has_root, small
         cdef Event ev[32]
         cdef int nev
+        # S8: the states are read by index (a face correction below adds states, and the state pool can move)
         closing = []
         for k in range(NKD):
-            if not (t.mset >> k) & 1:continue
+            if not (self.eng.st[low].mset >> k) & 1 or self.eng.soft_kind(k):continue
             has_root = self.crossing(history, k, &root)
-            m0k = t0.m[k] if (t0.mset >> k) & 1 else 1.
-            small = t.m[k] <= .02*pmax(fabs(m0k), 1e-6)
-            if (has_root and root < target+.5) or small:closing.append((root if has_root else t.alpha, k))
+            m0k = self.eng.st[first].m[k] if (self.eng.st[first].mset >> k) & 1 else 1.
+            small = self.eng.st[low].m[k] <= .02*pmax(fabs(m0k), 1e-6)
+            if (has_root and root < target+.5) or small:closing.append((root if has_root else self.eng.st[low].alpha, k))
         for _, k in sorted(closing):
             if k == KD_PITCH:
-                if ((t0.mset >> k) & 1) and t0.m[k] > 0. and t.m[k] < .7*t0.m[k]:
+                if (((self.eng.st[first].mset >> k) & 1) and self.eng.st[first].m[k] > 0.
+                        and self.eng.st[low].m[k] < .7*self.eng.st[first].m[k]):
                     edge = self.pitch_face(low)
                     if edge >= 0:return edge
                 continue
@@ -860,7 +1016,7 @@ cdef class NMarch:
         cdef TState* s
         if p < 0:return False
         s = &self.eng.st[p]
-        if not s.valid or s.load < l.load-1e-3 or s.alpha > target+1e-9:return False
+        if not self.eng.passable(p) or s.load < l.load-1e-3 or s.alpha > target+1e-9:return False
         if s.alpha >= l.alpha-1e-4:return True
         if s.alpha >= l.alpha-.5 and fabs(s.turn-l.turn) <= self.turn_tol:
             self.eng.stats['behind_face'] = self.eng.stats.get('behind_face', 0)+1
@@ -883,7 +1039,7 @@ cdef class NMarch:
         t.ok = -1 if p < 0 else int(self.eng.st[p].valid)
         t.evals = self.eng.counts[K_EVAL]-e0;t.fresh = self.eng.counts[K_DERIV]-d0
         t.alpha = self.eng.st[p].alpha if p >= 0 else NAN
-        if (p < 0 or not self.eng.st[p].valid or self.eng.st[p].limit < 0
+        if (p < 0 or not self.eng.passable(p) or self.eng.st[p].limit < 0
                 or self.eng.st[p].alpha < self.eng.st[low].alpha-1e-4 or self.eng.st[p].load < self.eng.st[low].load-1e-3):
             return -1
         self.samples.append(p)
@@ -896,11 +1052,11 @@ cdef class NMarch:
         cdef PredMap preds
         cdef double center, command, step, ps_tol, turn_tol, sign
         cdef int contraction, p, probe, good, bad, it, i
-        cdef TState* s = &self.eng.st[seed]
-        if not s.valid or not s.has_pitch_rec:return -1
+        # S8: the seed's fields are read by index (limit_at adds states, and the state pool can move)
+        if not self.eng.passable(seed) or not self.eng.st[seed].has_pitch_rec:return -1
         preds.n = 0
         memo_c = [];memo_s = []
-        center = s.sol[3]
+        center = self.eng.st[seed].sol[3]
         memo_c.append(center);memo_s.append(seed)
         ps_tol = self.eng.sep_tol
         from em_accuracy import turn_tolerance
@@ -912,16 +1068,16 @@ cdef class NMarch:
                 if command == center:break
                 p = self.limit_at(command, seed, memo_c, memo_s, &preds)
                 if p >= 0:
-                    if self.eng.st[p].pitch_margin >= s.pitch_margin:break
-                    if self.eng.st[p].load >= s.load:
+                    if self.eng.st[p].pitch_margin >= self.eng.st[seed].pitch_margin:break
+                    if self.eng.st[p].load >= self.eng.st[seed].load:
                         probes.append(p);break
         if not probes:return -1
         probe = probes[0]
         for q in probes[1:]:
             if self.eng.st[q].pitch_margin < self.eng.st[probe].pitch_margin:probe = q
         direction = 1. if self.eng.st[probe].sol[3] > center else -1.
-        good = seed;bad = probe if not self.eng.st[probe].valid else -1
-        if self.eng.st[probe].valid:good = probe
+        good = seed;bad = probe if not self.eng.passable(probe) else -1
+        if self.eng.passable(probe):good = probe
         step = .015
         for it in range(24):
             if bad >= 0:break
@@ -932,7 +1088,7 @@ cdef class NMarch:
                 step *= .5
                 if step < 1e-5:return -1
                 continue
-            if not self.eng.st[p].valid:
+            if not self.eng.passable(p):
                 bad = p;break
             if self.eng.st[p].load < self.eng.st[good].load-2e-4:return -1
             good = p;step = pmin(.04, step*1.5)
@@ -941,9 +1097,9 @@ cdef class NMarch:
             if self.limit_closed(good, bad, turn_tol, ps_tol):break
             p = self.limit_at((self.eng.st[good].sol[3]+self.eng.st[bad].sol[3])*.5, good, memo_c, memo_s, &preds)
             if p < 0:return -1
-            if self.eng.st[p].valid:good = p
+            if self.eng.passable(p):good = p
             else:bad = p
-        if not self.limit_closed(good, bad, turn_tol, ps_tol) or self.eng.st[good].load < s.load-2e-4:return -1
+        if not self.limit_closed(good, bad, turn_tol, ps_tol) or self.eng.st[good].load < self.eng.st[seed].load-2e-4:return -1
         g = &self.eng.st[good];b = &self.eng.st[bad]
         limit = dict(kind='pitch response', axis=None, limiting_load_g=g.load,
             method='First balanced pitch-response crossing in continuous command coordinates',
@@ -987,7 +1143,7 @@ cdef class NMarch:
         t = &self.eng.st[p]
         if not t.converged or fabs(t.sol[3]-command) > 1e-5 or not t.has_pitch_rec:return -1
         for i in range(t.nreasons):
-            if t.reasons[i] != R_PITCH_REV:return -1
+            if t.reasons[i] != R_PITCH_REV and not (self.eng.soft and soft_code(t.reasons[i])):return -1
         if fabs(t.alpha-self.eng.st[near].alpha) > .75:return -1
         memo_c.append(command);memo_s.append(p)
         return p
@@ -1000,7 +1156,7 @@ cdef class NMarch:
         cdef int low, edge
         cdef double hi
         cdef int i
-        admitted = sorted((p for p in self.samples if self.eng.st[p].valid and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+        admitted = sorted((p for p in self.samples if self.eng.passable(p) and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
                            and self.eng.st[p].alpha >= self.eng.st[level].alpha-1e-9), key=lambda p: self.eng.st[p].alpha)
         if not admitted:return None
         low = admitted[-1]
@@ -1035,6 +1191,7 @@ cdef class NMarch:
             if key in seen:continue
             seen.add(key)
             self.eng.stats['face_trials'] = self.eng.stats.get('face_trials', 0)+1
+            if self.eng.soft_kind(ev[rank].kind):continue
             if ev[rank].kind == KD_PITCH:
                 if not self.eng.st[low].has_pitch_rec or rank > 1:continue
                 edge = self.pitch_face(low)
@@ -1068,9 +1225,9 @@ cdef class NMarch:
             if slope is not None and slope*width <= self.turn_tol:break
             self.eng.stats['bisect_trials'] = self.eng.stats.get('bisect_trials', 0)+1
             p = self.at_state(lo, self.eng.st[lo].alpha+.5*width, 's3 bisect')
-            if p >= 0 and self.eng.st[p].valid:
+            if p >= 0 and self.eng.passable(p):
                 lo = p;lows.append(p)
-            elif p >= 0 and self.eng.physical(p):
+            elif p >= 0 and self.eng.hard_rejected(p):
                 self.last_lo = -1
                 edge, why = self.margin_edge(lo, p)
                 if edge >= 0:
@@ -1096,10 +1253,10 @@ cdef class NMarch:
         cdef int lo, b, edge, i, nev, kind, axis, engine
         cdef double d
         cdef Event ev[32]
-        admitted = sorted((p for p in self.samples if self.eng.st[p].valid and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
+        admitted = sorted((p for p in self.samples if self.eng.passable(p) and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
                            and self.eng.st[p].alpha >= self.eng.st[level].alpha-1e-9), key=lambda p: self.eng.st[p].alpha)
         if not admitted:
-            if not self.eng.st[level].valid:return None
+            if not self.eng.passable(level):return None
             admitted = [level]
         lo = admitted[-1]
         sides = {}
@@ -1113,6 +1270,7 @@ cdef class NMarch:
             kind = KIND_CODE.get(limit['kind'], -1)
             axis = -1 if limit.get('axis') is None else int(limit['axis'])
             edge = -1
+            if self.eng.soft_kind(kind):continue    # S8: an RPM face is no hard limit to rescue with
             if kind == KD_FOLD:
                 edge = self.neighbour_fold(admitted, b)
             elif kind == KD_PITCH:
@@ -1174,10 +1332,10 @@ cdef class NMarch:
         cdef int p, edge
         p = self.at_state(b, self.eng.st[b].alpha, 's5 neighbour pitch')
         if p < 0:return -1
-        if self.eng.st[p].valid:
+        if self.eng.passable(p):
             if self.eng.st[p].alpha < self.eng.st[lo].alpha-1e-4:return -1
             return self.pitch_face(p)
-        if self.eng.physical(p) and self.eng.st[p].alpha > self.eng.st[lo].alpha:
+        if self.eng.hard_rejected(p) and self.eng.st[p].alpha > self.eng.st[lo].alpha:
             self.last_lo = -1
             edge, _ = self.margin_edge(lo, p)
             return edge
@@ -1192,7 +1350,7 @@ cdef class NMarch:
         points = [q for q in admitted]
         for d in (-.8, -.4, 0., .4):
             p = self.at_state(b, base+d, 's5 neighbour fold')
-            if p >= 0 and self.eng.st[p].valid:points.append(p)
+            if p >= 0 and self.eng.passable(p):points.append(p)
         edge, why, bracket = self.fold_edge(points, 28)
         if edge >= 0:return edge
         if bracket is not None:
@@ -1214,13 +1372,13 @@ cdef class NMarch:
         n = <int>pmin(12., pmax(3., ceil(a1-a0)))
         for j in range(1, n):
             p = self.at_state(prev, a0+j*(a1-a0)/n, 's5 gap')
-            if p >= 0 and self.eng.st[p].valid:
+            if p >= 0 and self.eng.passable(p):
                 if self.eng.st[p].load < self.eng.st[prev].load:
                     e, _, bracket = self.fold_edge([lo]+gap+[p], 28)
                     if e >= 0:self.s3_flags.add('load maximum before the face')
                     return e
                 gap.append(p);prev = p;continue
-            if p >= 0 and self.eng.physical(p):
+            if p >= 0 and self.eng.hard_rejected(p):
                 self.last_lo = -1
                 e, _ = self.margin_edge(prev, p)
                 return e
@@ -1241,12 +1399,12 @@ cdef class NMarch:
         q = self.at_state(prev, a1, 's6 face branch')
         self.eng.stats['s6_face_checks'] = self.eng.stats.get('s6_face_checks', 0)+1
         if q < 0:return edge
-        if self.eng.st[q].valid:
+        if self.eng.passable(q):
             if fabs(self.eng.st[q].turn-self.eng.st[edge].turn) <= self.turn_tol:return edge
             self.s3_flags.add('face on another branch rejected')
             self.eng.stats['s6_face_rejected'] = self.eng.stats.get('s6_face_rejected', 0)+1
             return -1
-        if self.eng.physical(q):
+        if self.eng.hard_rejected(q):
             self.last_lo = -1
             e, _ = self.margin_edge(prev, q)
             self.eng.stats['s6_face_replaced'] = self.eng.stats.get('s6_face_replaced', 0)+1

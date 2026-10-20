@@ -14,7 +14,7 @@ STATE_FIELDS = ('speed_kmh', 'load_g', 'turn_dps', 'ps_mps', 'alpha_deg', 'bank_
                 'stationary_coordinates', 'stationary_coordinate_names', 'stationary_request_indices',
                 'sideslip_attitude_deg', 'sideslip_deg', 'stationary_governor_mode', 'model_experiments',
                 'mach_curve_mode', 'mach_curve_revision', 'roll_leveling_branch', 'valid', 'reasons',
-                'force_error_g', 'angular_error_rad_s2', 'history_error', 'converged')
+                'force_error_g', 'angular_error_rad_s2', 'history_error', 'converged', 'chart_rule')
 
 
 DEF S7_CURVE_CHECK = .6666666666666666   # S7: a midpoint within 2/3 of the curve tolerance (the drawn line's worst point
@@ -64,6 +64,8 @@ cdef class NCurves:
     cdef public bint s7
     cdef double tangent_delta
     cdef public list segs
+    # S8: the envelope boundary (verified columns: speed, limiting load) for the transient over-rev rule
+    cdef public list env_v, env_n
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -114,6 +116,29 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int admit_transient(self, int sid) except -1:
+        """S8: the engine RPM rule on a curve state: rejected for engine RPM only (its hard checks passed) below the
+        envelope boundary at its speed (the boundary of the neighbouring verified columns, the lower of the two), it is
+        a transient over-rev, admitted like the envelope's (the boundary is the first hard limit there, or the start of
+        the final over-rev stretch above it)."""
+        import bisect
+        cdef double v, n
+        cdef int i
+        if sid < 0 or not self.eng.soft or self.eng.st[sid].valid or not self.env_v:return 0
+        if not self.eng.only_reasons(sid, (<unsigned long long>1) << R_RPM):return 0
+        v = self.eng.st[sid].speed
+        i = bisect.bisect_left(self.env_v, v)
+        if i <= 0 or i >= len(self.env_v):
+            if not (0 < i < len(self.env_v)) and not any(fabs(x-v) <= 1e-9 for x in self.env_v):return 0
+        if i < len(self.env_v) and fabs(self.env_v[i]-v) <= 1e-9:n = self.env_n[i]
+        else:n = pmin(self.env_n[i-1], self.env_n[i])
+        if self.eng.st[sid].load < n-1e-9:
+            self.eng.st[sid].valid = True;self.eng.st[sid].rule = 1
+            self.eng.stats['s8_transient_over_rev'] = self.eng.stats.get('s8_transient_over_rev', 0)+1
+        return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef bint balanced(self, int sid) noexcept:
         cdef TState* t = &self.eng.st[sid]
         return (t.converged and t.force_error_g <= 2e-4 and t.angular_error <= 5e-5 and t.history_error <= 2e-4)
@@ -160,6 +185,7 @@ cdef class NCurves:
             attitude[1] += (acos(1./load)-acos(1./pmax(1., self.eng.st[anchor].load)))*RAD_TO_DEG
             initial = self.eng.initial_dict(anchor, attitude)
         sid = self.eng.points_().solve(speed, load, initial)
+        self.admit_transient(sid)
         self.eng.flush_counts()
         self.ledger.charge(phase, before, 'admitted' if self.eng.st[sid].valid else
                            'rejected' if self.balanced(sid) else 'unresolved',
@@ -211,6 +237,7 @@ cdef class NCurves:
             p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, self.max_nfev, 0, self.allowance,
                                  speed, NULL, NULL)
             self.eng.stats['curve_predictor_retries'] = self.eng.stats.get('curve_predictor_retries', 0)+1
+        if p >= 0:self.admit_transient(p)
         if self.reuse and p >= 0:
             got = pm_get(&self.preds, &key)
             if got != NULL and got.valid:
@@ -838,6 +865,8 @@ cdef class NCurves:
         self.ladders = [];self.ones = {}
         self.knot_speeds = self.py.model_knot_speeds(float(self.py.config['speed_min_kmh']), float(self.py.config['speed_max_kmh']))
         columns = sorted(columns, key=lambda c: c['speed_kmh'])
+        self.env_v = [float(c['speed_kmh']) for c in columns if c.get('boundary')]
+        self.env_n = [float(c['boundary']['load_g']) for c in columns if c.get('boundary')]
         components, seeds_report, unresolved_targets, excluded = [], [], [], []
         status = 'completed';junctions = []
         global g_sink

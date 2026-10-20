@@ -38,6 +38,8 @@ from primary_controls import selected_properties as control_properties, authorit
 
 ROOT = Path(__file__).resolve().parents[1]
 AIRCRAFT = LazyCatalog()
+# S8: the march chart's soft limits (solver.soft_admission): engine RPM and the forward-IAS limits
+SOFT_REASONS = frozenset(('engine RPM limit', 'IAS limit', 'flap automatic retraction', 'flap IAS limit'))
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
                 afterburner=True, torque_gyro=False, engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
@@ -954,12 +956,15 @@ class TrimSolver:
         reasons+=flap_violations(self.flap_profile,self.config['flaps_percent'],
             aero['air']['ias_u'],aero['air']['mach'],self.config['structural_limits'])
         pitch=None
-        if converged and final['stall_margin']>=0. and not reasons:
+        # S8: under the march chart's admission rule (soft_admission) a state rejected only for soft limits still gets
+        # the hard checks, so a transient over-rev or forward-IAS rejection is told from the first hard limit
+        soft=getattr(self,'soft_admission',False) and bool(reasons) and set(reasons)<=SOFT_REASONS
+        if converged and final['stall_margin']>=0. and (not reasons or soft):
             pitch=pitch_response(self,final)
             if not pitch['normal']:
                 reasons.append('reversed pitch response' if pitch['reversed'] else 'pitch response unresolved')
         instructor=None
-        if self.config['instructor'] and not reasons:
+        if self.config['instructor'] and (not reasons or (getattr(self,'soft_admission',False) and set(reasons)<=SOFT_REASONS)):
 
 
             instructor=self.instructor_at(final,speed,load)
