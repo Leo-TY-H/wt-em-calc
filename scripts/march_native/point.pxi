@@ -332,7 +332,7 @@ cdef class PointSolver:
         if self.eng.brake and self.eng.has_code(sid, R_PROP_BRAKE):
             # S10: the representative state brakes: the prescribed-load correction from it with coarser governor pitch
             # (MarchEngine.brake_reseed) for the pulling state of this speed and load
-            q = self.eng.brake_reseed(sid, FIX_LOAD, load, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed_kmh)
+            q = self.eng.brake_reseed(sid, -1, FIX_LOAD, load, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed_kmh)
             if q >= 0:return q
         return sid
 

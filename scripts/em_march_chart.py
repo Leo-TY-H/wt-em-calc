@@ -49,6 +49,8 @@ import numpy as np
 COLORS = ('#38c9d7', '#ffa66b')
 # S9 (WT_MARCH_S9=0 restores S8): the S9 fixes of the march chart (native: tracer, curves, sliding; here: bookkeeping)
 S9 = os.environ.get('WT_MARCH_S9', '1') != '0' and os.environ.get('WT_MARCH_S8', '1') != '0'
+# S10 (WT_MARCH_S10=0 restores S9): contours that turn back drawn as they are (fold pieces), high-speed edges drawn vertical
+S10 = S9 and os.environ.get('WT_MARCH_S10', '1') != '0'
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
 COLUMN_SPACING_KMH = 80.
@@ -393,6 +395,10 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                                    **({'curve_exit_intervals': [dict(level=c['level'], interval_kmh=u['interval_kmh'])
                                                                 for c in components for u in c['unresolved_intervals']
                                                                 if u.get('outcome') == 'excluded']} if S9 else {}),
+                                   # S10: a fold piece whose refinement did not close is not drawn (an unresolved stretch)
+                                   **({'curve_unresolved_folds': [dict(level=c['level'], interval_kmh=[min(k[0] for k in c['fold']),
+                                                                                                         max(k[0] for k in c['fold'])])
+                                                                  for c in components if c.get('fold_unresolved')]} if S10 else {}),
                                    certification_scope='admitted full-model states; withheld exact checks; no global coverage certificate'))
 
 
@@ -408,7 +414,8 @@ def compact_component(comp):
                 **({'steps': [list(u['interval_kmh']) for u in comp['steps']]} if comp.get('steps') else {}),
                 # S10: the fold piece where the contour turns back in speed: knots by load, [speed, load, Ps, dV/dw]
                 **({'fold': [[k['speed_kmh'], k['load_g'], k.get('ps_mps'), k.get('fold_dv_dw')] for k in comp['fold']['knots']]}
-                   if comp.get('fold') else {}))
+                   if comp.get('fold') else {}),
+                **({'fold_unresolved': True} if (comp.get('fold') or {}).get('unresolved') else {}))
 
 
 def ok(c):
@@ -616,7 +623,19 @@ def outline(data, aircraft):
             boundary[-1].update(edge_kind='Wing sweep limit', vertical_edge=True)
             boundary.append(dict(speed_kmh=run[-1]['speed_kmh'], turn_dps=0., at_plot_ceiling=False,
                                  edge_kind='Wing sweep limit', vertical_edge=True))
-        boundary.extend(ias_edge(aircraft, run, grid))
+        leaning = ias_edge(aircraft, run, grid)
+        boundary.extend(leaning)
+        if S10 and not leaning:
+            # S10: where level flight is physically rejected just above a run's last column (a high-speed edge: the
+            # propellers brake, an engine over-revs at 1 g), the chart ends there: a vertical edge down to level flight
+            top = run[-1]['speed_kmh']
+            edge = next((e for e in (aircraft.get('envelope_trace') or {}).get('events', []) if e['kind'] == 'edge'
+                         and e.get('status') == 'no feasible samples' and abs(min(e['speed_kmh'])-top) < 1e-9
+                         and max(e['speed_kmh']) > top+1e-9 and 'forward-IAS' not in str(e.get('reason'))), None)
+            if edge is not None and boundary and boundary[-1]['speed_kmh'] == top:
+                kind = 'Propeller braking edge' if 'propeller braking' in str(edge.get('reason')) else 'High-speed feasibility edge'
+                boundary[-1].update(edge_kind=kind, vertical_edge=True)
+                boundary.append(dict(speed_kmh=top, turn_dps=0., at_plot_ceiling=False, edge_kind=kind, vertical_edge=True))
         if k < len(pieces)-1:
             # An explicit gap: never a smooth line to the next run.
             nxt = pieces[k+1][0]['speed_kmh'];here = run[-1]['speed_kmh']
@@ -739,7 +758,7 @@ def polyline(component, samples=200):
     if not knots:return []
     if len(knots) == 1:
         return [[(knots[0][0], float(turn_rate(knots[0][0], knots[0][1])))]]+(
-            [fold_path(component['fold'])] if component.get('fold') else [])
+            [fold_path(component['fold'])] if component.get('fold') and not component.get('fold_unresolved') else [])
     v = np.array([k[0] for k in knots], dtype=float)
     f = curve_interpolant(knots);xs = np.unique(np.r_[np.linspace(v[0], v[-1], samples), v])
     turns = turn_rate(xs, np.sqrt(1.+np.maximum(np.asarray(f(xs), dtype=float), 0.)))
@@ -768,7 +787,7 @@ def polyline(component, samples=200):
             piece = [];continue
         piece.append((x, t))
     if piece:pieces.append(piece)
-    if component.get('fold'):pieces.append(fold_path(component['fold']))
+    if component.get('fold') and not component.get('fold_unresolved'):pieces.append(fold_path(component['fold']))
     return pieces
 
 
