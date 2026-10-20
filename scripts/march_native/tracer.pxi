@@ -261,6 +261,10 @@ cdef class NTracer:
     cdef public list knot_speeds
     cdef double tangent_delta
     cdef bint exact_a, exact_b      # S7: interval_slopes found face slopes (exact or the face neighbour's) at both ends
+    cdef int forced_level           # S9: the level flight the next column marches from (the dive path's walked state), or -1
+    cdef public list ias_knots      # S9: forward-IAS breakpoints of the control authority (m/s): effective speeds, floors
+    cdef double sigma               # S9: sqrt(density ratio) at the chart altitude (forward IAS = u sigma)
+    cdef public list s9_knots       # S9: the model breakpoints in speed the outline is checked at (model knots, Mach tables)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -289,6 +293,8 @@ cdef class NTracer:
         self.knot_speeds = []
         self.tangent_delta = 1.
         self.cheap = False     # S7: a column without rescues or nudges (the edge refinement column)
+        self.forced_level = -1
+        self.ias_knots = [];self.sigma = 1.;self.s9_knots = []
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -310,6 +316,7 @@ cdef class NTracer:
         seeds = []
         for c in neighbours:
             if c is None:continue
+            if self.eng.ncut and self.eng.across(c.speed, speed):continue
             for sid in c.points:
                 if self.eng.st[sid].valid:seeds.append(sid)
             # S8: a level flight over a forward-IAS limit seeds the next column's level flight
@@ -501,10 +508,24 @@ cdef class NTracer:
         march.strict_faces = self.s6
         march.no_rescue = self.cheap
         col.march = True
-        if nearest >= 0 and march.store:
+        if self.forced_level >= 0 and fabs(self.eng.st[self.forced_level].speed-speed) <= 1e-9:
+            level = self.forced_level
+        elif nearest >= 0 and march.store:
             level = march.level_from(nearest)
         if level < 0:
             level = self.python_level(march, speed, nearest)
+        if (self.eng.s9 and not self.cheap and not self.probing
+                and (level < 0 or not (self.eng.st[level].valid or self.eng.ias_soft(level) or self.eng.level_physical(level)))):
+            # S9: level flight that does not close from the seeds (a far neighbour across a blade-polar jump the jump check
+            # cannot see from there): continued from the nearest admitted level flight below, as the dive path reaches it
+            below = -1
+            for sid in seeds:
+                if (fabs(self.eng.st[sid].load-1.) <= 1e-12 and self.eng.st[sid].valid and self.eng.st[sid].speed < speed-1e-9
+                        and not (self.eng.ncut and self.eng.across(self.eng.st[sid].speed, speed))
+                        and (below < 0 or self.eng.st[sid].speed > self.eng.st[below].speed)):below = sid
+            if below >= 0:
+                sid = self.level_walk(below, speed)
+                if sid >= 0:level = sid
         if level < 0:
             # S8: no level-flight candidate at all
             self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: no established candidate', started)
@@ -514,7 +535,7 @@ cdef class NTracer:
         # S8: a level flight over a forward-IAS limit only is no edge: the march starts from it (states at higher
         # alpha can lie inside the limit; the column's lower edge is where they begin)
         if not (self.eng.st[level].valid or self.eng.ias_soft(level)):
-            if not self.eng.physical(level) and healthy:
+            if not self.eng.level_physical(level) and healthy:
                 reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
                 # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
                 # (their march from level flight reached it without a limit) instead of the production column
@@ -653,7 +674,7 @@ cdef class NTracer:
         t = march.trial('level');t.ok = int(self.eng.st[level].valid)
         t.evals = self.eng.counts[K_EVAL]-e0+w.counts.get('aircraft_evaluations', 0)
         t.fresh = -1
-        if (not self.eng.st[level].valid and not self.eng.physical(level) and not self.eng.ias_soft(level) and nearest >= 0
+        if (not self.eng.st[level].valid and not self.eng.level_physical(level) and not self.eng.ias_soft(level) and nearest >= 0
                 and speed > self.eng.st[nearest].speed):
             e0 = self.eng.counts[K_EVAL]
             w = Work({}, parent=current())
@@ -664,7 +685,7 @@ cdef class NTracer:
                 return level
             t = march.trial('level retry');t.ok = int(self.eng.st[retry].valid)
             t.evals = self.eng.counts[K_EVAL]-e0+w.counts.get('aircraft_evaluations', 0);t.fresh = -1
-            if self.eng.st[retry].valid or self.eng.physical(retry):level = retry
+            if self.eng.st[retry].valid or self.eng.level_physical(retry):level = retry
         return level
 
     @cython.boundscheck(True)
@@ -801,7 +822,7 @@ cdef class NTracer:
         physical rejection, -3 where the correction did not close (no evidence either way)."""
         cdef int p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS,
                                       2e-6, speed, preds, NULL)
-        if p < 0 or (not self.eng.st[p].valid and not self.eng.physical(p)):
+        if p < 0 or (not self.eng.st[p].valid and not self.eng.level_physical(p)):
             p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6,
                                  speed, NULL, NULL)
         self.eng.flush_counts()
@@ -810,7 +831,47 @@ cdef class NTracer:
             # S8 (item 2): next to a blade-polar jump, level flight with the shafts sliding on it (NMarch.slide_at's rule)
             q = self.slide_probe(level, speed)
             if q >= 0:return q
-        return -1 if p >= 0 and self.eng.physical(p) else -3
+        return -1 if p >= 0 and self.eng.level_physical(p) else -3
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint healthy(self, int sid) noexcept:
+        """S9: every hard-limit margin of the state is at least S9_FOLD_MARGIN."""
+        cdef int k
+        for k in range(NKD):
+            if (self.eng.st[sid].mset >> k) & 1 and not self.eng.soft_kind(k) and self.eng.st[sid].m[k] < S9_FOLD_MARGIN:return False
+        return True
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int level_walk(self, int level, double speed) except -2:
+        """S9: level flight at ``speed`` continued from the level-flight state ``level`` of a lower speed, as the aircraft
+        reaches it by speeding up at 1 g (the dive path): steps of at most the placement tolerance, a step that does not
+        close halved down to the speed tolerance (level_probe: the sliding state where the jump check at the step's own
+        speed confirms a blade-polar jump). The admitted state at ``speed``; -1 where level flight is physically
+        rejected on the way (an edge lies before it) or a step of the speed tolerance does not close."""
+        from em_trim_work import Work, use, current
+        cdef double v = self.eng.st[level].speed, step = self.place_tol, h, nxt
+        cdef int p
+        cdef PredMap preds
+        preds.n = 0
+        w = Work({}, parent=current())
+        try:
+            with use(w):
+                while speed-v > 1e-9:
+                    h = pmin(step, speed-v)
+                    nxt = speed if speed-(v+h) < .25*self.vtol else v+h
+                    p = self.level_probe(level, nxt, &preds)
+                    if p >= 0:
+                        v = nxt;level = p;step = pmin(self.place_tol, 2.*step)
+                        continue
+                    if p == -1 or h <= self.vtol*(1.+1e-9):return -1
+                    step = pmax(self.vtol, .5*h)
+        finally:
+            row = self.work.setdefault('level walk', dict(columns=0, evaluations=0))
+            row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
+        self.eng.stats['s9_level_walks'] = self.eng.stats.get('s9_level_walks', 0)+1
+        return level
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -822,7 +883,7 @@ cdef class NTracer:
         if self.eng.st[level].slide.n > 0:
             spec.n = 0
         else:
-            self.eng.slide_candidate(level, &spec, self.eng.st[level].sol[0], self.eng.st[level].sol[1], 1.)
+            self.eng.slide_candidate(level, &spec, self.eng.st[level].sol[0], self.eng.st[level].sol[1], 1., True, speed)
             if spec.n == 0:return -1
         self.eng.slide_override = spec;self.eng.use_override = True
         try:
@@ -858,6 +919,8 @@ cdef class NTracer:
         cdef int level = good.level, p
         cdef PredMap preds
         cdef NColumn col
+        cdef bint branched = False
+        cdef double halved_from = NAN
         preds.n = 0
         if level < 0 or not self.eng.st[level].valid or fabs(self.eng.st[level].load-1.) > 1e-9:
             g, b = self.localize(good, bad, 'edge')
@@ -875,9 +938,18 @@ cdef class NTracer:
                     p = self.level_probe(level, nxt, &preds)
                 if p >= 0:
                     inside = nxt;level = p;admitted.append(nxt)
-                    if step < self.place_tol and (inside-failed)*direction >= 0.:step = self.place_tol
+                    if step < self.place_tol and (inside-failed)*direction >= 0.:
+                        step = self.place_tol;halved_from = NAN
                     continue
                 out = nxt
+                if self.eng.s9 and p == -3 and self.vtol*.25*(1.+1e-9) < h <= self.vtol*(1.+1e-9):
+                    # S9: a level flight that does not close over the speed tolerance is continued in halved steps (to a
+                    # quarter of it) before it counts as non-closing: a stiff stretch (the Instructor's level flight on
+                    # J29A RB closes in steps of 0.2 km/h, not 0.5) walks on to its own edge
+                    self.eng.stats['s9_probe_halvings'] = self.eng.stats.get('s9_probe_halvings', 0)+1
+                    if not isfinite(halved_from):halved_from = inside
+                    failed = nxt;step = .5*h
+                    continue
                 if h <= self.vtol*(1.+1e-9):
                     if self.s8 and p == -3 and inside != leapt:
                         # S8: a level flight that does not close is no evidence of the edge (a band without a steady
@@ -900,6 +972,34 @@ cdef class NTracer:
                             self.eng.stats['s8_probe_leaps'] = self.eng.stats.get('s8_probe_leaps', 0)+1
                             inside = v;level = p;admitted.append(v);failed = v;step = self.vtol
                             continue
+                        if self.eng.s9 and p == -3 and not branched:
+                            # S9: no leap closes from this branch's level flight and none is physically rejected: the
+                            # branch may end at a fold where level flight continues on another one (N1K1 SB: a second
+                            # propeller-wash branch below 156.5 km/h, down to 145.4). The level-flight search (its own
+                            # seeds) at the first leap; where it finds admitted level flight, the probes continue from it.
+                            # The followed branch keeps the speeds where it was admitted: its last admitted probe speed
+                            # (within the speed tolerance of its end) becomes a branch cut (no state is carried across it,
+                            # so every column on its side starts from it, every column beyond from the other branch;
+                            # columns right at the fold of the followed branch would need the S6 rescues)
+                            # (only where nothing explains the stop: every hard-limit margin of that level flight at least
+                            # S9_FOLD_MARGIN; a level flight closing in on its stall or another limit ends there)
+                            branched = True
+                            v = inside+direction*pmin(2*pmax(self.vtol, 1.), fabs(bad.speed-inside))
+                            if fabs(bad.speed-v) > 1e-9 and self.healthy(level):
+                                self.eng.stats['s9_probe_searches'] = self.eng.stats.get('s9_probe_searches', 0)+1
+                                q = self.python_level(NMarch(self.eng, v, self.march_tol), v, -1)
+                                if (q >= 0 and self.eng.st[q].valid and fabs(self.eng.st[q].load-1.) <= 1e-9
+                                        and self.level_probe(q, .5*(nxt+v), &preds) != -1):
+                                    self.eng.stats['s9_probe_branches'] = self.eng.stats.get('s9_probe_branches', 0)+1
+                                    # (before the halved steps: the followed branch right at its fold needs the S6
+                                    # rescues in every column there)
+                                    if isfinite(halved_from):inside = halved_from
+                                    self.eng.add_cut(inside)
+                                    self.events.append(dict(kind='branch cut', speed_kmh=[inside, nxt], branch_level_kmh=v,
+                                                            reason='level flight continues on another branch past the fold'))
+                                    admitted = [x for x in admitted if (x-inside)*direction <= 1e-9]
+                                    inside = v;level = q;admitted.append(v);failed = v;step = self.vtol;halved_from = NAN
+                                    continue
                     break
                 failed = nxt;step = self.vtol
             if fabs(out-inside) > .5*self.vtol:
@@ -909,21 +1009,27 @@ cdef class NTracer:
                     inside = nxt;level = p;admitted.append(nxt)
                 else:
                     out = nxt
+            if self.eng.s9 and isfinite(halved_from) and fabs(inside-halved_from) < self.vtol*(1.-1e-9):
+                # S9: halved steps that walked less than the speed tolerance past the last full step place the edge no
+                # better than that step did: the edge columns start there (the bracket stays the halved one)
+                admitted = [x for x in admitted if (x-halved_from)*direction <= 1e-9]
+                inside = halved_from
         row = self.work.setdefault('edge probe', dict(columns=0, evaluations=0))
         row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
         self.eng.stats['s7_edge_probes'] = self.eng.stats.get('s7_edge_probes', 0)+1
         if inside == good.speed:return good, out
+        seeds = [good]
         for k in range(len(admitted)-1, max(-1, len(admitted)-4), -1):
             v = admitted[k]
             self.cheap = True
-            try:col = self.column(v, [good], 'edge', False, pmin(v, out), pmax(v, good.speed))
+            try:col = self.column(v, seeds, 'edge', False, pmin(v, out), pmax(v, good.speed))
             finally:self.cheap = False
             if NTracer.ok(col):
                 self.columns[float(col.speed)] = col
                 if k == len(admitted)-1:return col, out
                 v = admitted[len(admitted)-1]
                 self.cheap = True
-                try:near = self.column(v, [col, good], 'edge', False, pmin(v, out), pmax(v, col.speed))
+                try:near = self.column(v, [col]+seeds, 'edge', False, pmin(v, out), pmax(v, col.speed))
                 finally:self.cheap = False
                 if NTracer.ok(near):
                     self.columns[float(near.speed)] = near
@@ -931,11 +1037,26 @@ cdef class NTracer:
                 if self.s8 and fabs(out-col.speed) > self.vtol*(1.+1e-9):
                     # S8 (item 1): the bracket is still wider than the speed tolerance: the same column with the S6
                     # rescue steps (only here, so charts whose edge closes without them never pay for it)
-                    near = self.column(v, [col, good], 'edge', False, pmin(v, out), pmax(v, col.speed))
+                    near = self.column(v, [col]+seeds, 'edge', False, pmin(v, out), pmax(v, col.speed))
                     self.eng.stats['s8_edge_rescues'] = self.eng.stats.get('s8_edge_rescues', 0)+1
                     if NTracer.ok(near):
                         self.columns[float(near.speed)] = near
                         return near, out
+                    if self.eng.s9:
+                        # S9: the column at the last admitted speed does not verify, even with the rescues (PBM-3 SB
+                        # 121.9 km/h): columns halfway between it and the verified one, while that is still farther
+                        # than the speed tolerance from the edge's failing probe
+                        lo_v = v
+                        while fabs(out-col.speed) > self.vtol*(1.+1e-9) and fabs(col.speed-lo_v) > .25*self.vtol:
+                            v = .5*(col.speed+lo_v)
+                            self.eng.stats['s9_edge_halves'] = self.eng.stats.get('s9_edge_halves', 0)+1
+                            self.cheap = True
+                            try:near = self.column(v, [col]+seeds, 'edge', False, pmin(v, out), pmax(v, col.speed))
+                            finally:self.cheap = False
+                            if NTracer.ok(near):
+                                self.columns[float(near.speed)] = near
+                                col = near
+                            else:lo_v = v
                 return col, out
             self.eng.stats['s7_edge_column_misses'] = self.eng.stats.get('s7_edge_column_misses', 0)+1
         if self.s8:
@@ -944,7 +1065,7 @@ cdef class NTracer:
             # where none does)
             for k in range(len(admitted)-1, max(-1, len(admitted)-4), -1):
                 v = admitted[k]
-                col = self.column(v, [good], 'edge', False, pmin(v, out), pmax(v, good.speed))
+                col = self.column(v, seeds, 'edge', False, pmin(v, out), pmax(v, good.speed))
                 self.eng.stats['s8_edge_rescues'] = self.eng.stats.get('s8_edge_rescues', 0)+1
                 if NTracer.ok(col):
                     self.columns[float(col.speed)] = col
@@ -1020,14 +1141,20 @@ cdef class NTracer:
                 self.eng.slide_candidate(c.level, &spec, NAN, NAN, NAN, False)
                 if spec.n == 0:continue
                 self.eng.stats['s8_dive_checks'] = self.eng.stats.get('s8_dive_checks', 0)+1
-                p = self.eng.correct(low.level, self.eng.st[low.level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, 12, 40, 2e-6,
-                                     c.speed, NULL, NULL)
+                if self.eng.s9 and self.eng.st[low.level].valid:
+                    # S9: level flight continued from below in steps of at most the placement tolerance (one correction
+                    # over a whole column interval can land on the other branch, P-47D-16 RE RB 785 -> 810 km/h)
+                    p = self.level_walk(low.level, c.speed)
+                else:
+                    p = self.eng.correct(low.level, self.eng.st[low.level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, 12, 40, 2e-6,
+                                         c.speed, NULL, NULL)
                 if p < 0 or not self.eng.st[p].valid or fabs(self.eng.st[p].ps-self.eng.st[c.level].ps) <= .01:continue
                 self.eng.dive_seed = True
+                if self.eng.s9:self.forced_level = p     # S9: the column marches from the walked level flight itself
                 try:
                     col = self.column(c.speed, [low], 'dive path', False, low.speed, hi+1e-9)
                 finally:
-                    self.eng.dive_seed = False
+                    self.eng.dive_seed = False;self.forced_level = -1
                 if not (NTracer.ok(col) and col.speed == c.speed and col.level >= 0
                         and fabs(self.eng.st[col.level].ps-self.eng.st[p].ps) <= .01):continue
                 self.events.append(dict(kind='dive path', speed_kmh=c.speed, level_ps_mps=[self.eng.st[c.level].ps,
@@ -1171,6 +1298,17 @@ cdef class NTracer:
                     if self.s7 and col.status == STATUS_NOFEASIBLE:
                         # S7: an infeasible edge to the speed tolerance (it was drawn up to the placement tolerance inside)
                         good, edge = self.edge_probe(last, col)
+                        if self.eng.s9:
+                            # S9: two level-flight branches near an edge: the probe chain followed one that ends here;
+                            # where the edge column's own level flight closes at the probe's first failing speed, the
+                            # edge lies further on: the probes again from that column (at most three times)
+                            for k in range(3):
+                                if (good is last or good.level < 0 or not self.eng.st[good.level].valid
+                                        or fabs(edge-good.speed) <= 1e-9 or fabs(col.speed-edge) <= 1e-9):break
+                                preds_n = self.debug_probe(good.level, edge)
+                                if preds_n < 0:break
+                                self.eng.stats['s9_edge_reprobes'] = self.eng.stats.get('s9_edge_reprobes', 0)+1
+                                good, edge = self.edge_probe(good, col)
                         self.events.append(dict(kind='edge', speed_kmh=[good.speed, edge], status=col.status_name(),
                                                 reason=col.reason, located_by='level-flight probes'))
                         break
@@ -1476,6 +1614,64 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint face_event(self, NColumn col, Event* out) except -1:
+        """S9: the native event of a verified column's limiting face (column_slope's choice: stall, wing force, control
+        with its axis, Instructor, engine RPM with its engine), or False."""
+        cdef int b = col.boundary, base, i, nev, kind, laxis = -1, engine
+        cdef Event ev[32]
+        if b < 0 or self.eng.st[b].limit < 0 or col.status != STATUS_VERIFIED:return False
+        base = self.eng.st[b].base
+        limit = self.eng.limits[self.eng.st[b].limit]
+        kind = KIND_CODE.get(limit.get('kind'), -1)
+        if kind not in (KD_STALL, KD_WING, KD_CONTROL, KD_INSTR, KD_RPM):return False
+        if limit.get('axis') is not None:laxis = int(limit['axis'])
+        engine = int((limit.get('engine_rpm_limit') or {}).get('engine', -1))
+        nev = self.eng.nearest_events(base, ev)
+        for i in range(nev):
+            if ev[i].kind != kind or ev[i].code <= 0:continue
+            if kind == KD_CONTROL and laxis >= 0 and ev[i].axis != laxis:continue
+            if kind == KD_RPM and engine >= 0 and ev[i].engine != engine:continue
+            out[0] = ev[i]
+            return True
+        return False
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint knot_check(self, list good, int i, double k, double sa, double sb, double ka, double kb, double pa, double pb,
+                         bint corner, bint exact, list checks) except -1:
+        """S9: whether the outline piece good[i]..good[i+1], drawn as interval_load, holds at the model breakpoint ``k``
+        inside it: the limiting face of the nearer column corrected at ``k`` (its own event equations from its boundary
+        state) is admitted and lies within S8_BOUND of the turn tolerance of the drawn line there (allowing the chart's
+        horizontal slack). A face change, or a face without a native event, is no evidence (False: split at ``k``)."""
+        cdef NColumn a = good[i], b = good[i+1], c
+        cdef Event ev
+        cdef int base, p
+        cdef double x, t, lo_t = INFINITY, hi_t = -INFINITY, box, na, nb
+        if corner:return False
+        c = a if k-a.speed <= b.speed-k else b
+        if not self.face_event(c, &ev):return False
+        base = self.eng.st[c.boundary].base
+        p = self.eng.correct(base, self.eng.st[base].sol, self.eng.st[base].load, True, FIX_EVENT, 0., ev.code,
+                             ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6, k, NULL, NULL)
+        self.eng.flush_counts()
+        self.eng.stats['s9_knot_checks'] = self.eng.stats.get('s9_knot_checks', 0)+1
+        if p < 0 or not self.eng.st[p].valid:return False
+        na = self.eng.st[a.boundary].load;nb = self.eng.st[b.boundary].load
+        for x in (k-self.vtol, k, k+self.vtol):
+            x = pmin(pmax(x, a.speed), b.speed)
+            t = turn_rate(x, interval_load(a.speed, na, sa, ka, pa, b.speed, nb, sb, kb, pb, corner, exact, x))
+            lo_t = pmin(lo_t, t);hi_t = pmax(hi_t, t)
+        t = self.eng.st[p].turn
+        box = 0. if lo_t <= t <= hi_t else (t-hi_t if t > hi_t else lo_t-t)
+        checks.append(dict(interval_kmh=[a.speed, b.speed], speed_kmh=k, passed=bool(box <= S8_BOUND*self.ttol), kind='knot',
+                           error_dps=box, faces=[a.reason, b.reason]))
+        if box > S8_BOUND*self.ttol:
+            self.eng.stats['s9_knot_splits'] = self.eng.stats.get('s9_knot_splits', 0)+1
+            return False
+        return True
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef list check_s8(self):
         """S8: the split rule on every outline piece between verified columns of one segment (no Mach seam or segment
         end inside). A piece whose error bound (piece_error) is within S8_BOUND of the envelope turn tolerance and which
@@ -1510,6 +1706,30 @@ cdef class NTracer:
                 corner = self.face_of(a) != self.face_of(b);exact = self.exact_a and self.exact_b
                 e = self.piece_error(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, &x)
                 bound = e if isfinite(e) else None
+                knot_split = False
+                if self.eng.s9 and vb-va > self.vtol+1e-9 and e <= tol and vb-va <= width+1e-9:
+                    # S9: the bound assumes the boundary's slope changes monotonically inside the piece; at a model
+                    # breakpoint (jet thrust-table speed, Mach polynomial end) it can kink either way (A-6E RB 1200 km/h):
+                    # the face there from the nearer column (its event correction) must lie on the drawn line, else
+                    # the piece is split at the breakpoint
+                    for kx in self.s9_knots:
+                        if not (va+self.vtol < kx < vb-self.vtol):continue
+                        if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
+                        e = INFINITY;x = kx;knot_split = True
+                        break
+                    if not knot_split and self.ias_knots:
+                        # the control authority kinks where the boundary's forward IAS passes an effective speed (or the
+                        # authority floor) of a control axis (A-6E RB 1188 km/h): checked where the end states' forward
+                        # IAS brackets it, interpolated in speed
+                        ua = self.eng.st[a.boundary].speed/3.6*cos(self.eng.st[a.boundary].alpha*DEG_TO_RAD)*self.sigma
+                        ub = self.eng.st[b.boundary].speed/3.6*cos(self.eng.st[b.boundary].alpha*DEG_TO_RAD)*self.sigma
+                        for kn in self.ias_knots:
+                            if not (ua-kn)*(ub-kn) < 0.:continue
+                            kx = va+(kn-ua)/(ub-ua)*(vb-va)
+                            if not (va+self.vtol < kx < vb-self.vtol):continue
+                            if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
+                            e = INFINITY;x = kx;knot_split = True
+                            break
                 if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= width+1e-9):
                     passed_set.add(key)
                     kind = 'bound' if e <= tol else 'narrow'
@@ -1523,7 +1743,7 @@ cdef class NTracer:
                     if corner:self.events.append(dict(kind='corner', speed_kmh=[va, vb], faces=[a.reason, b.reason]))
                     continue
                 if e <= tol:x = .5*(va+vb)
-                x = pmin(pmax(x, va+.1*(vb-va)), vb-.1*(vb-va))
+                if not knot_split:x = pmin(pmax(x, va+.1*(vb-va)), vb-.1*(vb-va))
                 col = self.column(x, [a, b], 'split', False, va, vb)
                 splits += 1
                 checks.append(dict(interval_kmh=[va, vb], speed_kmh=col.speed, passed=False, kind='split', bound_dps=bound,
@@ -1642,7 +1862,7 @@ cdef class NTracer:
         if not c.march:return False
         if c.status == STATUS_UNRESOLVED:return True
         # S8: level flight over a forward-IAS limit with nothing inside it up to the first hard limit is an edge
-        return (c.status == STATUS_NOFEASIBLE and len(c.points) > 0 and not self.eng.physical(c.points[0])
+        return (c.status == STATUS_NOFEASIBLE and len(c.points) > 0 and not self.eng.level_physical(c.points[0])
                 and not self.eng.ias_soft(c.points[0]))
 
     @cython.boundscheck(True)
@@ -1773,6 +1993,61 @@ cdef class NTracer:
             import em_march_curves as C
             self.knot_speeds = C.model_knot_speeds(self.eng.solver, self.config, float(self.config['speed_min_kmh']),
                                                    float(self.config['speed_max_kmh']), self.vtol)
+        if self.eng.s9:
+            # S9: the forward-IAS breakpoints of the control authority (primary_controls.authority_ranges: each axis's
+            # effective speed, and where its power loss reaches the authority floor)
+            from control_mixer import density_at_height
+            p = getattr(self.eng.solver, 'controls', None)
+            knots = set()
+            if p:
+                for axis in range(3):
+                    for side in range(2):
+                        eff = float(p['effective_speed'][axis][side]);power = float(p['power'][axis][side])
+                        floor = float(p['minimum'][axis])
+                        if eff > 0.:
+                            knots.add(eff)
+                            if power > 0. and 0. < floor < 1.:knots.add(eff*pow(floor, -1./power))
+            # the control mixers' deflection tables by forward IAS (AnglesMultiplier rows, the density families' rows
+            # too) and their sensitivity curve by Mach (control_mixer.mix): piecewise linear, so the control authority
+            # kinks at their breakpoints
+            mach_knots = set()
+            model = getattr(self.eng.solver, 'model', None)
+            controls = model.get('controls') if isinstance(model, dict) else None
+            for name in ('Ailerons', 'Elevator', 'Rudder'):
+                props = (controls or {}).get(name)
+                if not props:continue
+                for rows in props.get('tables_1d') or ():
+                    if len(rows) > 1:knots.update(float(r[0]) for r in rows)
+                for family in props.get('tables_2d') or ():
+                    for entry in family:
+                        if len(entry[2]) > 1:knots.update(float(r[0]) for r in entry[2])
+                rows = props.get('sensitivity_curve') or ()
+                if len(rows) > 1:mach_knots.update(float(r[0]) for r in rows)
+            # the polars' Mach curves (polar_model.mach_factor): a cubic Hermite from MachCrit to MachMax whose end slope
+            # turns it back inside (A-6E RB, horizontal tail curve 7: up to x3 and down at -200 per Mach) bends the
+            # chart strongly between those knots (the control face peaks at Mach 0.967): its quarter points and its
+            # extremum are checked as knots too
+            def polars(d):
+                if isinstance(d, dict):
+                    if 'MachCrit1' in d:yield d
+                    for v in d.values():yield from polars(v)
+                elif isinstance(d, list):
+                    for v in d:yield from polars(v)
+            for props in polars(getattr(self.eng.solver, 'fm', None)):
+                for i in range(1, 10):
+                    try:
+                        a = float(props['MachCrit%d' % i]);b = float(props['MachMax%d' % i])
+                        hh = float(props['MultMachMax%d' % i])-(0. if i == 6 else 1.);ss = (b-a)*float(props['MultLineCoeff%d' % i])
+                    except (KeyError, TypeError, ValueError):continue
+                    if not b > a or 6*hh-3*ss == 0.:continue
+                    ts = (6*hh-2*ss)/(6*hh-3*ss)
+                    if 0. < ts < 1.:mach_knots.update([a+(b-a)*ts, a+.25*(b-a), a+.5*(b-a), a+.75*(b-a)])
+            self.ias_knots = sorted(k for k in knots if k > 0.)
+            self.sigma = sqrt(float(density_at_height(float(self.config['altitude_m'])))/1.225)
+            from air_state import speed_of_sound
+            sound = float(speed_of_sound(float(self.config['altitude_m'])))*3.6
+            lo_v, hi_v = float(self.config['speed_min_kmh']), float(self.config['speed_max_kmh'])
+            self.s9_knots = sorted({float(v) for v in self.knot_speeds} | {m*sound for m in mach_knots if lo_v < m*sound < hi_v})
         # S8: past the zero-alpha speed of a forward-IAS limit (the top segment's start hint) the segments are traced
         # upwards from the one below (they hold only states inside the limit at higher alpha), the rest top-down as before
         hint = next((s['start_kmh'] for s in segments if 'start_kmh' in s), None) if self.s8 else None
@@ -1885,7 +2160,7 @@ cdef class NTracer:
                     points=[(round(self.eng.st[q].alpha, 3), round(self.eng.st[q].load, 3), bool(self.eng.st[q].valid),
                              self.eng.reason_list(q)) for q in col.points],
                     turn=self.eng.st[col.boundary].turn if col.boundary >= 0 else None,
-                    load=self.eng.st[col.boundary].load if col.boundary >= 0 else None)
+                    load=self.eng.st[col.boundary].load if col.boundary >= 0 else None, boundary=col.boundary)
 
     def debug_probe(self, int level, double speed):
         """Diagnostics (S8): level_probe from state ``level`` at ``speed`` (state id, -1 physical rejection, -3 open)."""

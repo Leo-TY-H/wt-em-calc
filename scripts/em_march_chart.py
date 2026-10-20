@@ -47,6 +47,8 @@ import time
 import numpy as np
 
 COLORS = ('#38c9d7', '#ffa66b')
+# S9 (WT_MARCH_S9=0 restores S8): the S9 fixes of the march chart (native: tracer, curves, sliding; here: bookkeeping)
+S9 = os.environ.get('WT_MARCH_S9', '1') != '0' and os.environ.get('WT_MARCH_S8', '1') != '0'
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
 COLUMN_SPACING_KMH = 80.
@@ -381,8 +383,16 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                                    mach_approximations=mach.get('approximations', []),
                                    certified_speed_interiors=[], certified_boundary_intervals=[],
                                    envelope_turn_tolerance_dps=tracer.ttol, curve_tolerance_scale=CURVE_SCALE,
-                                   curve_unresolved_intervals=[dict(level=c['level'], interval_kmh=u['interval_kmh'])
-                                                               for c in components for u in c['unresolved_intervals']],
+                                   # S9: only stretches the curve solver could not resolve; a contour leaving the envelope
+                                   # (outcome 'excluded', both ends located) is listed apart (WT_MARCH_S9=0: S8's list)
+                                   curve_unresolved_intervals=[dict(level=c['level'], interval_kmh=u['interval_kmh'],
+                                                                    **({'outcome': u.get('outcome'), 'reason': str(u.get('reason'))[:160]}
+                                                                       if S9 else {}))
+                                                               for c in components for u in c['unresolved_intervals']
+                                                               if not (S9 and u.get('outcome') == 'excluded')],
+                                   **({'curve_exit_intervals': [dict(level=c['level'], interval_kmh=u['interval_kmh'])
+                                                                for c in components for u in c['unresolved_intervals']
+                                                                if u.get('outcome') == 'excluded']} if S9 else {}),
                                    certification_scope='admitted full-model states; withheld exact checks; no global coverage certificate'))
 
 
@@ -391,7 +401,8 @@ def compact_component(comp):
     return dict(level=comp['level'], segment_kmh=comp['segment_kmh'],
                 knots=[[k['speed_kmh'], k['load_g'], k.get('ps_mps')]+(list(k['s7_w_slope']) if k.get('s7_w_slope') else [])
                        for k in comp['knots']],
-                unresolved_intervals=[dict(interval_kmh=list(u['interval_kmh']), reason=str(u.get('reason'))[:120])
+                unresolved_intervals=[dict(interval_kmh=list(u['interval_kmh']), reason=str(u.get('reason'))[:120],
+                                           **({'outcome': u.get('outcome')} if S9 and u.get('outcome') else {}))
                                       for u in comp.get('unresolved_intervals', [])],
                 start=(comp.get('start') or {}).get('kind'), end=(comp.get('end') or {}).get('kind'),
                 **({'steps': [list(u['interval_kmh']) for u in comp['steps']]} if comp.get('steps') else {}))

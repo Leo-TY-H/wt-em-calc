@@ -94,6 +94,7 @@ cdef inline double turn_rate(double speed, double load) noexcept nogil:
 
 DEF S8_INFLECTION = .5   # S8: band_load across an inflection: the chord +- this times the larger end-slope deviation x width
 DEF S8_SAMPLES = 32      # S8: points across a piece at which its error bound is evaluated
+DEF S9_FOLD_MARGIN = .1  # S9: a level flight with every hard-limit margin above this that stops closing ends at a fold
 
 
 cdef inline void band_load(double va, double na, double sa, double vb, double nb, double sb, double x, double* lo,
@@ -269,6 +270,11 @@ cdef class MarchEngine:
     cdef SlideSpec slide_override
     cdef public bint use_override
     cdef public bint sliding         # S8: the sliding state at blade-polar jumps (WT_MARCH_SLIDE=0: off)
+    cdef public bint s9              # S9 (WT_MARCH_S9=0 restores S8 exactly)
+    # S9: speeds where the level-flight branch the sweep follows ends at a fold and level flight continues on another
+    # branch beyond it (edge probes): no state is carried across them (column seeds, the cross-speed stores)
+    cdef public int ncut
+    cdef double cut[8]
     cdef public bint last_closed
     cdef int prop_engines
     cdef list engine_shafts
@@ -329,6 +335,9 @@ cdef class MarchEngine:
         self.soft = bool(getattr(solver, "soft_admission", False))
         import os
         self.sliding = self.soft and os.environ.get("WT_MARCH_SLIDE", "1") != "0"
+        self.s9 = self.soft and os.environ.get("WT_MARCH_S9", "1") != "0"
+        self.ncut = 0
+        if self.fin is not None and self.fin.pm is not None:self.fin.pm.s9 = self.s9
         from em_speed_limits import speed_limits
         value = speed_limits(solver.fm, solver.config).get("forward_ias_limit_mps")
         self.ias_limit = NAN if value is None else float(value)
@@ -713,23 +722,70 @@ cdef class MarchEngine:
         return hard
 
     cdef int slide_candidate(self, int sid, SlideSpec* out, double alpha=NAN, double bank=NAN, double load=NAN,
-                             bint straddle=True) except -1:
+                             bint straddle=True, double speed=NAN, bint transition=False) except -1:
         """S8 (the blade-polar jump check): the sliding spec of a regular propeller state whose shafts (on a pitch stop
         or with a fixed pitch) have a blade-polar jump within PropModel.slide_width of their speed that blocks their
         torque balance (net torque of opposite signs either side of it; any jump there without ``straddle``), at the
-        state's flight condition or at the given one (the target of a correction from it); out.n = 0 without."""
+        state's flight condition or at the given one (the target of a correction from it); out.n = 0 without.
+        S9: the target's flight condition includes its speed (``speed``): a correction continued from a neighbouring
+        speed is checked where it is solved (a shaft approaching the jump with speed reaches it only there). With
+        ``transition``, a sliding state is checked too, its sliding shafts at their jump speed: the shafts whose jump still
+        blocks their torque balance at the target keep sliding (with the state's own sliding coordinates), the others are
+        regular there (a turn makes the propellers' conditions differ, so their jumps part)."""
         cdef TState* t = &self.st[sid]
         cdef PropPrep* prep
+        cdef double regular[NMAX]
+        cdef int i, slot
         out.n = 0
         if not self.is_prop or self.fin is None or self.fin.pm is None:return 0
-        if not t.has_coords or not t.layout_names or t.slide.n > 0 or not t.req_ok:return 0
-        self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
+        if not t.has_coords or not t.layout_names or not t.req_ok:return 0
+        if t.slide.n > 0 and not (self.s9 and transition):return 0
+        self.P.speed_kmh = speed if self.s9 and isfinite(speed) else t.speed;self.P.nprep = 0;self.P.prep_next = 0
         prep = self.P.prepared(t.load if not isfinite(load) else load, t.coords[0] if not isfinite(alpha) else alpha,
                                t.coords[1] if not isfinite(bank) else bank)
-        self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out, straddle)
+        if t.slide.n > 0:
+            for i in range(t.nx):regular[i] = t.coords[i]
+            for i in range(NP):
+                if t.slide.flag[i]:
+                    slot = self.fin.pm.shaft_coordinate(i)
+                    if slot >= 0:regular[7+slot] = t.slide.cw[i]+t.slide.lo[i]/300.
+            self.fin.pm.jump_near(prep, &regular[7], t.req, t.nreq, out, straddle)
+            for i in range(NP):
+                if out.n > 0 and out.flag[i] and t.slide.flag[i]:
+                    out.c0[i] = t.slide.c0[i];out.cw[i] = t.slide.cw[i];out.frac[i] = t.slide.frac[i]
+                    out.hint[i] = t.slide.hint[i];out.theta[i] = t.coords[7+self.fin.pm.shaft_coordinate(i)]-t.slide.c0[i]
+            self.stats['s9_transition_checks'] = self.stats.get('s9_transition_checks', 0)+1
+        else:
+            self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out, straddle)
         self.stats['s8_jump_checks'] = self.stats.get('s8_jump_checks', 0)+1
         if out.n:self.stats['s8_jumps_found'] = self.stats.get('s8_jumps_found', 0)+1
         return 0
+
+    cdef bint across(self, double a, double b) noexcept:
+        """S9: a branch cut lies between the speeds ``a`` and ``b``."""
+        cdef int i
+        for i in range(self.ncut):
+            if (a-self.cut[i])*(b-self.cut[i]) < 0.:return True
+        return False
+
+    cdef void add_cut(self, double v) noexcept:
+        if self.ncut < 8:
+            self.cut[self.ncut] = v;self.ncut += 1
+
+    cdef bint same_slide(self, const SlideSpec* a, const SlideSpec* b) noexcept:
+        """S9: the same set of sliding shafts."""
+        cdef int i
+        if a.n != b.n:return False
+        for i in range(NP):
+            if (a.flag[i] if a.n > 0 else False) != (b.flag[i] if b.n > 0 else False):return False
+        return True
+
+    cdef bint level_physical(self, int sid) noexcept:
+        """em_march.physical for a level-flight state; S9: under the soft-limit rule a level flight over the engine RPM
+        limit (a physical limit at 1 g: an edge) that is also over a forward-IAS limit is physical too (S8 took the
+        IAS reason for a numerical one, so the march went on from an interior start past the 1 g over-rev edge)."""
+        if self.physical(sid):return True
+        return self.s9 and self.soft and self.physical_except(sid, self.soft_mask)
 
     cdef bint ias_soft(self, int sid) noexcept:
         """S8: rejected only for forward-IAS limits (its hard checks passed): below a leaning forward-IAS edge."""
@@ -895,7 +951,18 @@ cdef class MarchEngine:
         sd.nreq = t.nreq;sd.req_ok = t.req_ok
         # S8: the seed's sliding shafts (or the march's explicit choice: slide_override)
         sd.slide = self.slide_override if self.use_override else t.slide
-        if sd.has_coords and t.slide.n > 0 and sd.slide.n == 0 and self.fin is not None and self.fin.pm is not None:
+        if self.s9 and sd.has_coords and self.use_override and self.fin is not None and self.fin.pm is not None:
+            # S9: shaft by shaft: one leaving the jump gets its regular coordinate at the shaft speed on the side of the
+            # jump its theta is nearer; one starting to slide gets its sliding coordinate (c0 plus the side it is on)
+            for i in range(NP):
+                if t.slide.n > 0 and t.slide.flag[i] and not (sd.slide.n > 0 and sd.slide.flag[i]):
+                    slot = self.fin.pm.shaft_coordinate(i)
+                    if slot >= 0:
+                        sd.coords[7+slot] = t.slide.cw[i]+(t.slide.hi[i] if t.coords[7+slot]-t.slide.c0[i] >= .5 else t.slide.lo[i])/300.
+                elif sd.slide.n > 0 and sd.slide.flag[i] and not (t.slide.n > 0 and t.slide.flag[i]):
+                    slot = self.fin.pm.shaft_coordinate(i)
+                    if slot >= 0:sd.coords[7+slot] = sd.slide.c0[i]+sd.slide.theta[i]
+        elif sd.has_coords and t.slide.n > 0 and sd.slide.n == 0 and self.fin is not None and self.fin.pm is not None:
             # leaving the jump: the shaft coordinate back to its regular meaning at the shaft speed of the jump
             for i in range(NP):
                 if t.slide.flag[i]:
@@ -929,7 +996,9 @@ cdef class MarchEngine:
             for i in range(NP):
                 if t.slide.flag[i]:
                     k = self.fin.pm.shaft_coordinate(i)
-                    if k >= 0:sd.coords[7+k] = t.slide.cw[i]+t.slide.lo[i]/300.
+                    if k >= 0:
+                        sd.coords[7+k] = t.slide.cw[i]+(t.slide.hi[i] if self.s9 and t.coords[7+k]-t.slide.c0[i] >= .5
+                                                        else t.slide.lo[i])/300.
             sd.slide.n = 0
             self.stats['s8_slide_dropped'] = self.stats.get('s8_slide_dropped', 0)+1
             code = self.cc.solve_core(speed, cap, &sd, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
@@ -1255,6 +1324,89 @@ cdef class MarchEngine:
                         pm.signature(shaft, prep, qq, ps.fractions[shaft], ps.frame.trans_omega[shaft])))
         return out
 
+    def debug_torque_at(self, int sid, double speed, double load, double alpha, double bank, list shafts, list omegas,
+                        list flows=None):
+        """Diagnostics (S9): at the flight condition (speed, load, alpha, bank) with the state's other propulsion
+        coordinates (the induced flows from ``flows`` where given: coordinate index -> value), every shaft in
+        ``shafts`` at each shaft speed of ``omegas`` (rpm): (rpm, residual rows, shaft torques, signatures)."""
+        cdef TState* t = &self.st[sid]
+        cdef PropPrep* prep
+        cdef PropSample ps
+        cdef double c[NMAX]
+        cdef double qq[MAXPATH]
+        cdef double inner[MAXPATH]
+        cdef int j, i, code, s
+        cdef PropModel pm = self.fin.pm
+        out = []
+        self.P.speed_kmh = speed;self.P.nprep = 0;self.P.prep_next = 0
+        prep = self.P.prepared(load, alpha, bank)
+        pm.use_slide(NULL)
+        for rpm in omegas:
+            for i in range(t.nx-7):c[i] = t.coords[7+i]
+            if flows:
+                for k, v in flows.items():c[int(k)] = float(v)
+            for s in shafts:
+                j = pm.shaft_coordinate(s)
+                # the state's coordinate offset (a governed shaft on a pitch stop: coordinate - shaft speed/300)
+                c[j] = t.coords[7+j]-t.rpm[s]*M_PI/30./300.+rpm*M_PI/30./300.
+            code = pm.propulsion_q(prep, c, t.req, t.nreq, inner, &ps, qq)
+            if code:
+                out.append((rpm, None));continue
+            out.append((rpm, [inner[i] for i in range(pm.nrows)], [ps.torques[s] for s in shafts],
+                        [pm.signature(s, prep, qq, ps.fractions[s], ps.frame.trans_omega[s]) for s in shafts],
+                        [dict(torque=ps.frame.engines[k].torque, friction=ps.frame.engines[k].friction,
+                              manifold=ps.frame.engines[k].manifold, potential=ps.frame.engines[k].potential_manifold,
+                              ratio=ps.frame.engines[k].throttle_ratio, gear=ps.frame.engines[k].gear,
+                              omega=ps.frame.engines[k].omega, mixture=ps.frame.engines[k].mixture,
+                              regulator=ps.frame.engines[k].regulator, effective=ps.frame.engines[k].effective_throttle,
+                              mechanical=ps.frame.engines[k].mechanical)
+                         for k in range(pm.ne)],
+                        [ps.frame.props[k].outputs[18] for k in range(pm.nprops)],
+                        pm.debug_stations(shafts[0], prep, qq, ps.fractions[shafts[0]], ps.frame.trans_omega[shafts[0]])))
+        return out
+
+    def debug_rows(self, int sid, int index, list deltas):
+        """Diagnostics (S9): the residual rows (scaled as the corrector's: force/moment rows, propulsion rows) of the
+        state's own coordinates with coordinate ``index`` (nx: the turn coordinate sqrt(n^2-1)) moved by each delta."""
+        cdef CurveProblem P = self.P
+        cdef TState* t = &self.st[sid]
+        cdef double q[NMAX]
+        cdef int i, slot, nx = P.nx, nr = 7+P.nprows
+        P.slide = t.slide
+        P.nreq = t.nreq
+        for i in range(t.nreq):P.req[i] = t.req[i]
+        P.nz = nx+1;P.speed_kmh = t.speed;P.fixed = 0;P.alpha = t.coords[0]
+        P.nmemo = 0;P.aircraft_evaluations = 0;P.last_slot = -1;P.nprep = 0;P.prep_next = 0
+        out = []
+        for d in deltas:
+            for i in range(nx):q[i] = t.coords[i]
+            q[nx] = sqrt(pmax(0., t.load*t.load-1.))
+            q[index] += d
+            P.nmemo = 0;P.nprep = 0;P.prep_next = 0
+            slot = P.value(q)
+            if slot < 0:
+                out.append((d, None));continue
+            out.append((d, [P.memo_r[slot*NMAX+i] for i in range(nr)], P.memo_eval[slot].force_error_g))
+        return out
+
+    def debug_record(self, int sid, int index, double delta):
+        """Diagnostics (S9): the model's value record of the state with coordinate ``index`` moved by ``delta``."""
+        cdef CurveProblem P = self.P
+        cdef TState* t = &self.st[sid]
+        cdef double q[NMAX]
+        cdef int i, slot, nx = P.nx
+        P.slide = t.slide
+        P.nreq = t.nreq
+        for i in range(t.nreq):P.req[i] = t.req[i]
+        P.nz = nx+1;P.speed_kmh = t.speed;P.fixed = 0;P.alpha = t.coords[0]
+        P.nmemo = 0;P.aircraft_evaluations = 0;P.last_slot = -1;P.nprep = 0;P.prep_next = 0
+        for i in range(nx):q[i] = t.coords[i]
+        q[nx] = sqrt(pmax(0., t.load*t.load-1.))
+        q[index] += delta
+        slot = P.value(q)
+        if slot < 0:return None
+        return value_record(self.model, &P.memo_eval[slot], True, True)
+
     def debug_slide_sample(self, int sid, double theta):
         """Diagnostics (S8): the sliding propulsion sample of the state (every jump shaft at ``theta``) against the regular
         samples just below and above the jump: (sliding row, inner, regular row below, regular row above)."""
@@ -1301,6 +1453,45 @@ cdef class MarchEngine:
         cdef TState* t = &self.st[sid]
         return dict(speed=t.speed, load=t.load, alpha=t.alpha, base=t.base, limit=t.limit, valid=bool(t.valid),
                     margins={KIND_TEXT[k]: t.m[k] for k in range(NKD) if (t.mset >> k) & 1})
+
+    def debug_info(self, int sid):
+        """Diagnostics (S9): the fields of a state."""
+        cdef TState* t = &self.st[sid]
+        cdef int i
+        return dict(sid=sid, speed=t.speed, load=t.load, alpha=t.alpha, bank=t.bank, turn=t.turn, ps=t.ps, mach=t.mach,
+                    valid=bool(t.valid), converged=bool(t.converged), reasons=self.reason_list(sid), rule=t.rule,
+                    force_error_g=t.force_error_g, angular_error=t.angular_error, history_error=t.history_error,
+                    sol=[t.sol[i] for i in range(5)], coords=[t.coords[i] for i in range(t.nx)], base=t.base, limit=t.limit,
+                    slide=t.slide.n, physical=bool(self.physical(sid)), hard=bool(self.hard_rejected(sid)),
+                    margins={KIND_TEXT[k]: t.m[k] for k in range(NKD) if (t.mset >> k) & 1},
+                    rpm=[t.rpm[i] for i in range(t.ne)], rpm_limit=[t.rpm_limit[i] for i in range(t.ne)])
+
+    def debug_correct(self, int seed, double speed, kind, double value, load=None, alpha=None, int nfev=30, int evals=120,
+                      double tol=2e-6, slide=False):
+        """Diagnostics (S9): one correction from state ``seed`` at ``speed``: kind 'alpha' / 'load' / 'sep' / 'elevator'
+        with its value (the seed's solution with ``alpha`` and ``load`` replaced where given). (state or -1, last
+        correction residuals, evidence state or -1)."""
+        cdef double sol[5]
+        cdef int i, p, ev = -1, fk
+        cdef double n
+        cdef SlideSpec spec
+        for i in range(5):sol[i] = self.st[seed].sol[i]
+        if alpha is not None:sol[0] = float(alpha)
+        n = self.st[seed].load if load is None else float(load)
+        fk = dict(alpha=FIX_ALPHA, load=FIX_LOAD, sep=FIX_SEP, elevator=FIX_ELEVATOR)[kind]
+        if fk == FIX_ALPHA:sol[0] = value
+        if slide == 'regular':
+            spec.n = 0
+            self.slide_override = spec;self.use_override = True
+        elif slide:
+            self.slide_candidate(seed, &spec, sol[0], sol[1], n, True, speed)
+            if spec.n == 0:return 'no jump'
+            self.slide_override = spec;self.use_override = True
+        try:
+            p = self.correct(seed, sol, n, True, fk, value, 0, 0, 0, nfev, evals, tol, speed, NULL, &ev)
+        finally:
+            self.use_override = False
+        return p, self.last_correction(), ev, self.last_load, self.last_closed
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
