@@ -74,6 +74,7 @@ cdef class NColumn:
     cdef public object raw_status, raw_reason
     cdef public object nudged_from     # S6: the requested speed when this column was placed within the speed tolerance
     cdef public int lower              # S8: the lower edge of a column above a forward-IAS limit at level flight (state), or -1
+    cdef public double lower_slope     # S8: dw/dV (w = n^2-1, per km/h) of that edge along the forward-IAS limit (NaN: none)
     cdef public bint jump             # S8: the march met a blade-polar jump (no S6 nudges or robust retries here)
     # S7: the exact slope of the boundary, dn/dV (per km/h) from below / above the column speed (NaN: none), and its kind
     cdef public double slope_l, slope_r
@@ -84,7 +85,7 @@ cdef class NColumn:
     def __init__(self, double speed):
         self.nudged_from = None
         self.slope_l = NAN;self.slope_r = NAN;self.slope_kind = None
-        self.lower = -1;self.jump = False
+        self.lower = -1;self.jump = False;self.lower_slope = NAN
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None
@@ -136,7 +137,7 @@ cdef class NMarch:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     def __init__(self, MarchEngine eng, double speed, double turn_tol):
-        self.eng = eng;self.speed = speed;self.turn_tol = turn_tol;self.max_step = MAX_STEP_DEG
+        self.eng = eng;self.speed = speed;self.turn_tol = turn_tol;self.max_step = S8_MAX_STEP_DEG if eng.soft else MAX_STEP_DEG
         if eng.alpha_max_step > 0.:self.max_step = eng.alpha_max_step   # S8: the dense truth's finer alpha march
         self.max_nfev = MARCH_NFEV
         self.alpha_upper = float(eng.solver.trim_bounds[1][0])

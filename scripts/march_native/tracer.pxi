@@ -190,6 +190,7 @@ cdef double pchip_eval(int n, const double* x, const double* c, double xv) noexc
 
 
 DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope turn tolerance (the outline aims at it)
+DEF S8_MAX_WIDTH = 25.   # S8: the widest outline piece (km/h; the validation's general-rule setting, 50 left features unseen)
 DEF S8_BOUND = .6666666666666666   # S8: an outline piece is finished when its error bound is within 2/3 of the envelope
                                    # turn tolerance (the headroom of S7's curve checks)
 
@@ -331,6 +332,7 @@ cdef class NTracer:
                         self.eng.stats['s6_nudged'] = self.eng.stats.get('s6_nudged', 0)+1
                         col = alt;break
             if self.s7 and NTracer.ok(col):self.column_slope(col)
+            if self.s8 and NTracer.ok(col) and col.lower >= 0:self.lower_slope(col)
         col.role = why;col.evaluations = w.counts.get('aircraft_evaluations', 0)
         row = self.work.setdefault(why, dict(columns=0, evaluations=0))
         row['columns'] += 1;row['evaluations'] += col.evaluations
@@ -350,6 +352,20 @@ cdef class NTracer:
             if seg['speed_kmh'][0]-1e-9 <= speed <= seg['speed_kmh'][1]+1e-9:
                 return 1 if speed+self.tangent_delta > seg['speed_kmh'][1] else 2
         return 2
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int lower_slope(self, NColumn col) except -1:
+        """S8: the exact slope dw/dV of a column's lower edge (the leaning forward-IAS edge): MarchEngine.tangent on the
+        forward-IAS event residual (native event 7) through the edge state; NaN where unavailable."""
+        cdef double l = NAN, r = NAN
+        cdef int base = self.eng.st[col.lower].base
+        self.eng.flush_counts()
+        if self.eng.tangent(base, 1, 7, 0, 0, self.eng.st[base].speed, self.tangent_delta, self.slope_sides(col.speed), &l, &r):
+            if isfinite(l) and isfinite(r):col.lower_slope = .5*(l+r)
+            elif isfinite(l):col.lower_slope = l
+            elif isfinite(r):col.lower_slope = r
+        return 0
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -790,7 +806,35 @@ cdef class NTracer:
                                  speed, NULL, NULL)
         self.eng.flush_counts()
         if p >= 0 and self.eng.st[p].valid:return p
+        if self.s8 and self.eng.sliding and self.eng.is_prop:
+            # S8 (item 2): next to a blade-polar jump, level flight with the shafts sliding on it (NMarch.slide_at's rule)
+            q = self.slide_probe(level, speed)
+            if q >= 0:return q
         return -1 if p >= 0 and self.eng.physical(p) else -3
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int slide_probe(self, int level, double speed) except -2:
+        """S8: the level-flight probe from ``level`` at ``speed`` with the shafts sliding on a blade-polar jump the
+        jump check confirms at the seed (from a sliding seed: the regular correction). The admitted state, or -1."""
+        cdef SlideSpec spec
+        cdef int p
+        if self.eng.st[level].slide.n > 0:
+            spec.n = 0
+        else:
+            self.eng.slide_candidate(level, &spec, self.eng.st[level].sol[0], self.eng.st[level].sol[1], 1.)
+            if spec.n == 0:return -1
+        self.eng.slide_override = spec;self.eng.use_override = True
+        try:
+            p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6,
+                                 speed, NULL, NULL)
+        finally:
+            self.eng.use_override = False
+        self.eng.flush_counts()
+        if p >= 0 and self.eng.st[p].valid:
+            self.eng.stats['s8_slide_probes'] = self.eng.stats.get('s8_slide_probes', 0)+1
+            return p
+        return -1
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -808,7 +852,7 @@ cdef class NTracer:
         probed speed beyond it). Where no refinement column verifies, the S6 column bisection to the placement tolerance
         follows."""
         from em_trim_work import Work, use, current
-        cdef double out = bad.speed, inside = good.speed, nxt, h, step, failed = bad.speed, v
+        cdef double out = bad.speed, inside = good.speed, nxt, h, step, failed = bad.speed, v, leapt = NAN
         cdef int k
         cdef double direction = 1. if bad.speed > good.speed else -1.
         cdef int level = good.level, p
@@ -834,7 +878,24 @@ cdef class NTracer:
                     if step < self.place_tol and (inside-failed)*direction >= 0.:step = self.place_tol
                     continue
                 out = nxt
-                if h <= self.vtol*(1.+1e-9):break
+                if h <= self.vtol*(1.+1e-9):
+                    if self.s8 and p == -3 and inside != leapt:
+                        # S8: a level flight that does not close is no evidence of the edge (a band without a steady
+                        # state at a blade-polar jump, or a stiff stretch): probes leaping 2, 4 and 8 speed tolerances
+                        # past the last admitted level flight; one that is admitted continues the probes from there
+                        leapt = inside
+                        for k in range(1, 4):
+                            v = inside+direction*pmin((2 << (k-1))*self.vtol, fabs(bad.speed-inside))
+                            if fabs(bad.speed-v) <= 1e-9:break
+                            p = self.level_probe(level, v, &preds)
+                            if p >= 0:break
+                            if p == -1:
+                                out = v;break
+                        if p >= 0:
+                            self.eng.stats['s8_probe_leaps'] = self.eng.stats.get('s8_probe_leaps', 0)+1
+                            inside = v;level = p;admitted.append(v);failed = v;step = self.vtol
+                            continue
+                    break
                 failed = nxt;step = self.vtol
             if fabs(out-inside) > .5*self.vtol:
                 nxt = .5*(inside+out)
@@ -1092,9 +1153,11 @@ cdef class NTracer:
                     continue
                 skipped = 0 if NTracer.ok(col) else skipped
                 if not NTracer.ok(col):
-                    if col.status == STATUS_NOFEASIBLE and (last.lower >= 0 or (col.points and self.eng.ias_soft(col.points[0]))):
+                    if col.status == STATUS_NOFEASIBLE and (last.lower >= 0 or (col.points and (self.eng.ias_soft(col.points[0])
+                                                                                      or self.eng.ias_any(col.points[0])))):
                         # S8: past the leaning forward-IAS edge (no state inside the limit up to the first hard
-                        # limit): the top corner of that edge, by columns to the speed tolerance
+                        # limit; or a level flight over the limit that also did not close): the top corner of that edge,
+                        # by columns to the speed tolerance (their marches reach the states inside the limit)
                         good, bad = self.localize(last, col, 'edge', self.vtol)
                         self.events.append(dict(kind='edge', speed_kmh=[good.speed, bad.speed], status=bad.status_name(),
                                                 reason=bad.reason, located_by='columns (forward-IAS edge)'))
@@ -1315,6 +1378,9 @@ cdef class NTracer:
         # a face change is drawn as its two faces meeting; without both faces' exact slopes, or where they do not meet
         # (a jump), nothing bounds it (it is split down to the speed tolerance)
         if corner and not (exact and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc)):return INFINITY
+        # an end in level flight (n = 1, the low-speed edge) has no exact slope (the turn coordinate is singular there),
+        # and turn rate there is singular in load: nothing bounds the piece (it is split down to the speed tolerance)
+        if (not self.exact_a and fabs(na-1.) <= 1e-9) or (not self.exact_b and fabs(nb-1.) <= 1e-9):return INFINITY
         for j in range(1, S8_SAMPLES):
             x = va+(vb-va)*j/S8_SAMPLES
             xl = pmax(va, x-self.vtol);xr = pmin(vb, x+self.vtol)
@@ -1331,57 +1397,76 @@ cdef class NTracer:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef int lower_split(self, list checks, double tol) except -1:
-        """S8: the split rule on the leaning forward-IAS edge (em_march_chart.ias_edge: PCHIP in load through the
-        columns' lower edges, from level flight at the located 'ias edge' speed): each piece between neighbouring lower
-        edges of one segment is judged by its error bound from its end loads and PCHIP slopes; a failing one gets a
-        column where the bound is largest. Returns the columns added."""
+        """S8: the split rule on the leaning forward-IAS edge (em_march_chart.ias_edge). Along the edge the speed is a
+        smooth function of w = n^2-1 (at level flight the edge leaves the 1 g line vertically: dV/dw = 0 there, while
+        w(V) is singular), so the edge is drawn as the cubic Hermite V(w) through the columns' lower edges with their
+        exact slopes (dV/dw = 1/lower_slope) and level flight at the located 'ias edge' speed with slope 0. Each piece is
+        judged by its error bound from its end values and slopes (band_load on V(w)): it is finished when the band lies
+        within S8_BOUND of the speed tolerance of the drawn edge (the chart's horizontal slack covers it) or the piece is
+        narrower than the speed tolerance; otherwise a column is solved at the speed where the band is widest. Where
+        the edge is not monotone in w, nothing here (the edge is drawn through the columns as recorded). Returns the
+        columns added."""
         cdef NColumn c, col
-        cdef int n, k, added = 0
-        cdef double va, vb, na, nb, e, x
-        cdef double* xs
-        cdef double* ns
-        cdef double* ds
+        cdef int n, k, added = 0, j
+        cdef double va, vb, wa, wb, e, x, w, vd, lo, hi, best, htol = S8_BOUND*self.vtol
+        cdef double* ws
+        cdef double* vs
+        cdef double* dl
+        cdef double* dr
         tried, passed_set = self.check_tried, self.check_passed
         lows = [c for c in sorted(self.columns.values(), key=lambda c: c.speed) if NTracer.ok(c) and c.lower >= 0]
         if not lows:return 0
         seg = next((g['speed_kmh'] for g in self.segments_ or () if g['speed_kmh'][0]-1e-9 <= (<NColumn>lows[0]).speed
                     <= g['speed_kmh'][1]+1e-9), None)
         if seg is not None:lows = [c for c in lows if seg[0]-1e-9 <= c.speed <= seg[1]+1e-9]
-        pts = [(c.speed, self.eng.st[c.lower].load, c) for c in lows]
+        pts = [(pow(self.eng.st[c.lower].load, 2.)-1., c.speed, c,
+                1./c.lower_slope if isfinite(c.lower_slope) and c.lower_slope > 0. else NAN) for c in lows]
         foot = next((max(e['speed_kmh']) for e in self.events if e['kind'] == 'ias edge'
-                     and min(e['speed_kmh']) <= pts[0][0]+1e-9), None)
-        if foot is not None and foot < pts[0][0]-1e-9:pts.insert(0, (foot, 1., None))
+                     and min(e['speed_kmh']) <= pts[0][1]+1e-9), None)
+        if foot is not None and foot < pts[0][1]-1e-9:pts.insert(0, (0., foot, None, 0.))
         n = len(pts)
-        if n < 2:return 0
-        xs = <double*>malloc(n*sizeof(double));ns = <double*>malloc(n*sizeof(double));ds = <double*>malloc(n*sizeof(double))
-        if xs == NULL or ns == NULL or ds == NULL:
-            if xs != NULL:cfree(xs)
-            if ns != NULL:cfree(ns)
-            if ds != NULL:cfree(ds)
+        if n < 2 or any(pts[k+1][0] <= pts[k][0] for k in range(n-1)):return 0
+        ws = <double*>malloc(n*sizeof(double));vs = <double*>malloc(n*sizeof(double))
+        dl = <double*>malloc(n*sizeof(double));dr = <double*>malloc(n*sizeof(double))
+        if ws == NULL or vs == NULL or dl == NULL or dr == NULL:
+            if ws != NULL:cfree(ws)
+            if vs != NULL:cfree(vs)
+            if dl != NULL:cfree(dl)
+            if dr != NULL:cfree(dr)
             raise MemoryError()
         try:
             for k in range(n):
-                xs[k] = pts[k][0];ns[k] = pts[k][1]
-            pchip_slopes(n, xs, ns, ds)
+                ws[k] = pts[k][0];vs[k] = pts[k][1];dl[k] = pts[k][3];dr[k] = pts[k][3]
+            fill_slopes(n, ws, vs, dl, dr)
             for k in range(n-1):
-                va, vb = xs[k], xs[k+1];na, nb = ns[k], ns[k+1]
+                wa, wb = ws[k], ws[k+1];va, vb = vs[k], vs[k+1]
                 key = ('lower edge', va, vb)
                 if key in passed_set or key in tried:continue
-                e = self.piece_error(va, na, ds[k], 0., ds[k], vb, nb, ds[k+1], 0., ds[k+1], False, False, &x)
-                if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= self.max_step+1e-9):
+                best = 0.;x = .5*(va+vb)
+                for j in range(1, S8_SAMPLES):
+                    w = wa+(wb-wa)*j/S8_SAMPLES
+                    vd = hermite_eval(n, ws, vs, dl, dr, w)
+                    band_load(wa, va, dr[k], wb, vb, dl[k+1], w, &lo, &hi)
+                    e = pmax(hi-vd, vd-lo)
+                    if not isfinite(e):e = INFINITY
+                    if e > best:
+                        best = e;x = vd
+                e = best
+                if vb-va <= self.vtol+1e-9 or (e <= htol and vb-va <= self.max_step+1e-9):
                     passed_set.add(key)
-                    checks.append(dict(interval_kmh=[va, vb], passed=True, kind='lower edge bound', bound_dps=e if isfinite(e) else None))
+                    checks.append(dict(interval_kmh=[va, vb], passed=True, kind='lower edge bound',
+                                       bound_kmh=e if isfinite(e) else None))
                     continue
-                if e <= tol:x = .5*(va+vb)
+                if e <= htol:x = .5*(va+vb)
                 x = pmin(pmax(x, va+.1*(vb-va)), vb-.1*(vb-va))
                 near = [q[2] for q in (pts[k], pts[k+1]) if q[2] is not None]
                 col = self.column(x, near, 'split', False, va, vb)
                 checks.append(dict(interval_kmh=[va, vb], speed_kmh=col.speed, passed=False, kind='lower edge split',
-                                   bound_dps=e if isfinite(e) else None))
+                                   bound_kmh=e if isfinite(e) else None))
                 self.columns[col.speed] = col;added += 1
                 if not NTracer.ok(col) or col.lower < 0:tried.add(key)
         finally:
-            cfree(xs);cfree(ns);cfree(ds)
+            cfree(ws);cfree(vs);cfree(dl);cfree(dr)
         return added
 
     @cython.boundscheck(True)
@@ -1401,6 +1486,7 @@ cdef class NTracer:
         cdef int i
         cdef long splits = 0, steps = 0
         cdef double tol = S8_BOUND*self.ttol
+        cdef double width = pmin(self.max_step, S8_MAX_WIDTH)
         checks, tried, passed_set = [], self.check_tried, self.check_passed
         seams = self.seams
 
@@ -1419,13 +1505,13 @@ cdef class NTracer:
                 corner = self.face_of(a) != self.face_of(b);exact = self.exact_a and self.exact_b
                 e = self.piece_error(va, na, sa, ka, pa, vb, nb, sb, kb, pb, corner, exact, &x)
                 bound = e if isfinite(e) else None
-                if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= self.max_step+1e-9):
+                if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= width+1e-9):
                     passed_set.add(key)
                     kind = 'bound' if e <= tol else 'narrow'
                     # narrower than the speed tolerance and still failing: where each end's tangent misses the other end
                     # by more than the turn tolerance, the difference did not shrink with the piece: a discontinuity
-                    if e > tol and pmin(fabs(turn_rate(vb, nb)-turn_rate(vb, na+sa*(vb-va))),
-                                              fabs(turn_rate(va, na)-turn_rate(va, nb-sb*(vb-va)))) > self.ttol:
+                    if e > tol and na > 1.+1e-9 and nb > 1.+1e-9 and pmin(fabs(turn_rate(vb, nb)-turn_rate(vb, na+sa*(vb-va))),
+                                                                          fabs(turn_rate(va, na)-turn_rate(va, nb-sb*(vb-va)))) > self.ttol:
                         kind = 'step';steps += 1
                         self.events.append(dict(kind='step', speed_kmh=[va, vb], faces=[a.reason, b.reason], bound_dps=bound))
                     checks.append(dict(interval_kmh=[va, vb], passed=True, kind=kind, bound_dps=bound, faces=[a.reason, b.reason]))
@@ -1767,6 +1853,7 @@ cdef class NTracer:
         if col.lower >= 0:
             # S8: the column's lower edge (level flight over a forward-IAS limit): the chart's leaning edge
             out['lower_edge'] = self.eng.row_of(col.lower);out['lower_edge_kind'] = 'forward IAS limit'
+            if isfinite(col.lower_slope):out['lower_edge_slope'] = col.lower_slope
         if col.nudged_from is not None:out['s6_requested_speed_kmh'] = float(col.nudged_from)
         if col.slope_kind is not None:
             out['boundary_slope'] = [col.slope_l if isfinite(col.slope_l) else None, col.slope_r if isfinite(col.slope_r) else None]

@@ -636,20 +636,33 @@ def outline(data, aircraft):
 def ias_edge(aircraft, run, grid):
     """S8: the leaning forward-IAS edge of one outline run: where level flight is over the lowest forward-IAS limit
     (wing VNE, flap retraction or damage by IAS) the columns carry their lower edge (the first state inside the limit
-    along alpha); the edge runs from the last column's lower edge back down through the others to level flight at the
-    speed the trace located ('ias edge' event), interpolated in load (PCHIP) on the chart grid. [] without one."""
+    along alpha) and its exact slope; the edge runs from the last column's lower edge back down through the others to
+    level flight at the speed the trace located ('ias edge' event), the speed as the cubic Hermite in n^2-1 (vertical
+    at level flight; PCHIP in load on the chart grid for records without slopes). [] without one."""
     from scipy.interpolate import PchipInterpolator
     lows = [c for c in run if c.get('lower_edge')]
     if not lows:return []
     kind = (aircraft.get('speed_limit') or {}).get('forward_ias_limits') or []
     kind = min(kind, key=lambda c: c['speed_kmh'])['kind'] if kind else 'Forward IAS limit'
     v = [c['speed_kmh'] for c in lows];n = [c['lower_edge']['load_g'] for c in lows]
+    slopes = [c.get('lower_edge_slope') for c in lows]
     events = (aircraft.get('envelope_trace') or {}).get('events', [])
     one = next((e for e in events if e['kind'] == 'ias edge' and min(e['speed_kmh']) <= v[0]+1e-9), None)
     if one is not None and max(one['speed_kmh']) < v[0]-1e-9:
-        v.insert(0, float(max(one['speed_kmh'])));n.insert(0, 1.)
+        v.insert(0, float(max(one['speed_kmh'])));n.insert(0, 1.);slopes.insert(0, None)
     xs = np.unique(np.r_[grid[(grid > v[0]) & (grid < v[-1])], v])
-    loads = PchipInterpolator(v, n)(xs) if len(v) > 1 else np.array(n)
+    w = np.asarray(n, dtype=float)**2-1.
+    if len(v) > 1 and any(s is not None for s in slopes) and np.all(np.diff(w) > 0.):
+        # the edge's exact slopes: the speed along the limit as the cubic Hermite V(w), w = n^2-1, with dV/dw = 1/slope
+        # at the columns and 0 at level flight (where the edge leaves the 1 g line vertically); the native tracer's
+        # lower_split judges this drawing. Sampled in w (with the columns) instead of on the speed grid.
+        d = [0. if k == 0 and n[0] == 1. else (1./s if s is not None and s > 0. else None) for k, s in enumerate(slopes)]
+        dl, dr = hermite_slopes(w, np.asarray(v, dtype=float), d, d)
+        wq = np.unique(np.r_[np.linspace(w[0], w[-1], 121), w])
+        xs = hermite(w, np.asarray(v, dtype=float), dl, dr, wq);loads = np.sqrt(1.+np.maximum(wq, 0.))
+        order = np.argsort(xs, kind='stable');xs, loads = xs[order], loads[order]
+    else:
+        loads = PchipInterpolator(v, n)(xs) if len(v) > 1 else np.array(n)
     rates = turn_rate(xs, loads)
     common = dict(at_plot_ceiling=False, edge_kind=kind+' (forward IAS) speed boundary', leaning_edge=True)
     out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs[::-1].tolist(), rates[::-1].tolist())]

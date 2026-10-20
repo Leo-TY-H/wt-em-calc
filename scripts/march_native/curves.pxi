@@ -136,10 +136,10 @@ cdef class NCurves:
         if not self.eng.only_reasons(sid, (<unsigned long long>1) << R_RPM):return 0
         v = self.eng.st[sid].speed
         i = bisect.bisect_left(self.env_v, v)
-        if i <= 0 or i >= len(self.env_v):
-            if not (0 < i < len(self.env_v)) and not any(fabs(x-v) <= 1e-9 for x in self.env_v):return 0
         if i < len(self.env_v) and fabs(self.env_v[i]-v) <= 1e-9:n = self.env_n[i]
-        else:n = pmin(self.env_n[i-1], self.env_n[i])
+        elif i > 0 and fabs(self.env_v[i-1]-v) <= 1e-9:n = self.env_n[i-1]
+        elif 0 < i < len(self.env_v):n = pmin(self.env_n[i-1], self.env_n[i])
+        else:return 0
         if self.eng.st[sid].load < n-1e-9:
             self.eng.st[sid].valid = True;self.eng.st[sid].rule = 1
             self.eng.stats['s8_transient_over_rev'] = self.eng.stats.get('s8_transient_over_rev', 0)+1

@@ -1,5 +1,5 @@
 {
- "native_sha256": "82afab4f99b66f9d3afec14714f042caf11fe2a4a1ae5f4060117014bbff8d94",
+ "native_sha256": "e965b8debfd9c58480b8d6543c26525b1f0d34a727a30fa0bfab2d39df6e1371",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -99,7 +99,7 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "ca8a4a2441f15ab334bf50f8a62b7515e85bab57d5679cb72841de08bb4de10b",
+ "python_sha256": "ce1004fa2d4be8921ca29abd2981251c43ac46831bb7482efbdc3bb36d75ec21",
  "verification": {
   "date": "2026-10-19",
   "aircraft": [
