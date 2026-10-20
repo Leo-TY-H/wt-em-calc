@@ -275,8 +275,11 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     # S5: the march, its column workers and the tracer on native trial states where the compiled
     # module covers this solver; otherwise the Python march (em_march, the reference) as in S4.
     engine = N.engine(solver)
+    if engine is None:
+        # S8: the soft-limit rule is native only; the Python march (the rollback reference) keeps the S7 rule
+        for s in (solver, curve_solver):s.__dict__.pop('soft_admission', None)
     if engine is not None:
-        native_tracer = solver.native_loop.m.NTracer(engine, name, cfg, tracer.cj, tracer.ttol, tracer.vtol, tracer.place_tol,
+        native_tracer =solver.native_loop.m.NTracer(engine, name, cfg, tracer.cj, tracer.ttol, tracer.vtol, tracer.place_tol,
                                                      tracer.max_step, tracer.max_depth, tracer.march_tol, tracer.on_column)
         with use(total):
             envelope = native_tracer.run()

@@ -243,6 +243,7 @@ cdef class MarchEngine:
     # S8: the soft chart limits (solver.soft_admission): engine RPM and the forward-IAS limits pass the march through
     cdef public bint soft
     cdef public bint dive_seed   # S8: level flight continued only from stored level states at lower speeds (dive path)
+    cdef public double alpha_max_step   # S8 validation: the alpha march's largest step (0: MAX_STEP_DEG)
     cdef unsigned long long soft_mask, ias_mask
     cdef public double ias_limit      # the lowest enforced forward-IAS limit (m/s), NaN without one
     cdef public double sep_tol

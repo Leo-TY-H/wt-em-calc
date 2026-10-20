@@ -1775,6 +1775,30 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    def debug_column(self, double speed, list near, bint cheap=False):
+        """Diagnostics (S8): one column at ``speed`` seeded from the trace's columns at the ``near`` speeds (not kept)."""
+        cdef NColumn col
+        seeds = [self.columns[v] for v in near if v in self.columns]
+        self.cheap = cheap
+        try:
+            col = self.column(speed, seeds, 'debug', False, -INFINITY, INFINITY)
+        finally:
+            self.cheap = False
+        return dict(speed=col.speed, status=col.status_name(), reason=col.reason, raw=str(col.raw_reason)[:300],
+                    march_reason=col.march_reason, level=col.level, trials=col.trial_log,
+                    points=[(round(self.eng.st[q].alpha, 3), round(self.eng.st[q].load, 3), bool(self.eng.st[q].valid),
+                             self.eng.reason_list(q)) for q in col.points],
+                    turn=self.eng.st[col.boundary].turn if col.boundary >= 0 else None,
+                    load=self.eng.st[col.boundary].load if col.boundary >= 0 else None)
+
+    def debug_probe(self, int level, double speed):
+        """Diagnostics (S8): level_probe from state ``level`` at ``speed`` (state id, -1 physical rejection, -3 open)."""
+        cdef PredMap preds
+        preds.n = 0
+        return self.level_probe(level, speed, &preds)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     def column_state(self, NColumn col):
         return dict(points=list(col.points), boundary=col.boundary, level=col.level, status=col.status_name(),
                     reason=col.reason, march_reason=col.march_reason)
