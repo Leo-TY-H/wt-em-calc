@@ -1071,7 +1071,7 @@ cdef class NCurves:
     cdef object fold_turn(self, dict comp, int last, int side, int one):
         """S10: the contour turns back in speed beyond its knot ``last`` (on a branch where SEP falls with load), where level
         flight at that knot's speed (``one``) lies outside the level too: the level's second root at that speed, between
-        level flight and the knot (fold_sample, then the bracketed solve). Where the knot itself lies just past the turn
+        level flight and the knot (fold_sample, then the bracketed solve). Where the knot itself lies on or just past the turn
         (within the SEP allowance of the level, below it: no second root at its speed), at the speed of one of the three
         knots before it instead, the first whose level flight lies outside the level too. Found, the component ends at the
         fold ('fold' end; its fold piece joins ``last`` to that root, refined by check_fold) and the other branch (a 'below'
@@ -1080,10 +1080,13 @@ cdef class NCurves:
         cdef double target = comp['level'], vk = self.eng.st[last].speed, v = vk, fo, fh, sv
         cdef int hit = -1, other_root = -1, top = last, k, q, i
         if not self.s10 or self.eng.st[last].load <= 1.+1e-6:return None
-        hit = self.fold_sample(v, target, last, (.8, .6, .4, .2))
-        if hit < 0 and self.eng.st[last].ps < target:
-            # the knot lies past the turn (Do 17Z-2 SB -20 m/s: 491.87 km/h, 0.047 m/s under the level): the turn lies
-            # between it and the knots before it, whose speeds have both roots (samples from next to the knot down)
+        # (from next to the knot down: where the turn is close, the other root lies just below the knot's load, XF5U-1 RB
+        # -10 m/s at 683 km/h)
+        hit = self.fold_sample(v, target, last, (.95, .8, .6, .4, .2))
+        if hit < 0:
+            # the knot lies past the turn (Do 17Z-2 SB -20 m/s: 491.87 km/h, 0.047 m/s under the level) or on its tip
+            # (XF5U-1 RB -10 m/s at 683 km/h, where SEP peaks sharply in load): the turn lies between it and the knots
+            # before it, whose speeds have both roots (samples from next to the knot down)
             knots = comp['knots'] if side > 0 else comp['knots'][::-1]
             for i in range(2, 5):
                 if i > len(knots):break
@@ -1096,7 +1099,9 @@ cdef class NCurves:
                         # level flight at the knot before lies inside the level: the turn and the 1 g end of the other
                         # branch both lie between the two knots, closer than the march steps (XP-55 SB +10 m/s, 461-462
                         # km/h): the fold piece runs from the knot down to that 1 g end
-                        r_ = self.one_g_root(target, q, one, 'fold')
+                        # (not level flight at the knot's own speed, even within S9_END_SEP: the end would leave no knot
+                        # at 1 g to draw it by; DB-3B RB +10 m/s at 250.7 km/h, the knot at 1.001 g)
+                        r_ = self.one_g_root(target, q, one, 'fold', one)
                         if r_ is not None:
                             k = r_
                             if (self.eng.compatible(k, last) and self.eng.st[k].load == 1.
