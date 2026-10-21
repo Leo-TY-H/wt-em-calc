@@ -650,6 +650,30 @@ cdef class NTracer:
             p = march.at_state(sid, self.eng.st[sid].alpha, 'interior start')
             if p >= 0 and self.eng.st[p].valid:
                 start = p;break
+        if start < 0 and self.eng.s12:
+            # S12: the neighbouring columns' march from level flight met no limit anywhere along its alpha path, not only
+            # at the samples it kept (AM-1 RB 804.8 km/h: the 804.1 km/h column kept only its level flight and its
+            # boundary, and that boundary's alpha lies past this speed's control face): starts a quarter, half and three
+            # quarters of the way from the nearest neighbour's level flight to its lowest sample above it, seeded from
+            # that sample (each side's nearest column, the nearer first)
+            firsts = {}
+            for sid in near:
+                firsts.setdefault(self.eng.st[sid].speed > speed, sid)
+            for sid in sorted(firsts.values(), key=lambda q: fabs(self.eng.st[q].speed-speed)):
+                lv = -1
+                for p in seeds:
+                    if (fabs(self.eng.st[p].load-1.) <= 1e-12 and self.eng.st[p].valid
+                            and self.eng.st[p].speed == self.eng.st[sid].speed):
+                        lv = p;break
+                if lv < 0 or not self.eng.st[sid].alpha > self.eng.st[lv].alpha:continue
+                for f in (.25, .5, .75):
+                    p = march.at_state(sid, self.eng.st[lv].alpha+f*(self.eng.st[sid].alpha-self.eng.st[lv].alpha),
+                                       's12 interior start')
+                    if p >= 0 and self.eng.st[p].valid:
+                        start = p;break
+                if start >= 0:
+                    self.eng.stats['s12_path_starts'] = self.eng.stats.get('s12_path_starts', 0)+1
+                    break
         if start < 0:return False
         if self.eng.brake_limit:
             # S10 (not S11, where braking is no limit): the boundary is the first limit along alpha from level flight:
@@ -1724,6 +1748,61 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint wake_check(self, list good, int i, int side, double sa, double sb, double ka, double kb, double pa, double pb,
+                         bint exact, list checks, double* at) except -1:
+        """S12: whether the outline piece good[i]..good[i+1] holds where its face crosses the tail-wake switch ``side``
+        (MarchEngine.wake_margins; its end states lie on either side): the crossing is located on the face itself (the
+        nearer column's limiting face corrected at the speed where the switch quantity, interpolated between the bracketing
+        states, is zero: Illinois steps, at most S12_WAKE_STEPS corrections, until the bracket is narrower than the speed
+        tolerance), and there the face must lie within S8_BOUND of the turn tolerance of the drawn line (allowing the
+        chart's horizontal slack). ``at``: the crossing. A face without a native event has no such check (True)."""
+        cdef NColumn a = good[i], b = good[i+1], c
+        cdef Event ev
+        cdef int seed, p = -1, q, it, kept = 0
+        cdef double lv = a.speed, lm, hv = b.speed, hm, k = NAN, m, x, t, lo_t = INFINITY, hi_t = -INFINITY, box, na, nb
+        lm = self.eng.st[a.boundary].wake[side];hm = self.eng.st[b.boundary].wake[side]
+        at[0] = lv+lm/(lm-hm)*(hv-lv)
+        for it in range(S12_WAKE_STEPS):
+            k = lv+lm/(lm-hm)*(hv-lv)
+            if p < 0:
+                c = a if k-a.speed <= b.speed-k else b
+                if not self.face_event(c, &ev):return True
+                seed = self.eng.st[c.boundary].base
+            else:seed = p
+            q = self.eng.correct(seed, self.eng.st[seed].sol, self.eng.st[seed].load, True, FIX_EVENT, 0., ev.code,
+                                 ev.engine if ev.code == 6 else (ev.axis-2 if ev.axis >= 0 else 0), ev.side, 16, 0, 2e-6, k,
+                                 NULL, NULL)
+            self.eng.flush_counts()
+            self.eng.stats['s12_wake_corrections'] = self.eng.stats.get('s12_wake_corrections', 0)+1
+            if q < 0 or not self.eng.st[q].valid:break
+            p = q;at[0] = k
+            m = self.eng.st[p].wake[side]
+            if not isfinite(m) or hv-lv <= self.vtol:break
+            # Illinois: the bracket end kept twice has its value halved
+            if (m >= 0.) == (lm >= 0.):
+                lv = k;lm = m
+                if kept == 1:hm *= .5
+                kept = 1
+            else:
+                hv = k;hm = m
+                if kept == -1:lm *= .5
+                kept = -1
+            if hv-lv <= self.vtol:break
+        if p < 0:return False
+        k = self.eng.st[p].speed
+        na = self.eng.st[a.boundary].load;nb = self.eng.st[b.boundary].load
+        for x in (k-self.vtol, k, k+self.vtol):
+            x = pmin(pmax(x, a.speed), b.speed)
+            t = turn_rate(x, interval_load(a.speed, na, sa, ka, pa, b.speed, nb, sb, kb, pb, False, exact, x))
+            lo_t = pmin(lo_t, t);hi_t = pmax(hi_t, t)
+        t = self.eng.st[p].turn
+        box = 0. if lo_t <= t <= hi_t else (t-hi_t if t > hi_t else lo_t-t)
+        checks.append(dict(interval_kmh=[a.speed, b.speed], speed_kmh=k, passed=bool(box <= S8_BOUND*self.ttol), kind='tail wake',
+                           error_dps=box, faces=[a.reason, b.reason]))
+        return box <= S8_BOUND*self.ttol
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef list check_s8(self):
         """S8: the split rule on every outline piece between verified columns of one segment (no Mach seam or segment
         end inside). A piece whose error bound (piece_error) is within S8_BOUND of the envelope turn tolerance and which
@@ -1782,6 +1861,31 @@ cdef class NTracer:
                             if self.knot_check(good, i, kx, sa, sb, ka, kb, pa, pb, corner, exact, checks):continue
                             e = INFINITY;x = kx;knot_split = True
                             break
+                if (self.eng.s12 and not corner and not knot_split and e <= tol and vb-va > self.vtol+1e-9
+                        and vb-va <= width+1e-9):
+                    # S12: the bound assumes the face's slope changes monotonically inside the piece. The game's wing-wake
+                    # term of the tail's downwash (type-2 downwash) has a cusp where a tail half passes through the wake
+                    # sheet (its attenuation exp(-1.41 |lateral offset|)) and a kink where the wake's travel time reaches its
+                    # cap, so the faces kink there; against the face's curvature the slope then overshoots inside the piece
+                    # (MB.151 C.1 RB 525 km/h: the control face's slope from -0.026 to -0.097 g per km/h there, -0.080 at the
+                    # piece's end 530 km/h; drawn 0.46 deg/s off). Where the end states lie on either side of such a switch,
+                    # the face at the crossing (interpolated in speed) must lie on the drawn line, else the piece is split
+                    # there (both one-sided slopes at that column)
+                    done = []
+                    for side in range(4):
+                        ma = self.eng.st[a.boundary].wake[side];mb = self.eng.st[b.boundary].wake[side]
+                        if not (isfinite(ma) and isfinite(mb)) or (ma >= 0.) == (mb >= 0.):continue
+                        kx = va+ma/(ma-mb)*(vb-va)
+                        # (both tail halves cross the wake sheet within the speed tolerance of each other: one check)
+                        if any(fabs(kx-v) <= self.vtol for v in done):continue
+                        self.eng.stats['s12_wake_checks'] = self.eng.stats.get('s12_wake_checks', 0)+1
+                        if self.wake_check(good, i, side, sa, sb, ka, kb, pa, pb, exact, checks, &vc):
+                            done.append(vc);continue
+                        if not (va+.5*self.vtol < vc < vb-.5*self.vtol):continue
+                        e = INFINITY;x = vc;knot_split = True
+                        self.knot_speeds.append(vc)
+                        self.eng.stats['s12_wake_splits'] = self.eng.stats.get('s12_wake_splits', 0)+1
+                        break
                 if (self.eng.s10 and corner and exact and not knot_split and e <= tol and vb-va > self.vtol+1e-9
                         and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc)):
                     # S10: the bound takes both faces as continued from their columns up to the corner. A long steep stretch
