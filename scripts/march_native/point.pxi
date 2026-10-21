@@ -334,7 +334,9 @@ cdef class PointSolver:
             # (MarchEngine.brake_reseed) for the pulling state of this speed and load (S11: else the braking state stays)
             q = self.eng.brake_reseed(sid, -1, FIX_LOAD, load, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed_kmh,
                                       self.eng.st[sid].thrust+S11_THRUST_EPS)
-            if q >= 0:return q
+            if q >= 0:
+                if self.eng.s11:self.eng.st[q].alt = sid
+                return q
         return sid
 
     @cython.boundscheck(True)

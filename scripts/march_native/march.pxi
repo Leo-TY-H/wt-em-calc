@@ -165,6 +165,7 @@ cdef struct TState:
     SlideSpec slide    # S8: shafts sliding on a blade-polar jump (n = 0: a regular state)
     bint brakes        # S11: the propellers' net thrust is negative under power (Fin.brakes; S10: also its rejection reason)
     double thrust      # S11: the propellers' net thrust in weights (NaN: unknown)
+    int alt            # S11: the braking state a search replaced by this one (more thrust), or -1
 
 
 cdef struct PKey:
@@ -463,7 +464,7 @@ cdef class MarchEngine:
         t.converged = f.converged;t.valid = f.row_valid
         t.nreasons = f.nreasons
         for i in range(f.nreasons):t.reasons[i] = f.reasons[i]
-        t.brakes = f.brakes
+        t.brakes = f.brakes;t.alt = -1
         t.thrust = net_thrust(self.fin.pm, &s.ps.frame)/self.model.weight if self.is_prop and self.fin.pm is not None else NAN
         t.force_error_g = e.force_error_g if isfinite(e.force_error_g) else NAN
         v = pmax(pmax(fabs(e.rate_residual[0]), fabs(e.rate_residual[1])), fabs(e.rate_residual[2]))
@@ -582,7 +583,7 @@ cdef class MarchEngine:
         reasons = row.get('reasons', ())
         t.nreasons = min(len(reasons), MAXREASONS)
         for i in range(t.nreasons):t.reasons[i] = reason_code(reasons[i])
-        t.brakes = bool(row.get('propeller_braking')) or 'propeller braking' in reasons;t.thrust = NAN
+        t.brakes = bool(row.get('propeller_braking')) or 'propeller braking' in reasons;t.thrust = NAN;t.alt = -1
         for name, default in (('force_error_g', 0), ('angular_error_rad_s2', 1), ('history_error', 2)):
             value = row.get(name)
             value = NAN if value is None else float(value)
@@ -971,6 +972,26 @@ cdef class MarchEngine:
     cdef int correct(self, int seed, const double* sol, double load, bint use_coords, int fixed_kind, double value,
                      int ev_kind, int ev_axis, int ev_side, int max_nfev, int max_evaluations, double event_tolerance,
                      double speed, PredMap* preds, int* evidence) except -2:
+        """correct1; S11: where the correction from a state the braking search chose (more thrust) does not close, the
+        same correction from the braking state it replaced (that state's branch continues where the chosen one ends:
+        AM-1 RB 804-806 km/h level flight)."""
+        cdef int q = self.correct1(seed, sol, load, use_coords, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
+                                   max_evaluations, event_tolerance, speed, preds, evidence)
+        cdef int alt
+        if q >= 0 or not self.s11 or self.brake_retry:return q
+        alt = self.st[seed].alt
+        if alt < 0 or alt >= self.nst or not self.st[alt].has_coords:return q
+        self.stats['s11_alt_seeds'] = self.stats.get('s11_alt_seeds', 0)+1
+        q = self.correct1(alt, sol, load, use_coords, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
+                          max_evaluations, event_tolerance, speed, preds, evidence)
+        if q >= 0:self.stats['s11_alt_closed'] = self.stats.get('s11_alt_closed', 0)+1
+        return q
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int correct1(self, int seed, const double* sol, double load, bint use_coords, int fixed_kind, double value,
+                      int ev_kind, int ev_axis, int ev_side, int max_nfev, int max_evaluations, double event_tolerance,
+                      double speed, PredMap* preds, int* evidence) except -2:
         """Curve.correct(seed, ...) natively: a state id, or -1 for None. ``sol``/``load`` replace the seed's
         solution and load (dict(seed, solution=..., load_g=...)). ``evidence``: when not NULL and the
         correction does not close but its state is admitted, the stored state id (Curve.retain), else -1."""
@@ -1085,7 +1106,9 @@ cdef class MarchEngine:
             # F2G-1 RB 798 km/h from 3.4 g)
             k = self.brake_reseed(sid, seed, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
                                   event_tolerance, speed, floor)
-            if k >= 0:return k
+            if k >= 0:
+                if self.s11:self.st[k].alt = sid
+                return k
             self.last_load = n;self.last_cap = cap;self.last_closed = True
         return sid
 
