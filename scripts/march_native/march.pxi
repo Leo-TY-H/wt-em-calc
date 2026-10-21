@@ -102,6 +102,8 @@ DEF S10_BRAKE_MARGIN = .05   # S10: the braking margin (net propeller thrust in 
 DEF S11_NFEV = 30            # S11: the shadow check's prescribed-load corrections (column.pxi ROBUST_NFEV, ROBUST_EVALS)
 DEF S11_EVALS = 120
 DEF S11_THRUST_EPS = 1e-3     # S11: another state of the same equations has more net thrust by this (weights)
+DEF S12_BRAKE_ROUNDS = 3      # S12: braking search rounds from a state found with more thrust that still brakes
+DEF S12_WAKE_STEPS = 5        # S12: face corrections locating a tail-wake switch inside an outline piece (NTracer.wake_check)
 
 
 cdef inline void band_load(double va, double na, double sa, double vb, double nb, double sb, double x, double* lo,
@@ -166,6 +168,9 @@ cdef struct TState:
     bint brakes        # S11: the propellers' net thrust is negative under power (Fin.brakes; S10: also its rejection reason)
     double thrust      # S11: the propellers' net thrust in weights (NaN: unknown)
     int alt            # S11: the braking state a search replaced by this one (more thrust), or -1
+    double wake[4]     # S12: the switches of the wing-wake term of the tail's downwash (type-2 downwash) on each tail half:
+                       # its lateral offset from the wake (0, 1: the term's attenuation exp(-1.41 |offset|) has a cusp at 0)
+                       # and its travel time over the cap (2, 3: the game caps the time); NaN without that term
 
 
 cdef struct PKey:
@@ -295,6 +300,12 @@ cdef class MarchEngine:
     # 2026-10-21) is found (brake_reseed); no braking limit
     cdef public bint s11
     cdef public bint brake_limit         # S10's braking limit (s10 rule without s11): the braking face and edge
+    # S12 (WT_MARCH_S12=0 restores S11 exactly): the braking search continues from a state it finds that still brakes;
+    # interior starts along the neighbouring columns' alpha path; outline pieces checked where the tail-wake term of the
+    # downwash switches inside them
+    cdef public bint s12
+    cdef public list brake_log           # diagnostics (WT_MARCH_BRAKE_LOG=1): every braking search's attempts, else None
+    cdef int brake_depth                 # S12: braking search rounds in progress
     cdef bint brake_retry
     cdef int prop_engines
     cdef list engine_shafts
@@ -362,6 +373,9 @@ cdef class MarchEngine:
         self.brake = self.s10 and self.fin is not None and self.fin.brake
         self.s11 = self.brake and self.fin.brake_choice
         self.brake_limit = self.brake and not self.s11
+        self.s12 = self.s10 and os.environ.get("WT_MARCH_S11", "1") != "0" and os.environ.get("WT_MARCH_S12", "1") != "0"
+        self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
+        self.brake_depth = 0
         self.brake_retry = False
         from em_speed_limits import speed_limits
         value = speed_limits(solver.fm, solver.config).get("forward_ias_limit_mps")
@@ -436,6 +450,28 @@ cdef class MarchEngine:
         return value
 
     # ------------------------------------------------------------------ states
+    cdef void wake_margins(self, const Eval* e, double* out) noexcept:
+        """S12: the switches of the wing-wake term of the tail's downwash on each tail half (tail.pxi type2_downwash and
+        scalar_stage, same inputs): out[i] its lateral offset from the wake, cos(angle) a + sin(angle) b with angle the
+        roll over the wake's travel time (the term's attenuation exp(-1.41 |lateral|) has a cusp where it is 0: the
+        tail half passes through the wake sheet); out[2+i] the travel time over its cap (min(distance/speed, cap)).
+        NaN without the term (S12 off, legacy downwash, a tail half not behind the wing)."""
+        cdef double sp2, d2, cap, travel, angle
+        cdef int i
+        for i in range(4):out[i] = NAN
+        if not self.s12 or not e.frame.tail.type2:return
+        sp2 = e.velocity[0]*e.velocity[0]+e.velocity[1]*e.velocity[1]+e.velocity[2]*e.velocity[2]
+        if not sp2 > 0.:return
+        cap = self.model.conds[e.cond].tp.travel_cap
+        for i in range(2):
+            if not e.frame.tail.projection[i][0] > 0.:continue
+            d2 = (e.frame.tail.projection[i][0]*e.frame.tail.projection[i][0]+e.frame.tail.projection[i][1]*e.frame.tail.projection[i][1]
+                  +e.frame.tail.projection[i][2]*e.frame.tail.projection[i][2])
+            travel = sqrt(d2/sp2)
+            angle = pmin(travel, cap)*e.frame.omega[0]
+            out[i] = cos(angle)*e.frame.tail.projection[i][1]+sin(angle)*e.frame.tail.projection[i][2]
+            out[2+i] = travel-cap
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef int state_from_src(self, int si) except -1:
@@ -465,6 +501,7 @@ cdef class MarchEngine:
         t.nreasons = f.nreasons
         for i in range(f.nreasons):t.reasons[i] = f.reasons[i]
         t.brakes = f.brakes;t.alt = -1
+        self.wake_margins(e, t.wake)
         t.thrust = net_thrust(self.fin.pm, &s.ps.frame)/self.model.weight if self.is_prop and self.fin.pm is not None else NAN
         t.force_error_g = e.force_error_g if isfinite(e.force_error_g) else NAN
         v = pmax(pmax(fabs(e.rate_residual[0]), fabs(e.rate_residual[1])), fabs(e.rate_residual[2]))
@@ -584,6 +621,7 @@ cdef class MarchEngine:
         t.nreasons = min(len(reasons), MAXREASONS)
         for i in range(t.nreasons):t.reasons[i] = reason_code(reasons[i])
         t.brakes = bool(row.get('propeller_braking')) or 'propeller braking' in reasons;t.thrust = NAN;t.alt = -1
+        for i in range(4):t.wake[i] = NAN
         for name, default in (('force_error_g', 0), ('angular_error_rad_s2', 1), ('history_error', 2)):
             value = row.get(name)
             value = NAN if value is None else float(value)
@@ -1139,7 +1177,8 @@ cdef class MarchEngine:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef int brake_reseed(self, int sid, int seed, int fixed_kind, double value, int ev_kind, int ev_axis, int ev_side,
-                          int max_nfev, int max_evaluations, double event_tolerance, double speed, double floor) except -2:
+                          int max_nfev, int max_evaluations, double event_tolerance, double speed, double floor,
+                          bint full=False) except -2:
         """S10: a correction that closed on a braking propeller state (its governed propellers near the fine pitch stop,
         their blade sections at negative incidence) is tried again with the same equations from coarser governor pitch,
         where the pulling state of the same shaft speed lies (ER-2 ACh-30B SB 515 km/h: 24.6 against 33.4 deg): first from
@@ -1155,9 +1194,14 @@ cdef class MarchEngine:
         state, and a state that brakes too is taken where its net thrust (weights) exceeds ``floor`` (the braking state's
         plus S11_THRUST_EPS: another state; for a shadowed SEP knot the midpoint to the state found at its load): the first
         pulling state, else the one with the most thrust above ``floor``, else -1. S11: no attempt after one that closes
-        back on the braking state itself (its own basin reaches that seed)."""
+        back on the braking state itself (its own basin reaches that seed). S12: the state found with more thrust, where it
+        still brakes, is searched in turn (``full``: every start, no stop) until no state with more thrust is found, at most
+        S12_BRAKE_ROUNDS times; and no stop once a start has closed on a state other than the braking one (several states
+        are known to coexist there: F3F-2 SB 736.6 km/h, 13.6 g: from -0.24 x weight every start reaches -0.10, and from
+        that state the halfway start returns to it while the quarter start reaches -0.06)."""
         cdef int j, cid, q, attempt, src, best = -1, nfev = max_nfev, evals = max_evaluations
         cdef double g, gs, top = floor
+        cdef bint other = full
         cdef double sol[5]
         cdef double prev[NMAX]
         cdef bint moved, has_prev = False, same
@@ -1216,16 +1260,36 @@ cdef class MarchEngine:
                                             'more_thrust' if self.st[q].thrust > floor else 'braking')
                 self.stats[key] = self.stats.get(key, 0)+1
                 self.stats[key+'_evals'] = self.stats.get(key+'_evals', 0)+(self.st[q].evaluations if q >= 0 else self.P.aircraft_evaluations)
+            if self.brake_log is not None:
+                self.brake_log.append((sid, seed, fixed_kind, value, speed, attempt, [self.st[cid].coords[j] for j in range(self.st[cid].nx)
+                                       if self.layout_names[j].startswith('governor:')], q,
+                                       self.st[q].thrust if q >= 0 else None, self.st[sid].thrust, self.st[sid].load))
             if q >= 0 and not self.brakes(q):
                 self.stats['s10_brake_reseeded'] = self.stats.get('s10_brake_reseeded', 0)+1
                 return q
             if self.s11 and q >= 0 and self.st[q].thrust > top:
                 best = q;top = self.st[q].thrust
-            elif self.s11 and q >= 0 and attempt > 0 and fabs(self.st[q].thrust-self.st[sid].thrust) <= S11_THRUST_EPS:
+            elif (self.s11 and q >= 0 and attempt > 0 and not (self.s12 and other)
+                  and fabs(self.st[q].thrust-self.st[sid].thrust) <= S11_THRUST_EPS):
                 # S11: back on the braking state itself from coarser pitch: its own basin reaches there, no further seeds
+                # (S12: unless another state has been found here)
                 break
+            if self.s12 and q >= 0 and fabs(self.st[q].thrust-self.st[sid].thrust) > S11_THRUST_EPS:other = True
         if best >= 0:
             self.stats['s11_brake_more_thrust'] = self.stats.get('s11_brake_more_thrust', 0)+1
+            if self.s12 and self.brake_depth < S12_BRAKE_ROUNDS:
+                # S12: the state found still brakes: it is searched in turn (its own starts can reach a state with more
+                # thrust that the first starts do not)
+                self.stats['s12_brake_rounds'] = self.stats.get('s12_brake_rounds', 0)+1
+                self.brake_depth += 1
+                try:
+                    q = self.brake_reseed(best, -1, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
+                                          event_tolerance, speed, self.st[best].thrust+S11_THRUST_EPS, True)
+                finally:
+                    self.brake_depth -= 1
+                if q >= 0:
+                    self.stats['s12_brake_round_gain'] = self.stats.get('s12_brake_round_gain', 0)+1
+                    best = q
         return best
 
     # ------------------------------------------------------------------ S7: exact slopes
@@ -1598,6 +1662,54 @@ cdef class MarchEngine:
             out.append((d, [P.memo_r[slot*NMAX+i] for i in range(nr)], P.memo_eval[slot].force_error_g))
         return out
 
+    def debug_speed_rows(self, int sid, int code, int axis, int side, list speeds):
+        """Diagnostics (S12): the state's own coordinates evaluated at other speeds: its stationary rows and, for an event
+        ``code`` > 0, the event residual (the face's own equations: where they kink in speed at fixed coordinates the
+        model has a speed breakpoint there)."""
+        cdef CurveProblem P = self.P
+        cdef TState* t = &self.st[sid]
+        cdef double q[NMAX]
+        cdef int i, slot, nx = P.nx, nr = 7+P.nprows
+        P.slide = t.slide
+        P.nreq = t.nreq
+        for i in range(t.nreq):P.req[i] = t.req[i]
+        P.nz = nx+1
+        if code > 0:
+            P.fixed = -3;P.ev_kind = code;P.ev_axis = axis;P.ev_side = side
+        else:
+            P.fixed = 0;P.alpha = t.coords[0]
+        out = []
+        for v in speeds:
+            P.speed_kmh = v
+            P.nmemo = 0;P.aircraft_evaluations = 0;P.last_slot = -1;P.nprep = 0;P.prep_next = 0
+            for i in range(nx):q[i] = t.coords[i]
+            q[nx] = sqrt(pmax(0., t.load*t.load-1.))
+            slot = P.value(q)
+            if slot < 0:
+                out.append((v, None));continue
+            out.append((v, [P.memo_r[slot*NMAX+i] for i in range(nr)], P.memo_extra[slot] if code > 0 else None,
+                        [P.memo_br[slot*BMAX+i] for i in range(BMAX)]))
+        P.speed_kmh = t.speed
+        return out
+
+    def debug_value_at(self, int sid, list coords, double load, double speed):
+        """Diagnostics (S12): the model's value record at given coordinates, load and speed (the state's request branch)."""
+        cdef CurveProblem P = self.P
+        cdef TState* t = &self.st[sid]
+        cdef double q[NMAX]
+        cdef int i, slot, nx = P.nx
+        P.slide = t.slide
+        P.nreq = t.nreq
+        for i in range(t.nreq):P.req[i] = t.req[i]
+        P.nz = nx+1;P.speed_kmh = speed;P.fixed = 0;P.alpha = coords[0]
+        P.nmemo = 0;P.aircraft_evaluations = 0;P.last_slot = -1;P.nprep = 0;P.prep_next = 0
+        for i in range(nx):q[i] = coords[i]
+        q[nx] = sqrt(pmax(0., load*load-1.))
+        slot = P.value(q)
+        P.speed_kmh = t.speed
+        if slot < 0:return None
+        return value_record(self.model, &P.memo_eval[slot], True, True)
+
     def debug_record(self, int sid, int index, double delta):
         """Diagnostics (S9): the model's value record of the state with coordinate ``index`` moved by ``delta``."""
         cdef CurveProblem P = self.P
@@ -1673,7 +1785,9 @@ cdef class MarchEngine:
                     sol=[t.sol[i] for i in range(5)], coords=[t.coords[i] for i in range(t.nx)], base=t.base, limit=t.limit,
                     slide=t.slide.n, physical=bool(self.physical(sid)), hard=bool(self.hard_rejected(sid)),
                     margins={KIND_TEXT[k]: t.m[k] for k in range(NKD) if (t.mset >> k) & 1},
-                    rpm=[t.rpm[i] for i in range(t.ne)], rpm_limit=[t.rpm_limit[i] for i in range(t.ne)])
+                    rpm=[t.rpm[i] for i in range(t.ne)], rpm_limit=[t.rpm_limit[i] for i in range(t.ne)],
+                    brakes=bool(t.brakes), thrust=t.thrust, alt=t.alt, src=t.src, wake=[t.wake[i] for i in range(4)],
+                    branch=[self.srcs[t.src].br[i] for i in range(BMAX)] if t.src >= 0 else None)
 
     def debug_correct(self, int seed, double speed, kind, double value, load=None, alpha=None, int nfev=30, int evals=120,
                       double tol=2e-6, slide=False):
