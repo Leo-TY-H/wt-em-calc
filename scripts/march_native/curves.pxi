@@ -102,6 +102,12 @@ cdef class NCurves:
     # to a fold ends there ('fold' end) with the fold piece (comp['fold']: knots from its end knot to the other branch's
     # end knot, drawn as speed against w = n^2-1), and the other branch is a component of its own, followed away from it.
     cdef public bint s10
+    # S13 (WT_MARCH_S13=0 restores S12 exactly): a contour piece whose two end states lie on different propeller branches
+    # (S9's propulsion-coordinate test) is not bounded by its end values and slopes, since the branch switch can lie
+    # anywhere inside it: it is split until it is narrower than the speed tolerance (a step). Where both branches have
+    # a root of the level at a split speed, the knot is the one at the lower load: the first crossing of the level along
+    # alpha from level flight (the envelope's first-limit rule, Leo 2026-10-17). F4U-1D RB -40 m/s at 746-752 km/h.
+    cdef public bint s13
     cdef list pending                    # S10: components found at folds, still to follow
     cdef dict grads                      # S10: (dSEP/dV, dSEP/dw) of curve states by their base state
 
@@ -137,6 +143,7 @@ cdef class NCurves:
         self.s8 = os.environ.get('WT_MARCH_S8', '1') != '0' and self.s7
         self.s9 = self.s8 and os.environ.get('WT_MARCH_S9', '1') != '0'
         self.s10 = self.s9 and os.environ.get('WT_MARCH_S10', '1') != '0'
+        self.s13 = self.eng.s12 and os.environ.get('WT_MARCH_S13', '1') != '0'
         self.pending = [];self.grads = {}
         self.exit_seen = False
         self.tangent_delta = .5
@@ -1386,6 +1393,20 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint prop_branch(self, int a, int b) noexcept:
+        """S13: the propulsion coordinates of curve states ``a`` and ``b`` (after the seven attitude and wing-history ones)
+        differ by more than S9_PROP_JUMP of their size (at least 1): different propeller branches (NTracer.prop_jump's
+        test). False where the layouts differ or either state slides on a blade-polar jump."""
+        cdef TState* s = &self.eng.st[a]
+        cdef TState* t = &self.eng.st[b]
+        cdef int i
+        if not (s.has_coords and t.has_coords) or s.nx != t.nx or s.nx <= 7 or s.slide.n > 0 or t.slide.n > 0:return False
+        for i in range(7, s.nx):
+            if fabs(t.coords[i]-s.coords[i]) > S9_PROP_JUMP*pmax(1., fabs(s.coords[i])):return True
+        return False
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef double piece_bound(self, HermiteCurve hf, int i, double* at) noexcept:
         """S8: the error bound of contour piece i (knots i, i+1 of ``hf``, the drawn Hermite in w = n^2-1) from its end
         values and slopes alone: the largest turn-rate distance from the drawn line (over x +- the speed tolerance) to
@@ -1432,10 +1453,15 @@ cdef class NCurves:
                 a = knots[i];b = knots[i+1]
                 key = (self.eng.st[a].speed, self.eng.st[b].speed)
                 if key in done or key in blocked:continue
+                branch_piece = False
                 if self.s8:
                     # S8: the split rule: no solve where the piece's error bound is within the tolerance
                     h = key[1]-key[0]
                     e = self.piece_bound(hf, i, &xm) if h > 0. else 0.
+                    if self.s13 and h > self.speed_tol and self.sense(comp) > 0. and self.prop_branch(a, b):
+                        # S13: ends on different propeller branches: the switch can lie anywhere inside, so no bound
+                        branch_piece = True;e = INFINITY;xm = .5*(key[0]+key[1])
+                        self.eng.stats['s13_branch_splits'] = self.eng.stats.get('s13_branch_splits', 0)+1
                     bound = e if isfinite(e) else None
                     if h <= self.speed_tol or (e <= self.turn_tol and h <= pmin(self.max_step, S8_MAX_WIDTH)):
                         if e > self.turn_tol and self.s10 and self.fold_absorb(comp, i):
@@ -1460,6 +1486,19 @@ cdef class NCurves:
                 outcome, truth, reason = self.direct_seed(speed, target, n, [a, b], attitude, 'interpolation_checks')
                 if outcome == 'admitted' and not (self.eng.compatible(truth, a) and self.eng.compatible(truth, b)):
                     outcome, reason = 'incompatible', 'midpoint branch differs from knots'
+                if branch_piece:
+                    # S13: the level's root on each end's branch (seeded from that end alone); the knot is the root at the
+                    # lower load (the first crossing along alpha from level flight)
+                    best = truth if outcome == 'admitted' else -1
+                    for anchor in (a, b):
+                        o2, p2, r2 = self.direct_seed(speed, target, self.eng.st[anchor].load, [anchor], None, 'interpolation_checks')
+                        if (o2 == 'admitted' and self.eng.compatible(p2, a) and self.eng.compatible(p2, b)
+                                and (best < 0 or self.eng.st[p2].load < self.eng.st[best].load-1e-9)):
+                            best = p2
+                    if best >= 0:
+                        if best != truth:
+                            self.eng.stats['s13_lower_roots'] = self.eng.stats.get('s13_lower_roots', 0)+1
+                        outcome, truth, reason = 'admitted', best, None
                 if outcome != 'admitted' and self.s7:
                     # S7: the S5 seed (the PCHIP load) before the single-anchor retries; the check still compares the
                     # exact state with the drawn (Hermite) line
