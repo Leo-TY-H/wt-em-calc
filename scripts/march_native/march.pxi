@@ -101,6 +101,7 @@ DEF S9_BEND = .05        # S9: a polar Mach curve overshooting its end value by 
 DEF S10_BRAKE_MARGIN = .05   # S10: the braking margin (net propeller thrust in weights) is a march margin below this
 DEF S11_NFEV = 30            # S11: the shadow check's prescribed-load corrections (column.pxi ROBUST_NFEV, ROBUST_EVALS)
 DEF S11_EVALS = 120
+DEF S11_THRUST_EPS = 1e-3     # S11: another state of the same equations has more net thrust by this (weights)
 
 
 cdef inline void band_load(double va, double na, double sa, double vb, double nb, double sb, double x, double* lo,
@@ -163,7 +164,7 @@ cdef struct TState:
     int rule           # S8: admitted by the chart rule only: 1 a transient over-rev (engine RPM over its limit on the way to a hard limit)
     SlideSpec slide    # S8: shafts sliding on a blade-polar jump (n = 0: a regular state)
     bint brakes        # S11: the propellers' net thrust is negative under power (Fin.brakes; S10: also its rejection reason)
-    bint brake_alone   # S11: a braking state with no pulling state found at its speed and load (brake_reseed found none)
+    double thrust      # S11: the propellers' net thrust in weights (NaN: unknown)
 
 
 cdef struct PKey:
@@ -289,7 +290,8 @@ cdef class MarchEngine:
     cdef public bint s10
     cdef public bint brake               # S10: the braking rule is on (Finisher.brake)
     # S11 (WT_MARCH_S11=0 restores S10 exactly): braking is a choice between states: a braking state is kept, as admitted
-    # by its own checks, where no pulling state of the same speed and load is found (brake_reseed); no braking limit
+    # by its own checks, where no state of the same speed and load with more net thrust (pulling, or braking less: Leo
+    # 2026-10-21) is found (brake_reseed); no braking limit
     cdef public bint s11
     cdef public bint brake_limit         # S10's braking limit (s10 rule without s11): the braking face and edge
     cdef bint brake_retry
@@ -461,7 +463,8 @@ cdef class MarchEngine:
         t.converged = f.converged;t.valid = f.row_valid
         t.nreasons = f.nreasons
         for i in range(f.nreasons):t.reasons[i] = f.reasons[i]
-        t.brakes = f.brakes;t.brake_alone = False
+        t.brakes = f.brakes
+        t.thrust = net_thrust(self.fin.pm, &s.ps.frame)/self.model.weight if self.is_prop and self.fin.pm is not None else NAN
         t.force_error_g = e.force_error_g if isfinite(e.force_error_g) else NAN
         v = pmax(pmax(fabs(e.rate_residual[0]), fabs(e.rate_residual[1])), fabs(e.rate_residual[2]))
         t.angular_error = v if isfinite(v) else NAN
@@ -579,7 +582,7 @@ cdef class MarchEngine:
         reasons = row.get('reasons', ())
         t.nreasons = min(len(reasons), MAXREASONS)
         for i in range(t.nreasons):t.reasons[i] = reason_code(reasons[i])
-        t.brakes = bool(row.get('propeller_braking')) or 'propeller braking' in reasons;t.brake_alone = False
+        t.brakes = bool(row.get('propeller_braking')) or 'propeller braking' in reasons;t.thrust = NAN
         for name, default in (('force_error_g', 0), ('angular_error_rad_s2', 1), ('history_error', 2)):
             value = row.get(name)
             value = NAN if value is None else float(value)
@@ -707,7 +710,7 @@ cdef class MarchEngine:
                    angular_error_rad_s2=t.angular_error if isfinite(t.angular_error) else None,
                    history_error=t.history_error if isfinite(t.history_error) else None, converged=bool(t.converged))
         if t.rule == 1:out['chart_rule'] = 'transient over-rev'
-        if self.s11 and t.brakes:out['propeller_braking'] = True   # S11: a braking state kept (no pulling state found)
+        if self.s11 and t.brakes:out['propeller_braking'] = True   # S11: a braking state kept (none with more thrust found)
         return out
 
     cdef bint physical(self, int sid) noexcept:
@@ -974,7 +977,7 @@ cdef class MarchEngine:
         cdef Seed sd
         cdef TState* t = &self.st[seed]
         cdef int i, slot, code, si, sid, k
-        cdef double n
+        cdef double n, floor, tp
         cdef bint closed
         cdef PKey key
         cdef Predictor pred_out
@@ -1066,37 +1069,39 @@ cdef class MarchEngine:
             if si == self.nsrc-1:
                 self.nsrc -= 1;self.st[sid].src = -1
         if self.brake and not self.brake_retry and self.brakes(sid):
-            if (self.s11 and fixed_kind == FIX_ALPHA and self.st[seed].brake_alone and self.brakes(seed)
-                    and fabs(self.st[seed].speed-speed) <= 1e-9):
-                # S11: continued along alpha at the same speed from a braking state that has no pulling state: the same
-                # propeller state, no new search (a pulling state appearing part-way along alpha would be a new branch)
-                self.st[sid].brake_alone = True
-                self.stats['s11_brake_continued'] = self.stats.get('s11_brake_continued', 0)+1
-                return sid
-            if self.s11 and fixed_kind == FIX_SEP and not self.brake_shadowed(sid, seed, speed):
-                # S11: no pulling state of this speed and load: the braking state is the chart's state here (a level's
-                # braking state can have a pulling state of the same speed and load with another SEP: the shadow check)
-                self.st[sid].brake_alone = True
-                self.last_load = n;self.last_cap = cap;self.last_closed = True
-                return sid
+            floor = self.st[sid].thrust+S11_THRUST_EPS
+            if self.s11 and fixed_kind == FIX_SEP:
+                tp = self.brake_shadowed(sid, seed, speed)
+                if not isfinite(tp):
+                    # S11: no state of this speed and load with more thrust: the braking state is the chart's state here
+                    # (a level's braking state can have a state of the same speed and load with more thrust and another SEP:
+                    # the shadow check)
+                    self.last_load = n;self.last_cap = cap;self.last_closed = True
+                    return sid
+                # shadowed: the level's state at this speed on the branch with more thrust (closer to its thrust than to
+                # the shadowed state's: the same branch at another load)
+                floor = .5*(self.st[sid].thrust+tp)
+            # (S11: every braking result is searched, also along alpha: another state can appear part-way along alpha,
+            # F2G-1 RB 798 km/h from 3.4 g)
             k = self.brake_reseed(sid, seed, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev, max_evaluations,
-                                  event_tolerance, speed)
+                                  event_tolerance, speed, floor)
             if k >= 0:return k
-            if self.s11 and not self.has_code(sid, R_PROP_BRAKE):self.st[sid].brake_alone = True
             self.last_load = n;self.last_cap = cap;self.last_closed = True
         return sid
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef bint brake_shadowed(self, int sid, int seed, double speed) except -1:
-        """S11: whether a braking state has a pulling state of the same speed and load (the prescribed-load correction at
-        its load from coarser governor pitch, brake_reseed); then that one is the chart's state there and the braking
-        state is rejected ('propeller braking'), also in its row source. Used where the correction's own equations do not
-        fix the load (an SEP-fixed knot: the pulling state of the same speed and load has another SEP)."""
+    cdef double brake_shadowed(self, int sid, int seed, double speed) except? -1e300:
+        """S11: whether a braking state has a state of the same speed and load with more net thrust (the prescribed-load
+        correction at its load from coarser governor pitch, brake_reseed: pulling, or braking less, Leo 2026-10-21 'more
+        thrust'); then that one is the chart's state there and the braking state is rejected ('propeller braking'), also
+        in its row source: that state's net thrust (in weights), else NaN. Used where the correction's own equations do
+        not fix the load (an SEP-fixed knot: the state of the same speed and load with more thrust has another SEP)."""
         cdef int q, si
         cdef Fin* f
-        q = self.brake_reseed(sid, seed, FIX_LOAD, self.st[sid].load, 0, 0, 0, S11_NFEV, S11_EVALS, 2e-6, speed)
-        if q < 0:return False
+        q = self.brake_reseed(sid, seed, FIX_LOAD, self.st[sid].load, 0, 0, 0, S11_NFEV, S11_EVALS, 2e-6, speed,
+                              self.st[sid].thrust+S11_THRUST_EPS)
+        if q < 0:return NAN
         self.stats['s11_brake_shadowed'] = self.stats.get('s11_brake_shadowed', 0)+1
         if self.st[sid].nreasons < MAXREASONS:
             self.st[sid].reasons[self.st[sid].nreasons] = R_PROP_BRAKE;self.st[sid].nreasons += 1
@@ -1106,37 +1111,47 @@ cdef class MarchEngine:
             f = &self.srcs[si].fin
             self.fin.add_reason(f, R_PROP_BRAKE)
             f.local_valid = False;f.row_valid = False
-        return True
+        return self.st[q].thrust
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef int brake_reseed(self, int sid, int seed, int fixed_kind, double value, int ev_kind, int ev_axis, int ev_side,
-                          int max_nfev, int max_evaluations, double event_tolerance, double speed) except -2:
+                          int max_nfev, int max_evaluations, double event_tolerance, double speed, double floor) except -2:
         """S10: a correction that closed on a braking propeller state (its governed propellers near the fine pitch stop,
         their blade sections at negative incidence) is tried again with the same equations from coarser governor pitch,
         where the pulling state of the same shaft speed lies (ER-2 ACh-30B SB 515 km/h: 24.6 against 33.4 deg): first from
         the correction's own seed where that one pulls (its propulsion coordinates, every governor coordinate moved
         half its distance from the braking state's further away from it: the braking state's induced flows are no seed
         for the pulling one), then from the braking state with every governor coordinate moved halfway, then a quarter
-        of the way towards the coarse stop (on the fine stop: to mid travel). The first such correction that closes on a
+        of the way towards the coarse stop (on the fine stop: to mid travel; S11: a quarter of the travel, and a fourth
+        attempt three quarters of the way, or of the travel). The first such correction that closes on a
         state that does not brake, or -1 (the braking state is the only one found: pulling flight ends there; S11: the
-        braking state stays the chart's state there). S11: a seed the same as the previous attempt's is not tried again
-        (on the fine stop both later attempts start at mid travel)."""
-        cdef int j, cid, q, attempt, src
-        cdef double g, gs
+        braking state stays the chart's state there). S11 (Leo 2026-10-21: of two states the one with more net thrust):
+        the corrections run with at least the robust budget (S11_NFEV, S11_EVALS; the other state's correction from mid
+        travel needs it), a seed the same as the previous attempt's is not tried again, the correction's own seed is used where it pulls or brakes less than the braking
+        state, and a state that brakes too is taken where its net thrust (weights) exceeds ``floor`` (the braking state's
+        plus S11_THRUST_EPS: another state; for a shadowed SEP knot the midpoint to the state found at its load): the first
+        pulling state, else the one with the most thrust above ``floor``, else -1. S11: no attempt after one that closes
+        back on the braking state itself (its own basin reaches that seed)."""
+        cdef int j, cid, q, attempt, src, best = -1, nfev = max_nfev, evals = max_evaluations
+        cdef double g, gs, top = floor
         cdef double sol[5]
         cdef double prev[NMAX]
         cdef bint moved, has_prev = False, same
         if not self.st[sid].has_coords or not self.st[sid].layout_names:return -1
+        if self.s11:
+            nfev = max(max_nfev, S11_NFEV)
+            if max_evaluations > 0:evals = max(max_evaluations, S11_EVALS)
         self.stats['s10_brake_states'] = self.stats.get('s10_brake_states', 0)+1
         if self.s11:
             key = 's11_brake_kind_%d_%s' % (fixed_kind, 'seedbrakes' if seed >= 0 and self.brakes(seed) else 'seedpulls' if seed >= 0 else 'noseed')
             self.stats[key] = self.stats.get(key, 0)+1
-        for attempt in range(3):
+        for attempt in range(4 if self.s11 else 3):
             if attempt == 0:
                 # the seed: a pulling state with the same coordinate layout and request branch
                 if (seed < 0 or not self.st[seed].has_coords or not self.st[seed].layout_names or self.st[seed].nx != self.st[sid].nx
-                        or self.brakes(seed) or self.st[seed].nreq != self.st[sid].nreq):continue
+                        or self.st[seed].nreq != self.st[sid].nreq):continue
+                if self.brakes(seed) and not (self.s11 and self.st[seed].thrust > floor):continue
                 src = seed
             else:src = sid
             cid = self.new_state()
@@ -1151,7 +1166,11 @@ cdef class MarchEngine:
                 if attempt == 0:
                     gs = self.st[seed].coords[j]
                     self.st[cid].coords[j] = pmin(1., pmax(0., gs+.5*(gs-g))) if 0. <= g < 1. else gs
-                elif g < 0.:self.st[cid].coords[j] = .5
+                elif attempt == 3:
+                    # S11: three quarters of the way towards the coarse stop (the third state of P-47D or Tu-2 near top
+                    # speed: several governed states, the one with the most thrust at the coarsest pitch)
+                    self.st[cid].coords[j] = .75 if g < 0. else (g+.75*(1.-g) if g < 1. else g)
+                elif g < 0.:self.st[cid].coords[j] = .25 if self.s11 and attempt == 2 else .5
                 elif g < 1.:self.st[cid].coords[j] = .5*(g+1.) if attempt == 1 else g+.25*(1.-g)
                 moved = moved or self.st[cid].coords[j] != g
             if not moved:continue
@@ -1165,18 +1184,26 @@ cdef class MarchEngine:
             for j in range(5):sol[j] = self.st[sid].sol[j]
             self.brake_retry = True
             try:
-                q = self.correct(cid, sol, self.st[sid].load, True, fixed_kind, value, ev_kind, ev_axis, ev_side, max_nfev,
-                                 max_evaluations, event_tolerance, speed, NULL, NULL)
+                q = self.correct(cid, sol, self.st[sid].load, True, fixed_kind, value, ev_kind, ev_axis, ev_side, nfev,
+                                 evals, event_tolerance, speed, NULL, NULL)
             finally:
                 self.brake_retry = False
             if self.s11:
-                key = 's11_reseed_%d_%s' % (attempt, 'failed' if q < 0 else 'braking' if self.brakes(q) else 'pulling')
+                key = 's11_reseed_%d_%s' % (attempt, 'failed' if q < 0 else 'pulling' if not self.brakes(q) else
+                                            'more_thrust' if self.st[q].thrust > floor else 'braking')
                 self.stats[key] = self.stats.get(key, 0)+1
                 self.stats[key+'_evals'] = self.stats.get(key+'_evals', 0)+(self.st[q].evaluations if q >= 0 else self.P.aircraft_evaluations)
             if q >= 0 and not self.brakes(q):
                 self.stats['s10_brake_reseeded'] = self.stats.get('s10_brake_reseeded', 0)+1
                 return q
-        return -1
+            if self.s11 and q >= 0 and self.st[q].thrust > top:
+                best = q;top = self.st[q].thrust
+            elif self.s11 and q >= 0 and attempt > 0 and fabs(self.st[q].thrust-self.st[sid].thrust) <= S11_THRUST_EPS:
+                # S11: back on the braking state itself from coarser pitch: its own basin reaches there, no further seeds
+                break
+        if best >= 0:
+            self.stats['s11_brake_more_thrust'] = self.stats.get('s11_brake_more_thrust', 0)+1
+        return best
 
     # ------------------------------------------------------------------ S7: exact slopes
     @cython.boundscheck(True)
