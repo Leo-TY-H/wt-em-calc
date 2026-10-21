@@ -41,7 +41,8 @@ def braking_rule(solver):
 def braking_choice(solver):
     """S11 (Leo, 2026-10-21; WT_MARCH_S11=0 restores S10's rejection): under the braking rule braking is a choice between
     states, not a rejection: a braking state keeps its own admission (flagged 'propeller_braking'), and the native march
-    charts a pulling state of the same speed and load instead wherever it finds one (MarchEngine.correct)."""
+    charts the state of the same speed and load with more net thrust (pulling, or braking less) wherever it finds one
+    (MarchEngine.correct)."""
     import os
     return braking_rule(solver) and os.environ.get('WT_MARCH_S11', '1') != '0'
 

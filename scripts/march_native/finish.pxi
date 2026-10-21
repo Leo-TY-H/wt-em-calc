@@ -160,7 +160,7 @@ cdef class Finisher:
     # engines deliver power (a braking propeller) is rejected (Leo, 2026-10-20: off the chart everywhere)
     cdef public bint brake
     # S11 (WT_MARCH_S11=0 restores S10): braking is a choice between states, not a rejection: a braking state is admitted
-    # (flagged, Fin.brakes) and the march charts a pulling state of the same speed and load instead where one exists
+    # (flagged, Fin.brakes) and the march charts the state of the same speed and load with the most net thrust
     cdef public bint brake_choice
     cdef public bint is_prop, python_admission
     cdef object admission_revision
@@ -570,7 +570,7 @@ cdef class Finisher:
                 self.add_reason(f, R_PROP_ADM)
             if self.brake and self.braking(&s.ps):
                 # S11: under the choice rule a braking state keeps its own admission (MarchEngine.correct looks for a
-                # pulling state of the same speed and load); S10 rejects it
+                # state of the same speed and load with more net thrust); S10 rejects it
                 f.brakes = True
                 if not self.brake_choice:self.add_reason(f, R_PROP_BRAKE)
         f.local_valid = not f.nreasons
@@ -733,7 +733,7 @@ cdef class Finisher:
                      history_closure_required=True, symmetry_projection=None, mach_curve_mode=c['mach_mode'])
         if c['mach_mode'] == 'stable':point['mach_curve_revision'] = c['stable_revision']
         if s.slide.n > 0:point['propeller_sliding'] = slide_record(&s.slide)
-        if fi.brakes and self.brake_choice:point['propeller_braking'] = True   # S11: admitted, no pulling state found here
+        if fi.brakes and self.brake_choice:point['propeller_braking'] = True   # S11: admitted, none with more thrust found
         return point
 
     cdef dict row(self, RowSrc* s):
