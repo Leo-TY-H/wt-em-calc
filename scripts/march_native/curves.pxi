@@ -20,7 +20,8 @@ STATE_FIELDS = ('speed_kmh', 'load_g', 'turn_dps', 'ps_mps', 'alpha_deg', 'bank_
                 'stationary_coordinates', 'stationary_coordinate_names', 'stationary_request_indices',
                 'sideslip_attitude_deg', 'sideslip_deg', 'stationary_governor_mode', 'model_experiments',
                 'mach_curve_mode', 'mach_curve_revision', 'roll_leveling_branch', 'valid', 'reasons',
-                'force_error_g', 'angular_error_rad_s2', 'history_error', 'converged', 'chart_rule')
+                'force_error_g', 'angular_error_rad_s2', 'history_error', 'converged', 'chart_rule',
+                'propeller_braking')
 
 
 DEF S7_CURVE_CHECK = .6666666666666666   # S7: a midpoint within 2/3 of the curve tolerance (the drawn line's worst point

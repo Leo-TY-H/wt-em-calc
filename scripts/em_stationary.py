@@ -38,6 +38,14 @@ def braking_rule(solver):
             and os.environ.get('WT_MARCH_S9', '1') != '0' and os.environ.get('WT_MARCH_S10_BRAKE', '1') != '0')
 
 
+def braking_choice(solver):
+    """S11 (Leo, 2026-10-21; WT_MARCH_S11=0 restores S10's rejection): under the braking rule braking is a choice between
+    states, not a rejection: a braking state keeps its own admission (flagged 'propeller_braking'), and the native march
+    charts a pulling state of the same speed and load instead wherever it finds one (MarchEngine.correct)."""
+    import os
+    return braking_rule(solver) and os.environ.get('WT_MARCH_S11', '1') != '0'
+
+
 def propeller_braking(properties, state):
     """S10: the net thrust of the shafts' propellers (each propeller's force along its own axis) is negative while
     their engines deliver power (the sum of engine torque x shaft speed is positive). The native Finisher.braking."""
@@ -373,7 +381,8 @@ class JointProblem:
             point['reasons'].append('propeller admission')
         if (self.solver.is_prop and braking_rule(self.solver)
                 and propeller_braking(self.solver.engine.properties, value['propulsion']['state'])):
-            point['reasons'].append('propeller braking')
+            if braking_choice(self.solver):point['propeller_braking'] = True
+            else:point['reasons'].append('propeller braking')
         point['local_valid'] = not point['reasons']
         point.update(valid=point['local_valid'],
             status='admitted' if point['local_valid'] else 'unresolved',

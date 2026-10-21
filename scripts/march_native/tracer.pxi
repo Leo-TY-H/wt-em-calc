@@ -651,9 +651,9 @@ cdef class NTracer:
             if p >= 0 and self.eng.st[p].valid:
                 start = p;break
         if start < 0:return False
-        if self.eng.brake:
-            # S10: the boundary is the first limit along alpha from level flight: where level flight at this speed, continued
-            # in load from the interior start (w halved, then to a quarter, a tenth and level flight), brakes (and no pulling
+        if self.eng.brake_limit:
+            # S10 (not S11, where braking is no limit): the boundary is the first limit along alpha from level flight:
+            # where level flight at this speed, continued in load from the interior start (w halved, then to a quarter, a tenth and level flight), brakes (and no pulling
             # level flight is found: MarchEngine.brake_reseed), level flight is physically rejected here, whatever the
             # states at higher alpha do (F2G-1 RB 786 km/h: braking at 1 g, pulling at 3.8 g), so the column is an edge
             p = start

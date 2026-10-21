@@ -124,6 +124,7 @@ cdef struct Fin:
     bint has_sweep_range
     double sweep_range[2]
     long calls
+    bint brakes        # S11: the propellers' net thrust is negative under power (under the braking rule)
 
 
 cdef struct RowSrc:
@@ -158,6 +159,9 @@ cdef class Finisher:
     # S10 (WT_MARCH_S10=0 restores S9): under the chart rule a state whose propellers' net thrust is negative while the
     # engines deliver power (a braking propeller) is rejected (Leo, 2026-10-20: off the chart everywhere)
     cdef public bint brake
+    # S11 (WT_MARCH_S11=0 restores S10): braking is a choice between states, not a rejection: a braking state is admitted
+    # (flagged, Fin.brakes) and the march charts a pulling state of the same speed and load instead where one exists
+    cdef public bint brake_choice
     cdef public bint is_prop, python_admission
     cdef object admission_revision
     cdef PropModel pm
@@ -203,8 +207,9 @@ cdef class Finisher:
         self.instructor = None;self.loop_stats = None;self.python_instructors = []
         self.chain = NULL
         self.soft = bool(getattr(solver, "soft_admission", False))
-        from em_stationary import braking_rule
+        from em_stationary import braking_rule, braking_choice
         self.brake = self.is_prop and braking_rule(solver)
+        self.brake_choice = self.brake and braking_choice(solver)
         self.request_cache = {}
 
     def set_prop(self, PropModel pm, layout):
@@ -486,6 +491,7 @@ cdef class Finisher:
         converged = f.finite and e.force_error_g+0. <= 2e-4 and rate_max <= 5e-5 and e.history_error <= 2e-4
         f.converged = converged
         f.nreasons = 0
+        f.brakes = False
         upright = 90.-fabs(e.x[1]) if isfinite(e.x[1]) else -1e308*10.
         if upright < 0.:self.add_reason(f, R_BANK)
         if not converged:self.add_reason(f, R_TRIM)
@@ -562,7 +568,11 @@ cdef class Finisher:
                 if any(not row['admitted'] for row in rows):self.add_reason(f, R_PROP_ADM)
             elif not self.admitted_native(&s.ps, &s.prep):
                 self.add_reason(f, R_PROP_ADM)
-            if self.brake and self.braking(&s.ps):self.add_reason(f, R_PROP_BRAKE)
+            if self.brake and self.braking(&s.ps):
+                # S11: under the choice rule a braking state keeps its own admission (MarchEngine.correct looks for a
+                # pulling state of the same speed and load); S10 rejects it
+                f.brakes = True
+                if not self.brake_choice:self.add_reason(f, R_PROP_BRAKE)
         f.local_valid = not f.nreasons
         f.row_valid = f.local_valid and isfinite(k.ps)
         return 0
@@ -723,6 +733,7 @@ cdef class Finisher:
                      history_closure_required=True, symmetry_projection=None, mach_curve_mode=c['mach_mode'])
         if c['mach_mode'] == 'stable':point['mach_curve_revision'] = c['stable_revision']
         if s.slide.n > 0:point['propeller_sliding'] = slide_record(&s.slide)
+        if fi.brakes and self.brake_choice:point['propeller_braking'] = True   # S11: admitted, no pulling state found here
         return point
 
     cdef dict row(self, RowSrc* s):
