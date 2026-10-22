@@ -34,6 +34,7 @@ DEF S9_END_DW = .05                       # S9: the level-turn solve (w = n^2-1)
 DEF S9_END_VERTICAL = 50.                 # S9: the steepest end slope dw/dV (per km/h): a vertical drop to 1 g
 DEF S10_FOLD_KNOTS = 10                   # S10: the most knots of one fold piece (the curve's turn in speed)
 DEF S10_ROOT_STEPS = 8                    # S10: secant steps in speed of one fold knot (the level at a fixed load)
+DEF S13_ROOT_SEP = .001                   # S13: a level root on the other propeller branch: lower load by more than this x
 
 
 cdef inline bint numerical_code(int r) noexcept nogil:
@@ -1393,16 +1394,32 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef bint prop_branch(self, int a, int b) noexcept:
-        """S13: the propulsion coordinates of curve states ``a`` and ``b`` (after the seven attitude and wing-history ones)
-        differ by more than S9_PROP_JUMP of their size (at least 1): different propeller branches (NTracer.prop_jump's
-        test). False where the layouts differ or either state slides on a blade-polar jump."""
+    cdef int prop_branch(self, list knots, int i) except -1:
+        """S13: contour piece i (knots i, i+1) crosses a propeller branch switch: a propulsion coordinate (after the seven
+        attitude and wing-history ones) of each end differs from its value continued from the other side by more than
+        S9_PROP_JUMP of its size (at least 1). Each side is continued linearly through its own neighbouring knot (both
+        sides must disagree, so a smooth drift over a long piece is not a switch); a side without a neighbour is held
+        constant (S9's NTracer.prop_jump test). False where the layouts differ or a state slides on a blade-polar jump."""
+        cdef int n = len(knots), a = knots[i], b = knots[i+1], j, pa = -1, pb = -1
         cdef TState* s = &self.eng.st[a]
         cdef TState* t = &self.eng.st[b]
-        cdef int i
+        cdef TState* u
+        cdef double xa, xb, ca, cb, tol
         if not (s.has_coords and t.has_coords) or s.nx != t.nx or s.nx <= 7 or s.slide.n > 0 or t.slide.n > 0:return False
-        for i in range(7, s.nx):
-            if fabs(t.coords[i]-s.coords[i]) > S9_PROP_JUMP*pmax(1., fabs(s.coords[i])):return True
+        xa = s.speed;xb = t.speed
+        if i > 0:
+            pa = knots[i-1];u = &self.eng.st[pa]
+            if not u.has_coords or u.nx != s.nx or u.slide.n > 0 or not u.speed < xa:pa = -1
+        if i+2 < n:
+            pb = knots[i+2];u = &self.eng.st[pb]
+            if not u.has_coords or u.nx != s.nx or u.slide.n > 0 or not u.speed > xb:pb = -1
+        for j in range(7, s.nx):
+            tol = S9_PROP_JUMP*pmax(1., pmax(fabs(s.coords[j]), fabs(t.coords[j])))
+            ca = s.coords[j]
+            if pa >= 0:ca += (s.coords[j]-self.eng.st[pa].coords[j])*(xb-xa)/(xa-self.eng.st[pa].speed)
+            cb = t.coords[j]
+            if pb >= 0:cb += (t.coords[j]-self.eng.st[pb].coords[j])*(xa-xb)/(xb-self.eng.st[pb].speed)
+            if fabs(t.coords[j]-ca) > tol and fabs(s.coords[j]-cb) > tol:return True
         return False
 
     @cython.boundscheck(True)
@@ -1458,7 +1475,7 @@ cdef class NCurves:
                     # S8: the split rule: no solve where the piece's error bound is within the tolerance
                     h = key[1]-key[0]
                     e = self.piece_bound(hf, i, &xm) if h > 0. else 0.
-                    if self.s13 and h > self.speed_tol and self.sense(comp) > 0. and self.prop_branch(a, b):
+                    if self.s13 and h > self.speed_tol and self.sense(comp) > 0. and self.prop_branch(knots, i):
                         # S13: ends on different propeller branches: the switch can lie anywhere inside, so no bound
                         branch_piece = True;e = INFINITY;xm = .5*(key[0]+key[1])
                         self.eng.stats['s13_branch_splits'] = self.eng.stats.get('s13_branch_splits', 0)+1
@@ -1492,8 +1509,10 @@ cdef class NCurves:
                     best = truth if outcome == 'admitted' else -1
                     for anchor in (a, b):
                         o2, p2, r2 = self.direct_seed(speed, target, self.eng.st[anchor].load, [anchor], None, 'interpolation_checks')
+                        # another root only: a load lower by more than S13_ROOT_SEP of it (not the same root converged
+                        # to a slightly different load)
                         if (o2 == 'admitted' and self.eng.compatible(p2, a) and self.eng.compatible(p2, b)
-                                and (best < 0 or self.eng.st[p2].load < self.eng.st[best].load-1e-9)):
+                                and (best < 0 or self.eng.st[p2].load < self.eng.st[best].load*(1.-S13_ROOT_SEP))):
                             best = p2
                     if best >= 0:
                         if best != truth:
