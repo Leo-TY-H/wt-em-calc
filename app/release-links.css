@@ -4,5 +4,5 @@
 body>header{gap:16px;min-height:72px;height:auto;flex-wrap:wrap;padding-block:12px}
 .release-links{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px}
 .release-links a:hover{color:#38c9d7}
-.release-version{color:#8d9aae;font-variant-numeric:tabular-nums}
-@media(max-width:760px){.release-links{width:100%;gap:12px}.release-links .release-version{margin-left:auto}.local,.runtime{margin-left:auto}}
+.release-links:empty{display:none}
+@media(max-width:760px){.release-links{width:100%;gap:12px}.local,.runtime{margin-left:auto}}
