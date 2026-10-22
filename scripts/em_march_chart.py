@@ -51,6 +51,11 @@ COLORS = ('#38c9d7', '#ffa66b')
 S9 = os.environ.get('WT_MARCH_S9', '1') != '0' and os.environ.get('WT_MARCH_S8', '1') != '0'
 # S10 (WT_MARCH_S10=0 restores S9): contours that turn back drawn as they are (fold pieces), high-speed edges drawn vertical
 S10 = S9 and os.environ.get('WT_MARCH_S10', '1') != '0'
+# S15 (WT_MARCH_S15=0 restores S14): the forward-IAS edge drawn from the native trace along the limit itself (ias_trace),
+# every state within the limit inside the outline; where a chart's forward-IAS end has no drawn edge, a vertical one
+def s15_on():
+    return S10 and all(os.environ.get(k, '1') != '0' for k in ('WT_MARCH_S11', 'WT_MARCH_S12', 'WT_MARCH_S13', 'WT_MARCH_S14',
+                                                              'WT_MARCH_S15'))
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
 COLUMN_SPACING_KMH = 80.
@@ -293,7 +298,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         with use(total):envelope = tracer.run()
     envelope_cpu = time.process_time()-t0;envelope_wall = time.perf_counter()-w0
     envelope_work = dict(total.counts)
-    verified = [c for c in envelope['columns'] if tracer.ok(c)]
+    verified = curve_columns(envelope, tracer)
     row = aircraft_row(name, index, cfg, solver, envelope, None, tracer)
     show(row)
     N.attach(curve_solver)
@@ -342,6 +347,12 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     return row
 
 
+def curve_columns(envelope, tracer):
+    """The verified columns the curve solver starts from. S15: not the column just inside the traced forward-IAS edge's
+    corner (it draws the outline's end; the curve solver's column choice stays as before)."""
+    return [c for c in envelope['columns'] if tracer.ok(c) and c.get('s1_role') != 'ias corner']
+
+
 def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
     from em_solver import AIRCRAFT
     from em_sampling import outline_column
@@ -377,7 +388,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                                     soft_limits=bool(getattr(solver, 'soft_admission', False)),
                                     events=envelope['events'], checks=len(envelope['checks']),
                                     speed_limit=envelope['speed_limit'], turn_tolerance_dps=tracer.ttol,
-                                    placement_tolerance_kmh=tracer.place_tol),
+                                    placement_tolerance_kmh=tracer.place_tol,
+                                    **({'ias_trace': envelope['ias_trace']} if envelope.get('ias_trace') else {})),
                 interpolation=dict(target_mps=cfg['sep_tolerance_mps'], target_contour_dps=turn_tolerance(cfg['sep_tolerance_mps']),
                                    target_speed_kmh=speed_tolerance(cfg), scope='contours', checked_sep_levels_mps=levels,
                                    unresolved_speed_intervals=gaps, mach_transition_intervals=[], mach_events=mach['events'],
@@ -585,7 +597,25 @@ def outline(data, aircraft):
     low = (aircraft.get('low_speed_edge') or {}).get('speed_kmh')
     starts = {s['speed_kmh'][0] for s in segments if s['ends'][0] == 'sweep_limit'}
     stops = {s['speed_kmh'][1] for s in segments if s['ends'][1] == 'sweep_limit'}
+    S15 = s15_on()
+    trace = (aircraft.get('envelope_trace') or {}).get('ias_trace') if S15 else None
+    if trace is not None and trace.get('status') != 'traced':trace = None
+    # S15: the traced edge closes the last run between the trace's start column and its corner
+    host = None if trace is None else max((k for k, run in enumerate(pieces) if run[0]['speed_kmh'] <= trace['corner']['speed_kmh']+1e-9
+                                           and run[-1]['speed_kmh'] >= trace['start_kmh']-1e-9), default=None)
+    # runs wholly past the corner stand on the edge itself (the native trace checked that their columns end on the limit)
+    skip = set() if host is None else {k for k, run in enumerate(pieces) if k > host
+                                       and run[0]['speed_kmh'] > trace['corner']['speed_kmh']+1e-9}
     for k, run in enumerate(pieces):
+        iso = None
+        if k in skip:continue
+        if k == host:
+            # S15: the run that reaches the traced forward-IAS edge ends at its corner (columns past it stand on the
+            # edge itself) and the edge closes it down to level flight
+            kept = [c for c in run if c['speed_kmh'] <= trace['corner']['speed_kmh']+1e-9]
+            if kept:
+                run = kept
+                iso = traced_edge(aircraft, trace)
         speeds = np.array([c['speed_kmh'] for c in run])
         exact = {c['speed_kmh']: c for c in run}
         xs = np.unique(np.r_[grid[(grid > speeds[0]) & (grid < speeds[-1])], speeds])
@@ -623,20 +653,29 @@ def outline(data, aircraft):
             boundary[-1].update(edge_kind='Wing sweep limit', vertical_edge=True)
             boundary.append(dict(speed_kmh=run[-1]['speed_kmh'], turn_dps=0., at_plot_ceiling=False,
                                  edge_kind='Wing sweep limit', vertical_edge=True))
-        leaning = ias_edge(aircraft, run, grid)
+        # (S15: with a traced edge no run draws the S14 leaning edge: a run cut before the host is no edge of the limit)
+        leaning = iso if iso is not None else [] if trace is not None else ias_edge(aircraft, run, grid)
         boundary.extend(leaning)
         if S10 and not leaning:
             # S10: where level flight is physically rejected just above a run's last column (a high-speed edge: the
-            # propellers brake, an engine over-revs at 1 g), the chart ends there: a vertical edge down to level flight
+            # propellers brake, an engine over-revs at 1 g), the chart ends there: a vertical edge down to level flight.
+            # S15: also past a forward-IAS limit with no edge drawn (no column landed past it and the trace failed)
             top = run[-1]['speed_kmh']
+            # (S15: located by its columns even where the edge's own column stayed unresolved)
+            ias = lambda e: 'forward-IAS' in str(e.get('reason'))+str(e.get('located_by'))
             edge = next((e for e in (aircraft.get('envelope_trace') or {}).get('events', []) if e['kind'] == 'edge'
-                         and e.get('status') == 'no feasible samples' and abs(min(e['speed_kmh'])-top) < 1e-9
-                         and max(e['speed_kmh']) > top+1e-9 and 'forward-IAS' not in str(e.get('reason'))), None)
+                         and (e.get('status') == 'no feasible samples' or S15 and 'forward-IAS' in str(e.get('located_by')))
+                         and abs(min(e['speed_kmh'])-top) < 1e-9
+                         and max(e['speed_kmh']) > top+1e-9 and (S15 or 'forward-IAS' not in str(e.get('reason')))), None)
             if edge is not None and boundary and boundary[-1]['speed_kmh'] == top:
-                kind = 'Propeller braking edge' if 'propeller braking' in str(edge.get('reason')) else 'High-speed feasibility edge'
+                # (S15: level flight that ends before reaching the limit, e.g. over-revving at 1 g, is no forward-IAS edge)
+                early = 'level flight ends before the limit' in str(((aircraft.get('envelope_trace') or {}).get('ias_trace') or {}).get('status'))
+                kind = ('Propeller braking edge' if 'propeller braking' in str(edge.get('reason')) else
+                        forward_ias_kind(aircraft)+' (forward IAS) speed boundary' if ias(edge) and not early
+                        else 'High-speed feasibility edge')
                 boundary[-1].update(edge_kind=kind, vertical_edge=True)
                 boundary.append(dict(speed_kmh=top, turn_dps=0., at_plot_ceiling=False, edge_kind=kind, vertical_edge=True))
-        if k < len(pieces)-1:
+        if k < len(pieces)-1 and not all(j in skip for j in range(k+1, len(pieces))):
             # An explicit gap: never a smooth line to the next run.
             nxt = pieces[k+1][0]['speed_kmh'];here = run[-1]['speed_kmh']
             seam = any(here <= x+1e-9 and nxt >= y-1e-9 for x, y in (aircraft.get('envelope_trace') or {}).get('mach_seams_kmh', []))
@@ -662,7 +701,11 @@ def outline(data, aircraft):
             if at is not None:
                 common = dict(speed_kmh=redline['speed_kmh'], sample_speed_kmh=sample, at_plot_ceiling=False,
                               vertical_edge=True, edge_kind=redline['kind']+' speed boundary')
-                boundary[at+1:at+1] = [dict(common, turn_dps=column['boundary']['turn_dps']), dict(common, turn_dps=0.)]
+                # S15: down to the traced forward-IAS edge where it reaches this limit (below it the states are over the
+                # forward-IAS limit), else to level flight
+                foot = (trace['corner']['turn_dps'] if trace is not None and trace['corner']['speed_kmh'] >= sample-.01
+                        else 0.)
+                boundary[at+1:at+1] = [dict(common, turn_dps=column['boundary']['turn_dps']), dict(common, turn_dps=foot)]
     return boundary
 
 
@@ -700,7 +743,9 @@ def ias_edge(aircraft, run, grid):
         dl, dr = hermite_slopes(wm, vm, d, d)
         wq = np.unique(np.r_[np.linspace(wm[0], wm[-1], 121), wm])
         xs = hermite(wm, vm, dl, dr, wq);loads = np.sqrt(1.+np.maximum(wq, 0.))
-        order = np.argsort(xs, kind='stable');xs, loads = xs[order], loads[order]
+        if not s15_on():
+            # S15: kept in w order (an edge that turns back in speed was drawn as a zigzag in speed order)
+            order = np.argsort(xs, kind='stable');xs, loads = xs[order], loads[order]
         if m < len(v):
             tail = np.unique(np.r_[grid[(grid > v[m-1]) & (grid < v[-1])], v[m:]])
             xs = np.r_[xs, tail];loads = np.r_[loads, PchipInterpolator(v[m-1:], n[m-1:])(tail)]
@@ -710,6 +755,32 @@ def ias_edge(aircraft, run, grid):
     common = dict(at_plot_ceiling=False, edge_kind=kind+' (forward IAS) speed boundary', leaning_edge=True)
     out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs[::-1].tolist(), rates[::-1].tolist())]
     if n[0] > 1.:out.append(dict(common, speed_kmh=float(v[0]), turn_dps=0.))
+    return out
+
+
+def forward_ias_kind(aircraft):
+    """The lowest forward-IAS limit's kind (VNE, flap damage or flap retraction by IAS)."""
+    kinds = (aircraft.get('speed_limit') or {}).get('forward_ias_limits') or []
+    return min(kinds, key=lambda c: c['speed_kmh'])['kind'] if kinds else 'Forward IAS limit'
+
+
+def traced_edge(aircraft, trace):
+    """S15: the forward-IAS edge from the native trace (NTracer.ias_trace): speed and w = n^2-1 along the limit's
+    iso-line as cubic Hermites in body alpha through its knots and their slopes (missing slopes as hermite_slopes; the
+    drawing the native split rule judged), from the corner where it meets the first hard limit down to level flight, in
+    that order (where level flight has negative body alpha the edge turns back to lower speeds before it leans out: the
+    over-limit band lies outside the outline)."""
+    knots = trace['knots']
+    a = np.array([k[4] for k in knots], dtype=float)
+    v = np.array([k[0] for k in knots], dtype=float);w = np.array([k[1] for k in knots], dtype=float)**2-1.
+    vl, vr = hermite_slopes(a, v, [k[2] for k in knots], [k[2] for k in knots])
+    wl, wr = hermite_slopes(a, w, [k[3] for k in knots], [k[3] for k in knots])
+    aq = np.unique(np.r_[np.linspace(a[0], a[-1], 241), a])[::-1]
+    xs = hermite(a, v, vl, vr, aq);wq = hermite(a, w, wl, wr, aq)
+    rates = turn_rate(xs, np.sqrt(1.+np.maximum(wq, 0.)))
+    common = dict(at_plot_ceiling=False, edge_kind=forward_ias_kind(aircraft)+' (forward IAS) speed boundary', leaning_edge=True)
+    out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs.tolist(), rates.tolist())]
+    out[-1]['turn_dps'] = 0.
     return out
 
 
