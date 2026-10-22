@@ -1948,12 +1948,13 @@ cdef class NTracer:
                     if not isfinite(e):
                         bound = None
                         self.eng.stats['s10_corner_stretch'] = self.eng.stats.get('s10_corner_stretch', 0)+1
-                if self.eng.s14 and not knot_split and e > tol and vb-va > self.vtol+1e-9:
+                if self.eng.s14 and not corner and not knot_split and e > tol and vb-va > self.vtol+1e-9:
                     # S14: a failing piece with a model breakpoint inside: the failure can be a jump there (P-61C-1 SB
                     # 675.6 km/h: the wing-force limit steps from 7.49 to 7.19 g), which the split at the largest bound
                     # (at least a tenth of the piece from its ends) only creeps towards (14 columns from 662 km/h, the
                     # last piece 672.8-676.0 left smooth, 0.25 deg/s off): columns a quarter of the speed tolerance
-                    # either side of the breakpoint
+                    # either side of the breakpoint (not at a corner: there the corner rules place the columns; F-16XL SB
+                    # 166-176 km/h and Hunter F.58A SB 1079-1089 km/h were drawn worse with them)
                     for kx in self.knot_speeds:
                         if not (va+.05*self.vtol < kx < vb-.05*self.vtol):continue
                         if kx-.25*self.vtol > va+.05*self.vtol:x = kx-.25*self.vtol
