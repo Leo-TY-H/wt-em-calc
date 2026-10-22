@@ -193,7 +193,28 @@ DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope
 DEF S8_MAX_WIDTH = 25.   # S8: the widest outline piece (km/h; the validation's general-rule setting, 50 left features unseen)
 DEF S8_BOUND = .6666666666666666   # S8: an outline piece is finished when its error bound is within 2/3 of the envelope
                                    # turn tolerance (the headroom of S7's curve checks)
+cdef inline double turn_of(double speed, double w) noexcept nogil:
+    """S15: turn rate (deg/s) at speed (km/h) and w = n^2-1 (em_march_chart.turn_rate)."""
+    return 180./M_PI*G_TURN*sqrt(pmax(0., w))/(speed/3.6)
+
+
 DEF S14_TIE = .05    # S14: a margin of another hard limit at a column's boundary below which it can take over nearby
+# S15: the traced forward-IAS edge (NTracer.ias_trace)
+DEF S15_INSIDE = 3e-6       # its states lie this fraction of the limit inside it (the event residual's own offset is 5e-6)
+DEF S15_CLOSE = 1e-9        # the speed iteration ends when forward IAS is this close (relative) to that target
+DEF S15_ITER = 12           # speed iterations of one edge state
+DEF S15_FIRST = .05         # deg: the first step along alpha from level flight (the end slope there is one-sided)
+DEF S15_ALPHA_STEP = 1.     # deg: the step along alpha between edge knots before the split rule
+DEF S15_MIN_STEP = .01      # deg: a step that does not close is halved down to this
+DEF S15_ALPHA_SPAN = 30.    # deg: no hard limit within this much alpha above level flight: no edge (the chart domain)
+DEF S15_MAX_KNOTS = 240
+DEF S15_CORNER_TOL = 1e-3   # deg: the corner (the edge meets the first hard limit) bisected to this in alpha
+DEF S15_ROUNDS = 12         # split rounds on the edge
+DEF S15_SPLIT_MIN = 2e-3    # deg: a piece narrower than this in alpha is not split
+DEF S15_DIFF = .02          # deg: the alpha step of the knots' slope differences
+DEF S15_CORNER_OFFSET = .05 # km/h: the column just inside the corner (at most an eighth of the speed tolerance)
+DEF S15_FAIL_MARGIN = .1    # an edge state that does not close is past a hard limit whose margin is within this ...
+DEF S15_FAIL_EXTRA = .01    # ... and, continued along the edge, below this there (past_limit)
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -268,6 +289,8 @@ cdef class NTracer:
     cdef double sigma               # S9: sqrt(density ratio) at the chart altitude (forward IAS = u sigma)
     cdef public list s9_knots       # S9: the model breakpoints in speed the outline is checked at (model knots, Mach tables)
     cdef int brake_level            # S10: a braking level flight found from an interior start (interior_march), or -1
+    cdef bint s15                   # S15: the forward-IAS edge traced along the limit itself (ias_trace)
+    cdef public object ias_trace_out  # S15: the traced edge (the envelope's 'ias_trace' record), or None
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -300,6 +323,9 @@ cdef class NTracer:
         self.forced_level = -1
         self.ias_knots = [];self.sigma = 1.;self.s9_knots = []
         self.brake_level = -1
+        # S15: WT_MARCH_S15=0 restores S14 exactly (the leaning edge drawn through the columns' lower edges)
+        self.s15 = self.s8 and self.eng.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
+        self.ias_trace_out = None
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -1332,6 +1358,449 @@ cdef class NTracer:
             self.events.append(dict(kind='ias edge', speed_kmh=[lo, hi], located_by='level-flight probes'))
         return 0
 
+    # ------------------------------------------------------------------ S15: the forward-IAS edge itself
+    def traced(self):
+        """S15: the forward-IAS edge was traced (ias_trace); the S14 leaning edge and its foot probes are not needed."""
+        return self.ias_trace_out is not None and self.ias_trace_out.get('status') == 'traced'
+
+    cdef double fwd_ias(self, int sid) noexcept:
+        """S15: a state's forward IAS (m/s): its body-axis speed times sqrt(density ratio) (air_cache: alpha = -atan2(v, u),
+        beta = atan2(w, u), so u = V / sqrt(1 + tan^2 alpha + tan^2 beta))."""
+        cdef TState* t = &self.eng.st[sid]
+        cdef double ta = tan(t.alpha*M_PI/180.), tb = tan(t.beta*M_PI/180.) if isfinite(t.beta) else 0.
+        return t.speed/3.6/sqrt(1.+ta*ta+tb*tb)*self.sigma
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int iso_state(self, int seed, double value, int mode, bint robust) except -2:
+        """S15: the state on the forward-IAS limit (S15_INSIDE inside it) corrected from ``seed`` at body alpha ``value``
+        (mode 0), in level flight (mode 1) or at load ``value`` (mode 2); ``robust``: with the larger correction budget.
+        Its speed is iterated: forward IAS scales with speed at fixed alpha and sideslip (and nearly so at fixed load,
+        where alpha changes slowly with speed). -1 where a correction does not close or the iteration does not settle."""
+        cdef double sol[5]
+        cdef double v, u, ta, tb, n, target = self.eng.ias_limit*(1.-S15_INSIDE)
+        cdef int p = seed, q, i, j, nfev = ROBUST_NFEV if robust else 30, evals = ROBUST_EVALS if robust else 120
+        for i in range(5):sol[i] = self.eng.st[seed].sol[i]
+        if mode == 0:
+            sol[0] = value
+            ta = tan(value*M_PI/180.)
+            tb = tan(self.eng.st[seed].beta*M_PI/180.) if isfinite(self.eng.st[seed].beta) else 0.
+            v = target*3.6*sqrt(1.+ta*ta+tb*tb)/self.sigma
+        else:
+            v = self.eng.st[seed].speed*target/self.fwd_ias(seed)
+        n = 1. if mode == 1 else value
+        for j in range(S15_ITER):
+            if mode == 0:
+                q = self.eng.correct(p, sol, self.eng.st[p].load, True, FIX_ALPHA, value, 0, 0, 0, nfev, evals, 2e-6, v, NULL, NULL)
+            else:
+                q = self.eng.correct(p, sol, n, True, FIX_LOAD, n, 0, 0, 0, MARCH_NFEV if not robust else nfev,
+                                     MARCH_EVALS if not robust else evals, 2e-6, v, NULL, NULL)
+                if (q < 0 or not self.eng.st[q].converged) and not robust:
+                    q = self.eng.correct(p, sol, n, True, FIX_LOAD, n, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, v, NULL, NULL)
+            self.eng.flush_counts()
+            if q < 0 or not self.eng.st[q].converged:return -1
+            u = self.fwd_ias(q)
+            p = q
+            for i in range(5):sol[i] = self.eng.st[q].sol[i]
+            if fabs(u/target-1.) <= S15_CLOSE:return p
+            v *= target/u
+        return p if fabs(self.fwd_ias(p)/target-1.) <= 1e3*S15_CLOSE else -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int iso_at(self, int seed, double alpha, double nguess, double lo, double hi) except -2:
+        """S15: the edge state at body alpha ``alpha`` from ``seed``: the prescribed-alpha correction, again with the robust
+        budget, then (near level flight the turn coordinate is singular, and some trim branches close only at fixed load)
+        the edge state at the load ``nguess`` instead, kept when its alpha lies strictly inside (lo, hi). -1 otherwise."""
+        cdef int q = self.iso_state(seed, alpha, 0, False)
+        if q >= 0 and self.iso_kind(q) >= 0:return q
+        q = self.iso_state(seed, alpha, 0, True)
+        if q >= 0 and self.iso_kind(q) >= 0:return q
+        if not (isfinite(nguess) and nguess > 1.+1e-6):return -1
+        q = self.iso_state(seed, nguess, 2, True)
+        if q < 0 or self.iso_kind(q) < 0 or not lo < self.eng.st[q].alpha < hi:return -1
+        self.eng.stats['s15_load_states'] = self.eng.stats.get('s15_load_states', 0)+1
+        return q
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double iso_guess(self, list knots, double alpha) except? -1e300:
+        """S15: the load expected at ``alpha`` on the edge: the line through the last two knots (from a single knot, its
+        load plus a twentieth of a g per 0.05 deg)."""
+        cdef int a, b
+        if not knots:return NAN
+        b = knots[-1]
+        if len(knots) < 2:return self.eng.st[b].load+(alpha-self.eng.st[b].alpha)
+        a = knots[-2]
+        if not self.eng.st[b].alpha > self.eng.st[a].alpha:return self.eng.st[b].load
+        return self.eng.st[b].load+(self.eng.st[b].load-self.eng.st[a].load)*(alpha-self.eng.st[b].alpha)/(
+            self.eng.st[b].alpha-self.eng.st[a].alpha)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int iso_kind(self, int sid) except -2:
+        """S15: 0 an edge state the chart keeps (admitted, or rejected for soft limits only: within its tolerance of the
+        forward-IAS limit), 1 past the first hard limit (or above the load cap: the plot ceiling), -1 neither."""
+        if not self.eng.st[sid].converged:return -1
+        if self.eng.passable(sid):
+            return 1 if self.eng.st[sid].load > self.eng.cap(self.eng.st[sid].speed)+1e-9 else 0
+        if self.eng.hard_rejected(sid):return 1
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint iso_slope(self, int sid, int side, double* dv, double* dw) except -1:
+        """S15: dV/dalpha and dw/dalpha along the edge at the edge state ``sid`` (w = n^2-1; both smooth in body alpha
+        there): the derivative of the parabola through it and two edge states S15_DIFF and 2 S15_DIFF away in alpha on both
+        sides (side 0), forward (side 1: the level-flight end, where w below 0 has no turn) or backward (side -1: the
+        corner, past which the hard limit rejects); the states' own alphas (one at fixed load lands near, not on, its
+        alpha). False where an edge state there does not close."""
+        cdef double a = self.eng.st[sid].alpha, h = S15_DIFF, x0, x1, x2, l0, l1, l2
+        cdef int p, q
+        cdef double n0 = self.eng.st[sid].load, ng
+        if side == 0:
+            p = self.iso_at(sid, a-h, NAN, -INFINITY, INFINITY)
+            q = self.iso_at(sid, a+h, NAN, -INFINITY, INFINITY)
+        else:
+            p = self.iso_at(sid, a+side*h, NAN, -INFINITY, INFINITY)
+            q = -1 if p < 0 else self.iso_at(p, a+2*side*h, NAN, -INFINITY, INFINITY)
+        if p < 0 or q < 0:return False
+        x0 = a;x1 = self.eng.st[p].alpha;x2 = self.eng.st[q].alpha
+        if not (fabs(x1-x0) > 1e-9 and fabs(x2-x0) > 1e-9 and fabs(x2-x1) > 1e-9):return False
+        # the derivative at x0 of the parabola through the three points (Lagrange)
+        l0 = (2*x0-x1-x2)/((x0-x1)*(x0-x2));l1 = (x0-x2)/((x1-x0)*(x1-x2));l2 = (x0-x1)/((x2-x0)*(x2-x1))
+        dv[0] = l0*self.eng.st[sid].speed+l1*self.eng.st[p].speed+l2*self.eng.st[q].speed
+        dw[0] = (l0*(n0*n0-1.)+l1*(self.eng.st[p].load*self.eng.st[p].load-1.)
+                 +l2*(self.eng.st[q].load*self.eng.st[q].load-1.))
+        return isfinite(dv[0]) and isfinite(dw[0])
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double iso_bound(self, int nk, const double* xs, const double* vs, const double* vl, const double* vr,
+                          const double* ws, const double* wl, const double* wr, int k, double* eturn) except? -1.:
+        """S15: the error bound of the edge piece k (knots k, k+1 in alpha): in speed (band_load on V(alpha), km/h) and,
+        through ``eturn``, in turn rate (band_load on w(alpha) at the drawn speed, deg/s)."""
+        cdef int j
+        cdef double x, vd, wd, lo, hi, wlo, whi, e = 0., t = 0., td, ev
+        for j in range(1, S8_SAMPLES):
+            x = xs[k]+(xs[k+1]-xs[k])*j/S8_SAMPLES
+            vd = hermite_eval(nk, xs, vs, vl, vr, x);wd = hermite_eval(nk, xs, ws, wl, wr, x)
+            band_load(xs[k], vs[k], vr[k], xs[k+1], vs[k+1], vl[k+1], x, &lo, &hi)
+            ev = pmax(hi-vd, vd-lo)
+            if not isfinite(ev):ev = INFINITY
+            e = pmax(e, ev)
+            band_load(xs[k], ws[k], wr[k], xs[k+1], ws[k+1], wl[k+1], x, &wlo, &whi)
+            td = turn_of(vd, wd)
+            ev = pmax(fabs(turn_of(vd, wlo)-td), fabs(turn_of(vd, whi)-td))
+            if not isfinite(ev):ev = INFINITY
+            t = pmax(t, ev)
+        eturn[0] = t
+        return e
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef tuple iso_corner(self, list knots, int hard, double hi_a):
+        """S15: the corner between the last edge knot and the edge state ``hard`` past the first hard limit (at alpha
+        ``hi_a``): bisected in alpha to S15_CORNER_TOL (a state that does not close is tried nearer the last edge state,
+        then from the state past the limit). (last edge state, state past the limit, alpha bracket width)."""
+        cdef int plo = knots[-1], prev = knots[-2] if len(knots) >= 2 else -1, q, kind, k, bk = -1
+        cdef double lo_a = self.eng.st[plo].alpha, am
+        while hi_a-lo_a > S15_CORNER_TOL:
+            kind = -1;q = -1;am = lo_a
+            for frac in (.5, .25, .125):
+                am = lo_a+frac*(hi_a-lo_a)
+                q = self.iso_at(plo, am, self.eng.st[plo].load, lo_a, hi_a)
+                if q < 0 and hard >= 0:q = self.iso_at(hard, am, self.eng.st[plo].load, lo_a, hi_a)
+                kind = -1 if q < 0 else self.iso_kind(q)
+                if kind >= 0:break
+            if kind == 0:
+                prev = plo;plo = q;lo_a = self.eng.st[q].alpha
+            elif kind == 1:
+                hard = q;hi_a = self.eng.st[q].alpha;bk = -1
+            else:
+                # no equilibrium there: past the limit where a hard limit's margin runs out on the way (the elevator
+                # saturates: no trim exists beyond it)
+                k = self.past_limit(plo, prev, am)
+                if k < 0:break
+                hi_a = am;bk = k
+        return plo, hard, hi_a-lo_a, bk
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int past_limit(self, int plo, int prev, double alpha) except -2:
+        """S15: the hard limit (kind) whose margin, falling along the edge at ``plo`` (its slope from the edge state
+        S15_DIFF before it in alpha; ``prev`` where that does not close), is within S15_FAIL_MARGIN at ``plo`` and runs
+        out (below S15_FAIL_EXTRA) by ``alpha``, the alpha of an edge state that does not close; -1 for none (the failure
+        is numerical, not the limit)."""
+        cdef int k, q
+        cdef double m0, s, ma
+        q = self.iso_at(plo, self.eng.st[plo].alpha-S15_DIFF, NAN, -INFINITY, INFINITY)
+        if q >= 0 and self.eng.st[q].alpha < self.eng.st[plo].alpha:prev = q
+        for k in range(NKD):
+            if self.eng.soft_kind(k) or not (self.eng.st[plo].mset >> k) & 1:continue
+            m0 = self.eng.st[plo].m[k]
+            if m0 > S15_FAIL_MARGIN:continue
+            ma = m0
+            if prev >= 0 and (self.eng.st[prev].mset >> k) & 1 and self.eng.st[plo].alpha > self.eng.st[prev].alpha:
+                s = (m0-self.eng.st[prev].m[k])/(self.eng.st[plo].alpha-self.eng.st[prev].alpha)
+                if s >= 0.:continue
+                ma = m0+s*(alpha-self.eng.st[plo].alpha)
+            if ma <= S15_FAIL_EXTRA:return k
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int ias_trace(self) except -1:
+        """S15 (Leo 2026-10-22: the exact rule, every state within the limit is drawn): the forward-IAS edge at the chart's
+        high-speed end, traced along the limit itself. At a fixed load forward IAS rises with speed, so the states within
+        the lowest forward-IAS limit lie left of the limit's iso-line, from level flight (where level flight reaches the
+        limit) up to where it meets the first hard limit (the corner). Body alpha rises along it, so it is traced in
+        alpha (at each alpha the speed where forward IAS reaches the limit). Where level flight has negative body alpha
+        the curve first turns back to lower speeds (pulling raises forward IAS), is slowest at zero alpha (the limit's own
+        speed) and then leans out to the corner: the over-limit band between is cut out of the chart. Near a load maximum
+        (stall) the load can fall again before the hard limit: still the edge, up to the limit. Drawn as the cubic
+        Hermite V(alpha), w(alpha) (w = n^2-1) through its knots and their slopes (iso_slope), split until each piece's
+        error bound is within S8_BOUND of the speed tolerance and of the turn tolerance; every piece's middle is solved
+        once (a hard limit crossing the edge between knots moves the corner there); a column just inside the corner gives
+        the upper boundary's end. Where a step fails the record says why and the S14 drawing stays (drawn in its own
+        order, with a vertical edge where it has none)."""
+        if not (isfinite(self.eng.ias_limit) and self.eng.soft):return 0
+        edge = None
+        for ev in self.events:
+            if (ev['kind'] == 'edge' and isinstance(ev.get('speed_kmh'), list)
+                    and ('forward-IAS' in str(ev.get('reason')) or 'forward-IAS' in str(ev.get('located_by')))
+                    and (edge is None or min(ev['speed_kmh']) > min(edge['speed_kmh']))):edge = ev
+        # (or no edge event: the states within the limit past it reach the chart's speed range or vertical limit; the
+        # columns there carry their lower edges)
+        if edge is None and not any(NTracer.ok(c) and c.lower >= 0 for c in self.columns.values()):return 0
+        caps = set(self.eng.ceilings)
+        try:
+            self.ias_trace_body(edge)
+        finally:
+            # the trace's own load-cap lookups stay out of the cache the curve solver interpolates in (known_caps)
+            for v in [v for v in self.eng.ceilings if v not in caps]:del self.eng.ceilings[v]
+        return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int ias_trace_body(self, object edge) except -1:
+        from em_trim_work import Work, use, current
+        cdef NColumn c, start, col, below
+        cdef int foot, p, q, hard = -1, kind, k, nk, rounds, plo, bk = -1, it
+        cdef double a0, a, an, step, vmax, vc, delta, e, et, am, sv, sw, width, bad, hi_a = NAN, lo_b, hi_b
+        cdef bint range_end = False
+        cdef double htol = S8_BOUND*self.vtol, ttol = S8_BOUND*self.ttol, target = self.eng.ias_limit*(1.-S15_INSIDE)
+        cdef double* xs
+        cdef double* vs
+        cdef double* vl
+        cdef double* vr
+        cdef double* ws
+        cdef double* wl
+        cdef double* wr
+        out = dict(status='failed', limit_kmh=self.eng.ias_limit*3.6, edge_kmh=list(edge['speed_kmh']) if edge else None)
+        self.ias_trace_out = out
+        self.eng.stats['s15_traces'] = self.eng.stats.get('s15_traces', 0)+1
+        good = (min(edge['speed_kmh']) if edge is not None else
+                min(c.speed for c in self.columns.values() if NTracer.ok(c) and c.lower >= 0))
+        cands = [c for c in self.columns.values() if NTracer.ok(c) and c.level >= 0 and c.speed <= good+1e-9
+                 and self.eng.st[c.level].valid]
+        if not cands:
+            out['status'] = 'failed: no column with level flight within the limit'
+            self.eng.stats['s15_failed'] = self.eng.stats.get('s15_failed', 0)+1
+            return 0
+        start = max(cands, key=lambda c: c.speed)
+        out['start_kmh'] = start.speed
+        vmax = max(s['speed_kmh'][1] for s in self.segments_)
+        knots = []
+        slopes = {}
+        why = None
+        wk = Work({}, parent=current())
+        try:
+            with use(wk):
+                # level flight continued up to the limit (steps of at most the placement tolerance; a step that lands
+                # past the limit ends the walk), then onto it
+                p = start.level
+                while self.eng.st[p].speed*target/self.fwd_ias(p)-self.eng.st[p].speed > self.place_tol:
+                    q = self.eng.correct(p, self.eng.st[p].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS, 2e-6,
+                                         self.eng.st[p].speed+self.place_tol, NULL, NULL)
+                    if q < 0 or not (self.eng.st[q].valid or self.eng.ias_soft(q)):
+                        q = self.eng.correct(p, self.eng.st[p].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS,
+                                             2e-6, self.eng.st[p].speed+self.place_tol, NULL, NULL)
+                    self.eng.flush_counts()
+                    if q >= 0 and self.eng.ias_soft(q):break
+                    if q < 0 or not self.eng.st[q].valid:
+                        why = 'level flight ends before the limit at %.3f km/h' % (self.eng.st[p].speed+self.place_tol)
+                        break
+                    p = q
+                foot = -1
+                if why is None:
+                    foot = self.iso_state(p, 1., 1, False)
+                    if foot < 0 or self.iso_kind(foot) != 0:foot = self.iso_state(p, 1., 1, True)
+                if why is None and (foot < 0 or self.iso_kind(foot) != 0):
+                    why = 'level flight at the limit does not close' if foot < 0 else 'level flight at the limit is rejected'
+                if why is None and not (self.eng.st[foot].valid or self.eng.ias_soft(foot)):
+                    # level flight there is over another soft limit (the engine over-revs at 1 g: an edge before the
+                    # forward-IAS limit is reached)
+                    why = 'level flight ends before the limit at %.3f km/h (%s)' % (
+                        self.eng.st[foot].speed, ', '.join(str(r) for r in self.eng.reason_list(foot)))
+                if why is None:
+                    # along the edge in alpha up to the first hard limit
+                    knots.append(foot)
+                    a0 = self.eng.st[foot].alpha;a = a0;p = foot;step = S15_FIRST
+                    while True:
+                        an = a+step
+                        if a < -1e-9 and an > 0.:an = 0.     # the edge's lowest speed (zero body alpha) is a knot
+                        q = self.iso_at(p, an, self.iso_guess(knots, an), a, an+step)
+                        kind = -1 if q < 0 else self.iso_kind(q)
+                        if kind == 1:
+                            hard = q;hi_a = self.eng.st[q].alpha;break
+                        if kind < 0 and self.past_limit(p, knots[-2] if len(knots) >= 2 else -1, an) >= 0:
+                            hi_a = an;break     # no equilibrium past a hard limit whose margin runs out (iso_corner)
+                        if kind == 0 and self.eng.st[q].speed > vmax:
+                            # the edge leaves the chart's speed range (or meets its vertical limit) before any hard
+                            # limit: its last knot is where it reaches that speed
+                            lo_b = a;hi_b = self.eng.st[q].alpha;plo = p
+                            for it in range(60):
+                                am = .5*(lo_b+hi_b)
+                                q = self.iso_at(plo, am, self.iso_guess(knots, am), lo_b, hi_b)
+                                if q < 0 or self.iso_kind(q) != 0:break
+                                if self.eng.st[q].speed > vmax:hi_b = self.eng.st[q].alpha
+                                else:
+                                    plo = q;lo_b = self.eng.st[q].alpha
+                                if vmax-self.eng.st[plo].speed < 1e-4:break
+                            if vmax-self.eng.st[plo].speed > 1e-2:
+                                why = 'the edge leaves the chart domain at alpha %.3f' % an;break
+                            if plo != knots[-1]:knots.append(plo)
+                            range_end = True;break
+                        if kind < 0:
+                            if step <= S15_MIN_STEP*(1.+1e-9):
+                                why = 'the edge state does not close at alpha %.3f' % an;break
+                            step = pmax(S15_MIN_STEP, .5*step);continue
+                        knots.append(q);p = q;a = self.eng.st[q].alpha;step = S15_ALPHA_STEP
+                        if a-a0 > S15_ALPHA_SPAN:
+                            why = 'no hard limit within %.0f deg of level flight' % S15_ALPHA_SPAN;break
+                        if len(knots) >= S15_MAX_KNOTS:
+                            why = 'too many edge knots';break
+                if why is None and not range_end:
+                    plo, hard, width, bk = self.iso_corner(knots, hard, hi_a)
+                    if width > 50.*S15_CORNER_TOL:
+                        why = 'corner unresolved between alpha %.3f and %.3f' % (self.eng.st[plo].alpha, self.eng.st[plo].alpha+width)
+                    elif plo != knots[-1]:knots.append(plo)
+                if why is None and len(knots) < 2:why = 'one edge state only'
+                if why is None:
+                    # the split rule on V(alpha) and w(alpha) through the knots and their slopes; in the first round every
+                    # piece's middle is solved too (a hard limit crossing the edge between knots)
+                    for k in range(len(knots)):
+                        if self.iso_slope(knots[k], 1 if k == 0 else -1 if k == len(knots)-1 else 0, &sv, &sw):
+                            slopes[knots[k]] = (sv, sw)
+                    for rounds in range(S15_ROUNDS):
+                        nk = len(knots)
+                        xs = <double*>malloc(7*nk*sizeof(double))
+                        if xs == NULL:raise MemoryError()
+                        vs = xs+nk;vl = xs+2*nk;vr = xs+3*nk;ws = xs+4*nk;wl = xs+5*nk;wr = xs+6*nk
+                        insert = []
+                        try:
+                            for k in range(nk):
+                                xs[k] = self.eng.st[knots[k]].alpha;vs[k] = self.eng.st[knots[k]].speed
+                                ws[k] = self.eng.st[knots[k]].load*self.eng.st[knots[k]].load-1.
+                                sv, sw = slopes.get(knots[k], (NAN, NAN))
+                                vl[k] = sv;vr[k] = sv;wl[k] = sw;wr[k] = sw
+                            fill_slopes(nk, xs, vs, vl, vr);fill_slopes(nk, xs, ws, wl, wr)
+                            for k in range(nk-1):
+                                e = self.iso_bound(nk, xs, vs, vl, vr, ws, wl, wr, k, &et)
+                                if rounds > 0 and e <= htol and et <= ttol:continue
+                                if xs[k+1]-xs[k] <= S15_SPLIT_MIN:
+                                    if e <= htol and et <= ttol:continue
+                                    why = 'the edge jumps between alpha %.4f and %.4f (%.3f km/h, %.3f deg/s bound)' % (
+                                        xs[k], xs[k+1], e, et)
+                                    break
+                                insert.append(k)
+                        finally:
+                            cfree(xs)
+                        if why is not None or not insert:break
+                        for k in reversed(insert):
+                            if k+1 >= len(knots):continue
+                            am = .5*(self.eng.st[knots[k]].alpha+self.eng.st[knots[k+1]].alpha)
+                            q = self.iso_at(knots[k], am, .5*(self.eng.st[knots[k]].load+self.eng.st[knots[k+1]].load),
+                                            self.eng.st[knots[k]].alpha, self.eng.st[knots[k+1]].alpha)
+                            kind = -1 if q < 0 else self.iso_kind(q)
+                            if kind < 0 and self.past_limit(knots[k], knots[k-1] if k >= 1 else -1, am) >= 0:
+                                kind = 1;q = -1
+                            if kind == 1:
+                                # a hard limit crosses the edge between these knots: the corner lies before it
+                                del knots[k+1:]
+                                plo, hard, width, bk = self.iso_corner(knots, q, self.eng.st[q].alpha if q >= 0 else am)
+                                if width > 50.*S15_CORNER_TOL:
+                                    why = 'corner unresolved between alpha %.3f and %.3f' % (self.eng.st[plo].alpha,
+                                                                                              self.eng.st[plo].alpha+width)
+                                    break
+                                if plo != knots[-1]:
+                                    knots.append(plo)
+                                    if self.iso_slope(plo, -1, &sv, &sw):slopes[plo] = (sv, sw)
+                                if len(knots) < 2:
+                                    why = 'one edge state only';break
+                                self.eng.stats['s15_inner_corners'] = self.eng.stats.get('s15_inner_corners', 0)+1
+                                continue
+                            if kind != 0:
+                                why = 'split state at alpha %.3f unresolved' % am;break
+                            if self.iso_slope(q, 0, &sv, &sw):slopes[q] = (sv, sw)
+                            knots.insert(k+1, q)
+                        if why is not None:break
+                        if len(knots) >= S15_MAX_KNOTS:
+                            why = 'too many edge knots';break
+                    else:
+                        why = 'split rounds exhausted'
+        finally:
+            row = self.work.setdefault('ias trace', dict(columns=0, evaluations=0))
+            row['columns'] += 1;row['evaluations'] += wk.counts.get('aircraft_evaluations', 0)
+        if why is None:
+            vc = self.eng.st[knots[-1]].speed
+            # the first column past the edge with nothing inside the limit (the edge's own column may be unresolved,
+            # another may have failed for other reasons)
+            bad = min([c.speed for c in self.columns.values() if c.status == STATUS_NOFEASIBLE and c.speed > good+1e-9
+                       and 'forward-IAS' in str(c.reason)] or [INFINITY])
+            if vc > bad+1e-6 and not range_end:
+                # that column's march stepped over the sliver within the limit next to the corner (the edge's states are
+                # exact; the edge truth checks them)
+                out['corner_past_column_kmh'] = bad
+                self.eng.stats['s15_corner_past_column'] = self.eng.stats.get('s15_corner_past_column', 0)+1
+            for c in self.columns.values():
+                if why is None and NTracer.ok(c) and c.speed > vc+.01 and 'IAS' not in str(c.reason):
+                    why = 'a column past the corner (%.3f km/h, %s)' % (c.speed, c.reason)
+        if why is not None:
+            out['status'] = 'failed: '+why
+            if knots:out['last_knot'] = [self.eng.st[knots[-1]].speed, self.eng.st[knots[-1]].load, self.eng.st[knots[-1]].alpha]
+            self.eng.stats['s15_failed'] = self.eng.stats.get('s15_failed', 0)+1
+            return 0
+        # the upper boundary's end: a column just inside the corner (its exact face and slope), unless one is there
+        delta = pmin(S15_CORNER_OFFSET, .125*self.vtol)
+        near = [c for c in self.columns.values() if NTracer.ok(c) and vc-delta-1e-9 <= c.speed <= vc+1e-9]
+        out['corner_column'] = None
+        if not near and not range_end:
+            ok = [c for c in self.columns.values() if NTracer.ok(c) and c.speed < vc-delta]
+            if ok:
+                below = max(ok, key=lambda c: c.speed)
+                col = self.column(vc-delta, [below], 'ias corner', True, pmax(below.speed, vc-self.vtol), vc)
+                out['corner_column'] = dict(speed_kmh=col.speed, status=col.status_name(), reason=str(col.reason))
+                if edge is not None and NTracer.ok(col) and col.speed > min(edge['speed_kmh']):
+                    edge['speed_kmh'] = [col.speed, max(edge['speed_kmh'])]
+        q = knots[-1]
+        out.update(status='traced', foot_kmh=self.eng.st[knots[0]].speed, foot_alpha_deg=self.eng.st[knots[0]].alpha,
+                   corner=dict(speed_kmh=vc, load_g=self.eng.st[q].load, turn_dps=self.eng.st[q].turn,
+                               alpha_deg=self.eng.st[q].alpha,
+                               beyond=(['chart speed range or vertical limit'] if range_end else
+                                       [KIND_TEXT[bk]+' (no equilibrium past it)'] if bk >= 0 else
+                                       (['plot ceiling'] if self.eng.passable(hard) else
+                                        [str(r)[:60] for r in self.eng.reason_list(hard)][:3]) if hard >= 0 else None)),
+                   # [speed km/h, load g, dV/dalpha, dw/dalpha (None: not available), body alpha deg], level flight first
+                   knots=[[self.eng.st[p].speed, self.eng.st[p].load,
+                           slopes[p][0] if p in slopes else None, slopes[p][1] if p in slopes else None,
+                           self.eng.st[p].alpha] for p in knots])
+        self.events.append(dict(kind='ias edge', speed_kmh=[self.eng.st[knots[0]].speed, self.eng.st[knots[0]].speed],
+                                located_by='S15 traced edge'))
+        self.eng.stats['s15_knots'] = self.eng.stats.get('s15_knots', 0)+len(knots)
+        return 0
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef sweep(self, dict segment, NColumn start):
@@ -1984,7 +2453,7 @@ cdef class NTracer:
                 added += 1
                 self.columns[col.speed] = col
                 if not NTracer.ok(col):tried.add(key)
-            n = self.lower_split(checks, tol)
+            n = 0 if self.traced() else self.lower_split(checks, tol)
             added += n;splits += n
             if not added:break
         self.eng.stats['s8_splits'] = self.eng.stats.get('s8_splits', 0)+splits
@@ -2341,7 +2810,8 @@ cdef class NTracer:
         if self.s8:self.seam_restarts(segments)
         for segment in upper:self.upper_segment(segment)
         if self.s8:self.dive_path(segments)
-        self.ias_one_g()
+        if self.s15:self.ias_trace()
+        if not self.traced():self.ias_one_g()
         checks = self.check()
         if self.nudge:checks += self.resolve_gaps(segments)
         for c in self.witnesses:
@@ -2351,7 +2821,8 @@ cdef class NTracer:
         cols = sorted(self.columns.values(), key=lambda c: c.speed)
         return dict(columns=cols, segments=segments, mach_seams_kmh=self.mach_seams, sweep_gaps_kmh=self.sweep_gaps,
                     events=self.events, checks=checks, work_by_role=self.work, elapsed_s=time.perf_counter()-started,
-                    speed_limit=dict(kind=limit['kind'], speed_kmh=limit['speed_kmh'], enforced=limit['enforced']))
+                    speed_limit=dict(kind=limit['kind'], speed_kmh=limit['speed_kmh'], enforced=limit['enforced']),
+                    ias_trace=self.ias_trace_out)
 
     # ------------------------------------------------------------------ column records
     @cython.boundscheck(True)
@@ -2405,6 +2876,12 @@ cdef class NTracer:
                              self.eng.reason_list(q)) for q in col.points],
                     turn=self.eng.st[col.boundary].turn if col.boundary >= 0 else None,
                     load=self.eng.st[col.boundary].load if col.boundary >= 0 else None, boundary=col.boundary)
+
+    def debug_iso(self, int seed, double alpha, bint level=False):
+        """Diagnostics (S15): iso_state from ``seed`` at body alpha ``alpha`` (``level``: level flight): (state or -1,
+        iso_kind, forward IAS m/s)."""
+        cdef int p = self.iso_state(seed, alpha, 1 if level else 0, False)
+        return p, (self.iso_kind(p) if p >= 0 else None), (self.fwd_ias(p) if p >= 0 else None)
 
     def debug_probe(self, int level, double speed):
         """Diagnostics (S8): level_probe from state ``level`` at ``speed`` (state id, -1 physical rejection, -3 open)."""
