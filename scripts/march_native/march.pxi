@@ -304,6 +304,9 @@ cdef class MarchEngine:
     # interior starts along the neighbouring columns' alpha path; outline pieces checked where the tail-wake term of the
     # downwash switches inside them
     cdef public bint s12
+    # S14 (WT_MARCH_S14=0 restores S13 exactly; WT_MARCH_S13=0 also turns S14 off): the misses the cleanup batch's wider
+    # dense check found: the leaning forward-IAS edge split on its monotone stretch (J6K1 SB) and the S14 items below
+    cdef public bint s14
     cdef public list brake_log           # diagnostics (WT_MARCH_BRAKE_LOG=1): every braking search's attempts, else None
     cdef int brake_depth                 # S12: braking search rounds in progress
     cdef bint brake_retry
@@ -374,6 +377,7 @@ cdef class MarchEngine:
         self.s11 = self.brake and self.fin.brake_choice
         self.brake_limit = self.brake and not self.s11
         self.s12 = self.s10 and os.environ.get("WT_MARCH_S11", "1") != "0" and os.environ.get("WT_MARCH_S12", "1") != "0"
+        self.s14 = self.s12 and os.environ.get("WT_MARCH_S13", "1") != "0" and os.environ.get("WT_MARCH_S14", "1") != "0"
         self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
         self.brake_depth = 0
         self.brake_retry = False

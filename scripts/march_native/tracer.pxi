@@ -193,6 +193,7 @@ DEF S7_CHECK = .5   # S7: withheld envelope checks pass within half the envelope
 DEF S8_MAX_WIDTH = 25.   # S8: the widest outline piece (km/h; the validation's general-rule setting, 50 left features unseen)
 DEF S8_BOUND = .6666666666666666   # S8: an outline piece is finished when its error bound is within 2/3 of the envelope
                                    # turn tolerance (the headroom of S7's curve checks)
+DEF S14_TIE = .05    # S14: a margin of another hard limit at a column's boundary below which it can take over nearby
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -1057,8 +1058,13 @@ cdef class NTracer:
                             # S9_FOLD_MARGIN; a level flight closing in on its stall or another limit ends there)
                             branched = True
                             v = inside+direction*pmin(2*pmax(self.vtol, 1.), fabs(bad.speed-inside))
-                            if fabs(bad.speed-v) > 1e-9 and self.healthy(level):
+                            # S14: also where a limit is close (Hurricane Mk I/B SB 136.9 km/h: level flight near its stall
+                            # stops closing, the other branch's level flight continues to 134.0 km/h; the chart ended 2.9
+                            # km/h early): the stop is only explained where the probes met a physical rejection, and none did
+                            if fabs(bad.speed-v) > 1e-9 and (self.healthy(level) or self.eng.s14):
                                 self.eng.stats['s9_probe_searches'] = self.eng.stats.get('s9_probe_searches', 0)+1
+                                if not self.healthy(level):
+                                    self.eng.stats['s14_probe_searches'] = self.eng.stats.get('s14_probe_searches', 0)+1
                                 q = self.python_level(NMarch(self.eng, v, self.march_tol), v, -1)
                                 if (q >= 0 and self.eng.st[q].valid and fabs(self.eng.st[q].load-1.) <= 1e-9
                                         and self.level_probe(q, .5*(nxt+v), &preds) != -1):
@@ -1643,6 +1649,17 @@ cdef class NTracer:
                      and min(e['speed_kmh']) <= pts[0][1]+1e-9), None)
         if foot is not None and foot < pts[0][1]-1e-9:pts.insert(0, (0., foot, None, 0.))
         n = len(pts)
+        if self.eng.s14:
+            # S14: an edge that is not monotone in w (where it meets the upper boundary, the lower edge's load can fall
+            # again: J6K1 SB 798-802 km/h) is split on its monotone stretch from level flight; S8 split nothing then, so
+            # the stretch from the foot to the first column (J6K1 SB 781.4-792.5 km/h, where the edge rises almost
+            # vertically from 1 g to 6.5 g: level-flight body alpha is negative, pulling first raises forward IAS) was
+            # drawn as recorded, up to 13 deg/s low
+            k = 0
+            while k+1 < n and pts[k+1][0] > pts[k][0]:k += 1
+            if k+1 < n:
+                pts = pts[:k+1];n = len(pts)
+                self.eng.stats['s14_lower_prefix'] = self.eng.stats.get('s14_lower_prefix', 0)+1
         if n < 2 or any(pts[k+1][0] <= pts[k][0] for k in range(n-1)):return 0
         ws = <double*>malloc(n*sizeof(double));vs = <double*>malloc(n*sizeof(double))
         dl = <double*>malloc(n*sizeof(double));dr = <double*>malloc(n*sizeof(double))
@@ -1803,6 +1820,23 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int tie_kind(self, list good, int j, int o) except -2:
+        """S14: a hard limit other than column good[j]'s own face whose margin at its boundary is below S14_TIE while at
+        the other end good[o] it is larger (more than twice it plus half S14_TIE): the limit that can take over inside
+        the piece; -1 for none, or where the verified column beyond good[j] (outside the piece) is limited by it."""
+        cdef NColumn c = good[j], d = good[o]
+        cdef TState* s = &self.eng.st[c.boundary]
+        cdef TState* t = &self.eng.st[d.boundary]
+        cdef int k, own = KIND_CODE.get(c.reason, -1), nb = j-1 if o > j else j+1
+        for k in (KD_CONTROL, KD_STALL, KD_WING, KD_INSTR):
+            if k == own or not (s.mset >> k) & 1 or not (t.mset >> k) & 1:continue
+            if not (s.m[k] < S14_TIE and t.m[k] > 2.*s.m[k]+.5*S14_TIE):continue
+            if 0 <= nb < len(good) and KIND_CODE.get((<NColumn>good[nb]).reason, -1) == k:continue
+            return k
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef list check_s8(self):
         """S8: the split rule on every outline piece between verified columns of one segment (no Mach seam or segment
         end inside). A piece whose error bound (piece_error) is within S8_BOUND of the envelope turn tolerance and which
@@ -1886,6 +1920,18 @@ cdef class NTracer:
                         self.knot_speeds.append(vc)
                         self.eng.stats['s12_wake_splits'] = self.eng.stats.get('s12_wake_splits', 0)+1
                         break
+                if self.eng.s14 and not corner and not knot_split and e <= tol and vb-va > 2.*self.vtol+1e-9:
+                    # S14: another hard limit nearly active at one end's boundary (its margin below S14_TIE there, larger
+                    # at the other end) can become the first limit inside the piece, which neither end sees (I-16 type 5
+                    # RB 120.5-124.5 km/h: the elevator saturates before the Instructor pitch limit, drawn 1.5 deg/s
+                    # high): a column a quarter of the piece from that end (a tie explained by the neighbouring corner
+                    # beyond that end is not one)
+                    for j, o in ((i, i+1), (i+1, i)):
+                        if self.tie_kind(good, j, o) < 0:continue
+                        x = va+.25*(vb-va) if j == i else vb-.25*(vb-va)
+                        e = INFINITY;knot_split = True;bound = None
+                        self.eng.stats['s14_tie_splits'] = self.eng.stats.get('s14_tie_splits', 0)+1
+                        break
                 if (self.eng.s10 and corner and exact and not knot_split and e <= tol and vb-va > self.vtol+1e-9
                         and corner_vertex(va, na, sa, ka, vb, nb, sb, kb, &vc)):
                     # S10: the bound takes both faces as continued from their columns up to the corner. A long steep stretch
@@ -1902,6 +1948,20 @@ cdef class NTracer:
                     if not isfinite(e):
                         bound = None
                         self.eng.stats['s10_corner_stretch'] = self.eng.stats.get('s10_corner_stretch', 0)+1
+                if self.eng.s14 and not knot_split and e > tol and vb-va > self.vtol+1e-9:
+                    # S14: a failing piece with a model breakpoint inside: the failure can be a jump there (P-61C-1 SB
+                    # 675.6 km/h: the wing-force limit steps from 7.49 to 7.19 g), which the split at the largest bound
+                    # (at least a tenth of the piece from its ends) only creeps towards (14 columns from 662 km/h, the
+                    # last piece 672.8-676.0 left smooth, 0.25 deg/s off): columns a quarter of the speed tolerance
+                    # either side of the breakpoint
+                    for kx in self.knot_speeds:
+                        if not (va+.05*self.vtol < kx < vb-.05*self.vtol):continue
+                        if kx-.25*self.vtol > va+.05*self.vtol:x = kx-.25*self.vtol
+                        elif kx+.25*self.vtol < vb-.05*self.vtol:x = kx+.25*self.vtol
+                        else:continue
+                        knot_split = True
+                        self.eng.stats['s14_knot_splits'] = self.eng.stats.get('s14_knot_splits', 0)+1
+                        break
                 if vb-va <= self.vtol+1e-9 or (e <= tol and vb-va <= width+1e-9):
                     passed_set.add(key)
                     kind = 'bound' if e <= tol else 'narrow'

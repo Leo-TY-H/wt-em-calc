@@ -685,15 +685,25 @@ def ias_edge(aircraft, run, grid):
         v.insert(0, float(max(one['speed_kmh'])));n.insert(0, 1.);slopes.insert(0, None)
     xs = np.unique(np.r_[grid[(grid > v[0]) & (grid < v[-1])], v])
     w = np.asarray(n, dtype=float)**2-1.
-    if len(v) > 1 and any(s is not None for s in slopes) and np.all(np.diff(w) > 0.):
+    # S14 (WT_MARCH_S14=0: S13): an edge not monotone in w is drawn as V(w) on its monotone stretch from level flight
+    # (the native tracer's lower_split judges that stretch) and through the remaining columns in load as before
+    m = len(v)
+    if S10 and all(os.environ.get(k, '1') != '0' for k in ('WT_MARCH_S11', 'WT_MARCH_S12', 'WT_MARCH_S13', 'WT_MARCH_S14')):
+        m = 1
+        while m < len(v) and w[m] > w[m-1]:m += 1
+    if len(v) > 1 and any(s is not None for s in slopes[:m]) and (np.all(np.diff(w) > 0.) if m == len(v) else m >= 2):
         # the edge's exact slopes: the speed along the limit as the cubic Hermite V(w), w = n^2-1, with dV/dw = 1/slope
         # at the columns and 0 at level flight (where the edge leaves the 1 g line vertically); the native tracer's
         # lower_split judges this drawing. Sampled in w (with the columns) instead of on the speed grid.
-        d = [0. if k == 0 and n[0] == 1. else (1./s if s is not None and s > 0. else None) for k, s in enumerate(slopes)]
-        dl, dr = hermite_slopes(w, np.asarray(v, dtype=float), d, d)
-        wq = np.unique(np.r_[np.linspace(w[0], w[-1], 121), w])
-        xs = hermite(w, np.asarray(v, dtype=float), dl, dr, wq);loads = np.sqrt(1.+np.maximum(wq, 0.))
+        d = [0. if k == 0 and n[0] == 1. else (1./s if s is not None and s > 0. else None) for k, s in enumerate(slopes[:m])]
+        wm, vm = w[:m], np.asarray(v[:m], dtype=float)
+        dl, dr = hermite_slopes(wm, vm, d, d)
+        wq = np.unique(np.r_[np.linspace(wm[0], wm[-1], 121), wm])
+        xs = hermite(wm, vm, dl, dr, wq);loads = np.sqrt(1.+np.maximum(wq, 0.))
         order = np.argsort(xs, kind='stable');xs, loads = xs[order], loads[order]
+        if m < len(v):
+            tail = np.unique(np.r_[grid[(grid > v[m-1]) & (grid < v[-1])], v[m:]])
+            xs = np.r_[xs, tail];loads = np.r_[loads, PchipInterpolator(v[m-1:], n[m-1:])(tail)]
     else:
         loads = PchipInterpolator(v, n)(xs) if len(v) > 1 else np.array(n)
     rates = turn_rate(xs, loads)
