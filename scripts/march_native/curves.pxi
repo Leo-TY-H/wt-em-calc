@@ -109,6 +109,12 @@ cdef class NCurves:
     # a root of the level at a split speed, the knot is the one at the lower load: the first crossing of the level along
     # alpha from level flight (the envelope's first-limit rule, Leo 2026-10-17). F4U-1D RB -40 m/s at 746-752 km/h.
     cdef public bint s13
+    # S14: a contour piece whose end states lie in different regimes of a propeller governor (its coordinate on either
+    # side of 0, the fine-pitch stop, or of 1: the RPM governed or not) is split at the crossing, interpolated in speed:
+    # the regime switch kinks SEP, against the curvature the piece bound assumes (PBY-5 SB +10 m/s at 154-155 km/h,
+    # where each engine reaches its governed 2,700 rpm: drawn 0.15 deg/s off)
+    cdef public bint s14
+    cdef list gov_idx
     cdef list pending                    # S10: components found at folds, still to follow
     cdef dict grads                      # S10: (dSEP/dV, dSEP/dw) of curve states by their base state
 
@@ -145,6 +151,8 @@ cdef class NCurves:
         self.s9 = self.s8 and os.environ.get('WT_MARCH_S9', '1') != '0'
         self.s10 = self.s9 and os.environ.get('WT_MARCH_S10', '1') != '0'
         self.s13 = self.eng.s12 and os.environ.get('WT_MARCH_S13', '1') != '0'
+        self.s14 = self.eng.s14
+        self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
         self.pending = [];self.grads = {}
         self.exit_seen = False
         self.tangent_delta = .5
@@ -1424,6 +1432,26 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint regime_cross(self, int a, int b, double* at) except -1:
+        """S14: curve states ``a`` and ``b`` have a propeller governor coordinate on either side of 0 or of 1 (its regime
+        kinks); ``at``: the first such crossing, interpolated linearly in speed. False where a state slides on a jump."""
+        cdef TState* s = &self.eng.st[a]
+        cdef TState* t = &self.eng.st[b]
+        cdef double ca, cb, k, x, best = INFINITY
+        if not (s.has_coords and t.has_coords) or s.nx != t.nx or s.slide.n > 0 or t.slide.n > 0:return False
+        for j in self.gov_idx:
+            if j >= s.nx:continue
+            ca = s.coords[j];cb = t.coords[j]
+            for k in (0., 1.):
+                if (ca-k)*(cb-k) < 0.:
+                    x = s.speed+(k-ca)/(cb-ca)*(t.speed-s.speed)
+                    if x < best:best = x
+        if not isfinite(best):return False
+        at[0] = best
+        return True
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef double piece_bound(self, HermiteCurve hf, int i, double* at) noexcept:
         """S8: the error bound of contour piece i (knots i, i+1 of ``hf``, the drawn Hermite in w = n^2-1) from its end
         values and slopes alone: the largest turn-rate distance from the drawn line (over x +- the speed tolerance) to
@@ -1452,7 +1480,7 @@ cdef class NCurves:
         cdef int a, b, i, p
         cdef PchipCurve f
         cdef HermiteCurve hf
-        cdef double x, tx, lo_t, hi_t, box
+        cdef double x, tx, lo_t, hi_t, box, xc = 0.
         checks = comp.setdefault('checks', [])
         unresolved = comp.setdefault('unresolved_intervals', [])
         for _ in range(self.refinement_passes):
@@ -1479,6 +1507,10 @@ cdef class NCurves:
                         # S13: ends on different propeller branches: the switch can lie anywhere inside, so no bound
                         branch_piece = True;e = INFINITY;xm = .5*(key[0]+key[1])
                         self.eng.stats['s13_branch_splits'] = self.eng.stats.get('s13_branch_splits', 0)+1
+                    elif self.s14 and h > 2.*self.speed_tol and self.regime_cross(a, b, &xc):
+                        # S14: a governor regime switch inside: split at its interpolated crossing
+                        e = INFINITY;xm = xc
+                        self.eng.stats['s14_regime_splits'] = self.eng.stats.get('s14_regime_splits', 0)+1
                     bound = e if isfinite(e) else None
                     if h <= self.speed_tol or (e <= self.turn_tol and h <= pmin(self.max_step, S8_MAX_WIDTH)):
                         if e > self.turn_tol and self.s10 and self.fold_absorb(comp, i):
