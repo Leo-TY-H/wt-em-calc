@@ -38,6 +38,19 @@ main{padding:18px 14px 22px}
 .ammunition-setting{margin:16px 0}.ammunition-setting .check-row{align-items:center;margin:0 0 7px;font-size:12px;line-height:1.5;cursor:pointer}.ammunition-setting input{flex-shrink:0;margin:0}.ammunition-setting small{display:block;margin:4px 0 0 22px;font-size:11px;line-height:1.5;color:var(--muted)}#ammunition-status{color:var(--text)}.ammunition-setting .field{margin-bottom:0}
 #manual-engine-field{width:100%;margin:14px 0}#manual-engine-settings{padding-top:10px}#manual-engine-settings small{display:block;margin:4px 0 14px;color:var(--muted);font-size:11px;line-height:1.5}#manual-engine-field .check-row{margin:8px 0;cursor:pointer}#manual-engine-settings input:disabled{opacity:.45}
 
+/* Tool tabs in the header bar, the selected one underlined. */
+body>header.topbar{height:56px;min-height:56px;padding:0 16px;gap:28px;flex-wrap:nowrap;justify-content:flex-start}
+.topbar .brand-icon{width:48px;height:30px}
+.topbar .tool-tabs{display:flex;align-self:stretch;gap:2px;padding:0;border:0;background:none;margin-right:auto}
+.topbar .tool-tabs button{position:relative;height:100%;border:0;border-radius:0;background:none;padding:0 14px;color:var(--muted);font-size:14px}
+.topbar .tool-tabs button:hover{color:var(--text)}
+.topbar .tool-tabs button[aria-selected=true]{background:none;border:0;color:var(--text)}
+.topbar .tool-tabs button[aria-selected=true]::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;background:var(--cyan)}
+@media(max-width:760px){body>header.topbar{height:auto;flex-wrap:wrap;gap:0 12px;padding:6px 12px 0}
+  .topbar .tool-tabs{order:3;flex-basis:calc(100% + 24px);height:44px;margin:0 -12px;padding:0 4px;border-top:1px solid var(--line)}
+  .topbar .tool-tabs button{padding:0 12px}
+  .topbar .release-links{width:auto;margin-left:auto}}
+
 /* The EM diagram and its operating-point details sit on the page without boxes. */
 #em-workspace .chart-card,#em-workspace .inspector{background:none;border:0;border-radius:0}
 #em-workspace .chart-toolbar{padding:0 0 12px;border-bottom:0}
