@@ -12,7 +12,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <link rel="preload" href="./fonts/wt-symbols.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="./styles.css">
 <script src="./config.js"></script><script defer src="./vendor/plotly.min.js"></script><script defer src="./app.js"></script><script defer src="./release-links.js"></script><link rel="stylesheet" href="./release-links.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span id="runtime-label" class="local"><i></i> LOCAL WORKSPACE</span><nav id="release-links" class="release-links" aria-label="Website"></nav></header>
+<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><span id="runtime-label" class="local" hidden><i></i> LOCAL WORKSPACE</span><nav id="release-links" class="release-links" aria-label="Website"></nav></header>
 <nav class="tool-tabs" role="tablist" aria-label="Flight tools"><button id="em-tab" type="button" role="tab" aria-selected="true" aria-controls="em-workspace">EM diagram</button><button id="missile-tab" type="button" role="tab" aria-selected="false" aria-controls="missile-workspace" tabindex="-1">Missile simulator</button></nav>
 <div class="workspace" id="em-workspace" role="tabpanel" aria-labelledby="em-tab">
 <aside class="sidebar"><form id="scenario">
@@ -82,7 +82,6 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 
 </form></aside>
 <main>
-<div class="page-heading"><div><span class="eyebrow">AIRCRAFT PERFORMANCE</span><h1>Energy–maneuverability</h1></div></div>
 <div id="hosting-notice" class="hosting-notice" hidden><strong>Public preview</strong><span>The interface and aircraft catalog are online. Calculations still require the local application while a compute backend is being prepared.</span></div>
 <div id="error" class="error" role="alert" hidden></div>
 <div id="progress" class="progress-panel" aria-live="polite" hidden><div><span class="spinner"></span><strong id="progress-label">Preparing calculation…</strong><span id="progress-count"></span></div><div class="progress-track"><div id="progress-fill"></div></div></div>
@@ -93,7 +92,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Ready to calculate</h2></div></div>
 </section>
 <div class="below-chart"><div class="exports"><span>EXPORT</span><a data-export="diagram.svg" aria-disabled="true">SVG</a><a data-export="diagram.png" aria-disabled="true">PNG</a><a data-export="diagram.pdf" aria-disabled="true">PDF</a><a data-export="samples.csv" aria-disabled="true">CSV</a><a data-export="data.json" aria-disabled="true">JSON</a></div></div>
-<section class="inspector"><div class="inspector-heading"><div><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
+<section id="inspector" class="inspector" hidden><div class="inspector-heading"><div><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
 
 <footer><span id="runtime-footer">LOCAL ANALYSIS TOOL</span><span id="footer-status">All calculations run on this computer.</span></footer>
 </main></div>

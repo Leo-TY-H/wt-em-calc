@@ -353,6 +353,8 @@ async function loadData(id,populateForm=false,preview=false){
     $('point-title').textContent=hasPoints?'Select a point on the diagram':((data.stationary_full_chart||data.stationary_baseline_chart)?'No chartable candidates found':'No valid operating points');
     $('point-content').innerHTML=hasPoints?'':((data.stationary_full_chart||data.stationary_baseline_chart)?'<p class="muted">Search unresolved; absence has not been established.</p>':'<p class="muted">No valid operating points in this range.</p>');
     $('point-status').textContent='';
+    // Details stay out of view until a point is clicked, unless they explain an empty chart.
+    $('inspector').hidden=hasPoints;
   }
   if(!preview&&JSON.stringify([...state.contourLevels].sort((a,b)=>a-b))!==
       JSON.stringify([...(data.settings.sep_contour_levels_mps||[])].sort((a,b)=>a-b)))await refreshContours();
@@ -458,11 +460,24 @@ function speedBoundaryAnnotations(a,data){
   return labels.map(p=>({name:a.id,x:p.speed_kmh,y:p.dashed ? .5 : p.turn_dps,xref:'x',yref:p.dashed?'paper':'y',
     text:escapeText(p.text).replace(/\n/g,'<br>'),textangle:-90,showarrow:false,
     xanchor:p.speed_kmh>threshold?'right':'left',yanchor:'middle',xshift:p.speed_kmh>threshold?-7:7,
-    font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(18,25,37,.85)',
+    font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(12,17,26,.85)',
     visible:!state.hiddenVehicles.has(a.id),
     hovertext:`${escapeText(a.name)}<br>${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
 }
+function nearestSolved(a,speed,rate,showRejected){
+  // Nearest on screen: distances in pixels of the current view.
+  const layout=$('chart')._fullLayout,[x0,x1]=layout.xaxis.range,[y0,y1]=layout.yaxis.range;
+  const sx=layout._size.w/(x1-x0),sy=layout._size.h/(y1-y0);
+  let best=null;
+  for(const point of [...a.points,...(a.sustained||[])]){
+    if(!chartUsable(point)&&!showRejected)continue;
+    const d=((point.speed_kmh-speed)*sx)**2+((point.turn_dps-rate)*sy)**2;
+    if(!best||d<best.d)best={point,d};
+  }
+  return best?.point;
+}
 function inspectContour(a,level,point){
+  $('inspector').hidden=false;
   const load=Math.hypot(1,(point.speed/3.6)*(point.rate*Math.PI/180)/9.8100004196167);
   $('point-title').textContent=`${a.name} · ${fmt(point.speed,1)} km/h · ${fmt(load,2)} g`;
   $('point-status').innerHTML='<span class="point-pill">Interpolated contour</span>';
@@ -532,7 +547,7 @@ function renderChart(){
     traces.push(contourLabelTrace(a,data));
   }
   const ymax=envelopeTop(displayed);
-  const layout={paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
+  const layout={paper_bgcolor:'#0c111a',plot_bgcolor:'#0c111a',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
     annotations:displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
@@ -565,7 +580,11 @@ function renderChart(){
       const a=data.aircraft.find(a=>a.id===p.data.meta.id);
       const level=p.data.meta.kind==='contour'?p.data.meta.level:p.customdata;
       const position=a&&projectedContourPoint(event,a,level);
-      if(position)return inspectContour(a,level,position);
+      if(position){
+        // Contours are interpolated; full details come from the nearest solved point.
+        const nearest=nearestSolved(a,position.speed,position.rate,showRejected);
+        return nearest?inspect(a,nearest,{level,...position}):inspectContour(a,level,position);
+      }
     }
     if(Array.isArray(p.customdata)&&p.customdata.length===3){
       const [id,kind,index]=p.customdata,a=data.aircraft.find(a=>a.id===id);if(a)return inspect(a,(kind==='root'?a.sustained:a.points)[index]);
@@ -579,24 +598,26 @@ function renderChart(){
     if(best)inspect(best.a,best.point);
   });
 }
-async function inspect(a,p){
+async function inspect(a,p,contour){
   const sequence=state.inspection=(state.inspection||0)+1;
   if(!p.component_forces){
     try {p=await api(`/api/jobs/${state.dataJob}/point/${encodeURIComponent(a.id)}/${p.detail_index}`);}
     catch(e){error(e.message);return;}
   }
   if(sequence!==state.inspection)return;
+  $('inspector').hidden=false;
   $('point-title').textContent=`${a.name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`;
-  $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
-  const dl=rows=>'<dl>'+rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('')+'</dl>';
+  $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${contour?`Nearest solved point to SEP ${contour.level>0?'+':''}${contour.level}`:chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
+  // A third row entry hides that row on the page; it stays in the markup (Leo, 2026-10-23).
+  const dl=rows=>'<dl>'+rows.map(([k,v,hide])=>`<dt${hide?' hidden':''}>${k}</dt><dd${hide?' hidden':''}>${v}</dd>`).join('')+'</dl>';
   if(p.not_evaluated){$('point-content').innerHTML=dl([['Not calculated',escapeText(p.reasons.join(', '))]]);return;}
   if(!chartUsable(p)&&p.status==='unresolved'&&!p.component_forces){$('point-content').innerHTML=dl([['Calculation',escapeText(p.search_unresolved||p.chart_status||'No numerical candidate established')]]);return;}
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
   $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3>${dl([
     ['Discrete Ps',fmt(p.ps_mps,2)+' m/s'],['Force-projection Ps',fmt(p.ps_continuous_mps,2)+' m/s'],
-    ['Aircraft model',aircraftModelLabel(p)],
-    ['Model experiment',experimentLabel(p)],
+    ['Aircraft model',aircraftModelLabel(p),true],
+    ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
     ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'°'],['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
     ['Engine force',fmt(p.engine_force_n[0]/1000,2)+' kN'],
@@ -610,7 +631,7 @@ async function inspect(a,p){
       ['Over-rev',p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No'],
       ['Landing gear',p.gear_percent===100?'Fixed · deployed':'Retracted']]:[]),
     ...(state.meta.aircraft[a.aircraft_id||a.id]?.has_flaps?[['Flaps',fmt(p.flaps_percent??0,0)+'%']]:[]),
-    ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div><h3>LIMITS & CONVERGENCE</h3>${dl([
+    ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
     ...(p.symmetry_projection?[['Roll/yaw balance','Assumed ideal support; physical control authority not established']]:[]),
@@ -630,7 +651,7 @@ async function inspect(a,p){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}`;
+    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${contour?`<div class="point-note">Clicked the SEP ${contour.level>0?'+':''}${contour.level} m/s contour at ${fmt(contour.speed,1)} km/h · ${fmt(contour.rate,2)} °/s. The details are for the nearest solved point.</div>`:''}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;
@@ -710,13 +731,13 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
   populateAircraft();populate(state.meta.defaults);
   if(state.meta.public_static){
     $('hosting-notice').hidden=false;
-    $('runtime-label').innerHTML='<i></i> PUBLIC PREVIEW';
+    $('runtime-label').innerHTML='<i></i> PUBLIC PREVIEW';$('runtime-label').hidden=false;
     $('runtime-footer').textContent='PUBLIC PREVIEW';
     $('footer-status').textContent='Calculations currently run in the local application.';
     $('calculate').disabled=true;$('calculate').textContent='Calculations require local app';
   }else if(remoteSite){
-    $('runtime-label').innerHTML='<i></i> LIVE TEST';
-    $('runtime-footer').textContent='LIVE TEST';
+    // The website carries no runtime label (Leo, 2026-10-23); local copies keep theirs.
+    $('runtime-footer').textContent='';
     $('footer-status').textContent='Calculations run on the server.';
-  }
+  }else $('runtime-label').hidden=false;
 }catch(e){error('Could not load the plotter: '+e.message);}})();
