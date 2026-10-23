@@ -357,20 +357,31 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
 
 
 def curve_outline(cfg, row, tracer):
-    """S16: (regions, speed unit, turn unit) of the drawn outline for the curve solver (NCurves.set_outline): every run of
-    the outline as the chart draws it (outline, from the envelope alone), closed down to level flight at both ends; a
-    contour piece drawn more than one unit (the speed tolerance, the envelope's turn tolerance) outside it is split."""
-    boundary = outline(dict(settings=cfg), row)
-    regions, run = [], []
+    """S16: (regions, speed unit, turn unit) of the drawn outline for the curve solver (NCurves.set_outline): the outline
+    as the chart draws it (outline, from the envelope alone) as closed regions (outline_regions); a contour state more
+    than one unit (the speed tolerance, the envelope's turn tolerance) outside them is no knot, and a piece drawn that
+    far outside is split."""
+    return outline_regions(outline(dict(settings=cfg), row)), float(tracer.vtol), float(tracer.ttol)
+
+
+def outline_regions(boundary):
+    """S16: the closed regions of a drawn outline (its runs, closed down to level flight). Runs the outline splits at a
+    numerical gap or a Mach seam (the run before does not end on level flight and the next does not start there) are one
+    region, joined straight across the gap: a gap is no absence proof, so a contour may pass it below that line."""
+    runs, run = [], []
     for p in boundary+[dict(turn_dps=None)]:
         if p['turn_dps'] is not None:
             run.append((float(p['speed_kmh']), float(p['turn_dps'])));continue
-        if run:
-            if run[-1][1] != 0.:run.append((run[-1][0], 0.))
-            if run[0][1] != 0.:run.insert(0, (run[0][0], 0.))
-            regions.append(run)
+        if run:runs.append(run)
         run = []
-    return regions, float(tracer.vtol), float(tracer.ttol)
+    joined = []
+    for run in runs:
+        if joined and joined[-1][-1][1] != 0. and run[0][1] != 0.:joined[-1] = joined[-1]+run
+        else:joined.append(list(run))
+    for run in joined:
+        if run[-1][1] != 0.:run.append((run[-1][0], 0.))
+        if run[0][1] != 0.:run.insert(0, (run[0][0], 0.))
+    return joined
 
 
 def curve_columns(envelope, tracer):
