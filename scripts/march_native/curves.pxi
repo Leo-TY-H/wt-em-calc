@@ -1058,7 +1058,7 @@ cdef class NCurves:
             n = py_sqrt(1.+max(w, 1e-6))
             outcome, point, reason = self.direct_seed(speed, target, n, [last], attitude, 'continuation')
             if (outcome == 'admitted' and self.s16 and abs(speed-self.eng.st[last].speed) > S16_BRANCH_STEP*self.speed_tol
-                    and self.prop_jump(last, point)):
+                    and self.step_jump(comp, last, point, side)):
                 # S16: a continuation step that lands on another propeller branch than the last knot is no step of the
                 # contour (A6M2-N RB at 65% pitch: from its 1 g crossing at 162.7 km/h on the branch that ends at 163.5,
                 # one step reached the other branch's +10 m/s at 193 km/h): shorter steps keep the branch to where it
@@ -2376,7 +2376,7 @@ cdef class NCurves:
         else:
             if (self.eng.st[self.pcol[i-1][0]].nx != nx or self.eng.st[self.pcol[i][0]].nx != nx
                     or not self.path_coords(i-1, n, ra) or not self.path_coords(i, n, rb)):return -1
-            if self.branch_apart(ra, rb, nx):
+            if self.columns_apart(i-1, i, n, ra, rb, nx):
                 exact = True
                 self.eng.stats['s16_path_column_trigger'] = self.eng.stats.get('s16_path_column_trigger', 0)+1
             else:
@@ -2408,6 +2408,40 @@ cdef class NCurves:
         q = lo if f <= .5 else hi
         return 1 if (self.branch_apart(self.eng.st[q].coords, t.coords, nx)
                      or fabs(self.eng.st[lo].ps+f*(self.eng.st[hi].ps-self.eng.st[lo].ps)-t.ps) > S16_PATH_SEP*self.allowance) else 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint step_jump(self, dict comp, int last, int point, int side) except -1:
+        """S16: a continuation state ``point`` on another propeller branch than the contour's ``last`` knot: S13's
+        prop_branch test on the piece, ``last`` continued through the knot before it (a drift of the coordinates along
+        the contour is no switch); prop_jump where the contour has one knot."""
+        knots = comp['knots']
+        if len(knots) < 2:return self.prop_jump(last, point)
+        prev = knots[-2] if side > 0 else knots[1]
+        if side > 0:return self.prop_branch([prev, last, point], 1)
+        return self.prop_branch([point, last, prev], 0)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint columns_apart(self, int i, int j, double n, const double* ra, const double* rb, int nx) except -1:
+        """S16: the paths of neighbouring columns i < j at load ``n`` (ra, rb) on different branches: some coordinate of
+        each apart by more than twice S9_PROP_JUMP of its size from the other continued linearly through its own outer
+        neighbouring column (i-1, j+1; held where there is none), so that a drift with speed is no switch."""
+        cdef double rp[NMAX]
+        cdef double rn[NMAX]
+        cdef double vi = self.pcol_v[i], vj = self.pcol_v[j], ca, cb, tol
+        cdef bint hp = False, hn = False
+        cdef int k
+        if i > 0 and self.eng.st[self.pcol[i-1][0]].nx == nx:hp = self.path_coords(i-1, n, rp)
+        if j+1 < len(self.pcol_v) and self.eng.st[self.pcol[j+1][0]].nx == nx:hn = self.path_coords(j+1, n, rn)
+        for k in range(7, nx):
+            tol = 2.*S9_PROP_JUMP*pmax(1., pmax(fabs(ra[k]), fabs(rb[k])))
+            ca = ra[k]
+            if hp and vi > self.pcol_v[i-1]:ca += (ra[k]-rp[k])*(vj-vi)/(vi-self.pcol_v[i-1])
+            cb = rb[k]
+            if hn and self.pcol_v[j+1] > vj:cb += (rb[k]-rn[k])*(vi-vj)/(self.pcol_v[j+1]-vj)
+            if fabs(rb[k]-ca) > tol and fabs(ra[k]-cb) > tol:return True
+        return False
 
     cdef bint near_apart(self, const double* x, const double* y, int nx) noexcept:
         """S16: some propulsion coordinate apart by more than S9_PROP_JUMP of its size (at least 1)."""
