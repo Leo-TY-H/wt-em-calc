@@ -645,6 +645,15 @@ def outline(data, aircraft):
         rpm = (aircraft.get('envelope_trace') or {}).get('rpm_trace')
         if rpm is not None and rpm.get('status') == 'traced' and (trace is None or rpm['foot_kmh'] < trace['foot_kmh']):
             trace = rpm
+    # S16: where the engine RPM edge's trace failed, S8's edge: vertical where level flight first over-revs (the 'rpm
+    # edge' foot, else the last column before the columns whose level flight over-revs). The columns' lower edges past it
+    # are no guide to the iso-line, which can bulge back between them (He 51 A-1 SB: 47.6 deg/s at 448 km/h, 44.9 at 458)
+    rpm_foot = None
+    if s16_on():
+        rpm = (aircraft.get('envelope_trace') or {}).get('rpm_trace')
+        if rpm is not None and rpm.get('status') != 'traced':
+            rpm_foot = next((max(e['speed_kmh']) for e in (aircraft.get('envelope_trace') or {}).get('events', [])
+                             if e['kind'] == 'rpm edge'), math.nan)
     # S15: the traced edge closes the last run between the trace's start column and its corner
     host = None if trace is None else max((k for k, run in enumerate(pieces) if run[0]['speed_kmh'] <= trace['corner']['speed_kmh']+1e-3
                                            and run[-1]['speed_kmh'] >= trace['start_kmh']-1e-9), default=None)
@@ -663,6 +672,12 @@ def outline(data, aircraft):
             if kept:
                 run = kept
                 iso = traced_edge(aircraft, trace)
+        # (S16: the run that reaches columns whose level flight over-revs ends at the foot when the RPM trace failed)
+        cut = None
+        if rpm_foot is not None:
+            band = [c for c in run if c.get('lower_edge_kind') == 'engine RPM limit']
+            below = [c['speed_kmh'] for c in run if band and c['speed_kmh'] < band[0]['speed_kmh'] and not c.get('lower_edge')]
+            if below:cut = rpm_foot if below[-1] <= rpm_foot <= band[0]['speed_kmh'] else below[-1]
         speeds = np.array([c['speed_kmh'] for c in run])
         exact = {c['speed_kmh']: c for c in run}
         xs = np.unique(np.r_[grid[(grid > speeds[0]) & (grid < speeds[-1])], speeds])
@@ -681,6 +696,11 @@ def outline(data, aircraft):
                         (mid, float(exact[hi]['boundary']['turn_dps']) if hi in exact else float(np.interp(hi, xs, rates)))]
             order = sorted([(x, 0, t) for x, t in zip(xs.tolist(), rates.tolist())]+[(x, 1+k, t) for k, (x, t) in enumerate(add)])
             xs = np.array([q[0] for q in order]);rates = np.array([q[2] for q in order])
+        if cut is not None:
+            keep = xs <= cut+1e-9
+            xs, rates = xs[keep], rates[keep]
+            if not len(xs) or xs[-1] < cut-1e-9:
+                xs = np.r_[xs, cut];rates = np.r_[rates, turn_rate(np.array([cut]), run_loads(run, np.array([cut])))]
         index = np.searchsorted(speeds, xs)
         if run[0]['speed_kmh'] in starts and run[0]['speed_kmh'] != low:
             boundary.append(dict(speed_kmh=run[0]['speed_kmh'], turn_dps=0., at_plot_ceiling=False,
@@ -702,6 +722,9 @@ def outline(data, aircraft):
                                  edge_kind='Wing sweep limit', vertical_edge=True))
         # (S15: with a traced edge no run draws the S14 leaning edge: a run cut before the host is no edge of the limit)
         leaning = iso if iso is not None else [] if trace is not None else ias_edge(aircraft, run, grid)
+        if cut is not None and boundary:
+            boundary[-1].update(edge_kind=RPM_EDGE, vertical_edge=True)
+            leaning = [dict(speed_kmh=float(cut), turn_dps=0., at_plot_ceiling=False, edge_kind=RPM_EDGE, vertical_edge=True)]
         boundary.extend(leaning)
         if S10 and not leaning:
             # S10: where level flight is physically rejected just above a run's last column (a high-speed edge: the
