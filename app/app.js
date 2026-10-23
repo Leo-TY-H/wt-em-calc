@@ -942,7 +942,6 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-$('reset-zoom').addEventListener('click',()=>{if(!state.data)return;const shown=state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view);Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,envelopeEnd(shown,state.data)],'yaxis.range':[0,envelopeTop(shown)]});});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();else $('download-menu').open=false;}));
 // The Download menu closes on a click elsewhere or Escape.
 document.addEventListener('click',e=>{if(!$('download-menu').contains(e.target))$('download-menu').open=false;});
