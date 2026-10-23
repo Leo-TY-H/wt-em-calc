@@ -36,6 +36,11 @@ DEF S10_FOLD_KNOTS = 10                   # S10: the most knots of one fold piec
 DEF S10_ROOT_STEPS = 8                    # S10: secant steps in speed of one fold knot (the level at a fixed load)
 DEF S13_ROOT_SEP = .001                   # S13: a level root on the other propeller branch: lower load by more than this x
 DEF S16_OUTLINE_SAMPLES = 16              # S16: points across a contour piece checked against the drawn outline
+DEF S16_BRANCH_DV = 1.                   # S16: km/h, a level-flight step of branch_crossing
+DEF S16_BRANCH_STEPS = 40                # S16: ... at most this many (within the two level flights)
+DEF S16_BUBBLE_SEP = 1.                  # S16: m/s, a level this far beyond both neighbouring level flights is looked for between them
+DEF S16_BUBBLE_STEPS = 6                 # S16: parabolic steps to level flight's SEP extremum between two columns
+DEF S16_BRANCH_STEP = .25                # S16: x the speed tolerance, the shortest continuation step that may cross a propeller branch switch
 DEF S16_PATH_DA = .5                      # S16: deg, the largest alpha step of a level-flight path march (path_state)
 DEF S16_PATH_SEP = 5.                     # S16: x the SEP allowance, a curve state's SEP apart from the path state's at its load
 
@@ -520,6 +525,13 @@ cdef class NCurves:
         if not self.path_bracket(v, n, k, &lo, &hi):return None
         return [(self.eng.st[q].speed, self.eng.st[q].load, self.eng.st[q].turn, self.eng.st[q].ps,
                  [self.eng.st[q].coords[i] for i in range(7, self.eng.st[q].nx)]) for q in (lo, hi)]
+
+    def debug_fixed(self, double v, double n, int anchor):
+        """Diagnostics (S16): fixed() at (v, n) from ``anchor``: (state, valid, converged, ps, compatible with anchor,
+        reasons)."""
+        cdef int q = self.fixed(v, n, anchor, 'debug')
+        return (q, self.eng.st[q].valid, self.eng.st[q].converged, self.eng.st[q].ps, self.eng.compatible(q, anchor),
+                self.eng.reason_list(q))
 
     def debug_rescue(self, double speed, double target, int anchor, double load):
         cdef int i
@@ -1041,6 +1053,15 @@ cdef class NCurves:
                 w = max(w, (pow(self.eng.st[last].load, 2.)-1.)*.25)
             n = py_sqrt(1.+max(w, 1e-6))
             outcome, point, reason = self.direct_seed(speed, target, n, [last], attitude, 'continuation')
+            if (outcome == 'admitted' and self.s16 and abs(speed-self.eng.st[last].speed) > S16_BRANCH_STEP*self.speed_tol
+                    and self.prop_jump(last, point)):
+                # S16: a continuation step that lands on another propeller branch than the last knot is no step of the
+                # contour (A6M2-N RB at 65% pitch: from its 1 g crossing at 162.7 km/h on the branch that ends at 163.5,
+                # one step reached the other branch's +10 m/s at 193 km/h): shorter steps keep the branch to where it
+                # ends (down to S16_BRANCH_STEP of the speed tolerance: a branch's piece can be narrower than it), a
+                # switch is crossed within that only
+                outcome, reason = 'incompatible', 'propeller branch changed during continuation'
+                self.eng.stats['s16_branch_steps'] = self.eng.stats.get('s16_branch_steps', 0)+1
             if outcome == 'admitted' and self.eng.compatible(point, last) and (not below or self.rising(point)):
                 self.add_knot(comp, point, side)
                 error = abs(curve_turn(speed, n)-self.eng.st[point].turn)
@@ -1053,7 +1074,12 @@ cdef class NCurves:
             if outcome == 'admitted':
                 outcome, reason = 'incompatible', 'branch changed during continuation'
             failure = dict(speed_kmh=speed, outcome=outcome, reason=reason, point=point)
-            if abs(speed-self.eng.st[last].speed) <= self.speed_tol:
+            # (S16: a branch change, or a contour of one knot so far, which draws nothing, halves on to S16_BRANCH_STEP of
+            # the speed tolerance: A6M2-N RB at 65% pitch, +10 m/s from its 1 g crossing at 162.7 km/h on a branch that
+            # ends at 163.5)
+            if abs(speed-self.eng.st[last].speed) <= self.speed_tol and not (
+                    self.s16 and (reason == 'propeller branch changed during continuation' or len(comp['knots']) == 1)
+                    and abs(speed-self.eng.st[last].speed) > S16_BRANCH_STEP*self.speed_tol):
                 if self.s8 and outcome != 'rejected':
                     # S8 (item 3): before the curve ends here, sliding on a confirmed blade-polar jump and the S6 retries
                     self.eng.flush_counts();before = self.ledger.snapshot()
@@ -2470,6 +2496,142 @@ cdef class NCurves:
         else:return 0.
         return pmax(S9_END_DW, .5*(n*n-1.))
 
+    cdef object one_g_start(self, double target, int above, int below, double va, double vb, dict segment, list components,
+                            list unresolved_targets):
+        """A contour of ``target`` met at level flight between the 1 g states ``above`` (SEP over it) and ``below`` (speeds
+        va..vb): located (locate_one_g) and followed from there, unless a followed contour of it already ends at 1 g in
+        the span (or, S10, a fold piece runs down to 1 g there)."""
+        cdef int crossing
+        explained = any(c['level'] == target and any(
+            e and e.get('kind') == 'one_g' and va-self.speed_tol <= (
+                e['speed_kmh'] if not isinstance(e['speed_kmh'], list) else e['speed_kmh'][0]) <= vb+self.speed_tol
+            for e in (c.get('start'), c.get('end'))) for c in components)
+        if self.s10 and not explained:
+            # S10: or a fold piece that runs down to 1 g there (NCurves.fold_turn)
+            explained = any(c['level'] == target and c.get('fold') is not None and any(
+                self.eng.st[q].load == 1. and va-self.speed_tol <= self.eng.st[q].speed <= vb+self.speed_tol
+                for q in c['fold']['knots']) for c in components)
+        if explained:return None
+        got = self.locate_one_g(target, above, below)
+        if got is None:
+            unresolved_targets.append(dict(target_mps=target, speed_kmh=[va, vb],
+                reason='1 g crossing bracketed but not localized'))
+            return None
+        crossing = got
+        if self.covered(components, target, crossing):return None
+        if (self.s16 and fabs(self.eng.st[crossing].ps-target) > self.allowance
+                and self.prop_branch([self.root_a, self.root_b], 0)):
+            # S16: the last bracket of one_g_root straddles a propeller branch switch. Where one of its two branches
+            # meets the level on its own nearby (A6M2-N RB at 65% pitch: the lower branch's level flight crosses +10 m/s
+            # at 162.7 km/h and ends at 163.5, the other runs at 14 m/s from 156.6 km/h on) that is the crossing, if it
+            # lies on the chart's level-flight path there (path_check); else level flight's SEP jumps across the level
+            # (Pyorremyrsky RB at 40% pitch, 7.7 to 18.3 m/s at 216.3-216.5 km/h across +10 m/s): no contour of it meets
+            # 1 g there (a steep SEP along level flight without a switch is a crossing: jets near their top speed)
+            got = self.branch_crossing(target, self.root_a, self.root_b, va, vb)
+            if got is None:
+                unresolved_targets.append(dict(target_mps=target, speed_kmh=self.eng.st[crossing].speed,
+                    reason='level-flight SEP jumps across the level'))
+                self.eng.stats['s16_one_g_jumps'] = self.eng.stats.get('s16_one_g_jumps', 0)+1
+                return None
+            crossing = got[0];above = got[1];below = got[2]
+            if self.covered(components, target, crossing):return None
+            self.eng.stats['s16_one_g_branch_crossings'] = self.eng.stats.get('s16_one_g_branch_crossings', 0)+1
+        if self.s9:self.end_slope(crossing)
+        comp = self.from_one_g(crossing, above, below, target, segment)
+        if comp is None:
+            unresolved_targets.append(dict(target_mps=target, speed_kmh=self.eng.st[crossing].speed,
+                reason='1 g crossing found; level slope unavailable'))
+            return None
+        components.append(comp)
+        self.follow(comp, segment)
+        if self.s10:self.follow_pending(segment, components)
+        return comp
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object branch_crossing(self, double target, int ra, int rb, double va, double vb):
+        """S16: the 1 g crossing of ``target`` on the branch of one end of a bracket that straddles a propeller branch
+        switch (ra, rb): each end's level flight continued in steps of S16_BRANCH_DV towards and past the other end (at
+        most S16_BRANCH_STEPS, within va..vb, on its own branch) until its SEP crosses the level, then one_g_root on that
+        branch alone. (crossing, above, below) of a crossing within the SEP allowance on the chart's level-flight path,
+        or None."""
+        cdef int e, other, prev, q, k, r, hi_, lo_
+        cdef double v, d, f0
+        for e, other in ((ra, rb), (rb, ra)):
+            d = 1. if self.eng.st[other].speed > self.eng.st[e].speed else -1.
+            f0 = self.eng.st[e].ps-target
+            prev = e;v = self.eng.st[e].speed
+            for k in range(S16_BRANCH_STEPS):
+                v += d*S16_BRANCH_DV
+                if not (pmin(va, vb)-1e-9 <= v <= pmax(va, vb)+1e-9):break
+                q = self.fixed(v, 1., prev, 'one_g_discovery')
+                if q < 0 or not self.eng.st[q].converged or not self.eng.st[q].valid or self.prop_jump(prev, q):break
+                if (self.eng.st[q].ps-target)*f0 < 0.:
+                    if self.eng.st[prev].ps > target:
+                        hi_ = prev;lo_ = q
+                    else:
+                        hi_ = q;lo_ = prev
+                    got = self.one_g_root(target, hi_, lo_, 'one_g_discovery')
+                    if got is None:break
+                    r = got
+                    if (fabs(self.eng.st[r].ps-target) > self.allowance or self.prop_jump(e, r)
+                            or self.path_check(r, -1) == 1):break
+                    return (r, hi_, lo_)
+                prev = q
+        return None
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int one_g_bubbles(self, int pa, int pb, double va, double vb, dict segment, list components,
+                           list unresolved_targets) except -1:
+        """S16: level flight's SEP with an extremum between two neighbouring level flights (pa, pb, on one branch) that
+        reaches a level neither of them does: a contour bubble against 1 g between the columns (P-43A-1 RB at 40% pitch:
+        -0.29 and -0.78 m/s at 430 and 455 km/h, +0.25 at 440). Looked for only where a level lies within S16_BUBBLE_SEP
+        beyond both: level flight at the middle, then parabolic steps to the extremum (at most S16_BUBBLE_STEPS) until
+        one crosses the level; each side's crossing then started as any other (one_g_start)."""
+        cdef double fa = self.eng.st[pa].ps, fb = self.eng.st[pb].ps, hi = pmax(fa, fb), lo = pmin(fa, fb), x, den
+        cdef double x0, x1, x2, y0, y1, y2, sgn, vm
+        cdef int m, q, k, best, j
+        if self.prop_jump(pa, pb) or vb-va <= 2.*self.speed_tol:return 0
+        ups = [t for t in self.levels if hi < t <= hi+S16_BUBBLE_SEP]
+        downs = [t for t in self.levels if lo-S16_BUBBLE_SEP <= t < lo]
+        if not ups and not downs:return 0
+        vm = .5*(va+vb)
+        m = self.fixed(vm, 1., pa, 'one_g_discovery')
+        if m < 0 or not self.eng.st[m].converged or not self.eng.st[m].valid or self.prop_jump(pa, m):return 0
+        self.eng.stats['s16_bubble_probes'] = self.eng.stats.get('s16_bubble_probes', 0)+1
+        for targets, sgn in ((ups, 1.), (downs, -1.)):
+            if not targets or not sgn*(self.eng.st[m].ps-(hi if sgn > 0. else lo)) > 0.:continue
+            pts = [pa, m, pb];best = m
+            for k in range(S16_BUBBLE_STEPS):
+                if all(sgn*(self.eng.st[best].ps-t) > 0. for t in targets):break
+                pts.sort(key=lambda r: self.eng.st[r].speed)
+                j = max(range(len(pts)), key=lambda i: sgn*self.eng.st[pts[i]].ps)
+                if j == 0 or j == len(pts)-1:break
+                x0 = self.eng.st[pts[j-1]].speed;x1 = self.eng.st[pts[j]].speed;x2 = self.eng.st[pts[j+1]].speed
+                y0 = self.eng.st[pts[j-1]].ps;y1 = self.eng.st[pts[j]].ps;y2 = self.eng.st[pts[j+1]].ps
+                den = (x1-x0)*(y1-y2)-(x1-x2)*(y1-y0)
+                if den == 0.:break
+                x = x1-.5*((x1-x0)*(x1-x0)*(y1-y2)-(x1-x2)*(x1-x2)*(y1-y0))/den
+                if not x0 < x < x2 or pmin(fabs(x-x0), pmin(fabs(x-x1), fabs(x-x2))) < .25*self.speed_tol:break
+                q = self.fixed(x, 1., pts[j], 'one_g_discovery')
+                if q < 0 or not self.eng.st[q].converged or not self.eng.st[q].valid or self.prop_jump(pts[j], q):break
+                pts.append(q)
+                if sgn*self.eng.st[q].ps > sgn*self.eng.st[best].ps:best = q
+            for t in targets:
+                if not sgn*(self.eng.st[best].ps-t) > 0.:continue
+                self.eng.stats['s16_bubbles'] = self.eng.stats.get('s16_bubbles', 0)+1
+                for side in (pa, pb):
+                    above, below = (best, side) if sgn > 0. else (side, best)
+                    v0, v1 = sorted((self.eng.st[best].speed, self.eng.st[side].speed))
+                    self.one_g_start(t, above, below, v0, v1, segment, components, unresolved_targets)
+        return 0
+
+    cdef bint slope_state(self, int two, int crossing) except -1:
+        """An admitted state compatible with the 1 g crossing (S16: on its propeller branch) for from_one_g's slope."""
+        return (self.eng.st[two].valid and self.eng.compatible(two, crossing)
+                and not (self.s16 and self.prop_jump(crossing, two)))
+
     cdef object from_one_g(self, int crossing, int above, int below, double target, dict segment):
         cdef double v = self.eng.st[crossing].speed, dv, d1, dw, dw2
         cdef int two
@@ -2489,12 +2651,18 @@ cdef class NCurves:
                             provenance='1 g crossing', w_slope=-d1/dw, below=True)
         two = self.fixed(v, 2., crossing, 'one_g_discovery')
         dw2 = 3.
-        if not (self.eng.st[two].valid and self.eng.compatible(two, crossing)) and self.s16:
+        # (S16: on the crossing's own propeller branch)
+        if not self.slope_state(two, crossing) and self.s16:
             # S16: where the envelope ends below 2 g at this speed (flying boats and bombers near their top speed: H6K4
             # RB -10 m/s at 403.5 km/h, the control limit at 1.9 g) the level set's slope from halfway to the boundary
             dw2 = self.half_w(v)
             if dw2 > 0.:two = self.fixed(v, sqrt(1.+dw2), crossing, 'one_g_discovery')
-        if not (self.eng.st[two].valid and self.eng.compatible(two, crossing)):return None
+            if not self.slope_state(two, crossing):
+                # (where that lands on another propeller branch or the boundary dips between the columns: A6M2-N RB at
+                # 65% pitch, 163 km/h, 1.1 g between 1.9 g columns; the end's own step, as end_slope)
+                dw2 = S9_END_DW
+                two = self.fixed(v, sqrt(1.+dw2), crossing, 'one_g_discovery')
+        if not self.slope_state(two, crossing):return None
         dw = (self.eng.st[two].ps-self.eng.st[crossing].ps)/dw2
         if dw >= 0.:return None
         return dict(level=target, segment=segment['speed_kmh'], knots=[crossing], discovered_at_kmh=v,
@@ -2547,42 +2715,9 @@ cdef class NCurves:
                             if not (self.eng.st[pa].valid and self.eng.st[pb].valid and self.eng.compatible(pa, pb)):continue
                             for target in self.levels:
                                 if (self.eng.st[pa].ps-target)*(self.eng.st[pb].ps-target) >= 0.:continue
-                                explained = any(c['level'] == target and any(
-                                    e and e.get('kind') == 'one_g' and va-self.speed_tol <= (
-                                        e['speed_kmh'] if not isinstance(e['speed_kmh'], list) else e['speed_kmh'][0]) <= vb+self.speed_tol
-                                    for e in (c.get('start'), c.get('end'))) for c in components)
-                                if self.s10 and not explained:
-                                    # S10: or a fold piece that runs down to 1 g there (NCurves.fold_turn)
-                                    explained = any(c['level'] == target and c.get('fold') is not None and any(
-                                        self.eng.st[q].load == 1. and va-self.speed_tol <= self.eng.st[q].speed <= vb+self.speed_tol
-                                        for q in c['fold']['knots']) for c in components)
-                                if explained:continue
                                 above, below = (pa, pb) if self.eng.st[pa].ps > target else (pb, pa)
-                                crossing = self.locate_one_g(target, above, below)
-                                if crossing is None:
-                                    unresolved_targets.append(dict(target_mps=target, speed_kmh=[va, vb],
-                                        reason='1 g crossing bracketed but not localized'))
-                                    continue
-                                if self.covered(components, target, crossing):continue
-                                if (self.s16 and fabs(self.eng.st[crossing].ps-target) > self.allowance
-                                        and self.prop_branch([self.root_a, self.root_b], 0)):
-                                    # S16: level flight's SEP jumps across the level where the propeller switches branch
-                                    # inside one_g_root's last bracket (Pyorremyrsky RB at 40% pitch, 7.7 to 18.3 m/s at
-                                    # 216.3-216.5 km/h across +10 m/s): no contour of it meets 1 g there (a steep SEP
-                                    # along level flight without a switch is a crossing: jets near their top speed)
-                                    unresolved_targets.append(dict(target_mps=target, speed_kmh=self.eng.st[crossing].speed,
-                                        reason='level-flight SEP jumps across the level'))
-                                    self.eng.stats['s16_one_g_jumps'] = self.eng.stats.get('s16_one_g_jumps', 0)+1
-                                    continue
-                                if self.s9:self.end_slope(crossing)
-                                comp = self.from_one_g(crossing, above, below, target, segment)
-                                if comp is None:
-                                    unresolved_targets.append(dict(target_mps=target, speed_kmh=self.eng.st[crossing].speed,
-                                        reason='1 g crossing found; level slope unavailable'))
-                                    continue
-                                components.append(comp)
-                                self.follow(comp, segment)
-                                if self.s10:self.follow_pending(segment, components)
+                                self.one_g_start(target, above, below, va, vb, segment, components, unresolved_targets)
+                            if self.s16:self.one_g_bubbles(pa, pb, va, vb, segment, components, unresolved_targets)
                     if self.s16 and self.edge_knots:self.edge_seeds(segments, components)
                     if self.s9:components[:] = self.merge_duplicates(components)
                     for comp in components:
