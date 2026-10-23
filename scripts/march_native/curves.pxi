@@ -2352,6 +2352,14 @@ cdef class NCurves:
                                         reason='1 g crossing bracketed but not localized'))
                                     continue
                                 if self.covered(components, target, crossing):continue
+                                if self.s16 and fabs(self.eng.st[crossing].ps-target) > self.allowance:
+                                    # S16: level flight's SEP jumps across the level inside a quarter of the speed
+                                    # tolerance (a propeller branch switch: Pyorremyrsky RB at 40% pitch, 7.7 to 18.3 m/s
+                                    # at 216.3-216.5 km/h across +10 m/s): no contour of it meets 1 g there
+                                    unresolved_targets.append(dict(target_mps=target, speed_kmh=self.eng.st[crossing].speed,
+                                        reason='level-flight SEP jumps across the level'))
+                                    self.eng.stats['s16_one_g_jumps'] = self.eng.stats.get('s16_one_g_jumps', 0)+1
+                                    continue
                                 if self.s9:self.end_slope(crossing)
                                 comp = self.from_one_g(crossing, above, below, target, segment)
                                 if comp is None:
