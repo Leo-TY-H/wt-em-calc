@@ -29,7 +29,7 @@ main{padding:18px 14px 22px}
 .sidebar{padding:18px 16px}
 .page-heading{margin-bottom:16px}
 .contour-settings{display:block}.contour-levels{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.contour-levels button{border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);padding:4px 8px;font-size:12px}.contour-levels button:hover{border-color:var(--cyan)}.contour-add{display:flex;gap:7px}.contour-add input{width:100%;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:5px;color:var(--text);padding:7px}.contour-add button{border:0;border-radius:5px;background:var(--cyan);color:#0c111a;padding:7px 12px;font-weight:700}.contour-settings .hint{display:block;min-height:0;margin-top:5px}
-#chart .textpoint text{paint-order:stroke;stroke:#121925;stroke-width:4px;stroke-linejoin:round}
+#chart .textpoint text{paint-order:stroke;stroke:#0c111a;stroke-width:4px;stroke-linejoin:round}
 @media(min-width:1600px){.workspace{grid-template-columns:300px minmax(0,1fr)}main{padding-inline:14px}}
 @media(max-width:1150px){.workspace{grid-template-columns:254px minmax(0,1fr)}main{padding-inline:12px}}
 @media(max-width:760px){.workspace{display:flex;flex-direction:column}.topbar{padding-inline:12px}main{padding:14px 8px}.sidebar{padding:14px 10px}}
@@ -37,3 +37,12 @@ main{padding:18px 14px 22px}
 .flap-modes{display:flex;gap:5px;margin:12px 0 8px}.flap-modes button{flex:1;padding:6px 3px;border:1px solid var(--line);border-radius:4px;background:var(--panel);font-size:11px}.flap-modes button[aria-pressed=true]{border-color:var(--cyan);color:var(--cyan);background:#16343d}.flap-modes button:disabled{cursor:default;opacity:.35}#flap-limit-help{display:block;color:var(--muted);font-size:10px;line-height:1.5}
 .ammunition-setting{margin:16px 0}.ammunition-setting .check-row{align-items:center;margin:0 0 7px;font-size:12px;line-height:1.5;cursor:pointer}.ammunition-setting input{flex-shrink:0;margin:0}.ammunition-setting small{display:block;margin:4px 0 0 22px;font-size:11px;line-height:1.5;color:var(--muted)}#ammunition-status{color:var(--text)}.ammunition-setting .field{margin-bottom:0}
 #manual-engine-field{width:100%;margin:14px 0}#manual-engine-settings{padding-top:10px}#manual-engine-settings small{display:block;margin:4px 0 14px;color:var(--muted);font-size:11px;line-height:1.5}#manual-engine-field .check-row{margin:8px 0;cursor:pointer}#manual-engine-settings input:disabled{opacity:.45}
+
+/* The EM diagram and its operating-point details sit on the page without boxes. */
+#em-workspace .chart-card,#em-workspace .inspector{background:none;border:0;border-radius:0}
+#em-workspace .chart-toolbar{padding:0 0 12px;border-bottom:0}
+#em-workspace .inspector{padding:10px 0 0}
+/* Two visible columns: flight and energy, component forces. */
+.point-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.25fr)}
+@media(max-width:1150px){.point-grid>div:last-child{grid-column:auto}}
+@media(max-width:760px){.point-grid{grid-template-columns:minmax(0,1fr)}}
