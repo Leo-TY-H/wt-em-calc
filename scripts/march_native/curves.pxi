@@ -114,6 +114,8 @@ cdef class NCurves:
     # the regime switch kinks SEP, against the curvature the piece bound assumes (PBY-5 SB +10 m/s at 154-155 km/h,
     # where each engine reaches its governed 2,700 rpm: drawn 0.15 deg/s off)
     cdef public bint s14
+    # S15 (WT_MARCH_S15=0: S14): the last column with level flight closes the solved columns (link_columns)
+    cdef public bint s15
     cdef list gov_idx
     cdef list pending                    # S10: components found at folds, still to follow
     cdef dict grads                      # S10: (dSEP/dV, dSEP/dw) of curve states by their base state
@@ -152,6 +154,7 @@ cdef class NCurves:
         self.s10 = self.s9 and os.environ.get('WT_MARCH_S10', '1') != '0'
         self.s13 = self.eng.s12 and os.environ.get('WT_MARCH_S13', '1') != '0'
         self.s14 = self.eng.s14
+        self.s15 = self.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
         self.pending = [];self.grads = {}
         self.exit_seen = False
@@ -1737,6 +1740,17 @@ cdef class NCurves:
             presence[speed] = self.column_levels(by_speed[speed])
             if presence[speed] is None:continue
             solved.append(speed);last_used = speed
+        if self.s15:
+            # S15: the last column with level flight ends the solved columns where the last column itself has none
+            # (past a forward-IAS limit): a level that appears only between them was never looked for there (Yak-3
+            # landing flaps, Ps = 0 from the top boundary into the flap-limit edge)
+            for speed in reversed(ordered):
+                if solved and speed <= solved[-1]:break
+                here = self.column_levels(by_speed[speed])
+                if here is None:continue
+                presence[speed] = here;solved.append(speed)
+                self.eng.stats['s15_last_level_columns'] = self.eng.stats.get('s15_last_level_columns', 0)+1
+                break
         extra = {}
         for a, b in zip(solved, solved[1:]):
             for speed in ordered:

@@ -601,18 +601,20 @@ def outline(data, aircraft):
     trace = (aircraft.get('envelope_trace') or {}).get('ias_trace') if S15 else None
     if trace is not None and trace.get('status') != 'traced':trace = None
     # S15: the traced edge closes the last run between the trace's start column and its corner
-    host = None if trace is None else max((k for k, run in enumerate(pieces) if run[0]['speed_kmh'] <= trace['corner']['speed_kmh']+1e-9
+    host = None if trace is None else max((k for k, run in enumerate(pieces) if run[0]['speed_kmh'] <= trace['corner']['speed_kmh']+1e-3
                                            and run[-1]['speed_kmh'] >= trace['start_kmh']-1e-9), default=None)
     # runs wholly past the corner stand on the edge itself (the native trace checked that their columns end on the limit)
     skip = set() if host is None else {k for k, run in enumerate(pieces) if k > host
-                                       and run[0]['speed_kmh'] > trace['corner']['speed_kmh']+1e-9}
+                                       and run[0]['speed_kmh'] > trace['corner']['speed_kmh']+1e-3}
     for k, run in enumerate(pieces):
         iso = None
         if k in skip:continue
         if k == host:
             # S15: the run that reaches the traced forward-IAS edge ends at its corner (columns past it stand on the
             # edge itself) and the edge closes it down to level flight
-            kept = [c for c in run if c['speed_kmh'] <= trace['corner']['speed_kmh']+1e-9]
+            # (a column within 0.001 km/h past it stands on the corner itself: an edge ending at the chart's speed range
+            # reaches the range end only to the trace's tolerance)
+            kept = [c for c in run if c['speed_kmh'] <= trace['corner']['speed_kmh']+1e-3]
             if kept:
                 run = kept
                 iso = traced_edge(aircraft, trace)
