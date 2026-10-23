@@ -94,6 +94,7 @@ cdef class NCurves:
     cdef public list trace               # S9 diagnostics: every direct solve (when a list)
     cdef public bint s9                  # S9 (WT_MARCH_S9=0 restores S8 exactly)
     cdef double root_dsdv                # S9: dSEP/dV along level flight over one_g_root's last bracket
+    cdef int root_a, root_b              # S16: the two level-flight states of that bracket
     cdef public bint exit_seen           # S9: the last level solve met a physical rejection at the level (exit evidence)
     cdef public bint edge_exit           # S9: a step of the last edge_root met one
     cdef public int exit_state           # S9: that physically rejected state
@@ -872,6 +873,7 @@ cdef class NCurves:
         for it in range(S9_END_STEPS):
             lo = self.eng.st[a].speed;hi = self.eng.st[b].speed
             self.root_dsdv = (self.eng.st[b].ps-self.eng.st[a].ps)/(hi-lo) if hi != lo else NAN
+            self.root_a = a;self.root_b = b
             if fabs(fa) <= S9_END_SEP*self.allowance and a != avoid:return a
             if fabs(fb) <= S9_END_SEP*self.allowance and b != avoid:return b
             if fabs(hi-lo) <= S9_END_SPEED*self.speed_tol:break
@@ -2352,10 +2354,12 @@ cdef class NCurves:
                                         reason='1 g crossing bracketed but not localized'))
                                     continue
                                 if self.covered(components, target, crossing):continue
-                                if self.s16 and fabs(self.eng.st[crossing].ps-target) > self.allowance:
-                                    # S16: level flight's SEP jumps across the level inside a quarter of the speed
-                                    # tolerance (a propeller branch switch: Pyorremyrsky RB at 40% pitch, 7.7 to 18.3 m/s
-                                    # at 216.3-216.5 km/h across +10 m/s): no contour of it meets 1 g there
+                                if (self.s16 and fabs(self.eng.st[crossing].ps-target) > self.allowance
+                                        and self.prop_branch([self.root_a, self.root_b], 0)):
+                                    # S16: level flight's SEP jumps across the level where the propeller switches branch
+                                    # inside one_g_root's last bracket (Pyorremyrsky RB at 40% pitch, 7.7 to 18.3 m/s at
+                                    # 216.3-216.5 km/h across +10 m/s): no contour of it meets 1 g there (a steep SEP
+                                    # along level flight without a switch is a crossing: jets near their top speed)
                                     unresolved_targets.append(dict(target_mps=target, speed_kmh=self.eng.st[crossing].speed,
                                         reason='level-flight SEP jumps across the level'))
                                     self.eng.stats['s16_one_g_jumps'] = self.eng.stats.get('s16_one_g_jumps', 0)+1
