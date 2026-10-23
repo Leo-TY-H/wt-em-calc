@@ -7,6 +7,7 @@ import ast
 import errno
 import hashlib
 import json
+import math
 import orjson
 import mimetypes
 import os
@@ -112,6 +113,62 @@ def chart_payload(key):
     return result['chart']
 
 
+POINT_LOCK=threading.Lock()
+
+
+@lru_cache(maxsize=4)
+def point_solver(key,entry):
+    """The full-model solver one chart entry was calculated with (the SEP curve solver for march charts)."""
+    from em_solver import TrimSolver,aircraft_settings,settings
+    from em_stationary_baseline import BaselineSolver
+    data=named_data(key)
+    aircraft=next((a for a in data['aircraft'] if a['id']==entry),None)
+    if aircraft is None:raise FileNotFoundError('Unknown aircraft entry')
+    name=aircraft.get('aircraft_id',aircraft['id'])
+    config=data['settings']
+    chosen=next((e for e in config.get('entries') or () if e['id']==entry),None)
+    condition=aircraft.get('settings') or (settings(dict(config,**dict(chosen['settings'],entries=None,aircraft=[name],
+        aircraft_settings={},compare_instructor=False))) if chosen else aircraft_settings(config,name))
+    condition=settings({k:v for k,v in condition.items() if k!='_over_rev_limits'})
+    if condition['trim_solver_mode']!='stationary':return TrimSolver(name,condition)
+    march=aircraft.get('chart_solver')=='march'
+    solver=BaselineSolver(name,settings(dict(condition,sideslip_recovery=False)) if march else condition)
+    if march:
+        import em_march_native
+        solver.soft_admission=True
+        em_march_native.attach(solver)
+    return solver
+
+
+def solve_point(key,entry,speed_kmh,load_g):
+    """Full-model state at a clicked position of a stored chart, seeded from the nearest admitted sample."""
+    for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Load',load_g,1.,64.)):
+        if not math.isfinite(value) or not low<=value<=high:raise ValueError(f'{label} out of range')
+    with LOCK:result=RESULTS.get(key)
+    if result is None:raise FileNotFoundError('Result expired')
+    if entry not in result['points']:raise FileNotFoundError('Unknown aircraft entry')
+    from em_sampling import continuation_initial
+    with POINT_LOCK:
+        solver=point_solver(key,entry)
+        seeds=[p for p in result['points'][entry] if p.get('local_valid',p.get('valid')) and p.get('solution') is not None]
+        initial=None
+        if seeds:
+            near=min(seeds,key=lambda p:((p['speed_kmh']-speed_kmh)/speed_kmh)**2+((p['load_g']-load_g)/load_g)**2)
+            nominal=lambda n:math.degrees(math.acos(1./max(1.,n)))
+            attitude=list(near['solution']);attitude[1]+=nominal(load_g)-nominal(near['load_g'])
+            initial=continuation_initial(solver,near,attitude)
+        try:point=solver.solve(speed_kmh,load_g,initial)
+        except ValueError as error:
+            # No candidate established: a gap at this state, not an absence proof.
+            point=dict(speed_kmh=speed_kmh,load_g=load_g,status='unresolved',valid=False,chart_usable=False,
+                       reasons=['stationary search unresolved'],search_unresolved=str(error))
+    def public(value):
+        if isinstance(value,dict):return {k:public(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
+        if isinstance(value,(list,tuple)):return [public(v) for v in value]
+        return value
+    return dict(public(point),solved_at_request=True)
+
+
 def fingerprint():
 
 
@@ -159,7 +216,7 @@ def discard_old_results():
             PREVIEWS.pop(job['id'],None)
             RESULTS.pop(job['id'],None)
     if old:
-        chart_payload.cache_clear();requested_contours.cache_clear()
+        chart_payload.cache_clear();requested_contours.cache_clear();point_solver.cache_clear()
 
 
 def run_job(key,config,event):
@@ -335,6 +392,22 @@ class Handler(BaseHTTPRequestHandler):
                     if result is None:raise FileNotFoundError('Result expired')
                     return self.respond(result['points'][aircraft][int(index)])
                 except (OSError,IndexError,ValueError,KeyError):return self.respond(dict(error='Point not found'),404)
+            if len(parts)==6 and parts[4]=='solve':
+                # The full-model state at a clicked chart position: ?speed_kmh=&load_g=
+                entry=parts[5]
+                base=entry.removesuffix('__instructor_on').removesuffix('__instructor_off')
+                if not (ENTRY_ID.fullmatch(entry) or (base in AIRCRAFT and entry in (base,base+'__instructor_on',base+'__instructor_off'))):
+                    return self.respond(dict(error='Invalid aircraft entry'),400)
+                query=parse_qs(urlparse(self.path).query)
+                try:
+                    if len(query.get('speed_kmh',()))!=1 or len(query.get('load_g',()))!=1:raise ValueError('speed_kmh and load_g required')
+                    return self.respond(solve_point(key,entry,float(query['speed_kmh'][0]),float(query['load_g'][0])))
+                except FileNotFoundError as error:return self.respond(dict(error=str(error)),404)
+                except ValueError as error:return self.respond(dict(error=str(error)),400)
+                except Exception as error:
+                    import traceback
+                    traceback.print_exc()
+                    return self.respond(dict(error='Point solve failed: '+type(error).__name__),500)
             if len(parts)==5 and parts[4]=='preview.json':
                 with LOCK:chart=PREVIEWS.get(key)
                 return self.respond(chart) if chart else self.respond(dict(error='Preview not ready'),404)
