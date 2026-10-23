@@ -1045,7 +1045,11 @@ cdef class NCurves:
                 return dict(kind='one_g', speed_kmh=self.eng.st[last].speed, state=last)
             if w <= 0.:
                 one = self.fixed(speed, 1., last, 'endpoint')
-                if self.eng.st[one].valid and self.sense(comp)*(self.eng.st[one].ps-target) < 0.:
+                if (self.eng.st[one].valid and self.sense(comp)*(self.eng.st[one].ps-target) < 0.
+                        and not (self.s16 and not below and self.eng.st[last].load > 1.+1e-9 and self.rising_at(one))):
+                    # (S16: not where SEP rises with load from level flight at this speed: the contour can lie above 1 g
+                    # here and turn back to it in speed (Do 17 E-1 SB -40 m/s: from 505.3 km/h out to 509.5 between 3.5
+                    # and 7.9 deg/s, back to 1 g at 506.4); the solve above 1 g first, S10's fold_turn at its tip)
                     end = self.one_g_endpoint(comp, target, last, one, side)
                     if end.get('state') is not None and end['kind'] == 'one_g':
                         self.add_knot(comp, end['state'], side)
@@ -2626,6 +2630,13 @@ cdef class NCurves:
                     v0, v1 = sorted((self.eng.st[best].speed, self.eng.st[side].speed))
                     self.one_g_start(t, above, below, v0, v1, segment, components, unresolved_targets)
         return 0
+
+    cdef bint rising_at(self, int one) except -1:
+        """S16: SEP rising with load from the level flight ``one`` (a level-turn solve at w = S9_END_DW, as S10's 'below'
+        test), on its branch."""
+        cdef int two = self.fixed(self.eng.st[one].speed, sqrt(1.+S9_END_DW), one, 'endpoint')
+        return (self.eng.st[two].valid and self.eng.compatible(two, one) and not self.prop_jump(one, two)
+                and self.eng.st[two].ps > self.eng.st[one].ps)
 
     cdef bint slope_state(self, int two, int crossing) except -1:
         """An admitted state compatible with the 1 g crossing (S16: on its propeller branch) for from_one_g's slope."""
