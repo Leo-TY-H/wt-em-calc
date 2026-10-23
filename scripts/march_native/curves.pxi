@@ -35,6 +35,7 @@ DEF S9_END_VERTICAL = 50.                 # S9: the steepest end slope dw/dV (pe
 DEF S10_FOLD_KNOTS = 10                   # S10: the most knots of one fold piece (the curve's turn in speed)
 DEF S10_ROOT_STEPS = 8                    # S10: secant steps in speed of one fold knot (the level at a fixed load)
 DEF S13_ROOT_SEP = .001                   # S13: a level root on the other propeller branch: lower load by more than this x
+DEF S16_OUTLINE_SAMPLES = 16              # S16: points across a contour piece checked against the drawn outline
 
 
 cdef inline bint numerical_code(int r) noexcept nogil:
@@ -116,6 +117,19 @@ cdef class NCurves:
     cdef public bint s14
     # S15 (WT_MARCH_S15=0: S14): the last column with level flight closes the solved columns (link_columns)
     cdef public bint s15
+    # S16 (WT_MARCH_S16=0: S15): every level present at an envelope column is drawn there (Leo 2026-10-23: "contour not
+    # plotted when they exist within the envelope"): columns above a lower edge (level flight over a soft limit) are
+    # looked at too; a level met at a column no followed contour passes is followed from there; a level met at level
+    # flight is a 1 g crossing (never a one-point contour stuck at 1 g); no over-rev state below a lower edge is transient
+    cdef public bint s16
+    cdef public list env_lo               # S16: the lower-edge load of each envelope column (1 without one)
+    cdef public list edge_knots           # S16: the rows of each traced leaning edge's knots (NTracer.edge_rows), or None
+    # S16: the drawn outline's closed regions (em_march_chart.curve_outline): their points (speed, turn) concatenated,
+    # the start of each region, and the units a point outside is measured in (speed and envelope tolerances)
+    cdef double* opts
+    cdef int* ooff
+    cdef int nreg
+    cdef double ounit_v, ounit_t
     cdef list gov_idx
     cdef list pending                    # S10: components found at folds, still to follow
     cdef dict grads                      # S10: (dSEP/dV, dSEP/dw) of curve states by their base state
@@ -124,9 +138,83 @@ cdef class NCurves:
     @cython.wraparound(True)
     def __cinit__(self, *args, **kwargs):
         self.pool = NULL
+        self.opts = NULL;self.ooff = NULL;self.nreg = 0
 
     def __dealloc__(self):
         if self.pool != NULL:cfree(self.pool)
+        if self.opts != NULL:cfree(self.opts)
+        if self.ooff != NULL:cfree(self.ooff)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    def set_outline(self, list regions, double unit_v, double unit_t):
+        """S16: the drawn outline the contours must stay inside: closed regions, each a list of (speed km/h, turn deg/s)
+        points (em_march_chart.curve_outline); a point outside is measured in units of (unit_v km/h, unit_t deg/s)."""
+        cdef int total = 0, k = 0, r
+        if self.opts != NULL:cfree(self.opts)
+        if self.ooff != NULL:cfree(self.ooff)
+        self.opts = NULL;self.ooff = NULL;self.nreg = 0
+        regions = [reg for reg in regions if len(reg) >= 3]
+        for reg in regions:total += len(reg)
+        if not regions:return
+        self.opts = <double*>malloc(2*total*sizeof(double));self.ooff = <int*>malloc((len(regions)+1)*sizeof(int))
+        if self.opts == NULL or self.ooff == NULL:raise MemoryError()
+        for r, reg in enumerate(regions):
+            self.ooff[r] = k
+            for x, y in reg:
+                self.opts[2*k] = float(x);self.opts[2*k+1] = float(y);k += 1
+        self.ooff[len(regions)] = k
+        self.nreg = len(regions);self.ounit_v = unit_v;self.ounit_t = unit_t
+
+    cdef double outline_outside(self, double x, double t) noexcept:
+        """S16: how far the point (speed ``x``, turn ``t``) lies outside the drawn outline, in its units (0 inside any
+        region: even-odd crossings; else the distance to the nearest region edge)."""
+        cdef int r, i, j, a, b, cross
+        cdef double x0, y0, x1, y1, xc, best = INFINITY, px, py, qx, qy, ex, ey, l, u, d
+        for r in range(self.nreg):
+            a = self.ooff[r];b = self.ooff[r+1];cross = 0
+            for i in range(a, b):
+                j = i+1 if i+1 < b else a
+                x0 = self.opts[2*i];y0 = self.opts[2*i+1];x1 = self.opts[2*j];y1 = self.opts[2*j+1]
+                if (y0 > t) != (y1 > t):
+                    xc = x0+(t-y0)*(x1-x0)/(y1-y0)
+                    if x < xc:cross += 1
+            if cross % 2:return 0.
+        px = x/self.ounit_v;py = t/self.ounit_t
+        for r in range(self.nreg):
+            a = self.ooff[r];b = self.ooff[r+1]
+            for i in range(a, b):
+                j = i+1 if i+1 < b else a
+                qx = self.opts[2*i]/self.ounit_v;qy = self.opts[2*i+1]/self.ounit_t
+                ex = self.opts[2*j]/self.ounit_v-qx;ey = self.opts[2*j+1]/self.ounit_t-qy
+                l = ex*ex+ey*ey
+                u = ((px-qx)*ex+(py-qy)*ey)/l if l > 0. else 0.
+                u = pmin(1., pmax(0., u))
+                d = sqrt((qx+u*ex-px)*(qx+u*ex-px)+(qy+u*ey-py)*(qy+u*ey-py))
+                if d < best:best = d
+        return best
+
+    cdef bint outside(self, int p) noexcept:
+        """S16: an admitted curve state that lies more than one unit outside the drawn outline: beyond the envelope by the
+        chart's own rule (the first limit along alpha from level flight: a trim fold or a pitch-response reversal stops the
+        march where the state's own admission still passes, Hunter F.58A SB -200 m/s at 1,096-1,112 km/h), so no contour
+        knot."""
+        if not self.s16 or self.nreg == 0 or p < 0 or not self.eng.st[p].valid:return False
+        return self.outline_outside(self.eng.st[p].speed, self.eng.st[p].turn) > 1.
+
+    cdef double outline_exit(self, HermiteCurve hf, double va, double vb) noexcept:
+        """S16: the speed inside (va, vb) where the drawn contour piece lies farthest outside the drawn outline, when that
+        is more than one unit (S16_OUTLINE_SAMPLES points across it); NaN where it stays inside."""
+        cdef int j
+        cdef double x, w, d, best = 1., at = NAN
+        if self.nreg == 0:return NAN
+        for j in range(1, S16_OUTLINE_SAMPLES):
+            x = va+(vb-va)*j/S16_OUTLINE_SAMPLES
+            w = hf.eval(x)
+            d = self.outline_outside(x, curve_turn(x, sqrt(1.+pmax(w, 0.))))
+            if d > best:
+                best = d;at = x
+        return at
 
     def __init__(self, MarchEngine eng, py):
         import os
@@ -155,6 +243,8 @@ cdef class NCurves:
         self.s13 = self.eng.s12 and os.environ.get('WT_MARCH_S13', '1') != '0'
         self.s14 = self.eng.s14
         self.s15 = self.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
+        self.s16 = self.s15 and self.eng.s16
+        self.edge_knots = None
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
         self.pending = [];self.grads = {}
         self.exit_seen = False
@@ -186,7 +276,7 @@ cdef class NCurves:
         a transient over-rev, admitted like the envelope's (the boundary is the first hard limit there, or the start of
         the final over-rev stretch above it)."""
         import bisect
-        cdef double v, n
+        cdef double v, n, lo
         cdef int i
         if sid < 0 or not self.eng.soft or self.eng.st[sid].valid or not self.env_v:return 0
         if not self.eng.only_reasons(sid, (<unsigned long long>1) << R_RPM):return 0
@@ -196,6 +286,13 @@ cdef class NCurves:
         elif i > 0 and fabs(self.env_v[i-1]-v) <= 1e-9:n = self.env_n[i-1]
         elif 0 < i < len(self.env_v):n = pmin(self.env_n[i-1], self.env_n[i])
         else:return 0
+        if self.s16 and self.env_lo:
+            # S16: not below the lower edge of the columns either side (a level flight that over-revs: the over-rev
+            # stretch up to that edge lies outside the outline)
+            if i < len(self.env_v) and fabs(self.env_v[i]-v) <= 1e-9:lo = self.env_lo[i]
+            elif i > 0 and fabs(self.env_v[i-1]-v) <= 1e-9:lo = self.env_lo[i-1]
+            else:lo = pmax(self.env_lo[i-1], self.env_lo[i])
+            if self.eng.st[sid].load <= lo+1e-9:return 0
         if self.eng.st[sid].load < n-1e-9:
             self.eng.st[sid].valid = True;self.eng.st[sid].rule = 1
             self.eng.stats['s8_transient_over_rev'] = self.eng.stats.get('s8_transient_over_rev', 0)+1
@@ -311,6 +408,10 @@ cdef class NCurves:
                 self.next_pool = (self.next_pool+1) % self.npool
         self.eng.flush_counts()
         if p < 0:outcome, reason = 'unresolved', 'correction failed'
+        elif self.outside(p) and fabs(self.eng.st[p].ps-target) <= self.allowance:
+            # S16: the level's state lies beyond the drawn envelope: an exit, as a physical rejection there
+            outcome, reason = 'rejected', ['beyond the envelope outline']
+            self.eng.stats['s16_outside_outline'] = self.eng.stats.get('s16_outside_outline', 0)+1
         elif self.eng.st[p].valid and fabs(self.eng.st[p].ps-target) <= self.allowance:outcome, reason = 'admitted', None
         elif not self.eng.st[p].valid and self.balanced(p) and self.s9 and not self.exit_evidence(p):
             # S9: rejected only because a sub-solve of the admission did not close (Instructor static trim, pitch
@@ -402,13 +503,22 @@ cdef class NCurves:
             outcome, q2, reason = self.direct_seed(mid, target, sqrt(1.+pmax(w, 1e-6)), [good], None, 'interpolation_checks')
             if outcome == 'admitted' and q2 is not None and self.eng.compatible(q2, good):
                 lo = mid;good = q2
+            elif self.s16 and outcome != 'rejected':
+                # S16: a plain solve that does not close far from the last state (a steep level near its 1 g end: the
+                # load seeded from that state is far off) is no evidence of the exit: the level solved as the split does
+                # (A6M6c RB at 65% pitch: +10 m/s was excluded over the whole 162-185 km/h piece)
+                q = self.solve_level(mid, target, good, -1, 'interpolation_checks')
+                if q >= 0:
+                    lo = mid;good = q
+                else:hi = mid
             else:hi = mid
         return good if good != k else -1
 
     cdef bint ok_root(self, int p, int anchor, double target) except -1:
         if p < 0:return False
         self.admit_transient(p)
-        return self.eng.st[p].valid and fabs(self.eng.st[p].ps-target) <= self.allowance and self.eng.compatible(p, anchor)
+        return (self.eng.st[p].valid and fabs(self.eng.st[p].ps-target) <= self.allowance and self.eng.compatible(p, anchor)
+                and not self.outside(p))
 
     # ------------------------------------------------------------------ S9: level solves that do not close
     cdef bint exit_evidence(self, int p) except -1:
@@ -417,6 +527,7 @@ cdef class NCurves:
         cdef TState* t
         cdef int i
         if p < 0:return False
+        if self.outside(p):return True     # S16: beyond the drawn envelope
         t = &self.eng.st[p]
         if t.valid or t.nreasons == 0 or not self.balanced(p):return False
         for i in range(t.nreasons):
@@ -479,6 +590,9 @@ cdef class NCurves:
             ps = self.eng.st[p].ps
             if not isfinite(ps):break
             if fabs(ps-target) <= self.allowance:
+                if self.outside(p):
+                    # S16: the level lies beyond the drawn envelope here
+                    self.exit_seen = True;self.exit_state = p;break
                 out = p;break
             if isfinite(ps0) and ps != ps0:step = -(ps-target)*(al-al0)/(ps-ps0)
             else:step = .05 if ps > target else -.05
@@ -681,7 +795,7 @@ cdef class NCurves:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef dict bracketed(self, double speed, double target, int a, int b, phase):
-        cdef double t, n, f
+        cdef double t, n, f, slack
         if fabs(self.eng.st[b].ps-target) <= self.allowance:
             return dict(outcome='admitted', point=b, bracket=[self.eng.st[a].load, self.eng.st[b].load])
         t = (target-self.eng.st[a].ps)/(self.eng.st[b].ps-self.eng.st[a].ps)
@@ -689,7 +803,12 @@ cdef class NCurves:
         f = (n-self.eng.st[a].load)/(self.eng.st[b].load-self.eng.st[a].load)
         attitude = [self.eng.st[a].sol[k]*(1-f)+self.eng.st[b].sol[k]*f for k in range(5)]
         outcome, point, reason = self.direct_seed(speed, target, n, [a, b], attitude, phase)
-        if outcome == 'admitted' and not (self.eng.st[a].load-1e-9 <= self.eng.st[point].load <= self.eng.st[b].load+1e-9
+        # S16: a bracket narrower than the curve tolerance in turn rate (a level next to the boundary: Su-25T SB -200 m/s
+        # at 834.8 km/h, 9.5593-9.5601 g) is widened by that tolerance (the same root, not another crossing)
+        slack = 1e-9
+        if self.s16 and outcome == 'admitted' and fabs(self.eng.st[b].turn-self.eng.st[a].turn) < self.turn_tol:
+            slack = self.turn_tol*RAD_TO_DEG**-1*(speed/3.6)*sqrt(pmax(n*n-1., 1e-12))/(G_TURN*n)
+        if outcome == 'admitted' and not (self.eng.st[a].load-slack <= self.eng.st[point].load <= self.eng.st[b].load+slack
                                           and self.eng.compatible(point, a)):
             outcome, reason = 'unresolved', 'root left observed bracket or branch changed'
         return dict(outcome=outcome, point=point, reason=reason, bracket=[self.eng.st[a].load, self.eng.st[b].load])
@@ -1483,7 +1602,7 @@ cdef class NCurves:
         cdef int a, b, i, p
         cdef PchipCurve f
         cdef HermiteCurve hf
-        cdef double x, tx, lo_t, hi_t, box, xc = 0.
+        cdef double x, tx, lo_t, hi_t, box, xc = 0., xo
         checks = comp.setdefault('checks', [])
         unresolved = comp.setdefault('unresolved_intervals', [])
         for _ in range(self.refinement_passes):
@@ -1514,6 +1633,14 @@ cdef class NCurves:
                         # S14: a governor regime switch inside: split at its interpolated crossing
                         e = INFINITY;xm = xc
                         self.eng.stats['s14_regime_splits'] = self.eng.stats.get('s14_regime_splits', 0)+1
+                    if self.s16 and h > self.speed_tol and not branch_piece:
+                        # S16: a piece drawn outside the drawn outline (Saab J35A RB -400 m/s across the boundary's dip at
+                        # 610-630 km/h): no bound passes it; the level is solved where it lies farthest out (an exit there
+                        # ends the contour at the boundary on both sides: failed_piece)
+                        xo = self.outline_exit(hf, key[0], key[1])
+                        if isfinite(xo):
+                            e = INFINITY;xm = xo
+                            self.eng.stats['s16_outline_splits'] = self.eng.stats.get('s16_outline_splits', 0)+1
                     bound = e if isfinite(e) else None
                     if h <= self.speed_tol or (e <= self.turn_tol and h <= pmin(self.max_step, S8_MAX_WIDTH)):
                         if e > self.turn_tol and self.s10 and self.fold_absorb(comp, i):
@@ -1683,11 +1810,19 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef bint column_start(self, column, list pts) except -1:
+        """Whether the column's lowest admitted sample starts its region: level flight, or (S16) the column's lower edge
+        (level flight over a soft limit: forward IAS, engine RPM)."""
+        if not pts:return False
+        if abs(self.eng.st[pts[0]].load-1.) <= 1e-9:return True
+        if not self.s16 or not column.get('lower_edge'):return False
+        return abs(self.eng.st[pts[0]].load-float(column['lower_edge']['load_g'])) <= 1e-9
+
     cdef object column_levels(self, column):
         """CurveSolver.column_levels: the levels column_roots would find at this column (no solves), or None."""
         cdef int i
         pts, _ = self.column_samples(column)
-        if not pts or abs(self.eng.st[pts[0]].load-1.) > 1e-9:return None
+        if not self.column_start(column, pts):return None
         out = []
         for t in self.levels:
             if abs(self.eng.st[pts[0]].ps-t) <= self.allowance:
@@ -1706,7 +1841,7 @@ cdef class NCurves:
         cdef int top, a, b, i
         out = dict(speed_kmh=speed, roots=[], fallback=None, stop=None)
         pts, top = self.column_samples(column)
-        if not pts or abs(self.eng.st[pts[0]].load-1.) > 1e-9:
+        if not self.column_start(column, pts):
             out['stop'] = dict(load_g=None, kind='unresolved', reasons=['no admitted level-flight state in column'])
             out['uninformative'] = True
             return out
@@ -1720,6 +1855,12 @@ cdef class NCurves:
                 out['roots'].append(dict(root, target=target));found = True
             if found:continue
             if abs(self.eng.st[pts[0]].ps-target) <= self.allowance:
+                # S16: a level met at level flight itself is a 1 g crossing: it is followed from where it is located
+                # between the columns' level flights (from_one_g, with the level set's slope there); a one-point
+                # component at 1 g has no slope to leave it by (Ki-21-I RB -20 m/s at 490 km/h was never drawn)
+                if self.s16 and abs(self.eng.st[pts[0]].load-1.) <= 1e-9:
+                    self.eng.stats['s16_one_g_roots'] = self.eng.stats.get('s16_one_g_roots', 0)+1
+                    continue
                 out['roots'].append(dict(outcome='admitted', point=pts[0], bracket=[self.eng.st[pts[0]].load]*2, target=target))
             elif top >= 0 and pts[-1] == top and self.eng.st[top].ps > target:
                 out['roots'].append(dict(outcome='rejected', point=None, target=target, edge_g=self.eng.st[top].load,
@@ -1804,6 +1945,48 @@ cdef class NCurves:
                 current.setdefault(target, []).append(comp)
             open_ = current
         components.extend(new)
+        self.follow_new(new, components, segment)
+        if self.s16:
+            # S16: every column's level flight is a 1 g sample of the level crossings along level flight (run(): a level
+            # met at level flight between two thinned columns and left again before the next one)
+            for speed in ordered:
+                if speed in ones:continue
+                for p in by_speed[speed]['points']:
+                    if abs(p['load_g']-1.) <= 1e-9 and p.get('valid') and p.get('stationary_coordinates') is not None:
+                        ones[speed] = self.state(p);break
+            # S16: every other column of the segment: a level present there that no followed contour of it passes (a
+            # second contour of the level between two solved columns, e.g. an island against the boundary next to a
+            # corner) is followed from that column (He 111 H-16 RB -20 m/s at 316 km/h, Hampden RB -10 at 399)
+            for speed in ordered:
+                if speed in presence or speed in extra:continue
+                column = by_speed[speed]
+                here = self.column_levels(column)
+                if not here:continue
+                pts, _ = self.column_samples(column)
+                levels = [L for L in self.levels if L in here and not self.level_covered(components, segment, L, pts)]
+                if not levels:continue
+                seed = self.column_roots(column, levels)
+                self.ladders.append(dict(speed_kmh=speed, segment=segment['speed_kmh'], ladder=seed))
+                seeds_report.append(dict(speed_kmh=speed, provenance='envelope column (level not followed there)',
+                                         roots=sum(r['outcome'] == 'admitted' for r in seed['roots']), stop=seed['stop']))
+                more = []
+                for root in seed['roots']:
+                    if root['outcome'] != 'admitted':continue
+                    p = root['point']
+                    if self.covered(components, root['target'], p):continue
+                    comp = dict(level=root['target'], segment=segment['speed_kmh'], knots=[p], discovered_at_kmh=speed,
+                                provenance='envelope column (level not followed there)')
+                    if self.s10 and root.get('rising'):comp['below'] = True
+                    more.append(comp)
+                if more:
+                    self.eng.stats['s16_column_seeds'] = self.eng.stats.get('s16_column_seeds', 0)+len(more)
+                    components.extend(more)
+                    self.follow_new(more, components, segment)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef follow_new(self, list new, list components, dict segment):
+        """Follow the components ``new`` (already in ``components``) in speed."""
         for comp in new:
             if self.s9 and any(other is not comp and 'end' in other and other['level'] == comp['level']
                                and other['segment'] == comp['segment'] and all(self.on_line(other, k) for k in comp['knots'])
@@ -1815,6 +1998,105 @@ cdef class NCurves:
                 continue
             self.follow(comp, segment)
             if self.s10:self.follow_pending(segment, components)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef edge_seeds(self, list segments, list components):
+        """S16: levels crossing a traced leaning edge (forward IAS or engine RPM) between its knots, where no followed
+        contour of the level ends: past the speed where level flight reaches the limit no column needs to lie in the band
+        above the edge (Bf 110 F-2 RB at 65% pitch: +10 m/s meets the engine RPM edge between its foot at 241.8 km/h and
+        the first column past it at 255.6). At the crossing interpolated between two edge knots the level is solved, at
+        the crossing's speed or up to two speed tolerances lower (inside the limit at that load), and followed both ways
+        from there with its exact slope."""
+        cdef int i, a, b, p, k, anchor
+        cdef double pa, pb, f, v, n, w, t, vv
+        for rows in self.edge_knots:
+            if not rows or len(rows) < 2:continue
+            sids = [self.state(r) for r in rows]
+            for i in range(len(sids)-1):
+                a = sids[i];b = sids[i+1]
+                for L in self.levels:
+                    pa = self.eng.st[a].ps-L;pb = self.eng.st[b].ps-L
+                    if not (isfinite(pa) and isfinite(pb)) or pa*pb > 0. or pa == pb:continue
+                    f = pa/(pa-pb)
+                    v = self.eng.st[a].speed+f*(self.eng.st[b].speed-self.eng.st[a].speed)
+                    w = (pow(self.eng.st[a].load, 2.)-1.)+f*((pow(self.eng.st[b].load, 2.)-1.)-(pow(self.eng.st[a].load, 2.)-1.))
+                    n = sqrt(1.+pmax(w, 0.));t = curve_turn(v, n)
+                    segment = next((s for s in segments if s['speed_kmh'][0]-1e-9 <= v <= s['speed_kmh'][1]+1e-9), None)
+                    if segment is None or self.near_component(components, segment, L, v, t):continue
+                    anchor = a if f <= .5 else b
+                    attitude = [self.eng.st[a].sol[k]*(1.-f)+self.eng.st[b].sol[k]*f for k in range(5)]
+                    p = -1
+                    for k in range(5):
+                        vv = v-.5*k*self.speed_tol
+                        outcome, q, _ = self.direct_seed(vv, L, pmax(n, 1.+1e-6), [anchor], attitude, 'seed_discovery')
+                        if outcome == 'admitted' and q is not None and self.eng.compatible(q, anchor):
+                            p = q;break
+                    if p < 0 or self.covered(components, L, p):continue
+                    comp = dict(level=L, segment=segment['speed_kmh'], knots=[p], discovered_at_kmh=self.eng.st[p].speed,
+                                provenance='leaning edge crossing')
+                    sl, sr = self.knot_slope(p)
+                    if isfinite(sl) or isfinite(sr):comp['w_slope'] = sl if isfinite(sl) else sr
+                    self.eng.stats['s16_edge_seeds'] = self.eng.stats.get('s16_edge_seeds', 0)+1
+                    components.append(comp)
+                    self.follow_new([comp], components, segment)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint near_component(self, list components, dict segment, double target, double v, double t) except -1:
+        """S16: a followed component of the level passes (v, t): a knot within two speed tolerances in speed and half a
+        deg/s in turn, or its interpolant within that turn at v inside its knots' span."""
+        cdef PchipCurve f
+        cdef double n
+        for comp in components:
+            if comp['level'] != target or comp['segment'] != segment['speed_kmh'] or not comp['knots']:continue
+            ks = comp['knots']
+            for q in ks:
+                if fabs(self.eng.st[q].speed-v) <= 2.*self.speed_tol and fabs(self.eng.st[q].turn-t) <= .5:return True
+            if len(ks) >= 2 and self.eng.st[ks[0]].speed <= v <= self.eng.st[ks[-1]].speed:
+                f = self.interpolant(ks)
+                n = sqrt(1.+pmax(f.eval(v), 0.))
+                if fabs(curve_turn(v, n)-t) <= .5:return True
+        return False
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint level_covered(self, list components, dict segment, double target, list pts) except -1:
+        """S16: whether every crossing of the level ``target`` between the column samples ``pts`` (by load) lies on a
+        followed component of that level: one whose knots span the column's speed with its interpolant's turn rate
+        inside the crossing's turn interval (four curve tolerances wider), or a fold piece spanning that speed. A level
+        met at level flight only (a 1 g crossing) counts as covered (the 1 g crossings are followed from level flight)."""
+        cdef int i, a, b
+        cdef double v, lo, hi, n, t
+        cdef PchipCurve f
+        if not pts:return True
+        v = self.eng.st[pts[0]].speed
+        brackets = []
+        for i in range(len(pts)-1):
+            a = pts[i];b = pts[i+1]
+            if (self.eng.st[a].ps-target)*(self.eng.st[b].ps-target) > 0. or not self.eng.compatible(a, b):continue
+            brackets.append((pmin(self.eng.st[a].turn, self.eng.st[b].turn), pmax(self.eng.st[a].turn, self.eng.st[b].turn)))
+        for lo, hi in brackets:
+            ok = False
+            for comp in components:
+                if comp['level'] != target or comp['segment'] != segment['speed_kmh'] or not comp['knots']:continue
+                ks = comp['knots']
+                fold = comp.get('fold')
+                if fold is not None and fold.get('knots'):
+                    fv = [self.eng.st[q].speed for q in fold['knots']]
+                    if min(fv)-1e-9 <= v <= max(fv)+1e-9:
+                        ok = True;break
+                if not (self.eng.st[ks[0]].speed-1e-9 <= v <= self.eng.st[ks[-1]].speed+1e-9):continue
+                if len(ks) == 1:
+                    t = self.eng.st[ks[0]].turn
+                else:
+                    f = self.interpolant(ks)
+                    n = sqrt(1.+pmax(f.eval(v), 0.))
+                    t = curve_turn(v, n)
+                if lo-4*self.turn_tol <= t <= hi+4*self.turn_tol:
+                    ok = True;break
+            if not ok:return False
+        return True
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -1918,8 +2200,22 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef double half_w(self, double v) except? -1.:
+        """S16: half of w = n^2-1 at the envelope boundary at speed ``v`` (the verified columns' limiting loads, linear
+        between the two either side), at least S9_END_DW; 0 outside the columns' span."""
+        import bisect
+        cdef int i
+        cdef double n
+        if not self.env_v:return 0.
+        i = bisect.bisect_left(self.env_v, v)
+        if i < len(self.env_v) and fabs(self.env_v[i]-v) <= 1e-9:n = self.env_n[i]
+        elif 0 < i < len(self.env_v):
+            n = self.env_n[i-1]+(self.env_n[i]-self.env_n[i-1])*(v-self.env_v[i-1])/(self.env_v[i]-self.env_v[i-1])
+        else:return 0.
+        return pmax(S9_END_DW, .5*(n*n-1.))
+
     cdef object from_one_g(self, int crossing, int above, int below, double target, dict segment):
-        cdef double v = self.eng.st[crossing].speed, dv, d1, dw
+        cdef double v = self.eng.st[crossing].speed, dv, d1, dw, dw2
         cdef int two
         dv = self.eng.st[above].speed-self.eng.st[below].speed
         if dv == 0.:return None
@@ -1936,8 +2232,14 @@ cdef class NCurves:
                 return dict(level=target, segment=segment['speed_kmh'], knots=[crossing], discovered_at_kmh=v,
                             provenance='1 g crossing', w_slope=-d1/dw, below=True)
         two = self.fixed(v, 2., crossing, 'one_g_discovery')
+        dw2 = 3.
+        if not (self.eng.st[two].valid and self.eng.compatible(two, crossing)) and self.s16:
+            # S16: where the envelope ends below 2 g at this speed (flying boats and bombers near their top speed: H6K4
+            # RB -10 m/s at 403.5 km/h, the control limit at 1.9 g) the level set's slope from halfway to the boundary
+            dw2 = self.half_w(v)
+            if dw2 > 0.:two = self.fixed(v, sqrt(1.+dw2), crossing, 'one_g_discovery')
         if not (self.eng.st[two].valid and self.eng.compatible(two, crossing)):return None
-        dw = (self.eng.st[two].ps-self.eng.st[crossing].ps)/3.
+        dw = (self.eng.st[two].ps-self.eng.st[crossing].ps)/dw2
         if dw >= 0.:return None
         return dict(level=target, segment=segment['speed_kmh'], knots=[crossing], discovered_at_kmh=v,
                     provenance='1 g crossing', w_slope=-d1/dw)
@@ -1961,6 +2263,7 @@ cdef class NCurves:
         self.env_v = [float(c['speed_kmh']) for c in columns if c.get('boundary')]
         self.env_n = [float(c['boundary']['load_g']) for c in columns if c.get('boundary')]
         self.env_ps = [c['boundary'].get('ps_mps') for c in columns if c.get('boundary')]
+        self.env_lo = [float((c.get('lower_edge') or {}).get('load_g', 1.)) for c in columns if c.get('boundary')]
         components, seeds_report, unresolved_targets, excluded = [], [], [], []
         status = 'completed';junctions = []
         global g_sink
@@ -2006,6 +2309,7 @@ cdef class NCurves:
                                 components.append(comp)
                                 self.follow(comp, segment)
                                 if self.s10:self.follow_pending(segment, components)
+                    if self.s16 and self.edge_knots:self.edge_seeds(segments, components)
                     if self.s9:components[:] = self.merge_duplicates(components)
                     for comp in components:
                         self.check_intervals(comp)

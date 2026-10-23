@@ -307,6 +307,10 @@ cdef class MarchEngine:
     # S14 (WT_MARCH_S14=0 restores S13 exactly; WT_MARCH_S13=0 also turns S14 off): the misses the cleanup batch's wider
     # dense check found: the leaning forward-IAS edge split on its monotone stretch (J6K1 SB) and the S14 items below
     cdef public bint s14
+    # S16 (WT_MARCH_S16=0 restores S15 exactly; any earlier stage switch at 0 also turns it off): a level flight over the
+    # engine RPM limit (soft) starts the march like one over a forward-IAS limit: in a turn the propeller turns slower, so
+    # states within the limit lie above a lower edge there (Leo 2026-10-23, Bf 109 F-4 at 65% pitch); the edge is traced
+    cdef public bint s16
     cdef public list brake_log           # diagnostics (WT_MARCH_BRAKE_LOG=1): every braking search's attempts, else None
     cdef int brake_depth                 # S12: braking search rounds in progress
     cdef bint brake_retry
@@ -378,6 +382,7 @@ cdef class MarchEngine:
         self.brake_limit = self.brake and not self.s11
         self.s12 = self.s10 and os.environ.get("WT_MARCH_S11", "1") != "0" and os.environ.get("WT_MARCH_S12", "1") != "0"
         self.s14 = self.s12 and os.environ.get("WT_MARCH_S13", "1") != "0" and os.environ.get("WT_MARCH_S14", "1") != "0"
+        self.s16 = self.s14 and os.environ.get("WT_MARCH_S15", "1") != "0" and os.environ.get("WT_MARCH_S16", "1") != "0"
         self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
         self.brake_depth = 0
         self.brake_retry = False
@@ -866,6 +871,41 @@ cdef class MarchEngine:
     cdef bint ias_soft(self, int sid) noexcept:
         """S8: rejected only for forward-IAS limits (its hard checks passed): below a leaning forward-IAS edge."""
         return self.soft and not self.st[sid].valid and self.only_reasons(sid, self.ias_mask)
+
+    cdef bint rpm_soft(self, int sid) noexcept:
+        """S16: rejected for the engine RPM limit, and otherwise only for soft limits (its hard checks passed): a level
+        flight that over-revs, below the leaning engine RPM edge (states at higher alpha can lie within the limit)."""
+        return (self.s16 and self.soft and not self.st[sid].valid and self.has_code(sid, R_RPM)
+                and self.only_reasons(sid, self.soft_mask))
+
+    cdef bint soft_level(self, int sid) noexcept:
+        """S16: a level flight the march starts from although it is rejected: over a forward-IAS limit only (S8) or over
+        the engine RPM limit (S16)."""
+        return self.ias_soft(sid) or self.rpm_soft(sid)
+
+    cdef double rpm_ratio(self, int sid) noexcept:
+        """S16: the state's highest engine RPM against its limit (rpm / limit, the largest over its engines); NaN without
+        engine RPM limits."""
+        cdef TState* t = &self.st[sid]
+        cdef double r = NAN, x
+        cdef int i
+        for i in range(t.ne):
+            if not (t.rpm_limit[i] > 0.):continue
+            x = t.rpm[i]/t.rpm_limit[i]
+            if not isfinite(r) or x > r:r = x
+        return r
+
+    cdef int rpm_engine(self, int sid) noexcept:
+        """S16: the engine with the highest RPM against its limit (-1 without engine RPM limits)."""
+        cdef TState* t = &self.st[sid]
+        cdef double r = -INFINITY, x
+        cdef int i, best = -1
+        for i in range(t.ne):
+            if not (t.rpm_limit[i] > 0.):continue
+            x = t.rpm[i]/t.rpm_limit[i]
+            if x > r:
+                r = x;best = i
+        return best
 
     cdef bint ias_any(self, int sid) noexcept:
         """S8: rejected for a forward-IAS limit among other reasons (a level flight past a forward-IAS limit that also

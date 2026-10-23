@@ -215,6 +215,10 @@ DEF S15_DIFF = .02          # deg: the alpha step of the knots' slope difference
 DEF S15_CORNER_OFFSET = .05 # km/h: the column just inside the corner (at most an eighth of the speed tolerance)
 DEF S15_FAIL_MARGIN = .1    # an edge state that does not close is past a hard limit whose margin is within this ...
 DEF S15_FAIL_EXTRA = .01    # ... and, continued along the edge, below this there (past_limit)
+DEF S16_RPM_CLOSE = 2e-6    # S16: an engine RPM edge state's rpm / limit within this of its target (S15_INSIDE inside)
+DEF S16_ITER = 16           # S16: speed iterations of one engine RPM edge state (secant on rpm / limit)
+DEF S16_PROBE = .5          # km/h: the first speed step where no slope of rpm / limit with speed is known yet
+DEF S16_MAX_DV = 10.        # km/h: the largest speed step of that iteration
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -291,6 +295,10 @@ cdef class NTracer:
     cdef int brake_level            # S10: a braking level flight found from an interior start (interior_march), or -1
     cdef bint s15                   # S15: the forward-IAS edge traced along the limit itself (ias_trace)
     cdef public object ias_trace_out  # S15: the traced edge (the envelope's 'ias_trace' record), or None
+    cdef public object rpm_trace_out  # S16: the traced engine RPM edge (the envelope's 'rpm_trace' record), or None
+    cdef int iso_lim                  # S16: the limit the iso_* functions trace: KD_IAS (forward IAS) or KD_RPM (engine RPM)
+    cdef double rpm_slope             # S16: d(rpm / limit)/dV (per km/h) at fixed alpha from the last engine RPM edge state
+    cdef public dict edge_rows        # S16: the rows of each traced edge's knots ('ias', 'rpm'), for the curve solver's seeds
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -326,6 +334,7 @@ cdef class NTracer:
         # S15: WT_MARCH_S15=0 restores S14 exactly (the leaning edge drawn through the columns' lower edges)
         self.s15 = self.s8 and self.eng.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.ias_trace_out = None
+        self.rpm_trace_out = None;self.iso_lim = KD_IAS;self.rpm_slope = NAN;self.edge_rows = {}
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -350,8 +359,8 @@ cdef class NTracer:
             if self.eng.ncut and self.eng.across(c.speed, speed):continue
             for sid in c.points:
                 if self.eng.st[sid].valid:seeds.append(sid)
-            # S8: a level flight over a forward-IAS limit seeds the next column's level flight
-            if c.level >= 0 and self.eng.ias_soft(c.level):seeds.append(c.level)
+            # S8: a level flight over a forward-IAS limit seeds the next column's level flight (S16: or over the RPM limit)
+            if c.level >= 0 and self.eng.soft_level(c.level):seeds.append(c.level)
         w = Work({}, parent=current())
         with use(w):
             col = self.run_column(speed, seeds)
@@ -397,9 +406,13 @@ cdef class NTracer:
         """S8: the exact slope dw/dV of a column's lower edge (the leaning forward-IAS edge): MarchEngine.tangent on the
         forward-IAS event residual (native event 7) through the edge state; NaN where unavailable."""
         cdef double l = NAN, r = NAN
-        cdef int base = self.eng.st[col.lower].base
+        cdef int base = self.eng.st[col.lower].base, code = 7, axis = 0
+        if col.lower_kind == KD_RPM:
+            # S16: an engine RPM lower edge: the RPM event residual (native event 6) of its engine nearest its limit
+            code = 6;axis = self.eng.rpm_engine(base)
+            if axis < 0:return 0
         self.eng.flush_counts()
-        if self.eng.tangent(base, 1, 7, 0, 0, self.eng.st[base].speed, self.tangent_delta, self.slope_sides(col.speed), &l, &r):
+        if self.eng.tangent(base, 1, code, axis, 0, self.eng.st[base].speed, self.tangent_delta, self.slope_sides(col.speed), &l, &r):
             if isfinite(l) and isfinite(r):col.lower_slope = .5*(l+r)
             elif isfinite(l):col.lower_slope = l
             elif isfinite(r):col.lower_slope = r
@@ -528,7 +541,7 @@ cdef class NTracer:
         cdef double d, bd = 0., predicted
         cdef bint has_predicted, healthy
         self.eng.stats['columns'] += 1
-        level_seeds = [sid for sid in seeds if self.eng.ias_soft(sid) and self.eng.st[sid].has_coords]
+        level_seeds = [sid for sid in seeds if self.eng.soft_level(sid) and self.eng.st[sid].has_coords]
         seeds = [sid for sid in seeds if self.eng.st[sid].valid and self.eng.st[sid].has_coords]
         for sid in seeds+level_seeds:
             if fabs(self.eng.st[sid].load-1.) <= 1e-12:
@@ -557,7 +570,7 @@ cdef class NTracer:
         if level < 0:
             level = self.python_level(march, speed, nearest)
         if (self.eng.s9 and not self.cheap and not self.probing
-                and (level < 0 or not (self.eng.st[level].valid or self.eng.ias_soft(level) or self.eng.level_physical(level)))):
+                and (level < 0 or not (self.eng.st[level].valid or self.eng.soft_level(level) or self.eng.level_physical(level)))):
             # S9: level flight that does not close from the seeds (a far neighbour across a blade-polar jump the jump check
             # cannot see from there): continued from the nearest admitted level flight below, as the dive path reaches it
             below = -1
@@ -575,8 +588,9 @@ cdef class NTracer:
             return 0
         healthy = nearest >= 0 and speed > self.eng.st[nearest].speed
         # S8: a level flight over a forward-IAS limit only is no edge: the march starts from it (states at higher
-        # alpha can lie inside the limit; the column's lower edge is where they begin)
-        if not (self.eng.st[level].valid or self.eng.ias_soft(level)):
+        # alpha can lie inside the limit; the column's lower edge is where they begin). S16: nor one over the engine RPM
+        # limit (in a turn the propeller turns slower)
+        if not (self.eng.st[level].valid or self.eng.soft_level(level)):
             if not self.eng.level_physical(level) and healthy:
                 reasons = ', '.join(REASON_TEXT[self.eng.st[level].reasons[i]] for i in range(self.eng.st[level].nreasons))
                 # S5: march from an admitted state of this speed on the neighbouring columns' alpha path
@@ -635,10 +649,14 @@ cdef class NTracer:
                 return 0
             self.production(col, speed, seeds, 'march unresolved: '+str(reason))
             return 0
-        if self.eng.ias_soft(level):
+        if self.eng.soft_level(level):
             col.lower = march.lower_edge(level, boundary)
+            # S16: the soft limit the lower edge leaves (with a forward-IAS limit over level flight too, the last one left)
+            if col.lower >= 0:col.lower_kind = march.lower_kind
             if col.lower < 0:
-                self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: forward-IAS limit', started)
+                self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE,
+                                   'level flight: engine RPM limit' if self.eng.rpm_soft(level) else 'level flight: forward-IAS limit',
+                                   started)
                 col.points = [level];col.region = False
                 return 0
         self.column_record(col, march, level, boundary,
@@ -828,14 +846,18 @@ cdef class NTracer:
         """em_march.column_record (the dict itself is built after the trace, NTracer.record)."""
         import time
         cdef int sid
-        cdef double ba = 0., bl = 0.
+        cdef double ba = 0., bl = 0., la
         if boundary >= 0 and self.eng.soft:
             # S8: below a verified stop, an over-rev state (rejected for engine RPM only, its hard checks passed) is a
             # transient over-rev: admitted by the chart rule, drawn and seeded like any admitted state
             ba = self.eng.st[boundary].alpha
+            # S16: not below the column's lower edge (a level flight that over-revs: the over-rev stretch from level flight
+            # up to the lower edge is outside the outline, not passed on the way from an admitted state)
+            la = self.eng.st[col.lower].alpha if self.eng.s16 and col.lower >= 0 else -INFINITY
             for sid in march.samples:
                 if (not self.eng.st[sid].valid and fabs(self.eng.st[sid].speed-col.speed) <= 1e-9
-                        and self.eng.st[sid].alpha <= ba+1e-9 and self.eng.only_reasons(sid, (<unsigned long long>1) << R_RPM)):
+                        and self.eng.st[sid].alpha <= ba+1e-9 and self.eng.st[sid].alpha > la+1e-9
+                        and self.eng.only_reasons(sid, (<unsigned long long>1) << R_RPM)):
                     self.eng.st[sid].valid = True;self.eng.st[sid].rule = 1
                     self.eng.stats['s8_transient_over_rev'] = self.eng.stats.get('s8_transient_over_rev', 0)+1
             if self.eng.st[boundary].base != boundary and self.eng.st[self.eng.st[boundary].base].rule == 1:
@@ -1324,11 +1346,11 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef int ias_one_g(self) except -1:
+    cdef int ias_one_g(self, int kind=KD_IAS) except -1:
         """S8: where level flight first passes the lowest forward-IAS limit: between neighbouring verified columns, the
         lower with its level flight inside the limit and the upper with it over (a lower edge), level flight continued
         from the lower in steps of the placement tolerance, then halved to 0.05 km/h ('ias edge' event; the leaning
-        edge's foot, em_march_chart.ias_edge)."""
+        edge's foot, em_march_chart.ias_edge). S16 (``kind`` KD_RPM): the same for the engine RPM limit ('rpm edge')."""
         from em_trim_work import Work, use, current
         cdef NColumn a, b
         cdef double lo, hi, v
@@ -1337,6 +1359,8 @@ cdef class NTracer:
         good = sorted((c for c in self.columns.values() if NTracer.ok(c)), key=lambda c: c.speed)
         for a, b in zip(good, good[1:]):
             if a.lower >= 0 or b.lower < 0 or a.level < 0 or not self.eng.st[a.level].valid:continue
+            # S16: each lower-edge limit has its own foot
+            if self.eng.s16 and b.lower_kind != kind:continue
             preds.n = 0
             level = a.level;lo = a.speed;hi = b.speed
             w = Work({}, parent=current())
@@ -1345,18 +1369,22 @@ cdef class NTracer:
                     v = pmin(lo+self.place_tol, .5*(lo+hi)) if hi-lo > 2*self.place_tol else .5*(lo+hi)
                     p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV,
                                          MARCH_EVALS, 2e-6, v, &preds, NULL)
-                    if p < 0 or not (self.eng.st[p].valid or self.eng.ias_soft(p)):
+                    if p < 0 or not (self.eng.st[p].valid or self.over_kind(p, kind)):
                         p = self.eng.correct(level, self.eng.st[level].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV,
                                              ROBUST_EVALS, 2e-6, v, NULL, NULL)
                     self.eng.flush_counts()
                     if p >= 0 and self.eng.st[p].valid:
                         lo = v;level = p
-                    elif p >= 0 and self.eng.ias_soft(p):hi = v
+                    elif p >= 0 and self.over_kind(p, kind):hi = v
                     else:break
-            row = self.work.setdefault('ias edge probe', dict(columns=0, evaluations=0))
+            row = self.work.setdefault('ias edge probe' if kind == KD_IAS else 'rpm edge probe', dict(columns=0, evaluations=0))
             row['columns'] += 1;row['evaluations'] += w.counts.get('aircraft_evaluations', 0)
-            self.events.append(dict(kind='ias edge', speed_kmh=[lo, hi], located_by='level-flight probes'))
+            self.events.append(dict(kind='ias edge' if kind == KD_IAS else 'rpm edge', speed_kmh=[lo, hi], located_by='level-flight probes'))
         return 0
+
+    cdef bint over_kind(self, int sid, int kind) noexcept:
+        """S16: a level flight over the soft limit ``kind`` only: forward IAS (ias_soft) or engine RPM (rpm_soft)."""
+        return self.eng.rpm_soft(sid) if kind == KD_RPM else self.eng.ias_soft(sid)
 
     # ------------------------------------------------------------------ S15: the forward-IAS edge itself
     def traced(self):
@@ -1380,6 +1408,7 @@ cdef class NTracer:
         cdef double sol[5]
         cdef double v, u, ta, tb, n, target = self.eng.ias_limit*(1.-S15_INSIDE)
         cdef int p = seed, q, i, j, nfev = ROBUST_NFEV if robust else 30, evals = ROBUST_EVALS if robust else 120
+        if self.iso_lim == KD_RPM:return self.iso_rpm(seed, value, mode, robust)
         for i in range(5):sol[i] = self.eng.st[seed].sol[i]
         if mode == 0:
             sol[0] = value
@@ -1405,6 +1434,58 @@ cdef class NTracer:
             if fabs(u/target-1.) <= S15_CLOSE:return p
             v *= target/u
         return p if fabs(self.fwd_ias(p)/target-1.) <= 1e3*S15_CLOSE else -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int iso_rpm(self, int seed, double value, int mode, bint robust) except -2:
+        """S16: iso_state on the engine RPM limit: the state whose highest rpm against its limit is S15_INSIDE inside it,
+        from ``seed`` at body alpha ``value`` (mode 0), in level flight (mode 1) or at load ``value`` (mode 2). At fixed
+        alpha a windmilling propeller turns faster with speed, so the speed is iterated by the secant on rpm / limit (the
+        slope of the last edge state to start with, else a first step of S16_PROBE). -1 where a correction does not close
+        or the iteration does not settle."""
+        cdef double sol[5]
+        cdef double v, n, r, r0 = NAN, v0 = NAN, slope = self.rpm_slope, dv, target = 1.-S15_INSIDE
+        cdef int p = seed, q = -1, i, j, nfev = ROBUST_NFEV if robust else 30, evals = ROBUST_EVALS if robust else 120
+        for i in range(5):sol[i] = self.eng.st[seed].sol[i]
+        if mode == 0:sol[0] = value
+        n = 1. if mode == 1 else value
+        v = self.eng.st[seed].speed
+        r = NAN
+        for j in range(S16_ITER):
+            if mode == 0:
+                q = self.eng.correct(p, sol, self.eng.st[p].load, True, FIX_ALPHA, value, 0, 0, 0, nfev, evals, 2e-6, v, NULL, NULL)
+            else:
+                q = self.eng.correct(p, sol, n, True, FIX_LOAD, n, 0, 0, 0, MARCH_NFEV if not robust else nfev,
+                                     MARCH_EVALS if not robust else evals, 2e-6, v, NULL, NULL)
+                if (q < 0 or not self.eng.st[q].converged) and not robust:
+                    q = self.eng.correct(p, sol, n, True, FIX_LOAD, n, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, v, NULL, NULL)
+            self.eng.flush_counts()
+            if q < 0 or not self.eng.st[q].converged:return -1
+            r = self.eng.rpm_ratio(q)
+            if not isfinite(r):return -1
+            if isfinite(r0) and fabs(v-v0) > 1e-9:slope = (r-r0)/(v-v0)
+            p = q
+            for i in range(5):sol[i] = self.eng.st[q].sol[i]
+            if fabs(r-target) <= S16_RPM_CLOSE:
+                if isfinite(slope) and slope > 0.:self.rpm_slope = slope
+                return p
+            if isfinite(slope) and slope > 0.:
+                dv = (target-r)/slope
+                dv = pmax(-S16_MAX_DV, pmin(S16_MAX_DV, dv))
+            else:
+                dv = -S16_PROBE if r > target else S16_PROBE
+            r0 = r;v0 = v;v += dv
+        return p if isfinite(r) and fabs(r-target) <= 10.*S16_RPM_CLOSE else -1
+
+    cdef double limit_speed(self, int sid) except? -1e300:
+        """S16: the level-flight speed where the traced limit is reached, predicted from the state ``sid``: forward IAS
+        scales with speed (S15); engine RPM by the last slope of rpm / limit with speed (NaN when not known)."""
+        cdef double r
+        if self.iso_lim == KD_RPM:
+            r = self.eng.rpm_ratio(sid)
+            if not (isfinite(r) and isfinite(self.rpm_slope) and self.rpm_slope > 0.):return NAN
+            return self.eng.st[sid].speed+((1.-S15_INSIDE)-r)/self.rpm_slope
+        return self.eng.st[sid].speed*(self.eng.ias_limit*(1.-S15_INSIDE))/self.fwd_ias(sid)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -1442,7 +1523,8 @@ cdef class NTracer:
         """S15: 0 an edge state the chart keeps (admitted, or rejected for soft limits only: within its tolerance of the
         forward-IAS limit), 1 past the first hard limit (or above the load cap: the plot ceiling), -1 neither."""
         if not self.eng.st[sid].converged:return -1
-        if self.eng.passable(sid):
+        # S16: on the engine RPM limit only an admitted state (one over a forward-IAS limit there is another edge's)
+        if self.eng.st[sid].valid if self.iso_lim == KD_RPM else self.eng.passable(sid):
             return 1 if self.eng.st[sid].load > self.eng.cap(self.eng.st[sid].speed)+1e-9 else 0
         if self.eng.hard_rejected(sid):return 1
         return -1
@@ -1572,14 +1654,47 @@ cdef class NTracer:
                     and (edge is None or min(ev['speed_kmh']) > min(edge['speed_kmh']))):edge = ev
         # (or no edge event: the states within the limit past it reach the chart's speed range or vertical limit; the
         # columns there carry their lower edges)
-        if edge is None and not any(NTracer.ok(c) and c.lower >= 0 for c in self.columns.values()):return 0
+        if edge is None and not any(NTracer.ok(c) and c.lower >= 0 and (not self.eng.s16 or c.lower_kind == KD_IAS)
+                                    for c in self.columns.values()):return 0
         caps = set(self.eng.ceilings)
+        self.iso_lim = KD_IAS
         try:
             self.ias_trace_body(edge)
         finally:
             # the trace's own load-cap lookups stay out of the cache the curve solver interpolates in (known_caps)
             for v in [v for v in self.eng.ceilings if v not in caps]:del self.eng.ceilings[v]
         return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int rpm_trace(self) except -1:
+        """S16 (Leo 2026-10-23: contours ran past the vertical over-rev edge of a Bf 109 F-4 at 65% pitch): the engine RPM
+        edge traced like the forward-IAS edge (ias_trace, the same machinery on the RPM limit). In a turn the propeller of
+        a level flight that over-revs turns slower (at 385 km/h 3,038 rpm at 1 g, 2,997 at 3.7 g against a 3,000 limit), so
+        states within the limit lie above an edge that leans out from where level flight first over-revs to where it
+        meets the first hard limit; at fixed alpha the propeller turns faster with speed, so the edge is traced in alpha
+        with the speed iterated (iso_rpm). Where a step fails the record says why and the edge is drawn through the
+        columns' lower edges (em_march_chart.ias_edge), vertical where there are none."""
+        if not (self.eng.s16 and self.eng.soft and self.eng.is_prop):return 0
+        edge = None
+        for ev in self.events:
+            if (ev['kind'] == 'edge' and isinstance(ev.get('speed_kmh'), list)
+                    and 'engine RPM edge' in str(ev.get('located_by'))
+                    and (edge is None or min(ev['speed_kmh']) > min(edge['speed_kmh']))):edge = ev
+        if edge is None and not any(NTracer.ok(c) and c.lower >= 0 and c.lower_kind == KD_RPM for c in self.columns.values()):
+            return 0
+        caps = set(self.eng.ceilings)
+        self.iso_lim = KD_RPM;self.rpm_slope = NAN
+        try:
+            self.ias_trace_body(edge)
+        finally:
+            self.iso_lim = KD_IAS
+            for v in [v for v in self.eng.ceilings if v not in caps]:del self.eng.ceilings[v]
+        return 0
+
+    def rpm_traced(self):
+        """S16: the engine RPM edge was traced (rpm_trace)."""
+        return self.rpm_trace_out is not None and self.rpm_trace_out.get('status') == 'traced'
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -1597,16 +1712,24 @@ cdef class NTracer:
         cdef double* ws
         cdef double* wl
         cdef double* wr
-        out = dict(status='failed', limit_kmh=self.eng.ias_limit*3.6, edge_kmh=list(edge['speed_kmh']) if edge else None)
-        self.ias_trace_out = out
-        self.eng.stats['s15_traces'] = self.eng.stats.get('s15_traces', 0)+1
+        rpm = self.iso_lim == KD_RPM
+        pre = 's16_rpm_' if rpm else 's15_'
+        if rpm:
+            # S16: the engine RPM edge (the envelope's 'rpm_trace' record, the same fields)
+            out = dict(status='failed', limit='engine RPM', edge_kmh=list(edge['speed_kmh']) if edge else None)
+            self.rpm_trace_out = out
+        else:
+            out = dict(status='failed', limit_kmh=self.eng.ias_limit*3.6, edge_kmh=list(edge['speed_kmh']) if edge else None)
+            self.ias_trace_out = out
+        self.eng.stats[pre+'traces'] = self.eng.stats.get(pre+'traces', 0)+1
         good = (min(edge['speed_kmh']) if edge is not None else
-                min(c.speed for c in self.columns.values() if NTracer.ok(c) and c.lower >= 0))
+                min(c.speed for c in self.columns.values() if NTracer.ok(c) and c.lower >= 0
+                    and (not self.eng.s16 or c.lower_kind == self.iso_lim)))
         cands = [c for c in self.columns.values() if NTracer.ok(c) and c.level >= 0 and c.speed <= good+1e-9
                  and self.eng.st[c.level].valid]
         if not cands:
             out['status'] = 'failed: no column with level flight within the limit'
-            self.eng.stats['s15_failed'] = self.eng.stats.get('s15_failed', 0)+1
+            self.eng.stats[pre+'failed'] = self.eng.stats.get(pre+'failed', 0)+1
             return 0
         start = max(cands, key=lambda c: c.speed)
         out['start_kmh'] = start.speed
@@ -1620,14 +1743,21 @@ cdef class NTracer:
                 # level flight continued up to the limit (steps of at most the placement tolerance; a step that lands
                 # past the limit ends the walk), then onto it
                 p = start.level
-                while self.eng.st[p].speed*target/self.fwd_ias(p)-self.eng.st[p].speed > self.place_tol:
+                while True:
+                    # (S16: on the engine RPM limit the walk goes on until a step lands past it while the slope of rpm /
+                    # limit with speed is not known)
+                    sv = self.limit_speed(p)
+                    if isfinite(sv) and not sv-self.eng.st[p].speed > self.place_tol:break
                     q = self.eng.correct(p, self.eng.st[p].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, MARCH_NFEV, MARCH_EVALS, 2e-6,
                                          self.eng.st[p].speed+self.place_tol, NULL, NULL)
-                    if q < 0 or not (self.eng.st[q].valid or self.eng.ias_soft(q)):
+                    if q < 0 or not (self.eng.st[q].valid or self.over_kind(q, self.iso_lim)):
                         q = self.eng.correct(p, self.eng.st[p].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS,
                                              2e-6, self.eng.st[p].speed+self.place_tol, NULL, NULL)
                     self.eng.flush_counts()
-                    if q >= 0 and self.eng.ias_soft(q):break
+                    if q >= 0 and rpm and self.eng.st[q].converged and self.eng.st[q].speed > self.eng.st[p].speed:
+                        sw = (self.eng.rpm_ratio(q)-self.eng.rpm_ratio(p))/(self.eng.st[q].speed-self.eng.st[p].speed)
+                        if isfinite(sw) and sw > 0.:self.rpm_slope = sw
+                    if q >= 0 and self.over_kind(q, self.iso_lim):break
                     if q < 0 or not self.eng.st[q].valid:
                         why = 'level flight ends before the limit at %.3f km/h' % (self.eng.st[p].speed+self.place_tol)
                         break
@@ -1739,7 +1869,7 @@ cdef class NTracer:
                                     if self.iso_slope(plo, -1, &sv, &sw):slopes[plo] = (sv, sw)
                                 if len(knots) < 2:
                                     why = 'one edge state only';break
-                                self.eng.stats['s15_inner_corners'] = self.eng.stats.get('s15_inner_corners', 0)+1
+                                self.eng.stats[pre+'inner_corners'] = self.eng.stats.get(pre+'inner_corners', 0)+1
                                 continue
                             if kind != 0:
                                 why = 'split state at alpha %.3f unresolved' % am;break
@@ -1758,19 +1888,19 @@ cdef class NTracer:
             # the first column past the edge with nothing inside the limit (the edge's own column may be unresolved,
             # another may have failed for other reasons)
             bad = min([c.speed for c in self.columns.values() if c.status == STATUS_NOFEASIBLE and c.speed > good+1e-9
-                       and 'forward-IAS' in str(c.reason)] or [INFINITY])
+                       and ('engine RPM' if rpm else 'forward-IAS') in str(c.reason)] or [INFINITY])
             if vc > bad+1e-6 and not range_end:
                 # that column's march stepped over the sliver within the limit next to the corner (the edge's states are
                 # exact; the edge truth checks them)
                 out['corner_past_column_kmh'] = bad
-                self.eng.stats['s15_corner_past_column'] = self.eng.stats.get('s15_corner_past_column', 0)+1
+                self.eng.stats[pre+'corner_past_column'] = self.eng.stats.get(pre+'corner_past_column', 0)+1
             for c in self.columns.values():
-                if why is None and NTracer.ok(c) and c.speed > vc+.01 and 'IAS' not in str(c.reason):
+                if why is None and NTracer.ok(c) and c.speed > vc+.01 and (rpm or 'IAS' not in str(c.reason)):
                     why = 'a column past the corner (%.3f km/h, %s)' % (c.speed, c.reason)
         if why is not None:
             out['status'] = 'failed: '+why
             if knots:out['last_knot'] = [self.eng.st[knots[-1]].speed, self.eng.st[knots[-1]].load, self.eng.st[knots[-1]].alpha]
-            self.eng.stats['s15_failed'] = self.eng.stats.get('s15_failed', 0)+1
+            self.eng.stats[pre+'failed'] = self.eng.stats.get(pre+'failed', 0)+1
             return 0
         # the upper boundary's end: a column just inside the corner (its exact face and slope), unless one is there
         delta = pmin(S15_CORNER_OFFSET, .125*self.vtol)
@@ -1780,7 +1910,8 @@ cdef class NTracer:
             ok = [c for c in self.columns.values() if NTracer.ok(c) and c.speed < vc-delta]
             if ok:
                 below = max(ok, key=lambda c: c.speed)
-                col = self.column(vc-delta, [below], 'ias corner', True, pmax(below.speed, vc-self.vtol), vc)
+                col = self.column(vc-delta, [below], 'rpm corner' if rpm else 'ias corner', True, pmax(below.speed, vc-self.vtol),
+                                  vc)
                 out['corner_column'] = dict(speed_kmh=col.speed, status=col.status_name(), reason=str(col.reason))
                 if edge is not None and NTracer.ok(col) and col.speed > min(edge['speed_kmh']):
                     edge['speed_kmh'] = [col.speed, max(edge['speed_kmh'])]
@@ -1796,9 +1927,13 @@ cdef class NTracer:
                    knots=[[self.eng.st[p].speed, self.eng.st[p].load,
                            slopes[p][0] if p in slopes else None, slopes[p][1] if p in slopes else None,
                            self.eng.st[p].alpha] for p in knots])
-        self.events.append(dict(kind='ias edge', speed_kmh=[self.eng.st[knots[0]].speed, self.eng.st[knots[0]].speed],
-                                located_by='S15 traced edge'))
-        self.eng.stats['s15_knots'] = self.eng.stats.get('s15_knots', 0)+len(knots)
+        self.events.append(dict(kind='rpm edge' if rpm else 'ias edge',
+                                speed_kmh=[self.eng.st[knots[0]].speed, self.eng.st[knots[0]].speed],
+                                located_by='S16 traced edge' if rpm else 'S15 traced edge'))
+        if self.eng.s16:
+            # S16: the edge's states, where the curve solver looks for levels crossing it (edge_seeds)
+            self.edge_rows['rpm' if rpm else 'ias'] = [self.eng.row_of(p) for p in knots]
+        self.eng.stats[pre+'knots'] = self.eng.stats.get(pre+'knots', 0)+len(knots)
         return 0
 
     @cython.boundscheck(True)
@@ -1835,14 +1970,18 @@ cdef class NTracer:
                     continue
                 skipped = 0 if NTracer.ok(col) else skipped
                 if not NTracer.ok(col):
-                    if col.status == STATUS_NOFEASIBLE and (last.lower >= 0 or (col.points and (self.eng.ias_soft(col.points[0])
+                    if col.status == STATUS_NOFEASIBLE and (last.lower >= 0 or (col.points and (self.eng.soft_level(col.points[0])
                                                                                       or self.eng.ias_any(col.points[0])))):
                         # S8: past the leaning forward-IAS edge (no state inside the limit up to the first hard
                         # limit; or a level flight over the limit that also did not close): the top corner of that edge,
-                        # by columns to the speed tolerance (their marches reach the states inside the limit)
+                        # by columns to the speed tolerance (their marches reach the states inside the limit).
+                        # S16: the same past the leaning engine RPM edge (level flight over-revs; in a turn the propeller
+                        # turns slower)
                         good, bad = self.localize(last, col, 'edge', self.vtol)
+                        rpm = self.eng.s16 and 'engine RPM' in str(bad.reason)
                         self.events.append(dict(kind='edge', speed_kmh=[good.speed, bad.speed], status=bad.status_name(),
-                                                reason=bad.reason, located_by='columns (forward-IAS edge)'))
+                                                reason=bad.reason,
+                                                located_by='columns (engine RPM edge)' if rpm else 'columns (forward-IAS edge)'))
                         break
                     # S6: an unresolved (not infeasible) column ends the sweep only to the speed tolerance
                     if self.s7 and col.status == STATUS_NOFEASIBLE:
@@ -2812,6 +2951,9 @@ cdef class NTracer:
         if self.s8:self.dive_path(segments)
         if self.s15:self.ias_trace()
         if not self.traced():self.ias_one_g()
+        if self.eng.s16:
+            self.rpm_trace()
+            if not self.rpm_traced():self.ias_one_g(KD_RPM)
         checks = self.check()
         if self.nudge:checks += self.resolve_gaps(segments)
         for c in self.witnesses:
@@ -2822,7 +2964,7 @@ cdef class NTracer:
         return dict(columns=cols, segments=segments, mach_seams_kmh=self.mach_seams, sweep_gaps_kmh=self.sweep_gaps,
                     events=self.events, checks=checks, work_by_role=self.work, elapsed_s=time.perf_counter()-started,
                     speed_limit=dict(kind=limit['kind'], speed_kmh=limit['speed_kmh'], enforced=limit['enforced']),
-                    ias_trace=self.ias_trace_out)
+                    ias_trace=self.ias_trace_out, rpm_trace=self.rpm_trace_out)
 
     # ------------------------------------------------------------------ column records
     @cython.boundscheck(True)
@@ -2851,7 +2993,8 @@ cdef class NTracer:
         if col.withheld:out['withheld_check'] = True
         if col.lower >= 0:
             # S8: the column's lower edge (level flight over a forward-IAS limit): the chart's leaning edge
-            out['lower_edge'] = self.eng.row_of(col.lower);out['lower_edge_kind'] = 'forward IAS limit'
+            out['lower_edge'] = self.eng.row_of(col.lower)
+            out['lower_edge_kind'] = 'engine RPM limit' if col.lower_kind == KD_RPM else 'forward IAS limit'
             if isfinite(col.lower_slope):out['lower_edge_slope'] = col.lower_slope
         if col.nudged_from is not None:out['s6_requested_speed_kmh'] = float(col.nudged_from)
         if col.slope_kind is not None:
