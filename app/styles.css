@@ -64,6 +64,21 @@ body>header.topbar{position:sticky;top:0;z-index:20}
   #em-workspace .sidebar,#missile-workspace .missile-sidebar{position:static;align-self:stretch;height:auto;overflow:visible}
   .sidebar-actions{margin:16px -10px 0}}
 
+/* Aircraft list: one compact row per aircraft, the name with its id small underneath, a "+" to add it. */
+#aircraft-list{max-height:310px;margin-top:8px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+#aircraft-list .aircraft-option{gap:8px;margin:0;padding:6px 6px 6px 9px;border:0;border-radius:6px;background:none}
+#aircraft-list .aircraft-option:hover{background:#1a2535}
+#aircraft-list .aircraft-option strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#aircraft-list .aircraft-option small{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#aircraft-list code,.entry-heading code{font:11px/1.4 ui-monospace,Consolas,monospace;color:#6c7f97}
+#aircraft-list .aircraft-option button{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border-radius:6px;font-size:0}
+#aircraft-list .aircraft-option button::before{content:"+";font-size:18px;line-height:1}
+/* Added-aircraft cards: the name first, the id small underneath. */
+.entry-heading{align-items:center;flex-wrap:wrap;row-gap:2px}
+.entry-heading strong{font-size:14px}
+.entry-heading code{flex-basis:100%;padding-left:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.entry-number{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:color-mix(in srgb,var(--entry-color) 18%,transparent)}
+
 /* The EM diagram and its operating-point details sit on the page without boxes. */
 #em-workspace .chart-card,#em-workspace .inspector{background:none;border:0;border-radius:0}
 #em-workspace .chart-toolbar{padding:0 0 12px;border-bottom:0}
