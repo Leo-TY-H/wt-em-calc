@@ -56,6 +56,12 @@ S10 = S9 and os.environ.get('WT_MARCH_S10', '1') != '0'
 def s15_on():
     return S10 and all(os.environ.get(k, '1') != '0' for k in ('WT_MARCH_S11', 'WT_MARCH_S12', 'WT_MARCH_S13', 'WT_MARCH_S14',
                                                               'WT_MARCH_S15'))
+
+
+# S16 (WT_MARCH_S16=0 restores S15): a level flight that over-revs starts the march (in a turn the propeller turns slower):
+# the engine RPM edge leans and is drawn from the native trace along the limit (rpm_trace), as the forward-IAS edge
+def s16_on():
+    return s15_on() and os.environ.get('WT_MARCH_S16', '1') != '0'
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
 COLUMN_SPACING_KMH = 80.
@@ -319,6 +325,9 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     if verified and curve_engine is not None:
         native_curves = curve_solver.native_loop.m.NCurves(curve_engine, curves)
         native_curves.check = check
+        if s16_on():
+            native_curves.set_outline(*curve_outline(cfg, row, tracer))
+            if engine is not None:native_curves.edge_knots = list(native_tracer.edge_rows.values())
         result = native_curves.run(verified)
     else:
         result = curves.run() if verified else None
@@ -347,10 +356,28 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     return row
 
 
+def curve_outline(cfg, row, tracer):
+    """S16: (regions, speed unit, turn unit) of the drawn outline for the curve solver (NCurves.set_outline): every run of
+    the outline as the chart draws it (outline, from the envelope alone), closed down to level flight at both ends; a
+    contour piece drawn more than one unit (the speed tolerance, the envelope's turn tolerance) outside it is split."""
+    boundary = outline(dict(settings=cfg), row)
+    regions, run = [], []
+    for p in boundary+[dict(turn_dps=None)]:
+        if p['turn_dps'] is not None:
+            run.append((float(p['speed_kmh']), float(p['turn_dps'])));continue
+        if run:
+            if run[-1][1] != 0.:run.append((run[-1][0], 0.))
+            if run[0][1] != 0.:run.insert(0, (run[0][0], 0.))
+            regions.append(run)
+        run = []
+    return regions, float(tracer.vtol), float(tracer.ttol)
+
+
 def curve_columns(envelope, tracer):
     """The verified columns the curve solver starts from. S15: not the column just inside the traced forward-IAS edge's
-    corner (it draws the outline's end; the curve solver's column choice stays as before)."""
-    return [c for c in envelope['columns'] if tracer.ok(c) and c.get('s1_role') != 'ias corner']
+    corner (it draws the outline's end; the curve solver's column choice stays as before); S16: nor the engine RPM
+    edge's."""
+    return [c for c in envelope['columns'] if tracer.ok(c) and c.get('s1_role') not in ('ias corner', 'rpm corner')]
 
 
 def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
@@ -389,7 +416,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                                     events=envelope['events'], checks=len(envelope['checks']),
                                     speed_limit=envelope['speed_limit'], turn_tolerance_dps=tracer.ttol,
                                     placement_tolerance_kmh=tracer.place_tol,
-                                    **({'ias_trace': envelope['ias_trace']} if envelope.get('ias_trace') else {})),
+                                    **({'ias_trace': envelope['ias_trace']} if envelope.get('ias_trace') else {}),
+                                    **({'rpm_trace': envelope['rpm_trace']} if envelope.get('rpm_trace') else {})),
                 interpolation=dict(target_mps=cfg['sep_tolerance_mps'], target_contour_dps=turn_tolerance(cfg['sep_tolerance_mps']),
                                    target_speed_kmh=speed_tolerance(cfg), scope='contours', checked_sep_levels_mps=levels,
                                    unresolved_speed_intervals=gaps, mach_transition_intervals=[], mach_events=mach['events'],
@@ -600,6 +628,11 @@ def outline(data, aircraft):
     S15 = s15_on()
     trace = (aircraft.get('envelope_trace') or {}).get('ias_trace') if S15 else None
     if trace is not None and trace.get('status') != 'traced':trace = None
+    if s16_on():
+        # S16: the traced engine RPM edge (where both edges are traced, the one whose foot comes first)
+        rpm = (aircraft.get('envelope_trace') or {}).get('rpm_trace')
+        if rpm is not None and rpm.get('status') == 'traced' and (trace is None or rpm['foot_kmh'] < trace['foot_kmh']):
+            trace = rpm
     # S15: the traced edge closes the last run between the trace's start column and its corner
     host = None if trace is None else max((k for k, run in enumerate(pieces) if run[0]['speed_kmh'] <= trace['corner']['speed_kmh']+1e-3
                                            and run[-1]['speed_kmh'] >= trace['start_kmh']-1e-9), default=None)
@@ -722,10 +755,13 @@ def ias_edge(aircraft, run, grid):
     if not lows:return []
     kind = (aircraft.get('speed_limit') or {}).get('forward_ias_limits') or []
     kind = min(kind, key=lambda c: c['speed_kmh'])['kind'] if kind else 'Forward IAS limit'
+    # S16: an engine RPM lower edge (level flight over-revs) has its own foot event ('rpm edge') and name
+    rpm = s16_on() and lows[0].get('lower_edge_kind') == 'engine RPM limit'
+    if rpm:lows = [c for c in lows if c.get('lower_edge_kind') == 'engine RPM limit']
     v = [c['speed_kmh'] for c in lows];n = [c['lower_edge']['load_g'] for c in lows]
     slopes = [c.get('lower_edge_slope') for c in lows]
     events = (aircraft.get('envelope_trace') or {}).get('events', [])
-    one = next((e for e in events if e['kind'] == 'ias edge' and min(e['speed_kmh']) <= v[0]+1e-9), None)
+    one = next((e for e in events if e['kind'] == ('rpm edge' if rpm else 'ias edge') and min(e['speed_kmh']) <= v[0]+1e-9), None)
     if one is not None and max(one['speed_kmh']) < v[0]-1e-9:
         v.insert(0, float(max(one['speed_kmh'])));n.insert(0, 1.);slopes.insert(0, None)
     xs = np.unique(np.r_[grid[(grid > v[0]) & (grid < v[-1])], v])
@@ -754,10 +790,13 @@ def ias_edge(aircraft, run, grid):
     else:
         loads = PchipInterpolator(v, n)(xs) if len(v) > 1 else np.array(n)
     rates = turn_rate(xs, loads)
-    common = dict(at_plot_ceiling=False, edge_kind=kind+' (forward IAS) speed boundary', leaning_edge=True)
+    common = dict(at_plot_ceiling=False, edge_kind=RPM_EDGE if rpm else kind+' (forward IAS) speed boundary', leaning_edge=True)
     out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs[::-1].tolist(), rates[::-1].tolist())]
     if n[0] > 1.:out.append(dict(common, speed_kmh=float(v[0]), turn_dps=0.))
     return out
+
+
+RPM_EDGE = 'Engine RPM limit (over-rev) speed boundary'   # S16: the leaning engine RPM edge
 
 
 def forward_ias_kind(aircraft):
@@ -780,7 +819,9 @@ def traced_edge(aircraft, trace):
     aq = np.unique(np.r_[np.linspace(a[0], a[-1], 241), a])[::-1]
     xs = hermite(a, v, vl, vr, aq);wq = hermite(a, w, wl, wr, aq)
     rates = turn_rate(xs, np.sqrt(1.+np.maximum(wq, 0.)))
-    common = dict(at_plot_ceiling=False, edge_kind=forward_ias_kind(aircraft)+' (forward IAS) speed boundary', leaning_edge=True)
+    # (S16: the engine RPM edge, traced the same way)
+    kind = RPM_EDGE if trace.get('limit') == 'engine RPM' else forward_ias_kind(aircraft)+' (forward IAS) speed boundary'
+    common = dict(at_plot_ceiling=False, edge_kind=kind, leaning_edge=True)
     out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs.tolist(), rates.tolist())]
     out[-1]['turn_dps'] = 0.
     return out

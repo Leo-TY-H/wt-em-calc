@@ -559,6 +559,8 @@ def add_boundary_limits(aircraft, source):
                   'Wing sweep limit speed boundary':'Wing sweep limit (selected sweep unavailable)',
                   'Flaps retracted at this wing sweep speed boundary':'Flaps retracted at this wing sweep',
                   'Propeller braking edge':'Propeller braking (level flight rejected at higher speed)',
+                  # S16: the leaning engine RPM edge (states within the limit above a level flight that over-revs)
+                  'Engine RPM limit (over-rev) speed boundary':'Engine RPM limit (over-rev; the propeller turns slower in a turn)',
                   'High-speed feasibility edge':'High-speed feasibility limit (level flight rejected at higher speed)'})
 
     def high_speed_label(point):

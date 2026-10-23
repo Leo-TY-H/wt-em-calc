@@ -79,6 +79,7 @@ cdef class NColumn:
     cdef public object nudged_from     # S6: the requested speed when this column was placed within the speed tolerance
     cdef public int lower              # S8: the lower edge of a column above a forward-IAS limit at level flight (state), or -1
     cdef public double lower_slope     # S8: dw/dV (w = n^2-1, per km/h) of that edge along the forward-IAS limit (NaN: none)
+    cdef public int lower_kind         # S16: the limit of that lower edge: KD_IAS (forward IAS) or KD_RPM (engine RPM)
     cdef public bint jump             # S8: the march met a blade-polar jump (no S6 nudges or robust retries here)
     # S7: the exact slope of the boundary, dn/dV (per km/h) from below / above the column speed (NaN: none), and its kind
     cdef public double slope_l, slope_r
@@ -89,7 +90,7 @@ cdef class NColumn:
     def __init__(self, double speed):
         self.nudged_from = None
         self.slope_l = NAN;self.slope_r = NAN;self.slope_kind = None
-        self.lower = -1;self.jump = False;self.lower_slope = NAN
+        self.lower = -1;self.jump = False;self.lower_slope = NAN;self.lower_kind = KD_IAS
         self.speed = speed;self.status = STATUS_OTHER;self.status_text = None;self.reason = None;self.march_reason = None
         self.boundary = -1;self.level = -1;self.points = [];self.record = None;self.trial_log = None;self.evidence = []
         self.ntrials = 0;self.s3_path = None;self.s3_flags = None;self.elapsed = 0.;self.search_work = None
@@ -127,6 +128,8 @@ cdef class NMarch:
     cdef public bint no_rescue
     # S8: a blade-polar jump within reach of a sample's shaft speed was found here (item 5: no S6 probing at such speeds)
     cdef public bint jump_seen
+    # S16: the soft limit the last lower_edge left (KD_IAS or KD_RPM)
+    cdef public int lower_kind
     # S9: the next march step approaches a hard limit's predicted root (no warm start from another speed then)
     cdef bint approach
     # S9: the side (+1 higher speeds, -1 lower, 0 none) of the column's segment start: level flight is continued from
@@ -162,6 +165,7 @@ cdef class NMarch:
         self.strict_faces = False
         self.no_rescue = False
         self.jump_seen = False
+        self.lower_kind = KD_IAS
         self.approach = False
 
     # ------------------------------------------------------------------ bookkeeping
@@ -506,7 +510,7 @@ cdef class NMarch:
             if q >= 0:p = q
         t = self.trial('level correction')
         t.ok = -1 if p < 0 else int(self.eng.st[p].valid);t.evals = evals;t.fresh = fresh
-        if p >= 0 and (self.eng.st[p].valid or self.eng.ias_soft(p)):
+        if p >= 0 and (self.eng.st[p].valid or self.eng.soft_level(p)):
             k = -1
             for i in range(self.preds.n):
                 if self.preds.key[i].fixed != 0:
@@ -521,8 +525,9 @@ cdef class NMarch:
                 if self.eng.nlevel > 200:
                     for i in range(self.eng.nlevel-50):self.eng.level_store[i] = self.eng.level_store[i+50]
                     self.eng.nlevel -= 50
-        # S8: a level flight over a forward-IAS limit (only) starts the march too (its states at higher alpha can be inside)
-        return p if p >= 0 and (self.eng.st[p].valid or self.eng.ias_soft(p)) else -1
+        # S8: a level flight over a forward-IAS limit (only) starts the march too (its states at higher alpha can be inside);
+        # S16: so does one over the engine RPM limit
+        return p if p >= 0 and (self.eng.st[p].valid or self.eng.soft_level(p)) else -1
 
     # ------------------------------------------------------------------ step control
     @cython.boundscheck(True)
@@ -977,6 +982,9 @@ cdef class NMarch:
         while j >= 0 and self.over(pts[j], mask):j -= 1
         if j < 0:
             if kind == KD_IAS:return -1, 'no feasible samples', 'forward-IAS limit up to the first hard limit'
+            # S16: over the engine RPM limit from level flight up to the first hard limit (a column past the leaning engine
+            # RPM edge: the march starts from a level flight that over-revs)
+            if self.eng.s16:return -1, 'no feasible samples', 'engine RPM limit up to the first hard limit'
             return -1, 'unresolved numerical boundary', 'over-rev from the lowest sample'
         w = pts[j];o = pts[j+1] if j+1 < len(pts) else edge
         face = self.soft_edge(w, o, mask, kind)
@@ -1047,8 +1055,11 @@ cdef class NMarch:
     cdef int lower_edge(self, int level, int boundary) except -2:
         """S8: the lower edge of a column whose level flight is over a forward-IAS limit (only): the forward-IAS face
         between the last such sample of the march and the first admitted one above it (soft_edge from the admitted side).
-        -1 where no admitted sample lies at or below the boundary."""
+        -1 where no admitted sample lies at or below the boundary. S16: over the engine RPM limit too: the face where the
+        last soft limit (the engine RPM limit where the sample below is over it) is left."""
         cdef int j, u, v, face
+        cdef unsigned long long mask = self.eng.ias_mask
+        cdef int kind = KD_IAS
         pts = sorted((p for p in self.samples if self.eng.passable(p) and fabs(self.eng.st[p].speed-self.speed) <= 1e-9
                       and self.eng.st[p].alpha <= self.eng.st[boundary].alpha+1e-9 and p != boundary),
                      key=lambda p: self.eng.st[p].alpha)+[boundary]
@@ -1056,8 +1067,11 @@ cdef class NMarch:
         while j < len(pts) and not self.eng.st[pts[j]].valid:j += 1
         if j >= len(pts):return -1
         v = pts[j];u = pts[j-1] if j >= 1 else level
-        if not self.over(u, self.eng.ias_mask):return v
-        face = self.soft_edge(v, u, self.eng.ias_mask, KD_IAS)
+        if self.eng.s16 and self.eng.has_code(u, R_RPM):
+            mask = self.eng.soft_mask;kind = KD_RPM
+        self.lower_kind = kind
+        if not self.over(u, mask):return v
+        face = self.soft_edge(v, u, mask, kind)
         if face < 0:return v
         return face
 
