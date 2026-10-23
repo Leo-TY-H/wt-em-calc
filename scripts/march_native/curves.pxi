@@ -124,6 +124,7 @@ cdef class NCurves:
     cdef public bint s16
     cdef public list env_lo               # S16: the lower-edge load of each envelope column (1 without one)
     cdef public list edge_knots           # S16: the rows of each traced leaning edge's knots (NTracer.edge_rows), or None
+    cdef public list rpm_feet             # S16: the speeds where level flight first over-revs (the 'rpm edge' events)
     # S16: the drawn outline's closed regions (em_march_chart.curve_outline): their points (speed, turn) concatenated,
     # the start of each region, and the units a point outside is measured in (speed and envelope tolerances)
     cdef double* opts
@@ -244,7 +245,7 @@ cdef class NCurves:
         self.s14 = self.eng.s14
         self.s15 = self.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.s16 = self.s15 and self.eng.s16
-        self.edge_knots = None
+        self.edge_knots = None;self.rpm_feet = []
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
         self.pending = [];self.grads = {}
         self.exit_seen = False
@@ -286,9 +287,10 @@ cdef class NCurves:
         elif i > 0 and fabs(self.env_v[i-1]-v) <= 1e-9:n = self.env_n[i-1]
         elif 0 < i < len(self.env_v):n = pmin(self.env_n[i-1], self.env_n[i])
         else:return 0
-        if self.s16 and self.env_lo:
-            # S16: not below the lower edge of the columns either side (a level flight that over-revs: the over-rev
-            # stretch up to that edge lies outside the outline)
+        if self.s16 and self.env_lo and not (self.rpm_feet and all(v <= f+1e-9 for f in self.rpm_feet)):
+            # S16: past where level flight over-revs (the engine RPM edge's foot), not below the lower edge of the
+            # columns either side (the over-rev stretch from level flight up to that edge lies outside the outline);
+            # below the foot level flight is admitted and an over-rev stretch on the way is transient
             if i < len(self.env_v) and fabs(self.env_v[i]-v) <= 1e-9:lo = self.env_lo[i]
             elif i > 0 and fabs(self.env_v[i-1]-v) <= 1e-9:lo = self.env_lo[i-1]
             else:lo = pmax(self.env_lo[i-1], self.env_lo[i])
