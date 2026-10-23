@@ -195,7 +195,8 @@ function populate(c) {
   state.entries=configEntries(c).map(e=>{state.conditions[e.id]=aircraftConditions(e.aircraft_id,e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
   updateDefaultContours();
   $('speed-min').value=c.speed_min_kmh;$('speed-max').value=c.speed_max_kmh;
-  $('enable-exports').checked=c.enable_exports??false;
+  // Exports are always prepared (Leo, 2026-10-23); the switch stays in the page, hidden.
+  $('enable-exports').checked=true;
   let selected=Object.keys(quality).find(k=>quality[k][2]===c.sep_tolerance_mps&&c.sampling==='adaptive') ||
     Object.keys(quality).find(k=>quality[k][0]===c.speed_samples&&quality[k][1]===c.load_samples&&quality[k][2]===c.sep_tolerance_mps);
   if(!selected){selected='custom';if(!$('quality').querySelector('[value=custom]'))$('quality').add(new Option('Saved sampling','custom'));}
@@ -942,7 +943,10 @@ $('contour-add').addEventListener('click',()=>{
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
 $('reset-zoom').addEventListener('click',()=>{if(!state.data)return;const shown=state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view);Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,envelopeEnd(shown,state.data)],'yaxis.range':[0,envelopeTop(shown)]});});
-document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
+document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();else $('download-menu').open=false;}));
+// The Download menu closes on a click elsewhere or Escape.
+document.addEventListener('click',e=>{if(!$('download-menu').contains(e.target))$('download-menu').open=false;});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')$('download-menu').open=false;});
 (async()=>{try{
   $('calculate').disabled=true;
   // Symbol glyphs are cosmetic; a missing font must not disable the calculator.
