@@ -54,7 +54,8 @@ body>header.topbar{height:56px;min-height:56px;padding:0 16px;gap:28px;flex-wrap
 /* The header stays on top, each sidebar scrolls on its own with its run button pinned at the foot, and the diagram
    fills the rest of the window. Phones keep one scrolling page with the button pinned to the screen's bottom. */
 :root{--header:56px}
-body>header.topbar{position:sticky;top:0;z-index:20}
+/* Above the Download menu and Plotly's mode bar (z-index 1001), which scroll under it. */
+body>header.topbar{position:sticky;top:0;z-index:1100}
 #em-workspace .sidebar,#missile-workspace .missile-sidebar{position:sticky;top:var(--header);align-self:start;height:calc(100vh - var(--header));overflow-y:auto;padding-bottom:0;scrollbar-width:thin;scrollbar-color:#2b3749 transparent}
 .sidebar-actions{position:sticky;bottom:0;z-index:2;margin:18px -16px 0;padding:12px 16px 14px;background:#101c29;border-top:1px solid #365064;box-shadow:0 -8px 24px #080d1460}
 .sidebar-actions .primary-button{margin-top:0;min-height:44px}
