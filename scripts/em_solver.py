@@ -43,7 +43,7 @@ SOFT_REASONS = frozenset(('engine RPM limit', 'IAS limit', 'flap automatic retra
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
                 afterburner=True, torque_gyro=False, engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
-                extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
+                extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', loadout='', stores_released=False, speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=False,aircraft_search_region=True,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='stationary',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='stable',
@@ -71,7 +71,7 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
 
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
     'manual_engine_controls','propeller_pitch_auto','propeller_pitch_percent','oil_radiator_percent','radiator_percent',
-    'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','structural_limits','turn_response_mode',
+    'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','structural_limits','turn_response_mode',
     'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode',
     'experimental_instantaneous_aero','experimental_lateral_trim','stationary_governor_mode'))
 
@@ -131,9 +131,11 @@ def settings(values=None):
         result[key]=int(result[key])
     result['sep_contour_levels_mps']=contour_levels(result['sep_contour_levels_mps'])
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
-    for key in ['manual_engine_controls','propeller_pitch_auto','default_ammunition','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region','enable_exports']:
+    for key in ['manual_engine_controls','propeller_pitch_auto','default_ammunition','stores_released','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region','enable_exports']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
     if not isinstance(result['ammunition_vehicle'],str):raise ValueError('ammunition_vehicle must be a vehicle ID')
+    from aircraft_loadouts import normalize as normalize_loadout
+    result['loadout']=normalize_loadout(result['loadout'])
     # The frozen chart domain is always intersected with this aircraft's
     # native speed and wing-force limits, including per-aircraft overrides.
     if result['reference_load_cap']:result['structural_limits']=True
@@ -200,6 +202,10 @@ def settings(values=None):
         if condition['default_ammunition']:
             from aircraft_ammunition import selected_mass
             selected_mass(name,condition['ammunition_vehicle'])
+        if condition['loadout']:
+            from aircraft_loadouts import resolve as resolve_loadout
+            resolve_loadout(name,condition['ammunition_vehicle'],condition['loadout'],
+                            released=condition['stores_released'],ammunition=condition['default_ammunition'])
     return result
 
 
@@ -339,6 +345,11 @@ class TrimSolver:
         self.flap_profile=flap_profile(self.fm)
         self.instructor_profile=instructor_profile(self.fm,self.config)
         self.model=at_sweep(prepare(self.fm),self.config['sweep_percent']/100.); self.controls=control_properties(self.fm)
+        # Selected weapon loadout: store payloads, drag area (FM+0x8448) and drop tanks.
+        from aircraft_loadouts import resolve as resolve_loadout
+        self.loadout=resolve_loadout(name,self.config['ammunition_vehicle'],self.config['loadout'],
+                                     released=self.config['stores_released'],ammunition=self.config['default_ammunition'])
+        if self.loadout is not None:self.model['attachment_drag_area']=self.loadout['drag_area']
         from em_mach_events import configure_model
         configure_model(self.model,self.config['mach_curve_mode'])
         self.model['aircraft_trim_mode']=self.config['aircraft_trim_mode']
@@ -352,13 +363,27 @@ class TrimSolver:
         ammunition_mass=selected_mass(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else 0.
         added_mass=self.config['extra_mass_kg']
         weapon_payloads=selected_payloads(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else []
+        external_tanks=()
+        if self.loadout is not None:
+            # A loadout lists every weapon of the aircraft (guns included) in the game's order.
+            weapon_payloads=self.loadout['payloads'];ammunition_mass=self.loadout['gun_mass_kg']
+            external_tanks=tuple(self.loadout['external_tanks'])
         # This app's Instructor toggle selects snapshot bit 0 (auto-trim
         # assistance). Optimized manual trim and torque/gyro are independent.
         assistance_flags=int(self.config['instructor'])
         payload_scale=payload_scales(assistance_flags,*payload_multipliers())[0]
-        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads,payload_scale=payload_scale)
+        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads,payload_scale=payload_scale,external_tanks=external_tanks)
         else:
             fuel=[f32(capacity*self.config['fuel_percent']/100.) for capacity in fuel_capacities(self.fm)]
+            if external_tanks:
+                # Drop tanks are full at spawn (0x1411204d0): add each present external tank.
+                tanks={t['index']:t for t in tank_configuration(self.fm)}
+                for index in external_tanks:
+                    tank=tanks.get(index)
+                    if tank is None or not tank['external']:raise ValueError('Drop tank does not match an external fuel tank of '+name)
+                    system=int(tank['system'])
+                    fuel+= [0.]*(system+1-len(fuel))
+                    fuel[system]=add(fuel[system],tank['capacity'])
             payloads=[*weapon_payloads,*([dict(mass=added_mass,position=self.fm['Mass']['CenterOfGravity'])] if added_mass else [])]
             self.mass=mass_evaluate(aircraft_properties(self.fm,payload_scale=payload_scale),fuel,payloads=payloads)
             self.mass['fuel_by_system']=fuel
@@ -367,6 +392,11 @@ class TrimSolver:
         if self.config['default_ammunition']:
             self.mass['ammunition']=ammunition_profile(name,self.config['ammunition_vehicle'])
             self.mass['mass_policy']='Internal fuel and default weapon payloads at their attachments; manual additional mass at configured CG'
+        if self.loadout is not None:
+            self.mass['loadout']=dict(label=self.loadout['label'],released=self.loadout['released'],
+                store_mass_kg=self.loadout['store_mass_kg'],gun_mass_kg=self.loadout['gun_mass_kg'],
+                drag_area_m2=self.loadout['drag_area'],external_tanks=self.loadout['external_tanks'])
+            self.mass['mass_policy']='Selected weapon loadout at its attachments (native store mass/drag rules), full drop tanks; manual additional mass at configured CG'
         self.weight=self.mass['mass']*float(G); self.dt=f32(1/self.config['timestep_hz'])
         self.engine=PropellerEnsemble(name,self.model,self.mass,self.config) if self.is_prop else EngineEnsemble(self.model,self.mass,self.config)
         self.instructor_boundaries={}

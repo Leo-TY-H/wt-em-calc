@@ -32,12 +32,17 @@ def allocate(tanks,systems,state,system,amount,internal=True,external=False,clam
     return s
 
 
-def initial(tanks,systems,fraction):
+def initial(tanks,systems,fraction,external=()):
+    # `external`: indices of external tanks a loadout's drop tanks switch on.
+    # The spawn path (0x1411204d0) fills each present external tank completely.
     state=dict(tanks=[0.]*len(tanks),systems=[[0.,0.,0.] for _ in systems],
-               present=[not t['external'] for t in tanks])
+               present=[not t['external'] or i in external for i,t in enumerate(tanks)])
     for i,p in enumerate(systems):
         amount=mul(sub(p['capacity'],p['external_capacity']),f32(fraction))
         state=allocate(tanks,systems,state,i,amount)
+    if external:
+        for i,p in enumerate(systems):
+            state=allocate(tanks,systems,state,i,p['external_capacity'],internal=False,external=True)
     for i,p in enumerate(systems):
         total=0.
         for priority in range(int(p['priority_count'])):

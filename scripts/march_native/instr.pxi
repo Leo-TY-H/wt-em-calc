@@ -493,7 +493,7 @@ cdef class Instructor:
         self.wing_runtime_fixed = flap_polar(m['polars']['WingPlane'], mapped[0])
         self.reference_speed = gain_reference_speed(fm['Mass'].get('Takeoff', 0.), flap_polar(m['wing_family'][0][1]['polars'], 0.))
         for i in range(NF):self.f[i] = 0.
-        f = {0x18a0: 1., 0x18d4: 1., 0x18d8: 1., 0x8448: 0.}
+        f = {0x18a0: 1., 0x18d4: 1., 0x18d8: 1., 0x8448: f32(m.get('attachment_drag_area', 0.))}
         for off, v in zip([0x5320, 0x5324, 0x5328], mass['cog']):f[off] = f32(v)
         for off, v in zip([0x6f20, 0x6f24, 0x6f28], tp['arms']['hstab']):f[off] = f32(v)
         for off, v in [(0x7334, tp['arms']['fuselage'][1]), (0x712c, tp['arms']['vstab'][1]), (0x7140, tp['slipstream_distance']),

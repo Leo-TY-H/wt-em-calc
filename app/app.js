@@ -63,7 +63,7 @@ const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'e
 // Fixed browser model; diagnostic API settings remain independently available.
 const fixedSolverConditions={trim_solver_mode:'stationary',mach_curve_mode:'auto',experimental_instantaneous_aero:false,experimental_lateral_trim:'full',timestep_hz:48};
 const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolverConditions),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','default_ammunition','ammunition_vehicle','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
+  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??({experimental_instantaneous_aero:false,experimental_lateral_trim:'full',mach_curve_mode:'auto'}[k]??state.meta.defaults[k])]));
@@ -85,7 +85,7 @@ function normalizeManualControls(values,aircraft){
   if(!caps.radiator)values.radiator_percent=0;
   return values;
 }
-const aircraftConditions=(name,c)=>{const values=modeConditions(c);const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';return normalizeManualControls(values,aircraft);};
+const aircraftConditions=(name,c)=>{const values=modeConditions(c);const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
 const flightModeLabel=c=>c.instructor!==c.torque_gyro?(c.instructor?'RB':'SB'):
   `Instructor ${c.instructor?'on':'off'} · torque/gyro ${c.torque_gyro?'on':'off'}`;
 const resultConditions=a=>({torque_gyro:true,...(a.settings||{...state.data.settings,...state.data.settings.aircraft_settings?.[a.id]})});
@@ -116,6 +116,7 @@ function showCondition(id){
   $('ammunition-vehicle').innerHTML=variants?Object.keys(variants).map(v=>`<option value="${escapeText(v)}">${escapeText(aircraft.vehicle_names?.find(n=>n.vehicle_id===v)?.display_name||v)}</option>`).join(''):'';
   if(variants)$('ammunition-vehicle').value=c.ammunition_vehicle||aircraft.ammunition.vehicle_id;
   showAmmunition(aircraft);
+  showLoadout();
   $('throttle').value=c.throttle*100;
   $('flight-mode-rb').checked=c.instructor;$('flight-mode-sb').checked=!c.instructor;
   $('flutter-on').checked=c.structural_limits!==false;$('flutter-off').checked=c.structural_limits===false;
@@ -160,7 +161,9 @@ function renderEntries(){
 function refreshEntrySummaries(){
   for(const row of $('selected-aircraft').children){
     const c=state.conditions[row.dataset.entry];
-    row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)}${c.structural_limits===false?' · Flutter off':''}`;
+    const entry=state.entries.find(e=>e.id===row.dataset.entry);
+    const loadout=c.loadout?' · '+loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle))+(c.stores_released?' (released)':''):'';
+    row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)}${c.structural_limits===false?' · Flutter off':''}${loadout}`;
   }
 }
 function addEntry(name,condition){
@@ -315,7 +318,10 @@ $('apply-settings-to-all').addEventListener('click',()=>{
   if(!state.editing||state.entries.length<2)return;
   saveCondition();
   const settings=state.conditions[state.editing];
-  for(const entry of state.entries)state.conditions[entry.id]=structuredClone(aircraftConditions(entry.aircraft_id,settings));
+  const source=state.entries.find(e=>e.id===state.editing).aircraft_id;
+  // Loadouts belong to one aircraft (and armament variant); other aircraft keep a clean loadout.
+  for(const entry of state.entries)state.conditions[entry.id]=structuredClone(aircraftConditions(entry.aircraft_id,
+    entry.aircraft_id===source?settings:{...settings,loadout:'',stores_released:false}));
   renderEntries();syncLabels();
   $('apply-settings-status').textContent=`Applied to all ${state.entries.length} aircraft.`;
 });
@@ -715,11 +721,193 @@ $('scenario').addEventListener('submit',async e=>{
     const job=await api('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(readConfig())});state.activeJob=job.id;poll(job.id);
   }catch(e){setRunning(false);error(e.message);}
 });
+// ---- Weapon loadouts: the game's presets and custom pylons (in-game editor rules) ----
+const loadoutCache=new Map();
+const loadoutKey=(aircraft,vehicle)=>`${aircraft}|${vehicle||''}`;
+function fetchLoadouts(aircraft,vehicle){
+  const key=loadoutKey(aircraft,vehicle);
+  if(!loadoutCache.has(key)){
+    const request=api(`/api/loadouts/${encodeURIComponent(aircraft)}?vehicle=${encodeURIComponent(vehicle||'')}`)
+      .then(info=>{request.value=info;return info;},cause=>{loadoutCache.delete(key);throw cause;});
+    loadoutCache.set(key,request);
+  }
+  return loadoutCache.get(key);
+}
+const cachedLoadouts=(aircraft,vehicle)=>loadoutCache.get(loadoutKey(aircraft,vehicle))?.value;
+const optionOf=(editor,tier,id)=>editor?.tiers.find(t=>t.tier===+tier)?.options.find(o=>o.id===id);
+function loadoutText(c,info){
+  if(!c.loadout)return 'Clean · guns only';
+  if(typeof c.loadout==='string')return info?.presets.find(p=>p.id===c.loadout)?.label||c.loadout;
+  const tiers=Object.entries(c.loadout.tiers||{});
+  if(!tiers.length)return 'Custom · all pylons empty';
+  const counts={};
+  for(const [tier,id] of tiers){const o=optionOf(info?.editor,tier,id);const label=o?.label||id;counts[label]=(counts[label]||0)+1;}
+  return 'Custom · '+Object.entries(counts).map(([label,n])=>n>1?`${n}× (${label})`:label).join(', ');
+}
+function loadoutTotals(loadout,info){
+  if(!loadout||!info)return {mass:0,drag:0};
+  if(typeof loadout==='string'){const p=info.presets.find(p=>p.id===loadout);return {mass:p?.mass_kg||0,drag:p?.drag_area_m2||0};}
+  let mass=0,drag=0;
+  for(const [tier,id] of Object.entries(loadout.tiers||{})){const o=optionOf(info.editor,tier,id);if(o){mass+=o.mass_kg;drag+=o.drag_area_m2;}}
+  return {mass,drag};
+}
+const loadoutFigures=t=>`${fmt(t.mass,0)} kg · drag area ${fmt(t.drag,3)} m²`;
+async function showLoadout(){
+  const entry=state.entries.find(e=>e.id===state.editing);
+  $('loadout-field').hidden=!entry;
+  if(!entry)return;
+  const aircraft=state.meta.aircraft[entry.aircraft_id],c=state.conditions[entry.id];
+  const available=!!aircraft.loadouts?.supported;
+  $('loadout-edit').disabled=!available;
+  $('loadout-summary').textContent=loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle));
+  $('loadout-detail').textContent=available?(c.loadout?'':'Stores, pylons and drop tanks the aircraft can carry.'):(aircraft.loadouts?.reason||'Loadouts are unavailable for this aircraft.');
+  if(!available||!c.loadout)return;
+  try{
+    const info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);
+    if(state.editing!==entry.id)return;
+    $('loadout-summary').textContent=loadoutText(c,info);
+    $('loadout-detail').textContent=loadoutFigures(loadoutTotals(c.loadout,info))+(c.stores_released?' · stores released, racks stay':'');
+    refreshEntrySummaries();
+  }catch(cause){$('loadout-detail').textContent='Could not load loadouts: '+cause.message;}
+}
+const loadoutDialog={entry:null,info:null,draft:null,pylon:null,notes:[]};
+async function openLoadoutEditor(){
+  const entry=state.entries.find(e=>e.id===state.editing);if(!entry)return;
+  saveCondition();
+  const c=state.conditions[entry.id],d=loadoutDialog;
+  d.entry=entry.id;d.info=null;d.pylon=null;d.notes=[];
+  $('loadout-title').textContent=state.meta.aircraft[entry.aircraft_id].name;
+  $('loadout-preset-list').innerHTML='<p class="hint">Loading loadouts…</p>';
+  $('loadout-custom').hidden=true;$('loadout-apply').disabled=true;
+  $('loadout-released').checked=!!c.stores_released;
+  $('loadout-dialog').showModal();
+  try{d.info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);}
+  catch(cause){$('loadout-preset-list').innerHTML=`<p class="hint">${escapeText('Could not load loadouts: '+cause.message)}</p>`;return;}
+  if(d.entry!==entry.id)return;
+  const loadout=c.loadout;
+  if(!loadout)d.draft={preset:'',tiers:{}};
+  else if(typeof loadout==='string')d.draft={preset:loadout,tiers:{...(d.info.presets.find(p=>p.id===loadout)?.tiers||{})}};
+  else d.draft={preset:null,tiers:{...loadout.tiers}};
+  renderLoadoutEditor();
+}
+function loadoutWeights(editor,tiers){
+  // weaponryPresetsParams.getPresetWeightRestrictionText: editor masses, sides split at slot count / 2.
+  const limits=editor.limits,center=Math.floor(editor.count/2);
+  let left=0,right=0,middle=0;
+  for(const [tier,id] of Object.entries(tiers)){
+    const t=editor.tiers.find(t=>t.tier===+tier),o=t?.options.find(o=>o.id===id);if(!o)continue;
+    if(t.center)middle+=o.editor_mass_kg;else if(+tier<center)left+=o.editor_mass_kg;else right+=o.editor_mass_kg;
+  }
+  const total=left+right+middle,problems=[];
+  if(!Object.values(limits).every(v=>v<0)){
+    if(Math.abs(left-right)>limits.disbalance)problems.push(`Left/right mass difference ${fmt(Math.abs(left-right),0)} kg exceeds ${fmt(limits.disbalance,0)} kg.`);
+    for(const [value,key,text] of [[total,'total','Total pylon mass'],[left,'left','Left pylon mass'],[right,'right','Right pylon mass']])
+      if(limits[key]>=0&&value>limits[key])problems.push(`${text} ${fmt(value,0)} kg exceeds ${fmt(limits[key],0)} kg.`);
+  }
+  return {left,right,middle,total,problems};
+}
+function choosePylon(tier,id){
+  // editSlotInPreset: banned weapons leave, weapons banning this one leave, required partners are fitted,
+  // and weapons that depended on the replaced one leave with it.
+  const d=loadoutDialog,editor=d.info.editor,tiers={...d.draft.tiers},notes=[];
+  const tierOf=slot=>editor.tiers.find(t=>t.slot===slot);
+  const name=(t,id)=>optionOf(editor,t,id)?.label||id;
+  const dropDependents=(slot,id)=>{
+    for(const [t,other] of Object.entries(tiers)){
+      const o=optionOf(editor,t,other);
+      if(o?.dependent.some(([s,p])=>s===slot&&p===id)){notes.push(`Removed ${name(t,other)} from pylon ${+t+1}: it needs ${name(tierOf(slot)?.tier,id)}.`);delete tiers[t];}
+    }
+  };
+  const target=editor.tiers.find(t=>t.tier===+tier);
+  if(tiers[tier])dropDependents(target.slot,tiers[tier]);
+  if(id){
+    const option=optionOf(editor,tier,id);
+    for(const [slot,banned] of option.banned){
+      const t=tierOf(slot);
+      if(t&&tiers[t.tier]===banned){notes.push(`Removed ${name(t.tier,banned)} from pylon ${t.tier+1}: it cannot be carried with ${option.label}.`);delete tiers[t.tier];dropDependents(slot,banned);}
+    }
+    for(const [t,other] of Object.entries(tiers)){
+      const o=optionOf(editor,t,other);
+      if(+t!==+tier&&o?.banned.some(([s,p])=>s===target.slot&&p===id)){notes.push(`Removed ${name(t,other)} from pylon ${+t+1}: it cannot be carried with ${option.label}.`);delete tiers[t];}
+    }
+    for(const [slot,need] of option.dependent){
+      const t=tierOf(slot);
+      if(t&&t.options.some(o=>o.id===need)&&tiers[t.tier]!==need){notes.push(`Fitted ${name(t.tier,need)} on pylon ${t.tier+1}: ${option.label} needs it.`);tiers[t.tier]=need;}
+    }
+    tiers[tier]=id;
+  }else delete tiers[tier];
+  d.draft={preset:null,tiers};d.notes=notes;
+  renderLoadoutEditor();
+}
+function renderLoadoutEditor(){
+  const d=loadoutDialog,info=d.info,editor=info.editor;
+  const preset=(id,label,figures,extra='',disabled=false,title='')=>`<button type="button" class="loadout-preset" data-preset="${escapeText(id)}" aria-pressed="${d.draft.preset===id}" ${disabled?'disabled':''} title="${escapeText(title)}"><strong>${escapeText(label)}${extra}</strong><span>${escapeText(figures)}</span></button>`;
+  $('loadout-preset-list').innerHTML=preset('','Clean','Guns and countermeasures only')+
+    info.presets.map(p=>preset(p.id,p.label,p.error?'Unavailable':loadoutFigures({mass:p.mass_kg,drag:p.drag_area_m2}),
+      '',!!p.error,p.error||'')).join('')+
+    (editor?`<button type="button" class="loadout-preset" data-preset="__custom" aria-pressed="${d.draft.preset===null}"><strong>Custom</strong><span>${escapeText(d.draft.preset===null?loadoutFigures(loadoutTotals({tiers:d.draft.tiers},info)):'Start from the selected preset')}</span></button>`:'');
+  $('loadout-custom').hidden=!editor;
+  let problems=[];
+  if(editor){
+    const sides=Math.floor(editor.count/2);
+    $('loadout-pylons').innerHTML=editor.tiers.map(t=>{
+      const id=d.draft.tiers[t.tier],o=id?t.options.find(o=>o.id===id):null;
+      const side=t.center?'centre':t.tier<sides?'left':'right';
+      return `<button type="button" class="loadout-pylon ${o?'':'empty'}" data-pylon="${t.tier}" aria-expanded="${d.pylon===t.tier}" aria-label="Pylon ${t.tier+1}: ${escapeText(o?.label||'empty')}"><b>${t.tier+1}</b><span>${escapeText(o?.label||'Empty')}</span><em>${side}</em></button>`;
+    }).join('');
+    const t=editor.tiers.find(t=>t.tier===d.pylon);
+    $('loadout-options').hidden=!t;
+    if(t){
+      const current=d.draft.tiers[t.tier]||'';
+      const row=(id,label,figures,disabled,title,tag='')=>`<button type="button" class="loadout-option" data-option="${escapeText(id)}" aria-pressed="${current===id}" ${disabled?'disabled':''} title="${escapeText(title)}"><strong>${escapeText(label)}${tag}</strong><span>${escapeText(figures)}</span></button>`;
+      $('loadout-options').innerHTML=row('','Empty','',false,'')+t.options.map(o=>row(o.id,o.label,o.error?'Unavailable':loadoutFigures({mass:o.mass_kg,drag:o.drag_area_m2}),!!o.error,o.error||'')).join('');
+    }
+    const w=loadoutWeights(editor,d.draft.tiers),L=editor.limits;
+    problems=d.draft.preset===null?w.problems:[];
+    const cell=(label,value,limit,over)=>`<div class="${over?'over':''}"><small>${label}</small><strong>${fmt(value,0)}${limit>=0?' / '+fmt(limit,0):''} kg</strong></div>`;
+    $('loadout-weights').innerHTML=cell('Total pylon mass',w.total,L.total,L.total>=0&&w.total>L.total)+cell('Left',w.left,L.left,L.left>=0&&w.left>L.left)+
+      cell('Right',w.right,L.right,L.right>=0&&w.right>L.right)+cell('Difference',Math.abs(w.left-w.right),L.disbalance,Math.abs(w.left-w.right)>L.disbalance&&!Object.values(L).every(v=>v<0));
+  }
+  $('loadout-notes').classList.toggle('problem',problems.length>0);
+  $('loadout-notes').textContent=[...problems,...d.notes].join(' ')||(editor?'Limits follow the in-game loadout editor. Drop tanks are carried full.':'Drop tanks are carried full.');
+  const totals=d.draft.preset===''?{mass:0,drag:0}:loadoutTotals(d.draft.preset===null?{tiers:d.draft.tiers}:d.draft.preset,info);
+  $('loadout-total').textContent=d.draft.preset===''?'Clean':loadoutFigures(totals);
+  $('loadout-released').disabled=d.draft.preset==='';
+  $('loadout-apply').disabled=problems.length>0;
+}
+$('loadout-edit').addEventListener('click',openLoadoutEditor);
+$('loadout-preset-list').addEventListener('click',event=>{
+  const button=event.target.closest('[data-preset]');if(!button||button.disabled||!loadoutDialog.info)return;
+  const d=loadoutDialog,id=button.dataset.preset;d.notes=[];
+  if(id==='__custom')d.draft={preset:null,tiers:{...d.draft.tiers}};
+  else d.draft={preset:id,tiers:{...(d.info.presets.find(p=>p.id===id)?.tiers||{})}};
+  renderLoadoutEditor();
+});
+$('loadout-pylons').addEventListener('click',event=>{
+  const button=event.target.closest('[data-pylon]');if(!button)return;
+  loadoutDialog.pylon=loadoutDialog.pylon===+button.dataset.pylon?null:+button.dataset.pylon;renderLoadoutEditor();
+});
+$('loadout-options').addEventListener('click',event=>{
+  const button=event.target.closest('[data-option]');if(!button||button.disabled)return;
+  choosePylon(loadoutDialog.pylon,button.dataset.option);
+});
+$('loadout-apply').addEventListener('click',()=>{
+  const d=loadoutDialog,c=state.conditions[d.entry];if(!c||!d.draft)return;
+  c.loadout=d.draft.preset===''?'':d.draft.preset!==null?d.draft.preset:{tiers:{...d.draft.tiers}};
+  c.stores_released=!!c.loadout&&$('loadout-released').checked;
+  $('loadout-dialog').close();
+  if(state.editing===d.entry)showLoadout();
+  refreshEntrySummaries();syncLabels();
+});
 function formChanged(e){
   if(e.target.id==='aircraft-search')return;
   if(e.target.id==='enable-exports'){updateContourAvailability();return;}
   $('apply-settings-status').textContent='';
   saveCondition();
+  if(e.target.id==='ammunition-vehicle'&&state.editing){
+    // Each armament variant has its own pylons and presets.
+    state.conditions[state.editing].loadout='';state.conditions[state.editing].stores_released=false;showLoadout();
+  }
   syncLabels();
 }
 $('scenario').addEventListener('input',formChanged);$('scenario').addEventListener('change',formChanged);

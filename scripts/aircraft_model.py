@@ -84,7 +84,7 @@ def replay_propulsion(model, result, mass_state, engine_vectors, engine_angular_
 
 def evaluate(model,velocity,stored_omega,mass_state,commands,height,dt,history,
              *,oil_radiator,radiator=0.,flaps=0.,throttle=1.1,gear=0.,airbrake=0.,cockpit_door=0.,
-             attachment_drag_area=0.,external_force=(0.,0.,0.),external_moment=(0.,0.,0.),
+             attachment_drag_area=None,external_force=(0.,0.,0.),external_moment=(0.,0.,0.),
              ext_thrust_mult=1.,height_agl=1e6,ground_effect_height=None,scalar_thrust=None,engine_spin_factor=None,
              engine_vectors=None,quaternion=(0.,0.,0.,1.),engine_wash=(0.,0.),torque_gyro=True,engine_angular_momentum=(0.,0.,0.),
              _condition_cache=None,_history_seed_only=False,_air_state=None):
@@ -157,6 +157,8 @@ def evaluate(model,velocity,stored_omega,mass_state,commands,height,dt,history,
     forces=dict(tail['forces']);points=dict(tail['points'])
     for i,name in enumerate(['left_wing','right_wing']):forces[name]=wing['forces'][i];points[name]=wing['points'][i]
     forces['chute']=[0.,0.,0.];points['chute']=[0.,0.,0.]
+    # Store drag area (FM+0x8448): the loadout's external weapons, racks and tanks.
+    if attachment_drag_area is None:attachment_drag_area=model.get('attachment_drag_area',0.)
     forces['parasite']=parasite_force(v,air['density'],ad.get('CockpitDoorCd',0.),cockpit_door,attachment_drag_area)
     raw_force=assemble_force(forces);raw_moment=assemble_moment(forces,points,cog)
 

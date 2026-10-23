@@ -152,7 +152,7 @@ cdef class Model:
     cdef double mass, weight, G
     cdef double cog[3]
     cdef double inertia[3]
-    cdef double dt, altitude, throttle, flaps, gear, ground_length, cockpit_door_cd, ext_thrust_base
+    cdef double dt, altitude, throttle, flaps, gear, ground_length, cockpit_door_cd, attachment_drag_area, ext_thrust_base
     cdef bint convert_aoa, roll_leveling, torque_gyro, optimized, cfg_default_trim
     cdef double trim_limit
     cdef double fixed_trim[3]
@@ -223,6 +223,7 @@ cdef class Model:
         self.dt = solver.dt;self.altitude = cfg['altitude_m'];self.throttle = cfg['throttle']
         self.flaps = solver.flaps;self.gear = solver.gear
         self.ground_length = fm['Length'];self.cockpit_door_cd = fm['Aerodynamics'].get('CockpitDoorCd', 0.)
+        self.attachment_drag_area = model.get('attachment_drag_area', 0.)
         self.ext_thrust_base = fm.get('ExtThrustBaseMult', 1.)
         self.convert_aoa = bool(fm.get('ConvertAoa', False));self.roll_leveling = bool(fm.get('RollLeveling', True))
         self.torque_gyro = bool(cfg['torque_gyro'])
@@ -415,7 +416,7 @@ cdef class Model:
             out.component_points[2][j] = out.tail.points[0][j]; out.component_points[3][j] = out.tail.points[1][j]
             out.component_points[4][j] = out.tail.points[2][j]; out.component_points[5][j] = out.tail.points[3][j]
             out.component_points[6][j] = 0.
-        parasite_force(v, air.density, self.cockpit_door_cd, fcomp[7])
+        parasite_force(v, air.density, self.cockpit_door_cd, self.attachment_drag_area, fcomp[7])
         for i in range(8):
             for j in range(3):
                 out.component_forces[i][j] = fcomp[i][j]
@@ -669,7 +670,8 @@ cdef class Model:
                     component_points=[[e.frame.component_points[i][j] for j in range(3)] for i in range(7)])
 
 
-cdef void parasite_force(const double* body_velocity, double density, double cockpit_door_cd, double* out) noexcept nogil:
+cdef void parasite_force(const double* body_velocity, double density, double cockpit_door_cd, double attachment_drag_area,
+                         double* out) noexcept nogil:
     cdef double x = F(body_velocity[0]), y = F(body_velocity[1]), z = F(body_velocity[2])
     cdef double norm2, speed, reciprocal, q, door, area, xy_scale
     cdef double d[3]
@@ -682,7 +684,7 @@ cdef void parasite_force(const double* body_velocity, double density, double coc
         d[0] = d[1] = d[2] = 0.
     q = M(norm2, M(F(density), .5))
     door = F(0.)
-    area = A(M(door, F(cockpit_door_cd)), F(0.))
+    area = A(M(door, F(cockpit_door_cd)), F(attachment_drag_area))
     xy_scale = M(area, -q)
     out[0] = M(xy_scale, d[0]); out[1] = M(xy_scale, d[1]); out[2] = M(M(-q, d[2]), area)
 

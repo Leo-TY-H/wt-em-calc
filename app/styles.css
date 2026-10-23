@@ -59,3 +59,60 @@ body>header.topbar{height:56px;min-height:56px;padding:0 16px;gap:28px;flex-wrap
 .point-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.25fr)}
 @media(max-width:1150px){.point-grid>div:last-child{grid-column:auto}}
 @media(max-width:760px){.point-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Weapon loadout: summary in the aircraft settings and the pylon editor dialog. */
+.loadout-field{margin:16px 0}
+.loadout-field-heading{display:flex;justify-content:space-between;align-items:center}
+.loadout-field-heading .text-button{font-size:12px;color:var(--cyan)}
+.loadout-field-heading .text-button:disabled{color:var(--muted);opacity:.5;cursor:default}
+.loadout-summary{margin-top:4px;color:var(--text);font-size:12px;line-height:1.4}
+#loadout-detail{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.5}
+.loadout-dialog{width:min(980px,calc(100vw - 32px));max-height:calc(100vh - 48px);padding:0;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text)}
+.loadout-dialog::backdrop{background:rgba(5,8,13,.72)}
+.loadout-dialog form{display:flex;flex-direction:column;max-height:calc(100vh - 50px)}
+.loadout-header{display:flex;justify-content:space-between;align-items:flex-start;padding:18px 22px 12px;border-bottom:1px solid var(--line)}
+.loadout-header h2{margin:2px 0 0;font-size:17px;font-weight:600}
+.loadout-header .text-button{font-size:16px;padding:2px 6px}
+.loadout-body{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:0;overflow:auto}
+.loadout-body h3{margin:0 0 10px;font-size:12px;font-weight:600;color:#c4cfdd}
+.loadout-body h3 small{margin-left:6px;font-weight:400;color:var(--muted)}
+.loadout-presets{padding:16px 16px 16px 22px;border-right:1px solid var(--line);overflow:auto}
+.loadout-preset-list{display:flex;flex-direction:column;gap:6px}
+.loadout-preset{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:6px;background:var(--panel2);padding:8px 10px}
+.loadout-preset:hover:not(:disabled){border-color:#3b5268}
+.loadout-preset[aria-pressed=true]{border-color:var(--cyan);background:#16262f}
+.loadout-preset:disabled{cursor:not-allowed;opacity:.45}
+.loadout-preset strong{display:block;font-size:12px;font-weight:550;line-height:1.35}
+.loadout-preset span{display:block;margin-top:2px;font-size:10.5px;color:var(--muted)}
+.loadout-custom{padding:16px 22px;min-width:0}
+.loadout-custom[hidden]{display:none}
+.loadout-pylons{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.loadout-pylon{flex:1 0 64px;max-width:96px;min-height:74px;display:flex;flex-direction:column;justify-content:space-between;text-align:left;border:1px solid var(--line);border-radius:6px;background:var(--panel2);padding:6px 7px}
+.loadout-pylon b{font-size:10px;font-weight:600;color:var(--muted)}
+.loadout-pylon span{font-size:10.5px;line-height:1.3;color:var(--text);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.loadout-pylon.empty span{color:#5d6b80}
+.loadout-pylon[aria-expanded=true]{border-color:var(--cyan)}
+.loadout-pylon:hover{border-color:#3b5268}
+.loadout-pylon em{font-style:normal;font-size:9px;letter-spacing:.6px;color:#6f8098}
+.loadout-options{margin-top:10px;border:1px solid var(--line);border-radius:6px;background:#0f1621;max-height:260px;overflow:auto}
+.loadout-option{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;width:100%;text-align:left;border:0;border-bottom:1px solid #1d2736;background:none;padding:8px 12px}
+.loadout-option:last-child{border-bottom:0}
+.loadout-option:hover:not(:disabled){background:#152030}
+.loadout-option[aria-pressed=true]{background:#16262f}
+.loadout-option:disabled{cursor:not-allowed;opacity:.45}
+.loadout-option strong{font-size:12px;font-weight:500}
+.loadout-option span{font-size:10.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.loadout-weights{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:14px}
+.loadout-weights div{border:1px solid var(--line);border-radius:6px;padding:7px 9px}
+.loadout-weights small{display:block;font-size:10px;color:var(--muted)}
+.loadout-weights strong{font-size:12px;font-weight:550;font-variant-numeric:tabular-nums}
+.loadout-weights .over{border-color:#a6533f}
+.loadout-weights .over strong{color:var(--orange)}
+.loadout-notes{margin:10px 0 0;font-size:11px;line-height:1.5;color:var(--muted)}
+.loadout-notes.problem{color:var(--orange)}
+.loadout-footer{display:flex;align-items:center;gap:12px;padding:12px 22px;border-top:1px solid var(--line)}
+.loadout-footer .check-row{margin:0 auto 0 0;font-size:12px;cursor:pointer}
+.loadout-footer .primary-button,.loadout-footer .secondary-button{width:auto;margin:0;padding:8px 16px}
+.loadout-total{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+@media(max-width:760px){.loadout-body{grid-template-columns:minmax(0,1fr)}.loadout-presets{border-right:0;border-bottom:1px solid var(--line);max-height:34vh}
+  .loadout-weights{grid-template-columns:repeat(2,minmax(0,1fr))}.loadout-footer{flex-wrap:wrap}.loadout-footer .check-row{flex-basis:100%}}
