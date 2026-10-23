@@ -347,6 +347,16 @@ cdef class NMarch:
         else:
             p = self.correct_at(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS, 2e-6,
                                 &self.preds, &evals, &fresh, NULL)
+        if self.eng.s16 and p >= 0 and self.eng.is_prop and self.prop_jump(seed, p):
+            # S16 (Leo 2026-10-23: the chart follows the propeller state reached by pulling from level flight): a step
+            # that lands on another propeller branch than its seed (Ki-43-III SB at 65% pitch, 217.25 km/h: governor 0.61
+            # in level flight, 0.79 after the first step to 1.61 g) is taken again in 2, 4 and 8 sub-steps; where the
+            # seed's branch reaches the target that way the march stays on it (one it cannot keep is a real switch)
+            q = self.path_step(seed, sol, load, seed_alpha, alpha, &evals2, &fresh2)
+            evals += evals2;fresh += fresh2
+            if q >= 0:
+                p = q
+                self.eng.stats['s16_path_steps'] = self.eng.stats.get('s16_path_steps', 0)+1
         if p < 0 and self.robust:
             p = self.retry(seed, sol, load, FIX_ALPHA, alpha, 0, 0, 0, self.max_nfev, MARCH_EVALS)
         if (p < 0 or (not self.eng.passable(p) and not self.eng.hard_rejected(p))) and self.eng.soft and self.eng.is_prop:
@@ -359,6 +369,35 @@ cdef class NMarch:
         t.warm = 1 if (best != NULL and best.has_pred) else 0
         if p >= 0 and self.eng.passable(p):self.samples.append(p)
         return p
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int path_step(self, int seed, const double* sol, double load, double seed_alpha, double alpha, long* evals,
+                       long* fresh) except -2:
+        """S16: the march step from ``seed`` (its solution ``sol`` and ``load``) to ``alpha`` in 2, 4 or 8 equal sub-steps,
+        each on the branch of the one before (prop_jump); the state at ``alpha``, or -1 where every split jumps."""
+        cdef double s[5]
+        cdef int n, k, i, cur, r
+        cdef double l
+        cdef long e1, f1
+        evals[0] = 0;fresh[0] = 0
+        for n in (2, 4, 8):
+            cur = seed
+            for k in range(1, n+1):
+                if k == 1:
+                    for i in range(5):s[i] = sol[i]
+                    l = load
+                else:
+                    for i in range(5):s[i] = self.eng.st[cur].sol[i]
+                    l = self.eng.st[cur].load
+                s[0] = seed_alpha+(alpha-seed_alpha)*k/n
+                r = self.correct_at(cur, s, l, FIX_ALPHA, s[0], 0, 0, 0, self.max_nfev, MARCH_EVALS, 2e-6, NULL, &e1, &f1, NULL)
+                evals[0] += e1;fresh[0] += f1
+                if r < 0 or not self.eng.st[r].converged or self.prop_jump(cur, r):
+                    cur = -1;break
+                cur = r
+            if cur >= 0:return cur
+        return -1
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
