@@ -523,6 +523,14 @@ async function solveAt(a,position,origin,showRejected){
   if(sequence!==state.inspection||job!==state.dataJob)return;
   return inspect(a,point,clicked);
 }
+const DATA_ICONS={
+  csv:{width:24,height:24,path:'M3 4h18v3H3z M3 10h8v3H3z M13 10h8v3h-8z M3 16h8v3H3z M13 16h8v3h-8z'},
+  json:{width:24,height:24,path:'M9 3H7.5C6.1 3 5 4.1 5 5.5V9c0 .8-.7 1.5-1.5 1.5H3v3h.5c.8 0 1.5.7 1.5 1.5v3.5C5 19.9 6.1 21 7.5 21H9v-2H7.5c-.3 0-.5-.2-.5-.5V15c0-1.2-.6-2.3-1.5-3 .9-.7 1.5-1.8 1.5-3V5.5c0-.3.2-.5.5-.5H9z M15 3h1.5C17.9 3 19 4.1 19 5.5V9c0 .8.7 1.5 1.5 1.5h.5v3h-.5c-.8 0-1.5.7-1.5 1.5v3.5c0 1.4-1.1 2.5-2.5 2.5H15v-2h1.5c.3 0 .5-.2.5-.5V15c0-1.2.6-2.3 1.5-3-.9-.7-1.5-1.8-1.5-3V5.5c0-.3-.2-.5-.5-.5H15z'}};
+function downloadExport(name){
+  const link=document.querySelector(`[data-export="${name}"]`);
+  if(link.getAttribute('aria-disabled')==='true')return error('Downloads are available once the calculation has finished.');
+  link.click();
+}
 function renderChart(){
   if(!state.data)return;
   const data=state.data,displayed=data.aircraft.filter(a=>state.view==='compare'||a.id===state.view),traces=[];
@@ -595,7 +603,11 @@ function renderChart(){
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
-  Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d','toImage']});
+  Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
+    // Downloads sit in the chart's own toolbar: Plotly's PNG of the current view, then the result's data files.
+    toImageButtonOptions:{format:'png',scale:2,filename:'WT-EM-'+data.aircraft.map(a=>a.aircraft_id||a.id).join('-vs-')},
+    modeBarButtonsToAdd:[{name:'Download samples (CSV)',icon:DATA_ICONS.csv,click:()=>downloadExport('samples.csv')},
+                         {name:'Download full result (JSON)',icon:DATA_ICONS.json,click:()=>downloadExport('data.json')}]});
   $('chart').removeAllListeners?.('plotly_legendclick');
   $('chart').on('plotly_legendclick',event=>{
     const group=event.data[event.curveNumber]?.legendgroup;if(!group)return false;
@@ -942,10 +954,7 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();else $('download-menu').open=false;}));
-// The Download menu closes on a click elsewhere or Escape.
-document.addEventListener('click',e=>{if(!$('download-menu').contains(e.target))$('download-menu').open=false;});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')$('download-menu').open=false;});
+document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
 (async()=>{try{
   $('calculate').disabled=true;
   // Symbol glyphs are cosmetic; a missing font must not disable the calculator.
