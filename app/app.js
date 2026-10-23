@@ -408,6 +408,12 @@ function sustainedCurve(aircraft,data){
   const paths=aircraft.contours.filter(c=>c.level===0);
   return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null])}:aircraft.sustained_curve;
 }
+function envelopeEnd(aircraft,data){
+  // The speed axis ends just past the fastest drawn envelope, within the requested range.
+  const fastest=Math.max(0,...aircraft.flatMap(a=>(a.boundary||[]).map(p=>Number.isFinite(p.speed_kmh)?p.speed_kmh:0)));
+  if(!fastest)return data.settings.speed_max_kmh;
+  return Math.min(data.settings.speed_max_kmh,Math.max(Math.ceil((fastest+40)/50)*50,data.settings.speed_min_kmh+100));
+}
 function envelopeTop(aircraft){
   const peak=Math.max(0,...aircraft.flatMap(a=>[...(a.boundary||[]),...(a.points||[]).filter(chartUsable)].map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
   return Math.max(10,Math.ceil(peak*1.05+1));
@@ -563,15 +569,15 @@ function renderChart(){
     traces.push(contourLabelTrace(a,data));
   }
   const ymax=envelopeTop(displayed);
-  const layout={paper_bgcolor:'#0c111a',plot_bgcolor:'#0c111a',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a7b7cb',size:11},
+  const layout={paper_bgcolor:'#0c111a',plot_bgcolor:'#0c111a',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#b4c2d3',size:12},
     annotations:displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
-    margin:{l:52,r:18,t:Math.max(38,displayed.length*20),b:46},hovermode:'closest',hoverlabel:{bgcolor:'#202e40',bordercolor:'#40536b',font:{color:'#eff7ff',size:11}},
-    xaxis:{title:{text:'True airspeed · km/h',standoff:6,font:{size:11}},range:[data.settings.speed_min_kmh,data.settings.speed_max_kmh],gridcolor:'#253144',zeroline:false,dtick:100,tickfont:{size:10},constrain:'domain'},
-    yaxis:{title:{text:'Turn rate · °/s',standoff:6,font:{size:11}},range:[0,ymax],gridcolor:'#253144',zeroline:false,dtick:5,tickfont:{size:10}},
-    legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:10},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
+    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#202e40',bordercolor:'#40536b',font:{color:'#eff7ff',size:12}},
+    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'#1f2a3a',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
+    yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'#1f2a3a',zeroline:false,dtick:5,tickfont:{size:12}},
+    legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
   Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d','toImage']});
@@ -739,7 +745,7 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-$('reset-zoom').addEventListener('click',()=>{if(state.data)Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,state.data.settings.speed_max_kmh],'yaxis.range':[0,envelopeTop(state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view))]});});
+$('reset-zoom').addEventListener('click',()=>{if(!state.data)return;const shown=state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view);Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,envelopeEnd(shown,state.data)],'yaxis.range':[0,envelopeTop(shown)]});});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
 (async()=>{try{
   $('calculate').disabled=true;
@@ -755,8 +761,7 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
     $('footer-status').textContent='Calculations currently run in the local application.';
     $('calculate').disabled=true;$('calculate').textContent='Calculations require local app';
   }else if(remoteSite){
-    // The website carries no runtime label (Leo, 2026-10-23); local copies keep theirs.
-    $('runtime-footer').textContent='';
+    // No runtime label on the website or local copies (Leo, 2026-10-23); only the public preview shows one.
     $('footer-status').textContent='Calculations run on the server.';
-  }else $('runtime-label').hidden=false;
+  }
 }catch(e){error('Could not load the plotter: '+e.message);}})();
