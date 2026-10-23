@@ -550,6 +550,24 @@ def add_boundary_limits(aircraft, source):
            'low-speed feasibility edge':'Low-speed feasibility limit'}
     edges.update({kind:' · '.join(filter(None,label)) for kind,label in SPEED_BOUNDARY_LABELS.items()
                   if kind.startswith('Flap ')})
+    # The march chart's high-speed edges (em_march_chart.outline): forward-IAS limits lean, the others stand vertical.
+    edges.update({'VNE (forward IAS) speed boundary':'Structure (VNE speed limit on forward IAS)',
+                  'Flap IAS limit (forward IAS) speed boundary':'Flap speed limit on forward IAS · Structure',
+                  'Flap automatic IAS limit (forward IAS) speed boundary':'Flap speed limit on forward IAS · Automatic flap controls',
+                  'Forward IAS limit (forward IAS) speed boundary':'Forward IAS speed limit',
+                  'Wing sweep limit':'Wing sweep limit (selected sweep unavailable)',
+                  'Wing sweep limit speed boundary':'Wing sweep limit (selected sweep unavailable)',
+                  'Flaps retracted at this wing sweep speed boundary':'Flaps retracted at this wing sweep',
+                  'Propeller braking edge':'Propeller braking (level flight rejected at higher speed)',
+                  'High-speed feasibility edge':'High-speed feasibility limit (level flight rejected at higher speed)'})
+
+    def high_speed_label(point):
+        # The level-flight rejection that ends the run here (the envelope trace's 'edge' event), e.g. an engine over-rev.
+        reason=next((str(e.get('reason','')) for e in (source.get('envelope_trace') or {}).get('events',[])
+                     if e['kind']=='edge' and abs(min(e['speed_kmh'])-point['speed_kmh'])<1e-6),'')
+        if 'engine RPM limit' in reason:return 'Engine RPM limit (level flight over-revs at higher speed)'
+        if reason.startswith('level flight: '):return 'High-speed feasibility limit ('+reason.removeprefix('level flight: ')+' in level flight at higher speed)'
+        return edges['High-speed feasibility edge']
     for point in aircraft['boundary']:
         label='Aircraft limit not identified'
         speed=point.get('sample_speed_kmh',point['speed_kmh'])
@@ -566,9 +584,9 @@ def add_boundary_limits(aircraft, source):
             label=boundary_limit_label(sample)
         if source.get('continuous_pull_boundary'):
             label='Prescribed continuous pull; aircraft limit not established'
-        if point.get('vertical_edge'):
+        if point.get('vertical_edge') or point.get('leaning_edge'):
             edge=point.get('edge_kind')
-            label=edges.get(edge,label)
+            label=high_speed_label(point) if edge=='High-speed feasibility edge' else edges.get(edge,label)
             if edge=='Roll-leveling boundary transition':label='Roll-leveling transition · '+label
         if point.get('mach_event'):label='Mach transition · '+label
         if point.get('native_mach_uncertainty'):
@@ -616,6 +634,8 @@ def add_boundary_hover(chart, data):
             for point in aircraft['boundary']:
                 speed=point.get('sample_speed_kmh',point['speed_kmh'])
                 if point.get('vertical_edge') and point['turn_dps']==0.:continue
+                # A leaning forward-IAS edge is another limit than the columns' boundary: no AoA or Ps borrowed from it.
+                if point.get('leaning_edge'):continue
                 if point['turn_dps'] is None or not speeds[0]<=speed<=speeds[-1]:continue
                 value=exact.get(speed)
                 if value is None and curve is not None:value=float(curve(speed))
