@@ -14,6 +14,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 from game_input_sources import LOCALIZATION, ROCKETS, generated_inputs, validate_source
 from aircraft_ammunition import WEAPONS, PRESETS, default_preset, source_name
+from aircraft_loadouts import WEAPON_DIRS as LOADOUT_WEAPON_DIRS
 
 ROOT = Path(__file__).resolve().parents[1]
 FLIGHT = 'aces.vromfs.bin_u/gamedata/flightmodels'
@@ -29,8 +30,14 @@ def read_json(path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def json_bytes(value):
+def json_bytes(value, compact=False):
+    if compact:
+        return (json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8')
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+
+
+# Large generated tables are stored without indentation.
+COMPACT_OUTPUTS = {'references/aircraft-loadouts.json'}
 
 
 def blob_sha(content):
@@ -124,23 +131,42 @@ class GitHubSource:
         return self.request(f'https://raw.githubusercontent.com/{self.repository}/{commit}/{quote(path)}')
 
     def ammunition_inventory(self, commit, stage):
-        """Use staged vehicles to find their default presets at the same commit."""
+        """Use staged vehicles to find their weapon presets at the same commit."""
         files = {}
-        for row in self.tree(self.entry(commit, WEAPONS)['sha']):
+        weapons = self.tree(self.entry(commit, WEAPONS)['sha'])
+        for row in weapons:
             if row['type'] == 'blob' and row['path'].endswith('.blkx'):
                 files['references/weapon-sources/' + row['path']] = dict(row, path=WEAPONS + '/' + row['path'])
-        wanted = set()
+        # Store launchers, racks, tanks and pods referenced by loadouts.
+        for folder in LOADOUT_WEAPON_DIRS:
+            row = next((r for r in weapons if r['path'] == folder and r['type'] == 'tree'), None)
+            if row is None:
+                raise ValueError('Required upstream weapon folder is missing: ' + folder)
+            for item in self.tree(row['sha']):
+                path = PurePosixPath(item['path'])
+                if item['type'] != 'blob' or path.suffix != '.blkx':
+                    continue
+                if len(path.parts) != 1 or '\\' in str(path) or ':' in str(path):
+                    raise ValueError('Unsafe upstream weapon path')
+                files[f'references/weapon-sources/{folder}/{path.name}'] = dict(
+                    item, path=f'{WEAPONS}/{folder}/{path.name}')
+        defaults, wanted = set(), set()
         for path in (stage / 'references/prop-vehicles').glob('*.blkx'):
             vehicle = read_json(path)
             if 'helicopter' in vehicle or not vehicle.get('model'):
                 continue
             preset = default_preset(vehicle)
             if preset:
-                wanted.add(PurePosixPath(source_name(preset)).name)
+                defaults.add(PurePosixPath(source_name(preset)).name)
+            presets = vehicle.get('weapon_presets', {}).get('preset')
+            for row in presets if isinstance(presets, list) else [presets] if presets else []:
+                wanted.add(PurePosixPath(source_name(row['blk'])).name)
         tree = {row['path']: row for row in self.tree(self.entry(commit, PRESETS)['sha']) if row['type'] == 'blob'}
-        for name in sorted(wanted):
+        for name in sorted(defaults | wanted):
             if name not in tree:
-                raise ValueError('Missing default weapon preset: ' + name)
+                if name in defaults:
+                    raise ValueError('Missing default weapon preset: ' + name)
+                continue  # a non-default preset the game itself cannot load
             files['references/weapon-presets/' + name] = dict(tree[name], path=PRESETS + '/' + name)
         return files
 
@@ -295,7 +321,7 @@ def sync(root=ROOT, source=None, force=False, workers=8):
             for name, value in generated.items():
                 target = stage / name
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(json_bytes(value))
+                target.write_bytes(json_bytes(value, compact=name in COMPACT_OUTPUTS))
             names = set(inventory) | set(generated)
             changed = bool(removed) or any(not (root / p).exists() or (root / p).read_bytes() != (stage / p).read_bytes() for p in names)
 

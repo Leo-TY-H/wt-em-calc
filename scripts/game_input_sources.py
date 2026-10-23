@@ -90,4 +90,8 @@ def generated_inputs(stage, inventory, records, repository, commit, version, geo
         from aircraft_ammunition import generate
         generated['references/aircraft-ammunition.json'] = dict(
             provenance, schema=2, aircraft=generate(stage, records, geometry_root))
+        from aircraft_loadouts import SCHEMA, generate as loadouts
+        labels = generated.get('references/missile-names.json', {}).get('labels', {})
+        generated['references/aircraft-loadouts.json'] = dict(
+            provenance, schema=SCHEMA, aircraft=loadouts(stage, records, geometry_root, labels))
     return generated

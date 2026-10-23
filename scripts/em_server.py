@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from functools import lru_cache
-from urllib.parse import urlparse,parse_qs
+from urllib.parse import urlparse,parse_qs,unquote
 from urllib.request import urlopen
 
 from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute, contour_levels as validate_contour_levels
@@ -379,6 +379,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
             return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,
                 result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info()))
+        if path.startswith('/api/loadouts/'):
+            name=unquote(path.removeprefix('/api/loadouts/'))
+            if name not in AIRCRAFT:return self.respond(dict(error='Unknown aircraft'),404)
+            vehicle=parse_qs(urlparse(self.path).query).get('vehicle',[''])[0]
+            if len(vehicle)>120:return self.respond(dict(error='Invalid vehicle'),400)
+            from aircraft_loadouts import summary as loadout_summary
+            try:return self.respond(loadout_summary(name,vehicle))
+            except (OSError,ValueError,KeyError) as error:return self.respond(dict(supported=False,reason=str(error)))
         if path.startswith('/api/jobs/'):
             parts=path.split('/');key=parts[3]
             if len(key)!=20 or any(c not in '0123456789abcdef' for c in key):return self.respond(dict(error='Invalid job'),400)

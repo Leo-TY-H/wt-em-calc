@@ -38,7 +38,7 @@ def source_state(solver,value,*,constant_cache=None):
         wing_runtime=polars[mapped[0]];reference_speed=constant_cache['reference_speed']
     prepared=constant_cache.get('source_constants') if constant_cache is not None else None
     if prepared is None:
-        f={0x18a0:1.,0x18d4:1.,0x18d8:1.,0x8448:0.}
+        f={0x18a0:1.,0x18d4:1.,0x18d8:1.,0x8448:f32(model.get('attachment_drag_area',0.))}
         for off,v in zip([0x5320,0x5324,0x5328],mass['cog']):f[off]=f32(v)
         for off,v in zip([0x6f20,0x6f24,0x6f28],tp['arms']['hstab']):f[off]=f32(v)
         for off,v in [(0x7334,tp['arms']['fuselage'][1]),(0x712c,tp['arms']['vstab'][1]),(0x7140,tp['slipstream_distance']),(0x6f1c,tp['incidence']['hstab'])]:f[off]=f32(v)

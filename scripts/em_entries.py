@@ -69,6 +69,9 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
             from em_model_experiments import label
             experiment=label(condition)
             if experiment:mode+=' · '+experiment
+            if condition.get('loadout'):
+                from aircraft_loadouts import display_label
+                mode+=' · '+display_label(entry['aircraft_id'],condition['ammunition_vehicle'],condition['loadout'],condition['stores_released'])
             a.update(id=entry['id'],aircraft_id=entry['aircraft_id'],color=COLORS[index],
                      name=f"{AIRCRAFT[entry['aircraft_id']]['name']} · {index+1} · {mode}")
             rows[entry['id']]=a

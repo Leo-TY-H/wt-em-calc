@@ -50,6 +50,12 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div id="flap-modes" class="flap-modes" role="group" aria-label="Flap positions"><button type="button" data-flap-mode="combat" aria-pressed="false">Combat</button><button type="button" data-flap-mode="takeoff" aria-pressed="false">Takeoff</button><button type="button" data-flap-mode="landing" aria-pressed="false">Landing</button></div>
 <small id="flap-limit-help" aria-live="polite"></small></div>
 
+<div id="loadout-field" class="field loadout-field" hidden>
+<div class="loadout-field-heading"><span>Loadout</span><button type="button" id="loadout-edit" class="text-button">Change…</button></div>
+<div id="loadout-summary" class="loadout-summary">Clean · guns only</div>
+<small id="loadout-detail" aria-live="polite"></small>
+</div>
+
 <div class="divider"></div>
 
 <div class="field">Flight mode<div class="mode-switch" role="radiogroup" aria-label="Flight mode"><label><input id="flight-mode-rb" type="radio" name="flight-mode" value="rb" checked><span>RB</span></label><label><input id="flight-mode-sb" type="radio" name="flight-mode" value="sb"><span>SB</span></label></div></div>
@@ -96,5 +102,24 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <footer><span id="runtime-footer"></span><span id="footer-status">All calculations run on this computer.</span></footer>
 </main></div>
 <section id="missile-workspace" role="tabpanel" aria-labelledby="missile-tab" hidden></section>
+<dialog id="loadout-dialog" class="loadout-dialog" aria-labelledby="loadout-title">
+<form id="loadout-form" method="dialog">
+<header class="loadout-header"><div><span class="eyebrow">LOADOUT</span><h2 id="loadout-title">Aircraft</h2></div><button type="submit" value="cancel" class="text-button" aria-label="Close loadout editor">✕</button></header>
+<div class="loadout-body">
+<section class="loadout-presets" aria-labelledby="loadout-presets-title"><h3 id="loadout-presets-title">Presets</h3><div id="loadout-preset-list" class="loadout-preset-list"></div></section>
+<section id="loadout-custom" class="loadout-custom" aria-labelledby="loadout-custom-title"><h3 id="loadout-custom-title">Pylons <small>Select a pylon to change what it carries</small></h3>
+<div id="loadout-pylons" class="loadout-pylons" role="group" aria-label="Pylons"></div>
+<div id="loadout-options" class="loadout-options" hidden></div>
+<div id="loadout-weights" class="loadout-weights"></div>
+<p id="loadout-notes" class="loadout-notes" role="status" aria-live="polite"></p>
+</section>
+</div>
+<footer class="loadout-footer">
+<label class="check-row"><input id="loadout-released" type="checkbox"><span>Stores released (racks and pods stay)</span></label>
+<span id="loadout-total" class="loadout-total"></span>
+<button type="submit" value="cancel" class="secondary-button">Cancel</button><button id="loadout-apply" type="button" class="primary-button">Use loadout</button>
+</footer>
+</form>
+</dialog>
 <link rel="stylesheet" href="./missiles.css"><script defer src="./missiles.js"></script>
 </body></html>

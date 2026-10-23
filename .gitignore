@@ -51,6 +51,7 @@
 !/scripts/aircraft_availability.py
 !/scripts/aircraft_catalog.py
 !/scripts/aircraft_description.py
+!/scripts/aircraft_loadouts.py
 !/scripts/aircraft_model.py
 !/scripts/aircraft_upgrades.py
 !/scripts/altitude_climb.py
