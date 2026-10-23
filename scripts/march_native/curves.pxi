@@ -338,6 +338,7 @@ cdef class NCurves:
     cdef int fixed(self, double speed, double load, int anchor, phase, bint exhaustive=False) except -2:
         """CurveSolver.fixed: the production fixed-load point solve (em_stationary.solve)."""
         global g_sink
+        from em_trim_work import WorkLimit
         cdef int sid
         if self.check is not None:self.check()
         self.eng.flush_counts()
@@ -347,7 +348,23 @@ cdef class NCurves:
             attitude = [self.eng.st[anchor].sol[i] for i in range(5)]
             attitude[1] += (acos(1./load)-acos(1./pmax(1., self.eng.st[anchor].load)))*RAD_TO_DEG
             initial = self.eng.initial_dict(anchor, attitude)
-        sid = self.eng.points_().solve(speed, load, initial)
+        try:
+            sid = self.eng.points_().solve(speed, load, initial)
+        except WorkLimit as error:
+            # S16: a point solve that establishes no candidate (a speed and load outside every equilibrium: a fixed solve
+            # past the envelope that S16's outline checks reach, Do 17 Z-7 SB) is a failed sample, not the end of the
+            # whole curve solve (it raised through run() and the chart fell back to the old sampler)
+            if not (self.s16 and anchor >= 0 and 'no established candidate' in str(error.kind)):raise
+            sid = self.eng.new_state()
+            self.eng.st[sid] = self.eng.st[anchor]
+            self.eng.st[sid].src = -1;self.eng.st[sid].row = -1;self.eng.st[sid].base = sid;self.eng.st[sid].limit = -1
+            self.eng.st[sid].valid = False;self.eng.st[sid].converged = False;self.eng.st[sid].nreasons = 0
+            self.eng.st[sid].speed = speed;self.eng.st[sid].load = load
+            self.eng.stats['s16_fixed_unresolved'] = self.eng.stats.get('s16_fixed_unresolved', 0)+1
+            self.eng.flush_counts()
+            self.ledger.charge(phase, before, 'unresolved', kind='fixed_load', speed_kmh=speed, load_g=load,
+                               exhaustive=exhaustive or None)
+            return sid
         self.admit_transient(sid)
         self.eng.flush_counts()
         self.ledger.charge(phase, before, 'admitted' if self.eng.st[sid].valid else
