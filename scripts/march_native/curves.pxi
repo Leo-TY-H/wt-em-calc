@@ -1984,6 +1984,38 @@ cdef class NCurves:
                     self.eng.stats['s16_column_seeds'] = self.eng.stats.get('s16_column_seeds', 0)+len(more)
                     components.extend(more)
                     self.follow_new(more, components, segment)
+                    self.drop_copies(more, components)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef drop_copies(self, list new, list components):
+        """S16: a component seeded by S16 (a level at a column no followed contour passed, or crossing a leaning edge)
+        that, followed, turns out to be a copy of one already there: its span inside that one's (two speed tolerances
+        wider) and three quarters of its knots within four curve tolerances of that one's interpolant (next to a model
+        jump the S9 merge, which needs every knot on the line, keeps both: P-63A-10 SB at 3,000 m +10 m/s)."""
+        cdef PchipCurve f
+        cdef int k, hits
+        cdef double v, n
+        fresh = {id(c) for c in new}
+        for comp in new:
+            if not any(c is comp for c in components) or len(comp['knots']) < 2:continue
+            ks = comp['knots']
+            v0, v1 = self.eng.st[ks[0]].speed, self.eng.st[ks[-1]].speed
+            for other in components:
+                if id(other) in fresh or other['level'] != comp['level'] or other['segment'] != comp['segment']:continue
+                if len(other['knots']) < 2 or (self.s10 and bool(other.get('below')) != bool(comp.get('below'))):continue
+                w0, w1 = self.eng.st[other['knots'][0]].speed, self.eng.st[other['knots'][-1]].speed
+                if not (w0-2.*self.speed_tol <= v0 and v1 <= w1+2.*self.speed_tol):continue
+                f = self.interpolant(other['knots'])
+                hits = 0
+                for k in ks:
+                    v = pmin(pmax(self.eng.st[k].speed, w0), w1)
+                    n = sqrt(1.+pmax(f.eval(v), 0.))
+                    if fabs(curve_turn(v, n)-self.eng.st[k].turn) <= 4.*self.turn_tol:hits += 1
+                if hits >= .75*len(ks):
+                    components[:] = [c for c in components if c is not comp]
+                    self.eng.stats['s16_copies_dropped'] = self.eng.stats.get('s16_copies_dropped', 0)+1
+                    break
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -2042,6 +2074,7 @@ cdef class NCurves:
                     self.eng.stats['s16_edge_seeds'] = self.eng.stats.get('s16_edge_seeds', 0)+1
                     components.append(comp)
                     self.follow_new([comp], components, segment)
+                    self.drop_copies([comp], components)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
