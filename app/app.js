@@ -440,11 +440,16 @@ function contourLabelTrace(a,data){
     hovertemplate:`${a.name}<br>SEP %{customdata} m/s<extra></extra>`};
 }
 function projectedContourPoint(event,a,level){
+  return projectedPoint(event,a.contours.filter(path=>path.level===level));
+}
+function projectedPoint(event,paths){
+  // The clicked position on the drawn lines, projected in screen coordinates.
   const chart=$('chart'),rect=chart.getBoundingClientRect(),plot=chart._fullLayout._size;
   const [xmin,xmax]=chart._fullLayout.xaxis.range,[ymin,ymax]=chart._fullLayout.yaxis.range;
   const cursor=[(event.event.clientX-rect.left-plot.l)/plot.w,1-(event.event.clientY-rect.top-plot.t)/plot.h];
   let best=null;
-  for(const path of a.contours.filter(path=>path.level===level))for(let i=1;i<path.x.length;i++){
+  for(const path of paths)for(let i=1;i<path.x.length;i++){
+    if(![path.x[i-1],path.y[i-1],path.x[i],path.y[i]].every(Number.isFinite))continue;
     const start=[(path.x[i-1]-xmin)/(xmax-xmin),(path.y[i-1]-ymin)/(ymax-ymin)];
     const end=[(path.x[i]-xmin)/(xmax-xmin),(path.y[i]-ymin)/(ymax-ymin)];
     const dx=end[0]-start[0],dy=end[1]-start[1],length=dx*dx+dy*dy;
@@ -476,15 +481,26 @@ function nearestSolved(a,speed,rate,showRejected){
   }
   return best?.point;
 }
-function inspectContour(a,level,point){
+async function solveAt(a,position,origin,showRejected){
+  // Lines are interpolated between solved states: solve the full model at the clicked speed and load.
+  const sequence=state.inspection=(state.inspection||0)+1,job=state.dataJob;
+  const load=Math.hypot(1,(position.speed/3.6)*(position.rate*Math.PI/180)/9.8100004196167);
+  const clicked={...origin,speed:position.speed,rate:position.rate};
   $('inspector').hidden=false;
-  const load=Math.hypot(1,(point.speed/3.6)*(point.rate*Math.PI/180)/9.8100004196167);
-  $('point-title').textContent=`${a.name} · ${fmt(point.speed,1)} km/h · ${fmt(load,2)} g`;
-  $('point-status').innerHTML='<span class="point-pill">Interpolated contour</span>';
-  $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3><dl>
-    <dt>Native-step Ps</dt><dd>${fmt(level,1)} m/s</dd><dt>Turn rate</dt><dd>${fmt(point.rate,3)} °/s</dd>
-    <dt>Turn radius</dt><dd>${turnRadius(point.speed,point.rate)}</dd><dt>True airspeed</dt><dd>${fmt(point.speed,1)} km/h</dd>
-    <dt>Load</dt><dd>${fmt(load,3)} g</dd></dl></div></div>`;
+  $('point-title').textContent=`${a.name} · ${fmt(position.speed,0)} km/h · ${fmt(load,2)} g`;
+  $('point-status').innerHTML='<span class="point-pill">Solving the clicked point…</span>';
+  $('point-content').innerHTML='';
+  let point;
+  try{point=await api(`/api/jobs/${job}/solve/${encodeURIComponent(a.id)}?speed_kmh=${position.speed}&load_g=${load}`);}
+  catch(e){
+    if(sequence!==state.inspection||job!==state.dataJob)return;
+    // A server without point solves: the nearest solved state instead.
+    const nearest=nearestSolved(a,position.speed,position.rate,showRejected);
+    if(nearest)return inspect(a,nearest,{...clicked,nearest:true});
+    error(e.message);return;
+  }
+  if(sequence!==state.inspection||job!==state.dataJob)return;
+  return inspect(a,point,clicked);
 }
 function renderChart(){
   if(!state.data)return;
@@ -509,7 +525,7 @@ function renderChart(){
         hovertemplate:`${a.name}<br>Ps ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
-      name:a.name,meta:a.id,legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
+      name:a.name,meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
       customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result']),
       hovertemplate:`${a.name}<br>%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
@@ -580,11 +596,12 @@ function renderChart(){
       const a=data.aircraft.find(a=>a.id===p.data.meta.id);
       const level=p.data.meta.kind==='contour'?p.data.meta.level:p.customdata;
       const position=a&&projectedContourPoint(event,a,level);
-      if(position){
-        // Contours are interpolated; full details come from the nearest solved point.
-        const nearest=nearestSolved(a,position.speed,position.rate,showRejected);
-        return nearest?inspect(a,nearest,{level,...position}):inspectContour(a,level,position);
-      }
+      if(position)return solveAt(a,position,{level},showRejected);
+    }
+    if(p.data.meta?.kind==='boundary'){
+      const a=data.aircraft.find(a=>a.id===p.data.meta.id);
+      const position=a&&projectedPoint(event,[{x:a.boundary.map(q=>q.speed_kmh),y:a.boundary.map(q=>q.turn_dps)}]);
+      if(position)return solveAt(a,position,{boundary:true},showRejected);
     }
     if(Array.isArray(p.customdata)&&p.customdata.length===3){
       const [id,kind,index]=p.customdata,a=data.aircraft.find(a=>a.id===id);if(a)return inspect(a,(kind==='root'?a.sustained:a.points)[index]);
@@ -598,20 +615,22 @@ function renderChart(){
     if(best)inspect(best.a,best.point);
   });
 }
-async function inspect(a,p,contour){
+async function inspect(a,p,clicked){
   const sequence=state.inspection=(state.inspection||0)+1;
-  if(!p.component_forces){
+  if(!p.component_forces&&p.detail_index!=null){
     try {p=await api(`/api/jobs/${state.dataJob}/point/${encodeURIComponent(a.id)}/${p.detail_index}`);}
     catch(e){error(e.message);return;}
   }
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
   $('point-title').textContent=`${a.name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`;
-  $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${contour?`Nearest solved point to SEP ${contour.level>0?'+':''}${contour.level}`:chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
+  $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
+  const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
+  const note=clicked?`<div class="point-note">Clicked ${where}. ${clicked.nearest?'The details are for the nearest solved point; this server cannot solve the clicked point.':'This state is solved there with the full model.'}</div>`:'';
   // A third row entry hides that row on the page; it stays in the markup (Leo, 2026-10-23).
   const dl=rows=>'<dl>'+rows.map(([k,v,hide])=>`<dt${hide?' hidden':''}>${k}</dt><dd${hide?' hidden':''}>${v}</dd>`).join('')+'</dl>';
-  if(p.not_evaluated){$('point-content').innerHTML=dl([['Not calculated',escapeText(p.reasons.join(', '))]]);return;}
-  if(!chartUsable(p)&&p.status==='unresolved'&&!p.component_forces){$('point-content').innerHTML=dl([['Calculation',escapeText(p.search_unresolved||p.chart_status||'No numerical candidate established')]]);return;}
+  if(p.not_evaluated){$('point-content').innerHTML=dl([['Not calculated',escapeText(p.reasons.join(', '))]])+note;return;}
+  if(!chartUsable(p)&&p.status==='unresolved'&&!p.component_forces){$('point-content').innerHTML=dl([['Calculation',escapeText(p.search_unresolved||p.chart_status||'No numerical candidate established')]])+note;return;}
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
   $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3>${dl([
@@ -651,7 +670,7 @@ async function inspect(a,p,contour){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${contour?`<div class="point-note">Clicked the SEP ${contour.level>0?'+':''}${contour.level} m/s contour at ${fmt(contour.speed,1)} km/h · ${fmt(contour.rate,2)} °/s. The details are for the nearest solved point.</div>`:''}`;
+    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;
