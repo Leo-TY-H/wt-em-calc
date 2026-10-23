@@ -27,6 +27,7 @@ from dataclasses import dataclass, asdict
 import hashlib
 import json
 import math
+import os
 import time
 
 import numpy as np
@@ -778,6 +779,15 @@ class CurveSolver:
             presence[speed] = self.column_levels(by_speed[speed])
             if presence[speed] is None:continue  # uninformative: keeps components open across it
             solved.append(speed);last_used = speed
+        if os.environ.get('WT_MARCH_S15', '1') != '0':
+            # S15 (native link_columns): the last column with level flight ends the solved columns where the last
+            # column itself has none (past a forward-IAS limit)
+            for speed in reversed(ordered):
+                if solved and speed <= solved[-1]:break
+                here = self.column_levels(by_speed[speed])
+                if here is None:continue
+                presence[speed] = here;solved.append(speed)
+                break
         extra = {}
         for a, b in zip(solved, solved[1:]):
             for speed in ordered:
