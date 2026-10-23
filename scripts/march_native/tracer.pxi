@@ -1692,6 +1692,36 @@ cdef class NTracer:
             for v in [v for v in self.eng.ceilings if v not in caps]:del self.eng.ceilings[v]
         return 0
 
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef tuple rpm_return(self, list knots):
+        """S16: (why, knots) of an engine RPM edge whose iso-line goes below the speed of its foot (level flight at the
+        limit): the knots from where it last comes back to that speed (located by regula falsi in alpha to 0.001 km/h),
+        the edge vertical below it; why where it never comes back before the corner (no state within the limit lies past
+        the foot below the first hard limit: a vertical edge)."""
+        cdef double vf = self.eng.st[knots[0]].speed, lo, hi, flo, fhi, am
+        cdef int j, i, plo, q, it
+        j = -1
+        for i in range(1, len(knots)):
+            if self.eng.st[knots[i]].speed < vf-1e-6:j = i
+        if j < 0:return None, knots
+        if j == len(knots)-1:return 'the edge lies below its foot speed up to the corner', knots
+        plo = knots[j];lo = self.eng.st[plo].alpha;hi = self.eng.st[knots[j+1]].alpha
+        flo = self.eng.st[plo].speed-vf;fhi = self.eng.st[knots[j+1]].speed-vf
+        q = knots[j+1]
+        for it in range(30):
+            if fhi <= 1e-3 or hi-lo <= S15_CORNER_TOL:break
+            am = lo+(hi-lo)*flo/(flo-fhi)
+            am = pmin(hi-.05*(hi-lo), pmax(lo+.05*(hi-lo), am))
+            i = self.iso_at(plo, am, self.iso_guess([plo, knots[j+1]], am), lo, hi)
+            if i < 0 or self.iso_kind(i) != 0:break
+            if self.eng.st[i].speed < vf:
+                plo = i;lo = self.eng.st[i].alpha;flo = self.eng.st[i].speed-vf
+            else:
+                q = i;hi = self.eng.st[i].alpha;fhi = self.eng.st[i].speed-vf
+        self.eng.stats['s16_rpm_returns'] = self.eng.stats.get('s16_rpm_returns', 0)+1
+        return None, [q]+([p for p in knots[j+1:] if p != q])
+
     def rpm_traced(self):
         """S16: the engine RPM edge was traced (rpm_trace)."""
         return self.rpm_trace_out is not None and self.rpm_trace_out.get('status') == 'traced'
@@ -1817,6 +1847,13 @@ cdef class NTracer:
                         why = 'corner unresolved between alpha %.3f and %.3f' % (self.eng.st[plo].alpha, self.eng.st[plo].alpha+width)
                     elif plo != knots[-1]:knots.append(plo)
                 if why is None and len(knots) < 2:why = 'one edge state only'
+                if why is None and rpm:
+                    # S16: where the propeller first turns faster as alpha rises (Gladiator Mk II at 3,000 m: 3,097 rpm at
+                    # 1 g, 3,107 at 3.9 g, 3,096 from 6.9 g at 465 km/h against a 3,100 limit) the limit's iso-line turns
+                    # back below the speed where level flight reaches the limit: below that speed the over-rev stretch is
+                    # passed on the way from admitted level flight (transient, drawn: S8), so the edge stands vertical at
+                    # that speed up to where the iso-line comes back to it, then follows it
+                    why, knots = self.rpm_return(knots)
                 if why is None:
                     # the split rule on V(alpha) and w(alpha) through the knots and their slopes; in the first round every
                     # piece's middle is solved too (a hard limit crossing the edge between knots)

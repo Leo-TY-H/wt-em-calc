@@ -328,6 +328,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         if s16_on():
             native_curves.set_outline(*curve_outline(cfg, row, tracer))
             if engine is not None:native_curves.edge_knots = list(native_tracer.edge_rows.values())
+            native_curves.rpm_feet = [min(e['speed_kmh']) for e in envelope['events'] if e['kind'] == 'rpm edge']
         result = native_curves.run(verified)
     else:
         result = curves.run() if verified else None
@@ -834,7 +835,12 @@ def traced_edge(aircraft, trace):
     kind = RPM_EDGE if trace.get('limit') == 'engine RPM' else forward_ias_kind(aircraft)+' (forward IAS) speed boundary'
     common = dict(at_plot_ceiling=False, edge_kind=kind, leaning_edge=True)
     out = [dict(common, speed_kmh=float(x), turn_dps=float(t)) for x, t in zip(xs.tolist(), rates.tolist())]
-    out[-1]['turn_dps'] = 0.
+    if knots[0][1] > 1.+1e-9:
+        # S16: an engine RPM edge whose iso-line came back to its foot speed above level flight (NTracer.rpm_return):
+        # vertical from there down to level flight
+        out.append(dict(common, speed_kmh=float(knots[0][0]), turn_dps=0.))
+    else:
+        out[-1]['turn_dps'] = 0.
     return out
 
 
