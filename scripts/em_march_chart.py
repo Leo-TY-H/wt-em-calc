@@ -329,6 +329,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
             native_curves.set_outline(*curve_outline(cfg, row, tracer))
             if engine is not None:native_curves.edge_knots = list(native_tracer.edge_rows.values())
             native_curves.rpm_feet = [min(e['speed_kmh']) for e in envelope['events'] if e['kind'] == 'rpm edge']
+            native_curves.lf_rows = level_flights(envelope)
         result = native_curves.run(verified)
     else:
         result = curves.run() if verified else None
@@ -355,6 +356,16 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         row['chart_solver_work']['native_python'] = dict(envelope=engine.python_counts(),
                                                          curves=curve_engine.python_counts() if curve_engine is not None else None)
     return row
+
+
+def level_flights(envelope):
+    """S16: (speed, level-flight point) of every envelope column with one (NCurves.lf_rows: the level flight the chart's
+    propeller-state rule starts from)."""
+    out = []
+    for c in envelope['columns']:
+        p = next((p for p in c.get('points', []) if abs(p['load_g']-1.) <= 1e-9 and p.get('stationary_coordinates') is not None), None)
+        if p is not None:out.append((float(c['speed_kmh']), p))
+    return out
 
 
 def curve_outline(cfg, row, tracer):
