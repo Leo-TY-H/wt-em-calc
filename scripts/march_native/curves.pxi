@@ -3086,6 +3086,8 @@ cdef class NCurves:
         cdef double v, tol, sl, interp, va, vb, vm
         cdef int it, depth
         self.jump_work = {}
+        # (jump lines are found where the propulsion coordinates jump: none without a propeller model)
+        if not self.eng.is_prop:return []
         per = []
         for col in columns:
             if not col.get('boundary'):continue
