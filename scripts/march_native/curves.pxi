@@ -49,6 +49,7 @@ DEF S16_JUMP_REACH = .75                 # S16: deg, a jump line point between c
 DEF S16_JUMP_REFINE = 2                  # S16: midpoint refinement depth of a jump line between two columns
 DEF S16_JUMP_END_STEPS = 5               # S16: speed bisection steps of a jump line's end towards the next column without it
 DEF S16_JUMP_END_SPEED = .25             # S16: ... down to this x the speed tolerance (a jump line's 1 g end is then continued to 1 g from its last two points)
+DEF S16_BUCKET_LOAD = 1.25               # S16: x the knot's load, a failed contour step's root this far above it is looked at for a drag bucket's turn
 DEF S16_JUMP_BUDGET = 60                 # S16: jump lookups between columns per chart
 DEF S16_JUMP_LINE_BUDGET = 16            # S16: ... per line
 DEF CURVE_STEP_SCALE = 3.                # S16: x the turn tolerance, the contour step a jump line marks (em_march_chart.CURVE_SCALE)
@@ -1175,7 +1176,10 @@ cdef class NCurves:
     cdef object classify_end(self, dict comp, int last, dict failure, int side):
         cdef double target = comp['level'], speed = failure['speed_kmh']
         cdef int one
-        if self.s16_jumps and self.s10 and not comp.get('below'):
+        if (self.s16_jumps and self.s10 and not comp.get('below') and failure.get('point') is not None
+                and failure['point'] >= 0 and self.eng.st[failure['point']].load > S16_BUCKET_LOAD*self.eng.st[last].load):
+            # (where the failed step found the level only far above the knot's load: the upper root past a dip, B6N1 RB at
+            # 691.3 km/h, -40 m/s at 13.6 deg/s against the knot's 5.4)
             end = self.bucket_turn(comp, last, side)
             if end is not None:return end
         one = self.fixed(speed, 1., last, 'endpoint')
