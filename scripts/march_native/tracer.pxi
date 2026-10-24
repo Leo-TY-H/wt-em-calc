@@ -581,6 +581,25 @@ cdef class NTracer:
             if below >= 0:
                 sid = self.level_walk(below, speed)
                 if sid >= 0:level = sid
+        if (self.eng.s16 and not self.cheap and not self.probing
+                and (level < 0 or not (self.eng.st[level].valid or self.eng.soft_level(level)))
+                and (level < 0 or not self.eng.level_physical(level)
+                     or self.eng.only_reasons(level, ((<unsigned long long>1) << R_PROP_SETTLE) | ((<unsigned long long>1) << R_CYCLE)))):
+            # S16: nor from below, or rejected only because its propulsion did not settle: continued from the nearest
+            # admitted level flight above (the sweep's own edge probe, level_probe), as the aircraft reaches it slowing
+            # down at 1 g. The nearest seed can lie across an engine torque jump and the Python level search then meets
+            # the engine's chatter there (Ki-43-I RB at 40%, 480 km/h: "propulsion cycle unresolved" from the nearest
+            # seed, admitted from the 480.4 km/h column's level flight)
+            above = -1
+            for sid in seeds:
+                if (fabs(self.eng.st[sid].load-1.) <= 1e-12 and self.eng.st[sid].valid and self.eng.st[sid].speed > speed+1e-9
+                        and not (self.eng.ncut and self.eng.across(self.eng.st[sid].speed, speed))
+                        and (above < 0 or self.eng.st[sid].speed < self.eng.st[above].speed)):above = sid
+            if above >= 0:
+                sid = self.level_probe(above, speed, NULL)
+                if sid >= 0:
+                    level = sid
+                    self.eng.stats['s16_level_from_above'] = self.eng.stats.get('s16_level_from_above', 0)+1
         if level < 0:
             # S8: no level-flight candidate at all
             self.column_record(col, march, -1, -1, STATUS_NOFEASIBLE, 'level flight: no established candidate', started)
@@ -1976,15 +1995,15 @@ cdef class NTracer:
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef sweep(self, dict segment, NColumn start):
-        cdef NColumn last, prev, col, good, bad
+        cdef NColumn last, prev, col, good, bad, alt
         cdef double speed, step, n, error, h, r, bound
-        cdef int skipped
+        cdef int skipped, rebuilds
         cdef bint ended
         lo, hi = segment['speed_kmh']
         self.seg_starts.append((float(lo), float(hi), float(start.speed)))
         for side in (-1., 1.):
             bound = lo if side < 0 else hi
-            chain = [start];step = self.max_step;skipped = 0;ended = False
+            chain = [start];step = self.max_step;skipped = 0;ended = False;rebuilds = 0
             while abs(chain[-1].speed-bound) > 1e-9 and not ended:
                 last = chain[-1];prev = chain[-2] if len(chain) > 1 else None
                 speed = last.speed+side*min(step, abs(bound-last.speed))
@@ -2035,6 +2054,19 @@ cdef class NTracer:
                                 if preds_n < 0:break
                                 self.eng.stats['s9_edge_reprobes'] = self.eng.stats.get('s9_edge_reprobes', 0)+1
                                 good, edge = self.edge_probe(good, col)
+                        if (self.eng.s16 and rebuilds < 3 and good is not last and good.level >= 0
+                                and self.eng.st[good.level].valid and fabs(col.speed-edge) <= 1e-9):
+                            # S16: the probes reached the infeasible column's own speed, so its level flight was sought
+                            # from neighbours too far off (across an engine torque jump: Ki-43-I RB at 40%, the 479.996
+                            # km/h column seeded from 492.8 km/h): the column again from the probes' last column, and the
+                            # sweep goes on from it where it closes
+                            if side > 0:alt = self.column(col.speed, [good, last], 'sweep', True, last.speed, bound+1e-9)
+                            else:alt = self.column(col.speed, [good, last], 'sweep', True, bound-1e-9, last.speed)
+                            if NTracer.ok(alt):
+                                rebuilds += 1
+                                self.eng.stats['s16_sweep_rebuilds'] = self.eng.stats.get('s16_sweep_rebuilds', 0)+1
+                                chain.append(good);chain.append(alt);step = max(self.max_step/4., 2*self.vtol)
+                                continue
                         self.events.append(dict(kind='edge', speed_kmh=[good.speed, edge], status=col.status_name(),
                                                 reason=col.reason, located_by='level-flight probes'))
                         break

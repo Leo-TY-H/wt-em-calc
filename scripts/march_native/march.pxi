@@ -383,6 +383,7 @@ cdef class MarchEngine:
         self.s12 = self.s10 and os.environ.get("WT_MARCH_S11", "1") != "0" and os.environ.get("WT_MARCH_S12", "1") != "0"
         self.s14 = self.s12 and os.environ.get("WT_MARCH_S13", "1") != "0" and os.environ.get("WT_MARCH_S14", "1") != "0"
         self.s16 = self.s14 and os.environ.get("WT_MARCH_S15", "1") != "0" and os.environ.get("WT_MARCH_S16", "1") != "0"
+        if self.fin is not None and self.fin.pm is not None:self.fin.pm.s16 = self.s16
         self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
         self.brake_depth = 0
         self.brake_retry = False

@@ -103,6 +103,9 @@ class PropUnsupported(ValueError):
     pass
 
 
+DEF S16_ENGINE_SLIDE = .15   # S16: relative shaft-speed reach of the supercharger-edge search (locate)
+
+
 cdef class PropModel:
     cdef int ne, nprops, nt
     cdef EngineT engines[NP]
@@ -153,10 +156,13 @@ cdef class PropModel:
     cdef double slide_hi[NP]
     # S9: theta's coordinate range kept inside the shaft coordinate's bounds (set by MarchEngine; False: S8)
     cdef public bint s9
+    # S16: a shaft's engine supercharger with no valid stage on one side of a shaft speed is a jump too (signature())
+    cdef public bint s16
 
     def __cinit__(self, *args, **kwargs):
         self.units = NULL
         self.s9 = False
+        self.s16 = False
 
     def __dealloc__(self):
         if self.units != NULL:pfree(self.units)
@@ -915,6 +921,32 @@ cdef class PropModel:
                         code = (code ^ <unsigned long long>(c+16))*1099511628211ULL
                     elif self.s9:
                         code = cl_jump_sides(&polar, alpha, code)
+        if self.s16:code = self.engine_signature(s, prep, omega, code)
+        return code
+
+    cdef unsigned long long engine_signature(self, int s, const PropPrep* prep, double omega,
+                                             unsigned long long code) noexcept:
+        """S16 (Leo 2026-10-24): ``code`` hashed with the supercharger branch of each piston engine of shaft ``s`` at
+        shaft speed ``omega``: a stage selected, or none (no stage scores above the starting -1 and the factor falls back
+        to -1, as in aces.exe 0x142fa2180). Engine torque jumps there, so a shaft on a pitch stop whose engine passes that
+        edge with shaft speed can have no torque balance (Ki-43-I RB at 40%, 300-460 km/h: net torque +5,435 N m at 1,520
+        rpm, -422 at 1,540), and it slides on it like on a blade-polar jump (the game's shaft speed chatters there)."""
+        cdef const EngineT* E
+        cdef const EngState* es
+        cdef double mult, reg, ratio, pot, man
+        cdef int gear, sel, kk, idx
+        for kk in range(self.trans[s].ne):
+            idx = self.trans[s].engines[kk].index
+            E = &self.engines[idx]
+            if (E.family != 0 and E.family != 1) or (E.compressor_type != 1 and E.compressor_type != 2):continue
+            es = &self.seed_engines[idx]
+            sel = 0
+            if compressor_step(E, omega*self.trans[s].engines[kk].ratio, pmin(F(es.throttle), F(1.1)),
+                               inlet_pressure(self.altitude, prep.velocity[0], E.ram_recovery), 0.,
+                               es.gear if (E.manual_compressor and not es.automatic_compressor) else -1, es.gear, -1.,
+                               es.afterburner, self.nitro, self.altitude, &mult, &gear, &reg, &ratio, &pot, &man, &sel):
+                continue
+            code = (code ^ <unsigned long long>(48 if sel < 0 else 49))*1099511628211ULL
         return code
 
     cdef list debug_stations(self, int s, const PropPrep* prep, const double* q, double frac, double omega):
@@ -975,6 +1007,31 @@ cdef class PropModel:
                         a = m;b = hint-(k-1)*step
                     found = True;break
             if found:break
+        if not found and self.s16:
+            # S16: a supercharger edge (engine_signature) is looked for up to S16_ENGINE_SLIDE of the shaft speed: the
+            # engine torque jump is a whole stage factor (+1 to -1), so a seed state well off it is still on its slope
+            # (Ki-43-I RB at 40%: from 1,553 rpm at 460 km/h, the edge at 450 km/h lies 3% lower)
+            s0 = self.engine_signature(s, prep, hint, 0)
+            step = hint*S16_ENGINE_SLIDE/32.
+            for k in range(1, 33):
+                for side in range(2):
+                    m = hint+(k*step if side == 0 else -k*step)
+                    if self.engine_signature(s, prep, m, 0) != s0:
+                        if side == 0:
+                            a = hint+(k-1)*step;b = m
+                        else:
+                            a = m;b = hint-(k-1)*step
+                        found = True;break
+                if found:break
+            if not found:return 1
+            sa = self.engine_signature(s, prep, a, 0)
+            for it in range(80):
+                if b-a <= 1e-11*fabs(hint):break
+                m = .5*(a+b)
+                if self.engine_signature(s, prep, m, 0) == sa:a = m
+                else:b = m
+            lo_out[0] = a;hi_out[0] = b
+            return 0
         if not found:return 1
         sa = self.signature(s, prep, q, frac, a)
         for it in range(80):
