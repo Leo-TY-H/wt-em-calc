@@ -135,7 +135,6 @@ cdef class NCurves:
     cdef public list pcol                 # S16: each such column's admitted path samples (state ids by load)
     cdef public list lf_rows              # S16: (speed, level-flight point row) of every envelope column (lf_seed)
     cdef list lf_v, lf_s                  # S16: their speeds and curve-engine states
-    cdef public double dbg_lo, dbg_hi, dbg_level
     cdef public list edge_knots           # S16: the rows of each traced leaning edge's knots (NTracer.edge_rows), or None
     cdef public list rpm_feet             # S16: the speeds where level flight first over-revs (the 'rpm edge' events)
     # S16: the drawn outline's closed regions (em_march_chart.curve_outline): their points (speed, turn) concatenated,
@@ -1066,7 +1065,6 @@ cdef class NCurves:
                 w = max(w, (pow(self.eng.st[last].load, 2.)-1.)*.25)
             n = py_sqrt(1.+max(w, 1e-6))
             outcome, point, reason = self.direct_seed(speed, target, n, [last], attitude, 'continuation')
-            if self.dbg_lo <= speed <= self.dbg_hi and target == self.dbg_level:self.eng.stats.setdefault('dbg_march', []).append((self.eng.st[last].speed, speed, n, outcome, str(reason)[:60], None if point is None else (self.eng.st[point].load, self.eng.st[point].ps, self.eng.st[point].coords[7])))
             if (outcome == 'admitted' and self.s16 and abs(speed-self.eng.st[last].speed) > S16_BRANCH_STEP*self.speed_tol
                     and self.step_jump(comp, last, point, side)):
                 # S16: a continuation step that lands on another propeller branch than the last knot is no step of the
