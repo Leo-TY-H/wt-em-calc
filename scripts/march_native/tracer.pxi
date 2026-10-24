@@ -299,6 +299,7 @@ cdef class NTracer:
     cdef int iso_lim                  # S16: the limit the iso_* functions trace: KD_IAS (forward IAS) or KD_RPM (engine RPM)
     cdef double rpm_slope             # S16: d(rpm / limit)/dV (per km/h) at fixed alpha from the last engine RPM edge state
     cdef public dict edge_rows        # S16: the rows of each traced edge's knots ('ias', 'rpm'), for the curve solver's seeds
+    cdef bint s16_settle              # S16 follow-up: an unsettled level flight inside the envelope is no edge (WT_MARCH_S16B=0: off)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -335,6 +336,8 @@ cdef class NTracer:
         self.s15 = self.s8 and self.eng.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.ias_trace_out = None
         self.rpm_trace_out = None;self.iso_lim = KD_IAS;self.rpm_slope = NAN;self.edge_rows = {}
+        # S16 follow-up (2026-10-24): WT_MARCH_S16B=0 restores the deployed 2026.10.24.1 exactly
+        self.s16_settle = self.eng.s16 and os.environ.get('WT_MARCH_S16B', '1') != '0'
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -606,6 +609,16 @@ cdef class NTracer:
             col.points = [];col.region = False
             return 0
         healthy = nearest >= 0 and speed > self.eng.st[nearest].speed
+        if (self.s16_settle and not healthy and not self.cheap and level >= 0 and not self.eng.st[level].valid
+                and self.eng.only_reasons(level, ((<unsigned long long>1) << R_PROP_SETTLE) | ((<unsigned long long>1) << R_CYCLE))
+                and any(self.eng.st[sid].speed < speed-1e-9 for sid in seeds)):
+            # S16 (Leo 2026-10-24, F4U-1A (Japan) RB at 30% with WEP: "there are two vertical boundaries"): a level flight
+            # rejected only because its propeller did not settle, with admitted flight at a lower speed among the seeds
+            # too, is a numerical failure inside the envelope (809.4-810.3 km/h: a blade-polar jump the governor cannot
+            # balance, no steady propeller state at 1 g; the states above it settle), not the low-speed edge, wherever
+            # the nearest level flight lies (here the 811.8 km/h column's): the column marches from an interior start
+            healthy = True
+            self.eng.stats['s16_settle_interior'] = self.eng.stats.get('s16_settle_interior', 0)+1
         # S8: a level flight over a forward-IAS limit only is no edge: the march starts from it (states at higher
         # alpha can lie inside the limit; the column's lower edge is where they begin). S16: nor one over the engine RPM
         # limit (in a turn the propeller turns slower)

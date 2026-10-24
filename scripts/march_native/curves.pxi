@@ -151,6 +151,7 @@ cdef class NCurves:
     cdef public list edge_knots           # S16: the rows of each traced leaning edge's knots (NTracer.edge_rows), or None
     cdef public list rpm_feet             # S16: the speeds where level flight first over-revs (the 'rpm edge' events)
     cdef public bint s16_jumps            # S16: SEP jump lines (WT_MARCH_S16_JUMPS=0: none)
+    cdef public bint s16b                 # S16 follow-up (2026-10-24): WT_MARCH_S16B=0 restores the deployed 2026.10.24.1
     cdef public dict jump_work            # S16: their work (triggers, corrections, lookups)
     cdef public list jump_log             # S16 diagnostics: every jump lookup between columns (speed, result)
     cdef public list jump_lines           # S16: the jump lines' points (dicts with the side states lo/hi and SEP either side)
@@ -276,6 +277,7 @@ cdef class NCurves:
         self.s15 = self.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.s16 = self.s15 and self.eng.s16
         self.s16_jumps = self.s16 and os.environ.get('WT_MARCH_S16_JUMPS', '1') != '0'
+        self.s16b = self.s16 and os.environ.get('WT_MARCH_S16B', '1') != '0'
         self.jump_work = {};self.jump_log = [];self.jump_lines = [];self.jump_min = .5*float(py.config['sep_tolerance_mps'])
         self.edge_knots = None;self.rpm_feet = []
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
@@ -3274,6 +3276,25 @@ cdef class NCurves:
                         else:out.append(q)
             L['out'] = sorted(out, key=lambda q: q['speed'])
         self.eng.flush_counts()
+        if self.s16b:
+            # S16 follow-up (2026-10-24): two lines that are one jump: a column between them whose own samples missed it
+            # split the line, then each part's ends, continued through the next columns, ran over the other (F4U-1A RB at
+            # 30% with WEP drew its 668-762 km/h propeller line twice, 0.01 deg/s apart): merged where they share speeds
+            # at the same turn rate (within the contour step tolerance)
+            merged = []
+            for L in sorted([L for L in lines if len(L['out']) >= 2], key=lambda q: q['out'][0]['speed']):
+                for M in merged:
+                    if (M['out'][0]['gap'] > 0) != (L['out'][0]['gap'] > 0):continue
+                    common = [(p, q) for p in M['out'] for q in L['out'] if fabs(p['speed']-q['speed']) <= 1e-9]
+                    if common and all(fabs(p['turn']-q['turn']) <= tol for p, q in common):
+                        speeds = [p['speed'] for p in M['out']]
+                        M['out'] = sorted(M['out']+[q for q in L['out'] if not any(fabs(q['speed']-x) <= 1e-9 for x in speeds)],
+                                          key=lambda q: q['speed'])
+                        self.eng.stats['s16_jump_merged'] = self.eng.stats.get('s16_jump_merged', 0)+1
+                        break
+                else:
+                    merged.append(L)
+            lines = merged
         res = []
         self.jump_work.pop('line', None)
         self.jump_lines = [L['out'] for L in lines if len(L['out']) >= 2]
