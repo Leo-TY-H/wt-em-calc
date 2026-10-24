@@ -1,5 +1,5 @@
 {
- "native_sha256": "965b5ee5a7085ac7aeceb8f179ff39006f9b1555d8323670038a587d4e3f1567",
+ "native_sha256": "f70a5671911f9298562fcb30d67b8d09c80e03f8b380b938d9fd9bf52c4ff223",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -101,7 +101,7 @@
  ],
  "python_sha256": "ffe87fb81fa8d50a817b8550cd3266feb63609cf802601d03609feb52755891a",
  "verification": {
-  "date": "2026-10-23",
+  "date": "2026-10-24",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
