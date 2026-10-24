@@ -522,8 +522,10 @@ cdef int mixture(const EngineT* p, double inlet, double command, double rich, bi
 cdef int compressor_step(const EngineT* p, double omega, double throttle, double inlet, double dt, int gear_in,
                          int old_gear, double regulator, bint afterburner, double nitro, double height,
                          double* multiplier, int* gear_out, double* regulator_out, double* ratio_out,
-                         double* potential_out, double* manifold_out) noexcept nogil:
-    """piston_compressor.step for discrete stages (types 1/2); gear_in < 0 selects automatically."""
+                         double* potential_out, double* manifold_out, int* selected_out=NULL) noexcept nogil:
+    """piston_compressor.step for discrete stages (types 1/2); gear_in < 0 selects automatically. S16: ``selected_out``
+    (where given) is the stage the scores selected, -1 where none scored above the starting -1 (the fallback factor -1
+    that aces.exe 0x142fa2180 returns too)."""
     cdef double requested, x, speed, best, potential, target, gain, ratio, manifold, factor
     cdef double pb, flow, critical, flat, ceiling, line, baseline, shape, score, offset, xx, scale
     cdef bint boost, flat_present, ceiling_present, exact
@@ -585,6 +587,7 @@ cdef int compressor_step(const EngineT* p, double omega, double throttle, double
         if score > best:
             sel = i; best = score
             sel_shape = shape; sel_flow = flow; sel_line = line; sel_offset = offset; sel_pb = pb
+    if selected_out != NULL:selected_out[0] = sel
     if sel < 0:
         sel = 0; sel_shape = -1.; sel_flow = inlet; sel_line = 1.; sel_offset = 0.
         sel_pb = p.boost_ata_ratio if boost_active(p, throttle, afterburner, 0, nitro) else 1.
