@@ -49,6 +49,8 @@ DEF S16_JUMP_REACH = .75                 # S16: deg, a jump line point between c
 DEF S16_JUMP_REFINE = 2                  # S16: midpoint refinement depth of a jump line between two columns
 DEF S16_JUMP_END_STEPS = 5               # S16: speed bisection steps of a jump line's end towards the next column without it
 DEF S16_JUMP_END_SPEED = .25             # S16: ... down to this x the speed tolerance (a jump line's 1 g end is then continued to 1 g from its last two points)
+DEF S16_SNAP_DV = 10.                    # S16: km/h, a contour edge is continued to a jump line this far ahead of it at most
+DEF S16_SNAP_TURN = 4.                   # S16: deg/s, ... and this far in turn rate
 DEF S16_BUCKET_LOAD = 1.25               # S16: x the knot's load, a failed contour step's root this far above it is looked at for a drag bucket's turn
 DEF S16_JUMP_BUDGET = 60                 # S16: jump lookups between columns per chart
 DEF S16_JUMP_LINE_BUDGET = 16            # S16: ... per line
@@ -151,6 +153,7 @@ cdef class NCurves:
     cdef public bint s16_jumps            # S16: SEP jump lines (WT_MARCH_S16_JUMPS=0: none)
     cdef public dict jump_work            # S16: their work (triggers, corrections, lookups)
     cdef public list jump_log             # S16 diagnostics: every jump lookup between columns (speed, result)
+    cdef public list jump_lines           # S16: the jump lines' points (dicts with the side states lo/hi and SEP either side)
     cdef double jump_min                  # S16: m/s, the smallest SEP gap drawn as a jump line (half the SEP tolerance)
     # S16: the drawn outline's closed regions (em_march_chart.curve_outline): their points (speed, turn) concatenated,
     # the start of each region, and the units a point outside is measured in (speed and envelope tolerances)
@@ -273,7 +276,7 @@ cdef class NCurves:
         self.s15 = self.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.s16 = self.s15 and self.eng.s16
         self.s16_jumps = self.s16 and os.environ.get('WT_MARCH_S16_JUMPS', '1') != '0'
-        self.jump_work = {};self.jump_log = [];self.jump_min = .5*float(py.config['sep_tolerance_mps'])
+        self.jump_work = {};self.jump_log = [];self.jump_lines = [];self.jump_min = .5*float(py.config['sep_tolerance_mps'])
         self.edge_knots = None;self.rpm_feet = []
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
         self.pending = [];self.grads = {}
@@ -1390,6 +1393,10 @@ cdef class NCurves:
                         # (not level flight at the knot's own speed, even within S9_END_SEP: the end would leave no knot
                         # at 1 g to draw it by; DB-3B RB +10 m/s at 250.7 km/h, the knot at 1.001 g)
                         r_ = self.one_g_root(target, q, one, 'fold', one)
+                        # (S16: not across a propeller switch, where level flight's SEP jumps across the level: He 111
+                        # H-6 RB at 40%, -10 m/s at 337.2 km/h; the contour ends by the SEP jump line there)
+                        if (r_ is not None and self.s16_jumps and fabs(self.eng.st[r_].ps-target) > self.allowance
+                                and (self.prop_jump(last, r_) or self.prop_jump(self.root_a, self.root_b))):r_ = None
                         if r_ is not None:
                             k = r_
                             if (self.eng.compatible(k, last) and self.eng.st[k].load == 1.
@@ -3062,6 +3069,82 @@ cdef class NCurves:
             return 'above' if outside and self.eng.st[cur].alpha < alpha_e else None
         return None
 
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef snap_to_jumps(self, list components):
+        """S16 (Leo 2026-10-24: "plot piecewise continuous sep curves to the left and right of the jump line"): every
+        contour edge next to a jump line, an end of a component or an edge of one of its unresolved stretches, is
+        continued on its own side of the line up to it (snap_edge), so the contours on either side of a jump line are
+        continuous pieces that meet it."""
+        cdef int i
+        if not self.jump_lines:return
+        for comp in components:
+            if not comp['knots']:continue
+            edges = []
+            if not (comp.get('end') or {}).get('kind') == 'fold':edges.append((comp['knots'][-1], 1, None))
+            if not (comp.get('start') or {}).get('kind') == 'fold':edges.append((comp['knots'][0], -1, None))
+            for u in comp.get('unresolved_intervals', []):
+                va, vb = u['interval_kmh']
+                for k in comp['knots']:
+                    if abs(self.eng.st[k].speed-va) <= 1e-9:edges.append((k, 1, u))
+                    if abs(self.eng.st[k].speed-vb) <= 1e-9:edges.append((k, -1, u))
+            for k, direction, u in edges:self.snap_edge(comp, k, direction, u)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef snap_edge(self, dict comp, int last, int direction, object u):
+        """S16: contour edge ``last`` (continuing towards ``direction`` in speed; ``u`` the unresolved stretch it borders,
+        or None at the component's end) next to a jump line: the side of the line it lies on (its propulsion state that of
+        the line's lower or upper side at the nearest line point), the point on the line where that side's SEP equals the
+        level, ahead of the edge within S16_SNAP_DV, then the level solved on the edge's own state at 50 and 85% of the
+        way there (each continued from the one before, kept while on the same state and near the straight way), and the
+        meeting point itself for the drawing (comp['jump_ends']: the edge's direction, the point's speed and load, and the
+        speed of the knot it is drawn from)."""
+        cdef double target = comp['level'], vk = self.eng.st[last].speed, tk = self.eng.st[last].turn, nk = self.eng.st[last].load
+        cdef double fa, fb, t, v, tr, d, ns, vf, nf, best_d = INFINITY, best_v = NAN, best_t = NAN
+        cdef int cur, p, i
+        for pts in self.jump_lines:
+            q0 = min(pts, key=lambda q: abs(q['speed']-vk))
+            if not self.prop_jump(q0['lo'], last) and self.prop_jump(q0['hi'], last):key = 'sep_before'
+            elif not self.prop_jump(q0['hi'], last) and self.prop_jump(q0['lo'], last):key = 'sep_after'
+            else:continue
+            for a, b in zip(pts, pts[1:]):
+                fa = a[key]-target;fb = b[key]-target
+                if fa*fb > 0.:continue
+                t = fa/(fa-fb) if fa != fb else .5
+                v = a['speed']+t*(b['speed']-a['speed']);tr = a['turn']+t*(b['turn']-a['turn'])
+                if direction*(v-vk) < -self.speed_tol or fabs(v-vk) > S16_SNAP_DV or fabs(tr-tk) > S16_SNAP_TURN:continue
+                d = sqrt(((v-vk)/self.speed_tol)**2+((tr-tk)/S16_SNAP_TURN)**2)
+                if d < best_d:
+                    best_d = d;best_v = v;best_t = tr
+        if not isfinite(best_v) or (fabs(best_v-vk) <= 1e-6 and fabs(best_t-tk) <= 1e-6):return
+        ns = sqrt(1.+(best_t/RAD_TO_DEG*(best_v/3.6)/G_TURN)**2)
+        cur = last
+        for f in (.5, .85):
+            vf = vk+f*(best_v-vk)
+            if direction*(vf-self.eng.st[cur].speed) <= 1e-6 or fabs(vf-self.eng.st[cur].speed) < .05*self.speed_tol:continue
+            nf = nk+f*(ns-nk)
+            res = self.direct_seed(vf, target, nf, [cur], None, 'jump snap')
+            if res[0] != 'admitted' or res[1] is None or res[1] < 0:break
+            p = res[1]
+            if self.prop_jump(cur, p) or not self.eng.compatible(p, cur):break
+            if fabs(self.eng.st[p].turn-(tk+f*(best_t-tk))) > .5*S16_SNAP_TURN:break
+            i = 0
+            while i < len(comp['knots']) and self.eng.st[comp['knots'][i]].speed < vf:i += 1
+            comp['knots'].insert(i, p)
+            self.slopes[self.eng.st[p].base] = (NAN, NAN)
+            if u is not None:
+                if direction > 0:u['interval_kmh'] = [vf, u['interval_kmh'][1]]
+                else:u['interval_kmh'] = [u['interval_kmh'][0], vf]
+            cur = p
+            self.eng.stats['s16_snap_knots'] = self.eng.stats.get('s16_snap_knots', 0)+1
+        # (the knot drawn to the line: the edge's own exact slope is taken next to the jump)
+        self.slopes[self.eng.st[cur].base] = (NAN, NAN)
+        comp.setdefault('jump_ends', []).append(dict(direction=direction, speed_kmh=best_v, load_g=ns,
+                                                     from_kmh=self.eng.st[cur].speed))
+        self.eng.stats['s16_snap_ends'] = self.eng.stats.get('s16_snap_ends', 0)+1
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef double boundary_load(self, double v) except? -1.:
@@ -3193,6 +3276,7 @@ cdef class NCurves:
         self.eng.flush_counts()
         res = []
         self.jump_work.pop('line', None)
+        self.jump_lines = [L['out'] for L in lines if len(L['out']) >= 2]
         for L in lines:
             o = L['out']
             if len(o) < 2:continue
@@ -3265,7 +3349,9 @@ cdef class NCurves:
                         for comp in components:self.check_fold(comp)
                     junctions = self.seam_junctions(segments, components)
                     self.raw_components = components
-                    if self.s16_jumps:jumps = self.sep_jumps([c for c in columns if c.get('boundary')])
+                    if self.s16_jumps:
+                        jumps = self.sep_jumps([c for c in columns if c.get('boundary')])
+                        self.snap_to_jumps(components)
                 finally:
                     g_sink = <long*>saved
                     self.eng.flush_counts()
@@ -3368,6 +3454,7 @@ cdef class NCurves:
                     k['fold_dv_dw'] = d if isfinite(d) else None
                     fk.append(k)
                 out['fold'] = dict(knots=fk, unresolved=bool(fold.get('unresolved')))
+        if comp.get('jump_ends'):out['jump_ends'] = comp['jump_ends']
         return out
 
 
