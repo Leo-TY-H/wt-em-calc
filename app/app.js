@@ -66,6 +66,10 @@ const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolve
   'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
+// Catalog names end in the internal id ("Bf 109 F-4 [bf-109f-4]"): the page shows it apart, hover text keeps it.
+const cleanName=n=>String(n).replace(/\s*\[[^\]]*\]/,'');
+const nameCode=n=>(String(n).match(/\[([^\]]*)\]/)||[])[1]||'';
+const sortName=n=>cleanName(n).replace(/^[^\p{L}\p{N}]+/u,'');
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??({experimental_instantaneous_aero:false,experimental_lateral_trim:'full',mach_curve_mode:'auto'}[k]??state.meta.defaults[k])]));
 const requestConditions=c=>{const values={...c,...fixedSolverConditions};delete values.mach_curve_mode;return values;};
 // Preserve actual result settings for display and stale-result comparisons.
@@ -144,7 +148,7 @@ function renderEntries(){
   // Move the single settings editor into the active card; never clone form IDs.
   const editor=$('aircraft-condition');$('condition-home').append(editor);
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
-    <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(entryName(e))}</strong></div>
+    <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong><code>${escapeText(nameCode(entryName(e))||e.aircraft_id)}</code></div>
     <p class="entry-summary"></p><div class="entry-actions">
     <button type="button" data-action="configure" aria-expanded="${e.id===state.editing}" aria-label="${e.id===state.editing?'Done configuring':'Configure'} entry ${i+1}">${e.id===state.editing?'Done':'Configure'}</button>
     <button type="button" data-action="duplicate" aria-label="Duplicate entry ${i+1}" ${state.entries.length>=8?'disabled':''}>Duplicate</button>
@@ -191,7 +195,8 @@ function populate(c) {
   state.entries=configEntries(c).map(e=>{state.conditions[e.id]=aircraftConditions(e.aircraft_id,e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
   updateDefaultContours();
   $('speed-min').value=c.speed_min_kmh;$('speed-max').value=c.speed_max_kmh;
-  $('enable-exports').checked=c.enable_exports??false;
+  // Exports are always prepared (Leo, 2026-10-23); the switch stays in the page, hidden.
+  $('enable-exports').checked=true;
   let selected=Object.keys(quality).find(k=>quality[k][2]===c.sep_tolerance_mps&&c.sampling==='adaptive') ||
     Object.keys(quality).find(k=>quality[k][0]===c.speed_samples&&quality[k][1]===c.load_samples&&quality[k][2]===c.sep_tolerance_mps);
   if(!selected){selected='custom';if(!$('quality').querySelector('[value=custom]'))$('quality').add(new Option('Saved sampling','custom'));}
@@ -293,9 +298,13 @@ function syncAircraftMenu(){
   $('search-empty').hidden=visible>0;
 }
 function populateAircraft(){
-  const entries=Object.entries(state.meta.aircraft).sort(([,a],[,b])=>Number(b.supported)-Number(a.supported)||a.name.localeCompare(b.name));
+  // By name, the leading nation symbol ignored, so an aircraft's variants sit together (the one without a symbol first).
+  const symbol=a=>Number(cleanName(a.name)!==sortName(a.name));
+  const entries=Object.entries(state.meta.aircraft).sort(([,a],[,b])=>Number(b.supported)-Number(a.supported)||
+    sortName(a.name).localeCompare(sortName(b.name),undefined,{numeric:true})||symbol(a)-symbol(b)||a.name.localeCompare(b.name));
+  // The type stays searchable but is not shown (Leo, 2026-10-23).
   const family=a=>({piston:'Piston propeller',turboprop:'Turboprop',mixed:'Propeller + jet',rocket:'Rocket'})[a.propulsion]||(a.has_sweep?'Variable sweep':'Jet');
-  $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(a.name)}</strong><small>${escapeText(a.supported?family(a)+(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):a.reason||'Model integration pending')}</small></span><button type="button" data-add="${escapeText(id)}" aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
+  $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):' · '+(a.reason||'Model integration pending'))}</small></span><button type="button" data-add="${escapeText(id)}" aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
   const ready=entries.filter(([,a])=>a.supported).length;
   $('catalog-status').textContent=`${ready} available aircraft`;
 }
@@ -332,7 +341,7 @@ async function loadData(id,populateForm=false,preview=false){
   if(!sameResult)state.hiddenVehicles.clear();
   if(populateForm)populate(data.settings);
   if(state.view!=='compare'&&!data.aircraft.some(a=>a.id===state.view))state.view='compare';
-  $('chart-tabs').innerHTML='<button type="button" data-view="compare">Compare</button>'+data.aircraft.map(a=>`<button type="button" data-view="${escapeText(a.id)}">${escapeText(a.name)}</button>`).join('');
+  $('chart-tabs').innerHTML='<button type="button" data-view="compare">Compare</button>'+data.aircraft.map(a=>`<button type="button" data-view="${escapeText(a.id)}" title="${escapeText(a.name)}">${escapeText(cleanName(a.name))}</button>`).join('');
   for(const button of document.querySelectorAll('[data-view]')){
     button.disabled=button.dataset.view!=='compare'&&!data.aircraft.some(a=>a.id===button.dataset.view);
     button.classList.toggle('active',button.dataset.view===state.view);
@@ -344,7 +353,7 @@ async function loadData(id,populateForm=false,preview=false){
     const r=a.over_rev;
     const detail=r.crossings.length?r.crossings.map(c=>`${fmt(c.speed_kmh,1)} km/h TAS · calculation stops at over-rev`).join('; '):
       r.over_rev_at_minimum?'Already over-revving at the minimum plotted speed; this entry was not solved.':'RPM limit could not be resolved; calculation stops at the last verified speed.';
-    return `${a.name}: ${detail}`;
+    return `${cleanName(a.name)}: ${detail}`;
   }).join(' ');
   $('over-rev-status').hidden=!rpmNotices.length;
   const unresolved=data.aircraft.reduce((sum,a)=>sum+(a.numerical_boundaries?.length||0),0);
@@ -499,7 +508,7 @@ async function solveAt(a,position,origin,showRejected){
   const load=Math.hypot(1,(position.speed/3.6)*(position.rate*Math.PI/180)/9.8100004196167);
   const clicked={...origin,speed:position.speed,rate:position.rate};
   $('inspector').hidden=false;
-  $('point-title').textContent=`${a.name} · ${fmt(position.speed,0)} km/h · ${fmt(load,2)} g`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${fmt(load,2)} g`;
   $('point-status').innerHTML='<span class="point-pill">Solving the clicked point…</span>';
   $('point-content').innerHTML='';
   let point;
@@ -513,6 +522,14 @@ async function solveAt(a,position,origin,showRejected){
   }
   if(sequence!==state.inspection||job!==state.dataJob)return;
   return inspect(a,point,clicked);
+}
+const DATA_ICONS={
+  csv:{width:24,height:24,path:'M3 4h18v3H3z M3 10h8v3H3z M13 10h8v3h-8z M3 16h8v3H3z M13 16h8v3h-8z'},
+  json:{width:24,height:24,path:'M9 3H7.5C6.1 3 5 4.1 5 5.5V9c0 .8-.7 1.5-1.5 1.5H3v3h.5c.8 0 1.5.7 1.5 1.5v3.5C5 19.9 6.1 21 7.5 21H9v-2H7.5c-.3 0-.5-.2-.5-.5V15c0-1.2-.6-2.3-1.5-3 .9-.7 1.5-1.8 1.5-3V5.5c0-.3.2-.5.5-.5H9z M15 3h1.5C17.9 3 19 4.1 19 5.5V9c0 .8.7 1.5 1.5 1.5h.5v3h-.5c-.8 0-1.5.7-1.5 1.5v3.5c0 1.4-1.1 2.5-2.5 2.5H15v-2h1.5c.3 0 .5-.2.5-.5V15c0-1.2.6-2.3 1.5-3-.9-.7-1.5-1.8-1.5-3V5.5c0-.3-.2-.5-.5-.5H15z'}};
+function downloadExport(name){
+  const link=document.querySelector(`[data-export="${name}"]`);
+  if(link.getAttribute('aria-disabled')==='true')return error('Downloads are available once the calculation has finished.');
+  link.click();
 }
 function renderChart(){
   if(!state.data)return;
@@ -545,7 +562,7 @@ function renderChart(){
         hovertemplate:`${a.name}<br>SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
-      name:a.name,meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
+      name:cleanName(a.name),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
       customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result']),
       hovertemplate:`${a.name}<br>%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
@@ -594,7 +611,11 @@ function renderChart(){
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
-  Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d','toImage']});
+  Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
+    // Downloads sit in the chart's own toolbar: Plotly's PNG of the current view, then the result's data files.
+    toImageButtonOptions:{format:'png',scale:2,filename:'WT-EM-'+data.aircraft.map(a=>a.aircraft_id||a.id).join('-vs-')},
+    modeBarButtonsToAdd:[{name:'Download samples (CSV)',icon:DATA_ICONS.csv,click:()=>downloadExport('samples.csv')},
+                         {name:'Download full result (JSON)',icon:DATA_ICONS.json,click:()=>downloadExport('data.json')}]});
   $('chart').removeAllListeners?.('plotly_legendclick');
   $('chart').on('plotly_legendclick',event=>{
     const group=event.data[event.curveNumber]?.legendgroup;if(!group)return false;
@@ -643,7 +664,7 @@ async function inspect(a,p,clicked){
   }
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
-  $('point-title').textContent=`${a.name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`;
   $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
   const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
   const note=clicked?`<div class="point-note">Clicked ${where}. ${clicked.nearest?'The details are for the nearest solved point; this server cannot solve the clicked point.':'This state is solved there with the full model.'}</div>`:'';
@@ -784,7 +805,7 @@ async function openLoadoutEditor(){
   saveCondition();
   const c=state.conditions[entry.id],d=loadoutDialog;
   d.entry=entry.id;d.info=null;d.pylon=null;d.notes=[];
-  $('loadout-title').textContent=state.meta.aircraft[entry.aircraft_id].name;
+  $('loadout-title').textContent=cleanName(state.meta.aircraft[entry.aircraft_id].name);
   $('loadout-preset-list').innerHTML='<p class="hint">Loading loadouts…</p>';
   $('loadout-custom').hidden=true;$('loadout-apply').disabled=true;
   $('loadout-released').checked=!!c.stores_released;
@@ -941,7 +962,6 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-$('reset-zoom').addEventListener('click',()=>{if(!state.data)return;const shown=state.data.aircraft.filter(a=>state.view==='compare'||a.id===state.view);Plotly.relayout('chart',{'xaxis.range':[state.data.settings.speed_min_kmh,envelopeEnd(shown,state.data)],'yaxis.range':[0,envelopeTop(shown)]});});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
 (async()=>{try{
   $('calculate').disabled=true;
