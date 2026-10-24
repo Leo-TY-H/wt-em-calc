@@ -480,7 +480,10 @@ def compact_component(comp):
                 # S10: the fold piece where the contour turns back in speed: knots by load, [speed, load, Ps, dV/dw]
                 **({'fold': [[k['speed_kmh'], k['load_g'], k.get('ps_mps'), k.get('fold_dv_dw')] for k in comp['fold']['knots']]}
                    if comp.get('fold') else {}),
-                **({'fold_unresolved': True} if (comp.get('fold') or {}).get('unresolved') else {}))
+                **({'fold_unresolved': True} if (comp.get('fold') or {}).get('unresolved') else {}),
+                # S16: where a piece meets an SEP jump line: [direction, speed, load, the speed of the knot drawn from]
+                **({'jump_ends': [[j['direction'], j['speed_kmh'], j['load_g'], j['from_kmh']] for j in comp['jump_ends']]}
+                   if comp.get('jump_ends') else {}))
 
 
 def ok(c):
@@ -964,6 +967,15 @@ def polyline(component, samples=200):
             piece = [];continue
         piece.append((x, t))
     if piece:pieces.append(piece)
+    # S16: a piece that meets an SEP jump line ends on it (the point where its side's SEP on the line equals the level)
+    for direction, speed, load, frm in component.get('jump_ends', []):
+        ends = [(abs((p[-1] if direction > 0 else p[0])[0]-frm), k) for k, p in enumerate(pieces) if p]
+        if not ends:continue
+        gap, k = min(ends)
+        if gap > 1e-6:continue
+        point = (float(speed), float(turn_rate(speed, load)))
+        if direction > 0:pieces[k].append(point)
+        else:pieces[k].insert(0, point)
     if component.get('fold') and not component.get('fold_unresolved'):pieces.append(fold_path(component['fold']))
     return pieces
 
