@@ -1033,6 +1033,22 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int lower_root(self, double speed, double target, int anchor, double n) except -2:
+        """S16: the level's root at ``speed`` between level flight and load ``n`` (fixed-load solves from ``anchor``), where
+        SEP there lies on either side of the level; -1 where it does not or a solve is not admitted."""
+        cdef int one, mid
+        one = self.fixed(speed, 1., anchor, 'continuation')
+        if one < 0 or not self.eng.st[one].valid or not self.eng.compatible(one, anchor):return -1
+        mid = self.fixed(speed, pmax(n, 1.+1e-3), anchor, 'continuation')
+        if mid < 0 or not self.eng.st[mid].valid or not self.eng.compatible(mid, anchor):return -1
+        if (self.eng.st[one].ps-target)*(self.eng.st[mid].ps-target) > 0.:return -1
+        root = self.bracketed(speed, target, one, mid, 'continuation')
+        if root.get('outcome') != 'admitted' or root.get('point') is None:return -1
+        self.eng.stats['s16_lower_roots'] = self.eng.stats.get('s16_lower_roots', 0)+1
+        return root['point']
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef bint jump_end(self, int inside, int p, double target) except -1:
         """S16 (SEP jump lines): a contour's 1 g end ``p`` that misses the level by more than the allowance on another
         propeller branch than the contour's last knot ``inside``: level flight's SEP jumps across the level there, and
@@ -1067,7 +1083,7 @@ cdef class NCurves:
                        side*(speed-v) > 1e-9]
             if between:speed = min(between, key=lambda v: abs(v-self.eng.st[last].speed))
             w, attitude = self.predict(comp, speed, side)
-            if below and w > 0.:
+            if below and w > 0. and not comp.get('bucket'):
                 # S10: level flight at every step of a 'below' branch (the slope found next to its fold is a poor guide to
                 # where it meets 1 g): outside the level there, the 1 g end lies within the step
                 one = self.fixed(speed, 1., last, 'endpoint')
@@ -1096,6 +1112,14 @@ cdef class NCurves:
                 w = max(w, (pow(self.eng.st[last].load, 2.)-1.)*.25)
             n = py_sqrt(1.+max(w, 1e-6))
             outcome, point, reason = self.direct_seed(speed, target, n, [last], attitude, 'continuation')
+            if (outcome == 'admitted' and self.s16_jumps and not below and comp.get('provenance') == '1 g crossing'
+                    and len(comp['knots']) <= 2 and self.eng.st[point].load > 1.25*n):
+                # S16: the first steps of a contour from a 1 g crossing that land far above the predicted load: where SEP
+                # dips along the turn (a drag bucket) the solve can slide past the level's lower root, the one this
+                # contour follows from 1 g, onto the upper one (B6N1 RB at 6,000 m, -40 m/s: from 1 g at 694.5 km/h to
+                # 3.1 g at 693.6). The lower root between level flight and the predicted load, where the level lies there
+                q = self.lower_root(speed, target, last, n)
+                if q >= 0:point = q
             if (outcome == 'admitted' and self.s16 and abs(speed-self.eng.st[last].speed) > S16_BRANCH_STEP*self.speed_tol
                     and self.step_jump(comp, last, point, side)):
                 # S16: a continuation step that lands on another propeller branch than the last knot is no step of the
@@ -1151,6 +1175,9 @@ cdef class NCurves:
     cdef object classify_end(self, dict comp, int last, dict failure, int side):
         cdef double target = comp['level'], speed = failure['speed_kmh']
         cdef int one
+        if self.s16_jumps and self.s10 and not comp.get('below'):
+            end = self.bucket_turn(comp, last, side)
+            if end is not None:return end
         one = self.fixed(speed, 1., last, 'endpoint')
         if self.eng.st[one].valid and self.sense(comp)*(self.eng.st[one].ps-target) < -self.allowance:
             end = self.one_g_endpoint(comp, target, last, one, side)
@@ -1401,6 +1428,72 @@ cdef class NCurves:
         self.fold_slope(last);self.fold_slope(other_root)
         self.pending.append(other)
         self.eng.stats['s10_folds'] = self.eng.stats.get('s10_folds', 0)+1
+        return dict(kind='fold', speed_kmh=vk, other_load_g=self.eng.st[other_root].load)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object bucket_turn(self, dict comp, int last, int side):
+        """S16: the contour turns back in speed beyond its knot ``last`` where SEP dips along the turn and rises back above
+        the level (a drag bucket: B6N1 RB at 6,000 m, -40 m/s, from 1 g at 694.5 km/h to 5.4 deg/s at 692.3, where the
+        level's two roots meet a little slower), the mirror of fold_turn: the level's second root above the knot at its
+        speed (fixed-load samples up to the envelope boundary, then load_root). Found, the component ends at the fold (its
+        fold piece joins ``last`` to that root) and the upper branch (a 'below' component: SEP rises with load there) is
+        followed away from the fold. None where SEP stays under the level above the knot."""
+        cdef double target = comp['level'], vk = self.eng.st[last].speed, wk = self.eng.st[last].load**2-1., wb, f, sv, v2
+        cdef int prev = last, p, lo = -1, hit = -1, other_root
+        if self.eng.st[last].load <= 1.+1e-6:return None
+        wb = self.boundary_load(vk)**2-1.
+        if wb <= wk*(1.+1e-3):return None
+        for f in (1.1, 1.25, 1.5, 2., 3.):
+            if f*wk >= wb:f = wb/wk*(1.-1e-3)
+            p = self.fixed(vk, sqrt(1.+f*wk), prev, 'fold')
+            if not (self.eng.st[p].valid and self.eng.compatible(p, last)):return None
+            if self.eng.st[p].ps > target:
+                hit = p;break
+            lo = p;prev = p
+            if f*wk >= wb*(1.-2e-3):break
+        if hit < 0:return None
+        if lo < 0:
+            # (the knot lies at the turn itself: its two roots meet within the SEP allowance there, SEP rising back above
+            # the level just past it, B6N1 RB at 692.3 km/h: the upper branch's root a speed tolerance back from the turn,
+            # where the two roots are apart)
+            if fabs(self.eng.st[last].ps-target) > self.allowance:return None
+            v2 = vk-side*self.speed_tol;prev = last;lo = -1;hit = -1
+            for f in (1., 1.1, 1.25, 1.5, 2., 3.):
+                if f*wk >= wb:break
+                p = self.fixed(v2, sqrt(1.+f*wk), prev, 'fold')
+                if not (self.eng.st[p].valid and self.eng.compatible(p, last)):return None
+                if self.eng.st[p].ps > target:
+                    if lo >= 0:
+                        hit = p;break
+                else:
+                    lo = p
+                prev = p
+            if lo < 0 or hit < 0:return None
+            other_root = self.load_root(v2, target, lo, hit)
+            if other_root < 0 or not self.eng.compatible(other_root, last):return None
+            vk = v2
+        else:
+            other_root = self.load_root(vk, target, lo, hit)
+            if other_root < 0 or not self.eng.compatible(other_root, last) or self.eng.st[other_root].load <= self.eng.st[last].load:
+                return None
+        # (a 'bucket' branch: level flight lies above the level there too, beyond the dip, so the 'below' branch's level
+        # flight test of its 1 g end does not apply)
+        other = dict(level=target, segment=comp['segment'], knots=[other_root], discovered_at_kmh=vk, provenance='fold',
+                     below=True, bucket=True)
+        other['end' if side > 0 else 'start'] = dict(kind='fold', speed_kmh=vk)
+        if self.eng.st[other_root].speed != self.eng.st[last].speed:
+            # (the upper branch's slope from the turn: the two roots a speed tolerance apart)
+            other['w_slope'] = ((self.eng.st[other_root].load**2-1.)-(self.eng.st[last].load**2-1.))/(
+                self.eng.st[other_root].speed-self.eng.st[last].speed)
+        else:
+            sv = self.fold_dvdw(other_root)
+            if isfinite(sv) and sv != 0. and side/sv > 0.:other['w_slope'] = 1./sv
+        if other_root != last:
+            comp['fold'] = dict(knots=[last, other_root], side=side)
+            self.fold_slope(last);self.fold_slope(other_root)
+        self.pending.append(other)
+        self.eng.stats['s16_bucket_folds'] = self.eng.stats.get('s16_bucket_folds', 0)+1
         return dict(kind='fold', speed_kmh=vk, other_load_g=self.eng.st[other_root].load)
 
     @cython.boundscheck(True)
