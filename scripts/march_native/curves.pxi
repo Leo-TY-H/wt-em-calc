@@ -42,6 +42,16 @@ DEF S16_BUBBLE_SEP = 1.                  # S16: m/s, a level this far beyond bot
 DEF S16_BUBBLE_STEPS = 6                 # S16: parabolic steps to level flight's SEP extremum between two columns
 DEF S16_BRANCH_STEP = .25                # S16: x the speed tolerance, the shortest continuation step that may cross a propeller branch switch
 DEF S16_PATH_DA = .25                     # S16: deg, the largest alpha step of a level-flight path march (path_bracket: a band of another branch can be a few tenths of a degree wide)
+DEF S16_JUMP_TRIG = 1.                   # S16: m/s, a pair of path states each off the other's SEP trend this far (same way) is searched for a jump
+DEF S16_JUMP_DA = .01                    # S16: deg, a jump is located to this alpha bracket
+DEF S16_JUMP_WIDE = .05                  # S16: deg, a bracket the bisection cannot narrow below this is no jump line (a fold, a band no solve closes)
+DEF S16_JUMP_STEPS = 14                  # S16: bisection steps of one jump
+DEF S16_JUMP_REACH = 1.5                 # S16: deg, a jump line point between columns is looked for this far either side of its expected alpha
+DEF S16_JUMP_REFINE = 4                  # S16: midpoint refinement depth of a jump line between two columns
+DEF S16_JUMP_END_STEPS = 9               # S16: speed bisection steps of a jump line's end towards the next column without it
+DEF S16_JUMP_END_SPEED = .125            # S16: ... down to this x the speed tolerance (a jump line can drop to 1 g within a few tenths of a km/h)
+DEF S16_JUMP_BUDGET = 80                 # S16: jump lookups between columns per chart
+DEF CURVE_STEP_SCALE = 3.                # S16: x the turn tolerance, the contour step a jump line marks (em_march_chart.CURVE_SCALE)
 DEF S16_PATH_SEP = 5.                     # S16: x the SEP allowance, a curve state's SEP apart from the path state's at its load
 
 
@@ -137,6 +147,10 @@ cdef class NCurves:
     cdef list lf_v, lf_s                  # S16: their speeds and curve-engine states
     cdef public list edge_knots           # S16: the rows of each traced leaning edge's knots (NTracer.edge_rows), or None
     cdef public list rpm_feet             # S16: the speeds where level flight first over-revs (the 'rpm edge' events)
+    cdef public bint s16_jumps            # S16: SEP jump lines (WT_MARCH_S16_JUMPS=0: none)
+    cdef public dict jump_work            # S16: their work (triggers, corrections, lookups)
+    cdef public list jump_log             # S16 diagnostics: every jump lookup between columns (speed, result)
+    cdef double jump_min                  # S16: m/s, the smallest SEP gap drawn as a jump line (half the SEP tolerance)
     # S16: the drawn outline's closed regions (em_march_chart.curve_outline): their points (speed, turn) concatenated,
     # the start of each region, and the units a point outside is measured in (speed and envelope tolerances)
     cdef double* opts
@@ -257,6 +271,8 @@ cdef class NCurves:
         self.s14 = self.eng.s14
         self.s15 = self.s14 and os.environ.get('WT_MARCH_S15', '1') != '0'
         self.s16 = self.s15 and self.eng.s16
+        self.s16_jumps = self.s16 and os.environ.get('WT_MARCH_S16_JUMPS', '1') != '0'
+        self.jump_work = {};self.jump_log = [];self.jump_min = .5*float(py.config['sep_tolerance_mps'])
         self.edge_knots = None;self.rpm_feet = []
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
         self.pending = [];self.grads = {}
@@ -987,6 +1003,7 @@ cdef class NCurves:
                       self.one_g_root(target, a_out, a_in, 'endpoint', avoid))
                 if r_ is not None:
                     p = r_
+                    if self.jump_end(inside, p, target):return dict(kind='sep jump', speed_kmh=[lo, hi])
                     self.end_slope(p, side)
                     return dict(kind='one_g', speed_kmh=self.eng.st[p].speed, state=p,
                                 sep_residual_mps=self.eng.st[p].ps-target)
@@ -1010,8 +1027,22 @@ cdef class NCurves:
             else:
                 hi = mid;a_out = p
         p = a_in if self.eng.st[a_in].load == 1. else a_out
+        if self.jump_end(inside, p, target):return dict(kind='sep jump', speed_kmh=[lo, hi])
         return dict(kind='one_g', speed_kmh=self.eng.st[p].speed, state=p, located_to_kmh=abs(hi-lo),
                     sep_residual_mps=self.eng.st[p].ps-target)
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint jump_end(self, int inside, int p, double target) except -1:
+        """S16 (SEP jump lines): a contour's 1 g end ``p`` that misses the level by more than the allowance on another
+        propeller branch than the contour's last knot ``inside``: level flight's SEP jumps across the level there, and
+        the contour ends at its last knot, by the jump line, instead of dropping to that level flight (He 111 H-6 RB at
+        40%: 0 m/s from 10.3 deg/s at 336.2 km/h down to level flight at 336.8, where SEP is -30.8 m/s)."""
+        if not (self.s16_jumps and fabs(self.eng.st[p].ps-target) > self.allowance and self.prop_jump(inside, p)):return False
+        self.eng.stats['s16_jump_ends'] = self.eng.stats.get('s16_jump_ends', 0)+1
+        # (the last knot's exact slope is taken across the jump next to it, so it is not drawn by: PCHIP there)
+        self.slopes[self.eng.st[inside].base] = (NAN, NAN)
+        return True
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -2757,6 +2788,336 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+
+    # ------------------------------------------------------------------ S16: SEP jump lines
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double sep_slope(self, int a, int b) noexcept:
+        """S16: dSEP/dalpha (m/s per degree) between two states (0 where their alphas meet)."""
+        cdef double da = self.eng.st[b].alpha-self.eng.st[a].alpha
+        return (self.eng.st[b].ps-self.eng.st[a].ps)/da if fabs(da) > 1e-9 else 0.
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint coord_jump(self, list pts, int i) except -1:
+        """S16: the propulsion coordinates jump between path states pts[i] and pts[i+1]: some coordinate of each is off the
+        other's linear trend in alpha (through pts[i-1], pts[i+2]; held where there is none) by more than S9_PROP_JUMP of
+        its size, so that a drift along alpha is no jump."""
+        cdef int a = pts[i], b = pts[i+1], pa = pts[i-1] if i > 0 else -1, pb = pts[i+2] if i+2 < len(pts) else -1, k
+        cdef double da, ca, cb, tol
+        if not self.prop_jump(a, b):return False
+        da = self.eng.st[b].alpha-self.eng.st[a].alpha
+        for k in range(7, self.eng.st[a].nx):
+            tol = S9_PROP_JUMP*pmax(1., pmax(fabs(self.eng.st[a].coords[k]), fabs(self.eng.st[b].coords[k])))
+            ca = self.eng.st[a].coords[k];cb = self.eng.st[b].coords[k]
+            if pa >= 0 and self.eng.st[pa].nx == self.eng.st[a].nx and fabs(self.eng.st[a].alpha-self.eng.st[pa].alpha) > 1e-9:
+                ca += (self.eng.st[a].coords[k]-self.eng.st[pa].coords[k])/(self.eng.st[a].alpha-self.eng.st[pa].alpha)*da
+            if pb >= 0 and self.eng.st[pb].nx == self.eng.st[b].nx and fabs(self.eng.st[pb].alpha-self.eng.st[b].alpha) > 1e-9:
+                cb -= (self.eng.st[pb].coords[k]-self.eng.st[b].coords[k])/(self.eng.st[pb].alpha-self.eng.st[b].alpha)*da
+            if fabs(self.eng.st[b].coords[k]-ca) > tol and fabs(self.eng.st[a].coords[k]-cb) > tol:return True
+        return False
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint sep_jump(self, list pts, int i) except -1:
+        """S16: SEP jumps between path states pts[i] and pts[i+1]: each is off the other side's trend in alpha by more than
+        S16_JUMP_TRIG, the same way (curvature puts them opposite); a pair at an end of the path (level flight's, the top
+        one) against the quadratic through the three states beyond it."""
+        cdef int n = len(pts), a = pts[i], b = pts[i+1], j
+        cdef double da = self.eng.st[b].alpha-self.eng.st[a].alpha, r1, r2, x, y, w
+        if i > 0 and i+2 < n:
+            r1 = self.eng.st[b].ps-(self.eng.st[a].ps+self.sep_slope(pts[i-1], a)*da)
+            r2 = self.eng.st[b].ps-self.sep_slope(b, pts[i+2])*da-self.eng.st[a].ps
+            return fabs(r1) > S16_JUMP_TRIG and fabs(r2) > S16_JUMP_TRIG and r1*r2 > 0.
+        if i == 0 and n >= 4:
+            far = pts[1:4];near = a
+        elif i+2 >= n and n >= 4:
+            far = pts[n-4:n-1];near = b
+        else:
+            return False
+        x = self.eng.st[near].alpha;y = 0.
+        for j in range(3):
+            w = 1.
+            for k in range(3):
+                if k != j:
+                    if fabs(self.eng.st[far[j]].alpha-self.eng.st[far[k]].alpha) <= 1e-9:return False
+                    w *= (x-self.eng.st[far[k]].alpha)/(self.eng.st[far[j]].alpha-self.eng.st[far[k]].alpha)
+            y += w*self.eng.st[far[j]].ps
+        return fabs(self.eng.st[near].ps-y) > S16_JUMP_TRIG
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef bint jump_side_ok(self, int m) noexcept:
+        return m >= 0 and self.eng.st[m].converged and (self.eng.st[m].valid or self.balanced(m))
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef tuple locate_jump(self, double v, int lo, int hi, double s_lo, double s_hi):
+        """S16: the SEP jump between path states lo and hi (lo at the lower alpha) at speed ``v``, bisected in alpha (each
+        midpoint continued from lo, else from hi, and kept on the side whose trend it follows, a propulsion coordinate
+        jump counting against a side): (lo, hi, gap, jump). No jump where the gap over the trend falls below half the
+        minimum jump (smooth SEP), or where the bracket cannot be narrowed to S16_JUMP_WIDE."""
+        cdef int it, m, fails = 0
+        cdef double am, gap, el, eh, jmin = self.jump_min, a_lo = self.eng.st[lo].alpha, a_hi = self.eng.st[hi].alpha
+        for it in range(S16_JUMP_STEPS):
+            gap = self.eng.st[hi].ps-self.eng.st[lo].ps-.5*(s_lo+s_hi)*(self.eng.st[hi].alpha-self.eng.st[lo].alpha)
+            if fabs(gap) < .5*jmin:return lo, hi, gap, False, a_lo, a_hi
+            if a_hi-a_lo <= S16_JUMP_DA:return lo, hi, gap, True, a_lo, a_hi
+            am = .5*(a_lo+a_hi)
+            self.jump_work['corrections'] = self.jump_work.get('corrections', 0)+1
+            m = self.alpha_correct(lo, v, am)
+            if not self.jump_side_ok(m):
+                self.jump_work['corrections'] = self.jump_work.get('corrections', 0)+1
+                m = self.alpha_correct(hi, v, am)
+            if not self.jump_side_ok(m):
+                # no solve closes at the midpoint from either side: past the end of the branch the path is on (a fold:
+                # the lower branch ends there and its corrections lose rank), so the jump lies below it
+                fails += 1
+                if fails > 4:break
+                a_hi = am;continue
+            el = fabs(self.eng.st[m].ps-(self.eng.st[lo].ps+s_lo*(am-self.eng.st[lo].alpha)))+(10. if self.prop_jump(lo, m) else 0.)
+            eh = fabs(self.eng.st[m].ps-(self.eng.st[hi].ps+s_hi*(am-self.eng.st[hi].alpha)))+(10. if self.prop_jump(hi, m) else 0.)
+            if el <= eh:
+                lo = m;a_lo = am
+            else:
+                hi = m;a_hi = am
+        gap = self.eng.st[hi].ps-self.eng.st[lo].ps-.5*(s_lo+s_hi)*(self.eng.st[hi].alpha-self.eng.st[lo].alpha)
+        return lo, hi, gap, a_hi-a_lo <= S16_JUMP_WIDE and fabs(gap) >= jmin, a_lo, a_hi
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef list path_jumps(self, double v, list pts):
+        """S16: the SEP jumps of one level-flight alpha path (states by load at speed ``v``): each pair the coordinate or
+        SEP trigger flags, located (locate_jump) and kept where it is a jump line: the gap at least the minimum jump and
+        the contour step it makes (the gap over SEP's slope along turn rate) at least the curve tolerance."""
+        cdef int i, n = len(pts), lo, hi
+        cdef double s_lo, s_hi, gap, spt, step, am, tl, th
+        out = []
+        for i in range(n-1):
+            if not (self.coord_jump(pts, i) or self.sep_jump(pts, i)):continue
+            self.jump_work['triggers'] = self.jump_work.get('triggers', 0)+1
+            s_hi = self.sep_slope(pts[i+1], pts[i+2]) if i+2 < n else self.sep_slope(pts[i-1], pts[i]) if i > 0 else 0.
+            s_lo = self.sep_slope(pts[i-1], pts[i]) if i > 0 else s_hi
+            if i+2 >= n:s_hi = s_lo
+            res = self.locate_jump(v, pts[i], pts[i+1], s_lo, s_hi)
+            lo = res[0];hi = res[1];gap = res[2]
+            if not res[3]:continue
+            # (inside the envelope: the jump's lower side admitted, not only balanced past a limit)
+            if not self.eng.st[lo].valid:continue
+            am = .5*(res[4]+res[5])
+            spt = .5*(s_lo+s_hi)*(self.eng.st[pts[i+1]].alpha-self.eng.st[pts[i]].alpha)
+            spt /= pmax(1e-9, self.eng.st[pts[i+1]].turn-self.eng.st[pts[i]].turn)
+            step = fabs(gap/spt) if fabs(spt) > 1e-12 else INFINITY
+            if step < CURVE_STEP_SCALE*self.turn_tol:continue
+            cause = 'propeller' if self.prop_jump(lo, hi) else 'other'
+            if self.eng.is_prop and self.eng.engine_branches(lo) != self.eng.engine_branches(hi):cause = 'supercharger'
+            # the jump's turn rate: at the bracket's mid alpha along the side states' turn rates (the states can lie
+            # either side of a narrower bracket where midpoints did not close)
+            tl = self.eng.st[lo].turn;th = self.eng.st[hi].turn
+            if self.eng.st[hi].alpha-self.eng.st[lo].alpha > 1e-9:
+                tl = tl+(th-tl)*(am-self.eng.st[lo].alpha)/(self.eng.st[hi].alpha-self.eng.st[lo].alpha)
+            out.append(dict(speed=v, lo=lo, hi=hi, gap=gap, cause=cause, alpha=am, turn=tl, load=sqrt(1.+(tl*(v/3.6)/(RAD_TO_DEG*G_TURN))**2),
+                            sep_before=self.eng.st[lo].ps, sep_after=self.eng.st[hi].ps))
+        return out
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef object jump_at(self, double v, dict ref, double alpha_e):
+        """S16: the jump of line point ``ref`` (another speed) at speed ``v``: level flight at v from the nearest jump
+        column's level flight, then the level-flight path in alpha steps of S16_PATH_DA from S16_JUMP_REACH below the
+        expected jump alpha ``alpha_e`` to as far above it (path_alpha: each on the branch of the one before; from level
+        flight itself where the reach's first state is already on the jump's far side), and its jump nearest alpha_e of
+        the same sign. Where there is none: 'below' where the path from level flight is on the jump's far side from the
+        start (its propulsion coordinates those of ref's far side: the jump has passed below level flight), 'above' where
+        the path leaves the admitted states before alpha_e (past the envelope), else None (or the budget is spent)."""
+        cdef int c, r, cur, it, level, attempt
+        cdef double a0, a1, top
+        cdef bint outside
+        if self.jump_work.get('lookups', 0) >= S16_JUMP_BUDGET:return None
+        self.jump_work['lookups'] = self.jump_work.get('lookups', 0)+1
+        c = ref['level']
+        level = self.fixed(v, 1., c, 'sep jump')
+        if level < 0 or not self.jump_side_ok(level):return None
+        top = alpha_e+S16_JUMP_REACH
+        for attempt in range(2):
+            cur = level;pts = [cur]
+            a0 = pmax(self.eng.st[cur].alpha, alpha_e-S16_JUMP_REACH) if attempt == 0 else self.eng.st[cur].alpha
+            if a0 > self.eng.st[cur].alpha+1e-6:
+                r = self.path_alpha(cur, v, a0)
+                if not self.jump_side_ok(r):return None
+                if self.prop_jump(ref['lo'], r) and not self.prop_jump(ref['hi'], r):continue   # (from level flight)
+                # (the state at the reach's start, and level flight below it only for the trend)
+                pts = [cur, r];cur = r
+            outside = False
+            for it in range(int((top-a0)/S16_PATH_DA)+2):
+                a1 = pmin(self.eng.st[cur].alpha+S16_PATH_DA, top)
+                if a1 <= self.eng.st[cur].alpha+1e-6:break
+                r = self.path_alpha(cur, v, a1)
+                if r >= 0 and self.eng.st[r].converged and not self.jump_side_ok(r):
+                    outside = True;break
+                if not self.jump_side_ok(r):
+                    # (a correction that does not close: past the end of a branch, a fold; the step is taken again
+                    # further on, onto the branch the path continues on)
+                    r = self.alpha_correct(cur, v, a1+S16_PATH_DA)
+                    if r >= 0 and self.eng.st[r].converged and not self.jump_side_ok(r):
+                        outside = True;break
+                    if not self.jump_side_ok(r):
+                        # (nor that: from the line's own far-side state, onto the far branch; Corsair F Mk II RB at full
+                        # fuel, 731 km/h, where neither propeller branch's corrections close over a few tenths of a degree)
+                        r = self.alpha_correct(ref['hi'], v, a1)
+                        if not self.jump_side_ok(r) or self.eng.st[r].alpha <= self.eng.st[cur].alpha+1e-6:break
+                if self.eng.st[r].load <= self.eng.st[cur].load:break
+                pts.append(r);cur = r
+            # (the same sign; the cause can change along a line: He 111 H-6 RB at 40% near its 1 g end, where the jump
+            # is the steep side of the supercharger curve rather than its no-stage edge)
+            found = [j for j in self.path_jumps(v, pts) if (j['gap'] > 0) == (ref['gap'] > 0)]
+            if found:
+                j = min(found, key=lambda q: abs(q['alpha']-alpha_e))
+                j['level'] = c
+                return j
+            if a0 <= self.eng.st[level].alpha+1e-6 and self.prop_jump(ref['lo'], level) and not self.prop_jump(ref['hi'], level):
+                if all(not self.prop_jump(ref['hi'], q) for q in pts):return 'below'
+            return 'above' if outside and self.eng.st[cur].alpha < alpha_e else None
+        return None
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef double boundary_load(self, double v) except? -1.:
+        """S16: the envelope boundary's load at speed ``v`` (the verified columns' limiting loads, linear between the two
+        either side; held past the ends)."""
+        import bisect
+        cdef int i
+        if not self.env_v:return 1.
+        i = bisect.bisect_left(self.env_v, v)
+        if i <= 0:return self.env_n[0]
+        if i >= len(self.env_v):return self.env_n[-1]
+        return self.env_n[i-1]+(self.env_n[i]-self.env_n[i-1])*(v-self.env_v[i-1])/(self.env_v[i]-self.env_v[i-1])
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef list sep_jumps(self, list columns):
+        """S16 (Leo 2026-10-24: "make it a general sep jump line"): the SEP jump lines of the chart. Each verified column's
+        level-flight path (its own march samples by load from level flight) is searched for SEP jumps (path_jumps);
+        jumps of neighbouring columns of the same cause and sign are joined into lines, refined at midpoints where the
+        straight line between two points is off the jump at the midpoint speed by more than the curve tolerance (with the
+        chart's speed slack), and their ends bisected in speed towards the neighbouring column without the jump."""
+        cdef double v, tol, sl, interp, va, vb, vm
+        cdef int it, depth
+        self.jump_work = {}
+        per = []
+        for col in columns:
+            if not col.get('boundary'):continue
+            pts, _ = self.column_samples(col)
+            if len(pts) < 2 or not self.column_start(col, pts):continue
+            v = float(col['speed_kmh'])
+            js = self.path_jumps(v, pts)
+            for j in js:j['level'] = pts[0]
+            per.append((v, js))
+        # join neighbouring columns' jumps (same cause and sign, nearest turn rate) into lines
+        lines = [];open_ = []
+        for k in range(len(per)):
+            v, js = per[k];now = [];taken = set()
+            for j in sorted(js, key=lambda q: q['turn']):
+                best = None
+                for L in open_:
+                    if id(L) in taken:continue
+                    q = L['pts'][-1]
+                    if (q['gap'] > 0) != (j['gap'] > 0):continue
+                    if best is None or abs(q['turn']-j['turn']) < abs(best['pts'][-1]['turn']-j['turn']):best = L
+                if best is not None:
+                    best['pts'].append(j);taken.add(id(best));now.append(best)
+                else:
+                    L = dict(pts=[j], first=k, last=k);lines.append(L);now.append(L)
+                now[-1]['last'] = k
+            open_ = now
+        tol = CURVE_STEP_SCALE*self.turn_tol
+        for L in lines:
+            pts_ = L['pts']
+            # midpoints between neighbouring points of the line
+            out = [pts_[0]]
+            for a, b in zip(pts_, pts_[1:]):
+                stack = [(a, b, 0)];seg = []
+                while stack:
+                    p, q, depth = stack.pop()
+                    va, vb = p['speed'], q['speed']
+                    if depth >= S16_JUMP_REFINE or vb-va <= 2.*self.speed_tol:
+                        seg.append(q);continue
+                    vm = .5*(va+vb)
+                    j = self.jump_at(vm, p, .5*(p['alpha']+q['alpha']))
+                    if not isinstance(j, dict):
+                        seg.append(q);continue
+                    interp = p['turn']+(q['turn']-p['turn'])*(vm-va)/(vb-va)
+                    sl = fabs(q['turn']-p['turn'])/(vb-va)
+                    if fabs(j['turn']-interp) <= tol+sl*self.speed_tol:
+                        seg.append(q);continue
+                    stack.append((j, q, depth+1));stack.append((p, j, depth+1))
+                out.extend(seg)
+            # the ends: bisected in speed towards the neighbouring column without the jump; where the jump passes below
+            # level flight there the line ends at 1 g, where it passes the envelope at the boundary (between the last
+            # speed with it and the first without)
+            for side in (-1, 1):
+                k = L['first']-1 if side < 0 else L['last']+1
+                # (first on through the next columns where their own samples missed it: Corsair F Mk II RB at full fuel,
+                # the -1.5 m/s jump at 748.2 km/h, between two samples the bisection of that column does not narrow)
+                while 0 <= k < len(per):
+                    end = out[0] if side < 0 else out[-1]
+                    j = self.jump_at(per[k][0], end, end['alpha'])
+                    if not isinstance(j, dict):break
+                    if side < 0:out.insert(0, j)
+                    else:out.append(j)
+                    k += side
+                if k < 0 or k >= len(per):continue
+                end = out[0] if side < 0 else out[-1]
+                va, vb = end['speed'], per[k][0]
+                below = above = NAN
+                for it in range(S16_JUMP_END_STEPS):
+                    if fabs(vb-va) <= S16_JUMP_END_SPEED*self.speed_tol:break
+                    vm = .5*(va+vb)
+                    j = self.jump_at(vm, end, end['alpha'])
+                    self.jump_log.append((side, vm, j if not isinstance(j, dict) else round(j['turn'], 3)))
+                    if not isinstance(j, dict):
+                        vb = vm
+                        if j == 'below':below = vm
+                        elif j == 'above':above = vm
+                    else:
+                        end = j;va = vm
+                        if side < 0:out.insert(0, j)
+                        else:out.append(j)
+                if (isfinite(below) or isfinite(above)) and len(out) >= 2:
+                    # the end at 1 g (or on the boundary) where the line heads there: its last two points continued to
+                    # 1 g (to the boundary's turn rate) within the last speed with the jump and the nearest one where it
+                    # has passed (not where the jump just ends: a band of another branch closing, Corsair F Mk II RB at
+                    # full fuel, 762 km/h, where level flight is then on the line's far side too)
+                    lim = below if isfinite(below) else above
+                    a_, b_ = (out[0], out[1]) if side < 0 else (out[-1], out[-2])
+                    n_ = 1.
+                    if isfinite(below):t_ = 0.
+                    else:
+                        n_ = self.boundary_load(.5*(va+lim));t_ = RAD_TO_DEG*G_TURN*sqrt(pmax(0., n_*n_-1.))/(.5*(va+lim)/3.6)
+                    vm = NAN
+                    if fabs(a_['turn']-b_['turn']) > 1e-9 and fabs(a_['speed']-b_['speed']) > 1e-9:
+                        vm = a_['speed']+(t_-a_['turn'])*(a_['speed']-b_['speed'])/(a_['turn']-b_['turn'])
+                    if isfinite(vm) and pmin(va, lim)-self.speed_tol <= vm <= pmax(va, lim)+self.speed_tol:
+                        vm = pmin(pmax(vm, pmin(va, lim)), pmax(va, lim))
+                        if not isfinite(below):
+                            n_ = self.boundary_load(vm);t_ = RAD_TO_DEG*G_TURN*sqrt(pmax(0., n_*n_-1.))/(vm/3.6)
+                        q = dict(end, speed=vm, turn=t_, load=n_, edge='1 g' if isfinite(below) else 'boundary')
+                        if side < 0:out.insert(0, q)
+                        else:out.append(q)
+            L['out'] = sorted(out, key=lambda q: q['speed'])
+        self.eng.flush_counts()
+        res = []
+        for L in lines:
+            o = L['out']
+            causes = [q['cause'] for q in o]
+            res.append(dict(cause='supercharger' if 'supercharger' in causes else max(set(causes), key=causes.count), speed_kmh=[q['speed'] for q in o], turn_dps=[q['turn'] for q in o],
+                            ends=[o[0].get('edge'), o[-1].get('edge')],
+                            load_g=[q['load'] for q in o], sep_before_mps=[q['sep_before'] for q in o],
+                            sep_after_mps=[q['sep_after'] for q in o]))
+        self.eng.stats['s16_jump_lines'] = self.eng.stats.get('s16_jump_lines', 0)+len(res)
+        for k_, v_ in self.jump_work.items():self.eng.stats['s16_jump_'+k_] = self.eng.stats.get('s16_jump_'+k_, 0)+v_
+        return res
+
     def run(self, columns):
         """MarchCurveSolver.run() with ``columns`` (the verified envelope column records)."""
         import time, math
@@ -2788,7 +3149,7 @@ cdef class NCurves:
                 if pts and self.eng.st[pts[0]].nx > 7:
                     self.pcol_v.append(float(c['speed_kmh']));self.pcol.append(pts)
         components, seeds_report, unresolved_targets, excluded = [], [], [], []
-        status = 'completed';junctions = []
+        status = 'completed';junctions = [];jumps = []
         global g_sink
         saved = <size_t>g_sink
         try:
@@ -2817,6 +3178,7 @@ cdef class NCurves:
                         for comp in components:self.check_fold(comp)
                     junctions = self.seam_junctions(segments, components)
                     self.raw_components = components
+                    if self.s16_jumps:jumps = self.sep_jumps([c for c in columns if c.get('boundary')])
                 finally:
                     g_sink = <long*>saved
                     self.eng.flush_counts()
@@ -2834,7 +3196,8 @@ cdef class NCurves:
                     attempt_count=len(self.ledger.attempts), attempt_work=self.ledger.summary(),
                     coverage_complete=False,
                     coverage_scope='sampled fixed-load ladders at seed speeds plus speed continuation; '
-                                   'not an absence proof between samples')
+                                   'not an absence proof between samples',
+                    **({'sep_jumps': jumps} if self.s16_jumps else {}))
 
     @cython.boundscheck(True)
     @cython.wraparound(True)

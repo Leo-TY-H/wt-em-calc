@@ -1879,6 +1879,24 @@ cdef class MarchEngine:
         """Diagnostics (S11): corrections without the braking reseed (raw) or with it."""
         self.brake_retry = raw
 
+    cdef unsigned long long engine_branches(self, int sid) except? 0:
+        """S16: the supercharger branch of every piston engine in a state's flight condition at its shaft speeds
+        (PropModel.engine_signature: a stage selected or none), hashed; 0 without a propeller model or coordinates."""
+        cdef TState* t = &self.st[sid]
+        cdef PropPrep* prep
+        cdef PropModel pm
+        cdef unsigned long long code = 1469598103934665603ULL
+        cdef double saved
+        cdef int s
+        if self.fin is None or self.fin.pm is None or not t.has_coords:return 0
+        pm = self.fin.pm
+        saved = self.P.speed_kmh
+        self.P.speed_kmh = t.speed;self.P.nprep = 0;self.P.prep_next = 0
+        prep = self.P.prepared(t.load, t.coords[0], t.coords[1])
+        for s in range(pm.nt):code = pm.engine_signature(s, prep, t.rpm[s]*M_PI/30., code)
+        self.P.speed_kmh = saved;self.P.nprep = 0;self.P.prep_next = 0
+        return code
+
     def debug_brakes(self, int sid):
         """Diagnostics (S11): whether a state's propellers brake, and its net propeller thrust in weights."""
         cdef double v = NAN

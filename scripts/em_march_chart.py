@@ -431,6 +431,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                 local_candidate_points=sum(bool(p.get('chart_usable')) for p in points),
                 curve_components=components,
                 curve_knots=[k for comp in (curves or {}).get('components', []) for k in comp['knots']],
+                # S16 (Leo 2026-10-24): the SEP jump lines (NCurves.sep_jumps), drawn dotted; contours end at them
+                **({'sep_jumps': curves['sep_jumps']} if curves and curves.get('sep_jumps') else {}),
                 # The complete curve solver record (knots, withheld checks, ends) for exports and replay.
                 curves=None if curves is None else {k: v for k, v in curves.items() if k not in ('seeds',)},
                 envelope_trace=dict(segments=envelope['segments'], mach_seams_kmh=envelope['mach_seams_kmh'],
