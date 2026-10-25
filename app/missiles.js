@@ -93,8 +93,10 @@
     if(name===true||name===false)name=name?'missile':'em';
     for(const [key,tab,panel] of toolTabs) {
       const selected=key===name;el(panel).hidden=!selected;
-      el(tab).setAttribute('aria-selected',String(selected));el(tab).tabIndex=selected?0:-1;
+      if(selected)el(tab).setAttribute('aria-current','page');else el(tab).removeAttribute('aria-current');
     }
+    // The header group holding the open calculator is marked current (app.js runs its menus).
+    for(const group of document.querySelectorAll('.nav-group'))group.classList.toggle('current',!!group.querySelector('[aria-current=page]'));
     if(name==='missile') {
       if(!meta) load();
       if(result) requestAnimationFrame(()=>{Plotly.Plots.resize(el('missile-chart'));resizeDataPlots();});
@@ -102,13 +104,6 @@
     document.dispatchEvent(new CustomEvent('tool-tab-change',{detail:name}));
   }
   for(const [key,tab] of toolTabs) el(tab).addEventListener('click',()=>selectTab(key));
-  document.querySelector('.tool-tabs').addEventListener('keydown',event=>{
-    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-    event.preventDefault();
-    const current=toolTabs.findIndex(([,,panel])=>!el(panel).hidden);
-    const index=event.key==='Home'?0:event.key==='End'?toolTabs.length-1:(current+(event.key==='ArrowRight'?1:toolTabs.length-1))%toolTabs.length;
-    selectTab(toolTabs[index][0]);el(toolTabs[index][1]).focus();
-  });
   async function load() {
     if(loading) return loading;
     loading=(async()=>{try{

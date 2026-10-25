@@ -981,3 +981,28 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
     $('footer-status').textContent='Calculations run on the server.';
   }
 }catch(e){error('Could not load the plotter: '+e.message);}})();
+// Header calculator menus (Leo, 2026-10-25): each group opens on hover, on a click of its name or with the down
+// arrow, and closes on a choice, Escape, leaving it or a click elsewhere. missiles.js switches the calculators.
+(()=>{
+  const groups=[...document.querySelectorAll('.nav-group')],hover=matchMedia('(hover: hover)');
+  const set=(group,open)=>{group.classList.toggle('open',open);group.querySelector('.nav-top').setAttribute('aria-expanded',String(open));};
+  const closeAll=except=>groups.forEach(g=>{if(g!==except)set(g,false);});
+  for(const group of groups){
+    const top=group.querySelector('.nav-top'),items=[...group.querySelectorAll('.nav-item')];
+    group.addEventListener('mouseenter',()=>{if(hover.matches){closeAll(group);set(group,true);}});
+    group.addEventListener('mouseleave',()=>{if(hover.matches)set(group,false);});
+    // With a mouse the menu is already open under the pointer; a tap toggles it.
+    top.addEventListener('click',()=>{const open=hover.matches||!group.classList.contains('open');closeAll(group);set(group,open);});
+    for(const item of items)item.addEventListener('click',()=>set(group,false));
+    group.addEventListener('keydown',event=>{
+      const at=items.indexOf(document.activeElement);
+      if(event.key==='Escape'){set(group,false);top.focus();}
+      else if(event.key==='ArrowDown'){set(group,true);items[at<0?0:Math.min(at+1,items.length-1)].focus();}
+      else if(event.key==='ArrowUp'&&at>=0)(at===0?top:items[at-1]).focus();
+      else return;
+      event.preventDefault();
+    });
+    group.addEventListener('focusout',event=>{if(!group.contains(event.relatedTarget))set(group,false);});
+  }
+  document.addEventListener('click',event=>{if(!event.target.closest('.nav-group'))closeAll();});
+})();

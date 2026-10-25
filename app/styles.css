@@ -38,17 +38,27 @@ main{padding:18px 14px 22px}
 .ammunition-setting{margin:16px 0}.ammunition-setting .check-row{align-items:center;margin:0 0 7px;font-size:12px;line-height:1.5;cursor:pointer}.ammunition-setting input{flex-shrink:0;margin:0}.ammunition-setting small{display:block;margin:4px 0 0 22px;font-size:11px;line-height:1.5;color:var(--muted)}#ammunition-status{color:var(--text)}.ammunition-setting .field{margin-bottom:0}
 #manual-engine-field{width:100%;margin:14px 0}#manual-engine-settings{padding-top:10px}#manual-engine-settings small{display:block;margin:4px 0 14px;color:var(--muted);font-size:11px;line-height:1.5}#manual-engine-field .check-row{margin:8px 0;cursor:pointer}#manual-engine-settings input:disabled{opacity:.45}
 
-/* Tool tabs in the header bar, the selected one underlined. */
+/* Header: one tab per tool family, its calculators in a dropdown; the family holding the open calculator underlined. */
 body>header.topbar{height:56px;min-height:56px;padding:0 16px;gap:28px;flex-wrap:nowrap;justify-content:flex-start}
 .topbar .brand-icon{width:48px;height:30px}
-.topbar .tool-tabs{display:flex;align-self:stretch;gap:2px;padding:0;border:0;background:none;margin-right:auto}
-.topbar .tool-tabs button{position:relative;height:100%;border:0;border-radius:0;background:none;padding:0 14px;color:var(--muted);font-size:14px}
-.topbar .tool-tabs button:hover{color:var(--text)}
-.topbar .tool-tabs button[aria-selected=true]{background:none;border:0;color:var(--text)}
-.topbar .tool-tabs button[aria-selected=true]::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;background:var(--cyan)}
+.site-nav{display:flex;align-self:stretch;gap:2px;margin-right:auto}
+.nav-group{position:relative;display:flex}
+.nav-top{position:relative;display:flex;align-items:center;gap:8px;height:100%;padding:0 14px;border:0;background:none;color:var(--muted);font-size:14px}
+.nav-top:hover,.nav-group.open .nav-top,.nav-group.current .nav-top{color:var(--text)}
+.nav-group.current .nav-top::after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:2px;background:var(--cyan)}
+.nav-caret{width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.75;transition:transform .15s}
+.nav-group.open .nav-caret{transform:translateY(1px) rotate(225deg)}
+.nav-menu{position:absolute;left:4px;top:100%;z-index:1200;display:none;flex-direction:column;min-width:210px;padding:6px;border:1px solid #334459;border-radius:8px;background:#162131;box-shadow:0 12px 30px #0009}
+.nav-group.open .nav-menu{display:flex}
+.nav-item{display:block;width:100%;padding:9px 12px;border:0;border-radius:6px;background:none;color:var(--text);font-size:14px;text-align:left;white-space:nowrap}
+.nav-item:hover,.nav-item:focus-visible{background:#1f2e42;color:var(--cyan)}
+.nav-item[aria-current=page]{color:var(--cyan)}
+.nav-item:focus-visible{outline-offset:-2px}
+@media(prefers-reduced-motion:reduce){.nav-caret{transition:none}}
 @media(max-width:760px){body>header.topbar{height:auto;flex-wrap:wrap;gap:0 12px;padding:6px 12px 0}
-  .topbar .tool-tabs{order:3;flex-basis:calc(100% + 24px);height:44px;margin:0 -12px;padding:0 4px;border-top:1px solid var(--line)}
-  .topbar .tool-tabs button{padding:0 12px}
+  .site-nav{order:3;flex-basis:calc(100% + 24px);height:44px;margin:0 -12px;padding:0 4px;border-top:1px solid var(--line)}
+  .nav-top{padding:0 12px}
+  .nav-group:last-child .nav-menu{left:auto;right:4px}
   .topbar .release-links{width:auto;margin-left:auto}}
 
 /* The header stays on top, each sidebar scrolls on its own with its run button pinned at the foot, and the diagram
