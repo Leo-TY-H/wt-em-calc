@@ -17,6 +17,8 @@ RUN python scripts/build_march_native.py
 RUN python scripts/build_missile_backend.py
 # Standalone release builds do not need distutils' default GCC debug symbols.
 RUN CFLAGS="-g0" CXXFLAGS="-g0" python scripts/build_missile_engine.py
+# The bounded writer creates private temporary files; the runtime must read this manifest.
+RUN chmod 644 .native_missile_engine/build-manifest.json
 
 FROM python:3.11-slim
 
