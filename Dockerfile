@@ -15,6 +15,7 @@ RUN python scripts/bootstrap_runtime.py
 RUN python scripts/build_em_backend.py
 RUN python scripts/build_march_native.py
 RUN python scripts/build_missile_backend.py
+RUN python scripts/build_missile_engine.py
 
 FROM python:3.11-slim
 
@@ -29,6 +30,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /srv/wt-em
 RUN useradd --create-home --uid 10001 emserver && mkdir -p /data/em /tmp/matplotlib \
     && chown -R emserver:emserver /data /tmp/matplotlib
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /srv/wt-em /srv/wt-em
 USER emserver

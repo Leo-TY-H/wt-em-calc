@@ -356,6 +356,12 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/missiles/meta':
             from missile_service import metadata
             return self.respond(metadata())
+        if path.startswith('/api/missiles/envelopes/'):
+            from missile_envelope_service import get as envelope
+            try:since=int(parse_qs(urlparse(self.path).query).get('since',['0'])[0])
+            except ValueError:since=0
+            job=envelope(path.removeprefix('/api/missiles/envelopes/'),since)
+            return self.respond(job if job else dict(error='Unknown envelope job'),200 if job else 404)
         if path.startswith('/api/missiles/jobs/'):
             from missile_service import get
             key=path.removeprefix('/api/missiles/jobs/')
@@ -372,6 +378,8 @@ class Handler(BaseHTTPRequestHandler):
                     if missiles is not None:
                         with missiles.LOCK:
                             busy=busy or any(job.get('status') in ('queued','running') for job in missiles.JOBS.values())
+                    envelopes=sys.modules.get('missile_envelope_service')
+                    if envelopes is not None:busy=busy or envelopes.busy()
                     if not busy:RESTART_REQUESTED.set()
                 if not busy:
                     self.respond(dict(error='Loading updated calculator.',code='server_restarting'),503)
@@ -448,6 +456,7 @@ class Handler(BaseHTTPRequestHandler):
         names={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/config.js':'config.js','/styles.css':'styles.css','/vendor/plotly.min.js':'vendor/plotly.min.js'}
         names.update({'/release.json':'release.json','/release-links.js':'release-links.js','/release-links.css':'release-links.css'})
         names.update({'/missiles.js':'missiles.js','/missiles.css':'missiles.css'})
+        names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
@@ -476,6 +485,15 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith('/api/missiles/jobs/') and path.endswith('/cancel'):
                 from missile_service import cancel
                 return self.respond(dict(cancelled=cancel(path.split('/')[4])))
+            if path=='/api/missiles/envelopes':
+                from missile_envelope_service import start as start_envelope
+                with LOCK:
+                    if RESTART_REQUESTED.is_set():raise ValueError('Calculator is loading updates. Refresh the page before calculating.')
+                    key=start_envelope(body)
+                return self.respond(dict(id=key),202)
+            if path.startswith('/api/missiles/envelopes/') and path.endswith('/cancel'):
+                from missile_envelope_service import cancel as cancel_envelope
+                return self.respond(dict(cancelled=cancel_envelope(path.split('/')[4])))
             if path=='/api/jobs':
                 key=start_job(body);return self.respond(dict(id=key),202)
             if path=='/api/trial':

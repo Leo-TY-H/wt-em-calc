@@ -5,12 +5,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import threading
 import time
 import uuid
 from missile_names import display_name
 from missile_inputs import directory as input_directory
+import missile_engine
 
 ROOT = Path(__file__).resolve().parent
 LOCK = threading.Lock()
@@ -40,7 +40,8 @@ def metadata():
                       lock_after_launch=bool(rocket['guidance'].get('lockAfterLaunch',False)),
                       warm_up_s=rocket['guidance'].get('warmUpTime',0.),
                       proximity_delay_s=rocket.get('proximityFuse',{}).get('timeOut',.3) if rocket.get('hasProximityFuse',False) else None)
-        entries.append(dict(id=key, name=display_name(key, rocket), family=row['family'],timing=timing))
+        fuze = rocket.get('proximityFuse',{}).get('radius') if rocket.get('hasProximityFuse',False) else None
+        entries.append(dict(id=key, name=display_name(key, rocket), family=row['family'],timing=timing,fuze_radius_m=fuze))
     # Keep one base configuration for each displayed name, not mounting aliases.
     # The localization also labels AIM-4D as AIM-4G; prefer the matching G profile.
     unique = {}
@@ -64,7 +65,7 @@ def _run(key, config, cancel):
         with LOCK:
             if cancel.is_set(): return
             JOBS[key].update(status='running', started=time.monotonic())
-        process = subprocess.Popen([sys.executable, '-X', 'utf8', str(ROOT/'missile_worker.py')],
+        process = subprocess.Popen(missile_engine.command('simulator'),
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                     text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         with LOCK:
@@ -72,7 +73,7 @@ def _run(key, config, cancel):
             if cancel.is_set(): process.terminate()
         timer = threading.Timer(300, lambda: process.kill() if process.poll() is None else None)
         timer.daemon=True; timer.start()
-        process.stdin.write(json.dumps(config)); process.stdin.close()
+        process.stdin.write(json.dumps(dict(config, _parent_pid=os.getpid()))); process.stdin.close()
         completed = False
         for line in process.stdout:
             message = json.loads(line)
@@ -86,14 +87,17 @@ def _run(key, config, cancel):
         with LOCK:
             if not cancel.is_set() and not completed and JOBS[key]['status']!='failed':
                 JOBS[key].update(status='failed',error='Simulation stopped before producing a result.')
-    except Exception:
+    except Exception as error:
         with LOCK:
-            if not cancel.is_set(): JOBS[key].update(status='failed',error='Unable to run missile simulation.')
+            if not cancel.is_set(): JOBS[key].update(status='failed',error=f'Unable to run missile simulation: {error}')
     finally:
         if timer is not None: timer.cancel()
         if process is not None:
             if process.poll() is None: process.terminate()
             process.wait()
+            for stream in (process.stdin, process.stdout):
+                try: stream.close()
+                except OSError: pass  # A cancelled worker may have closed its pipe.
         with LOCK:
             JOBS[key].pop('process',None)
             JOBS[key]['finished']=time.monotonic()
