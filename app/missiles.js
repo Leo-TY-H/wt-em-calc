@@ -88,22 +88,26 @@
   }
   const showError = text => {el('missile-error').textContent=text;el('missile-error').hidden=!text;};
   const pause = () => {playing=false;el('missile-play').textContent='Play';};
-  function selectTab(missile) {
-    el('em-workspace').hidden=missile;root.hidden=!missile;
-    for(const [id,selected] of [['em-tab',!missile],['missile-tab',missile]]) {
-      el(id).setAttribute('aria-selected',String(selected));el(id).tabIndex=selected?0:-1;
+  const toolTabs=[['em','em-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
+  function selectTab(name) {
+    if(name===true||name===false)name=name?'missile':'em';
+    for(const [key,tab,panel] of toolTabs) {
+      const selected=key===name;el(panel).hidden=!selected;
+      el(tab).setAttribute('aria-selected',String(selected));el(tab).tabIndex=selected?0:-1;
     }
-    if(missile) {
+    if(name==='missile') {
       if(!meta) load();
       if(result) requestAnimationFrame(()=>{Plotly.Plots.resize(el('missile-chart'));resizeDataPlots();});
-    } else {pause(); if(el('chart').data) requestAnimationFrame(()=>Plotly.Plots.resize(el('chart')));}
+    } else {pause(); if(name==='em'&&el('chart').data) requestAnimationFrame(()=>Plotly.Plots.resize(el('chart')));}
+    document.dispatchEvent(new CustomEvent('tool-tab-change',{detail:name}));
   }
-  el('em-tab').addEventListener('click',()=>selectTab(false));
-  el('missile-tab').addEventListener('click',()=>selectTab(true));
+  for(const [key,tab] of toolTabs) el(tab).addEventListener('click',()=>selectTab(key));
   document.querySelector('.tool-tabs').addEventListener('keydown',event=>{
     if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-    event.preventDefault();const missile=event.key==='End'||(event.key!=='Home'&&root.hidden);
-    selectTab(missile);el(missile?'missile-tab':'em-tab').focus();
+    event.preventDefault();
+    const current=toolTabs.findIndex(([,,panel])=>!el(panel).hidden);
+    const index=event.key==='Home'?0:event.key==='End'?toolTabs.length-1:(current+(event.key==='ArrowRight'?1:toolTabs.length-1))%toolTabs.length;
+    selectTab(toolTabs[index][0]);el(toolTabs[index][1]).focus();
   });
   async function load() {
     if(loading) return loading;
@@ -289,6 +293,22 @@
   });
   for(const role of ['launch','target'])syncMotion(role);
   updatePreview();
+  // Load a complete scenario (SI units, launcher at any position) from another tool.
+  window.missileSimulator={load(scenario){
+    if(batchRunning)return false;
+    selectTab('missile');
+    selectedMissiles=[scenario.missile];renderSelected();filterMissiles();
+    const origin=scenario.launcher.position;
+    // Full precision: near an envelope boundary a rounded position can change the outcome.
+    el('missile-launch-position-1').value=String(origin[1]);
+    for(let i=0;i<3;i++)el(`missile-target-position-${i}`).value=String(i===1?scenario.target.position[1]:scenario.target.position[i]-origin[i]);
+    syncMotion('launch',scenario.launcher.velocity);syncMotion('target',scenario.target.velocity);
+    if(scenario.duration)el('missile-duration').value=scenario.duration;
+    root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
+    el('missile-preset-note').textContent='Loaded from the launch envelope · choosing an example replaces both aircraft states.';
+    changed();busy(false);root.scrollIntoView?.({block:'start'});
+    return true;
+  }};
   new ResizeObserver(()=>updatePreview()).observe(el('missile-geometry'));
   el('missile-form').addEventListener('submit',async event=>{
     event.preventDefault();if(batchRunning||!selectedMissiles.length)return;

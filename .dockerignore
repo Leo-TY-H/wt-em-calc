@@ -5,6 +5,14 @@
 !references/aircraft-exclusions.json
 !scripts/
 !scripts/*.py
+!scripts/missile_native/
+!scripts/missile_native/*.py
+!scripts/missile_native/*.h
+!scripts/missile_native/*.cpp
+!scripts/missile_native/*.pyx
+!scripts/missile_native/*.txt
+!scripts/missile_native/typed/
+!scripts/missile_native/typed/*.h
 !scripts/march_native/
 !scripts/march_native/*.pyx
 !scripts/march_native/*.pxi

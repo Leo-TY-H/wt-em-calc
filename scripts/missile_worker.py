@@ -6,6 +6,25 @@ Legacy API requests with `launch` retain their explicit post-release meaning.
 Seekers use ready prelaunch initialization and recovered handoff; motor,
 guidance, acquisition and proximity clocks start at release, not at ignition.
 """
+if __name__ == '__main__':
+    import os as _os
+    if _os.environ.get('WT_MISSILE_ENGINE', 'native') != 'python':
+        import json as _json
+        import subprocess as _subprocess
+        import sys as _sys
+        from missile_engine import command as _command
+        try:
+            _request = _json.load(_sys.stdin)
+            if isinstance(_request, dict):
+                _request['_parent_pid'] = _os.getpid()
+                _request['_supervisor_pid'] = _os.getppid()
+            _status = _subprocess.run(_command('simulator'), input=_json.dumps(_request),
+                                      text=True, encoding='utf-8').returncode
+        except (RuntimeError, OSError, ValueError) as _error:
+            print(_json.dumps(dict(type='error', error=f'{type(_error).__name__}: {_error}')), flush=True)
+            _status = 1
+        raise SystemExit(_status)
+
 from copy import deepcopy
 import json
 import math

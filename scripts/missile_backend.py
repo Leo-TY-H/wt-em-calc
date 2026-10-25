@@ -3,6 +3,12 @@
 WT_MISSILE_BACKEND=reference keeps the full reference path. 'python' uses fast
 session orchestration without an extension. 'auto' uses a valid local extension
 when present; missing/stale binaries fall back to fast Python without a build.
+
+WT_MISSILE_NATIVE selects the native flight model (scripts/missile_native:
+motor, body substeps, speed cap and the four shared controllers) on top of a
+non-reference backend: 'auto' (default) uses a verified available build, '0'
+leaves it off, and '1' requires the module from scripts/build_missile_native.py.
+Seeker, manager and session code stay in Python either way.
 """
 import hashlib
 import importlib
@@ -14,8 +20,104 @@ import sys
 from types import FunctionType
 from build_missile_backend import DIRECTORY, signature
 
+NATIVE = False
+
 
 def activate():
+    global NATIVE
+    mode = _activate_helpers()
+    NATIVE = activate_native(mode)
+    return mode
+
+
+def activate_native(mode):
+    """Bind the native flight model into the website's flight compositions."""
+    setting = os.environ.get('WT_MISSILE_NATIVE', 'auto')
+    if setting not in ('0', '1', 'auto'):
+        raise ValueError('Unknown WT_MISSILE_NATIVE')
+    if setting == '0':
+        return False
+    if mode == 'reference':
+        if setting == '1':
+            raise RuntimeError('The reference backend never uses the native flight model')
+        return False
+    from build_missile_native import load
+    native = load(required=setting == '1')
+    if native is None:
+        return False
+
+    # The native wrapper loads after helper activation, so its Python globals
+    # were not visited by that pass. Reuse the verified state copier too.
+    import copy
+    native.deepcopy = sys.modules['_missile_accel'].deepcopy if mode == 'compiled' else copy.deepcopy
+
+    import kernels
+    import orientation_control
+    import guidance_request
+    import acceleration_control
+    import propulsion_control
+    import optical_point_flight
+    import optical_point_controls
+    # Compiled helpers (when active) are the bindings current callers hold.
+    def bound(name, function):
+        compiled = sys.modules.get('_missile_numeric_' + name)
+        return getattr(compiled, function.__name__, function) if compiled is not None else function
+    reference_acceleration = bound('acceleration_control', acceleration_control.update)
+    reference_propulsion = propulsion_control.update
+
+    def acceleration_update(p, aero, motor, state, request, measured, q, velocity, height, time, dt, *,
+                            environment=None, matrix_velocity_frame=True):
+        # Native code implements the default world values only.
+        if environment:
+            return reference_acceleration(p, aero, motor, state, request, measured, q, velocity, height, time, dt,
+                                          environment=environment, matrix_velocity_frame=matrix_velocity_frame)
+        return native.flight_acceleration(p, aero, motor, state, request, measured, q, velocity, height, time, dt,
+                                          matrix_velocity_frame)
+
+    def propulsion_update(p, state, time, position, velocity, tgo, closure, dt, *, environment=None):
+        if environment:
+            return reference_propulsion(p, state, time, position, velocity, tgo, closure, dt, environment=environment)
+        return native.flight_propulsion(p, state, time, position, velocity, tgo, closure, dt)
+
+    def flight_update(p, state, targets, dt, *, guidance_step=None):
+        return native.flight_update(p, state, targets, dt,
+                                    optical_point_controls.update if guidance_step is None else guidance_step)
+
+    replacements = {kernels.motor_scalar: native.flight_motor,
+                    orientation_control.update: native.flight_orientation,
+                    guidance_request.request: native.flight_request,
+                    acceleration_control.update: acceleration_update,
+                    reference_acceleration: acceleration_update,
+                    propulsion_control.update: propulsion_update,
+                    optical_point_flight.update: flight_update,
+                    bound('optical_point_flight', optical_point_flight.update): flight_update}
+    # The defining modules keep their reference functions; only consumers
+    # (e.g. optical_manager_controls, geometric_*_flight, missile_support and
+    # their compiled counterparts) are rebound.
+    defining = {'kernels', 'orientation_control', 'guidance_request', 'acceleration_control', 'propulsion_control',
+                'optical_point_flight', '_missile_numeric_acceleration_control', '_missile_numeric_optical_point_flight'}
+    scripts = Path(__file__).resolve().parent
+    model = scripts/'missile_model'
+    for name, module in list(sys.modules.items()):
+        filename = getattr(module, '__file__', None)
+        if not filename or name in defining:
+            continue
+        path = Path(filename).resolve()
+        if path.parent != model and not name.startswith('_missile_numeric_') and not (path.parent == scripts and path.stem in
+                {'missile_worker', 'missile_support', 'missile_initialization', 'missile_telemetry', 'missile_fast'}):
+            continue
+        for key, value in list(vars(module).items()):
+            if callable(value):
+                try:
+                    replacement = replacements.get(value)
+                except TypeError:
+                    continue
+                if replacement is not None:
+                    setattr(module, key, replacement)
+    return True
+
+
+def _activate_helpers():
     mode = os.environ.get('WT_MISSILE_BACKEND', 'auto')
     if mode not in ('auto', 'python', 'reference', 'compiled'):
         raise ValueError('Unknown WT_MISSILE_BACKEND')

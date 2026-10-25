@@ -5,14 +5,14 @@
 // The interface needs the local server for both assets and calculation APIs.
 if (window.location.protocol === 'file:') window.location.replace('http://127.0.0.1:8765/');
 </script>
-<title>neothunderism · Flight tools</title><meta name="description" content="neothunderism — War Thunder energy–maneuverability diagrams and experimental 3D missile engagements.">
+<title>neothunderism · Flight tools</title><meta name="description" content="neothunderism — War Thunder energy–maneuverability diagrams, experimental 3D missile engagements and launch envelopes.">
 <link rel="icon" type="image/png" sizes="16x16" href="./icons/neothunderism-16.png?v=4">
 <link rel="icon" type="image/png" sizes="32x32" href="./icons/neothunderism-32.png?v=4">
 <link rel="apple-touch-icon" sizes="180x180" href="./icons/neothunderism-180.png?v=3">
 <link rel="preload" href="./fonts/wt-symbols.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="./styles.css">
 <script src="./config.js"></script><script defer src="./vendor/plotly.min.js"></script><script defer src="./app.js"></script><script defer src="./release-links.js"></script><link rel="stylesheet" href="./release-links.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><nav class="tool-tabs" role="tablist" aria-label="Flight tools"><button id="em-tab" type="button" role="tab" aria-selected="true" aria-controls="em-workspace">EM diagram</button><button id="missile-tab" type="button" role="tab" aria-selected="false" aria-controls="missile-workspace" tabindex="-1">Missile simulator</button></nav><span id="runtime-label" class="local" hidden></span><nav id="release-links" class="release-links" aria-label="Website"></nav></header>
+<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><nav class="tool-tabs" role="tablist" aria-label="Flight tools"><button id="em-tab" type="button" role="tab" aria-selected="true" aria-controls="em-workspace">EM diagram</button><button id="missile-tab" type="button" role="tab" aria-selected="false" aria-controls="missile-workspace" tabindex="-1">Missile simulator</button><button id="envelope-tab" type="button" role="tab" aria-selected="false" aria-controls="envelope-workspace" tabindex="-1">Launch envelope</button></nav><span id="runtime-label" class="local" hidden></span><nav id="release-links" class="release-links" aria-label="Website"></nav></header>
 <div class="workspace" id="em-workspace" role="tabpanel" aria-labelledby="em-tab">
 <aside class="sidebar"><form id="scenario">
 <div class="section-heading"><span class="eyebrow">FLIGHT CONDITION</span><button type="button" class="text-button" id="reset">Reset</button></div>
@@ -101,6 +101,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <footer><span id="runtime-footer"></span><span id="footer-status">All calculations run on this computer.</span></footer>
 </main></div>
 <section id="missile-workspace" role="tabpanel" aria-labelledby="missile-tab" hidden></section>
+<section id="envelope-workspace" role="tabpanel" aria-labelledby="envelope-tab" hidden></section>
 <dialog id="loadout-dialog" class="loadout-dialog" aria-labelledby="loadout-title">
 <form id="loadout-form" method="dialog">
 <header class="loadout-header"><div><span class="eyebrow">LOADOUT</span><h2 id="loadout-title">Aircraft</h2></div><button type="submit" value="cancel" class="text-button" aria-label="Close loadout editor">✕</button></header>
@@ -121,4 +122,5 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 </form>
 </dialog>
 <link rel="stylesheet" href="./missiles.css"><script defer src="./missiles.js"></script>
+<link rel="stylesheet" href="./missile-envelope.css"><script defer src="./missile-envelope.js"></script>
 </body></html>
