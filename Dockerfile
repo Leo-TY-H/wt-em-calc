@@ -15,7 +15,8 @@ RUN python scripts/bootstrap_runtime.py
 RUN python scripts/build_em_backend.py
 RUN python scripts/build_march_native.py
 RUN python scripts/build_missile_backend.py
-RUN python scripts/build_missile_engine.py
+# Standalone release builds do not need distutils' default GCC debug symbols.
+RUN CFLAGS="-g0" CXXFLAGS="-g0" python scripts/build_missile_engine.py
 
 FROM python:3.11-slim
 
