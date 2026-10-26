@@ -7,9 +7,11 @@ the simulator tab, so fuze arming and radius shape the envelope together with
 the motor, mass, drag, lift, control limits, guidance and seeker limits.
 
 The envelope is drawn around the target, which flies straight and level along
-+X at its altitude. Layers are launcher altitudes and azimuth is the launcher's
-bearing from the target's nose (0 = head-on, 180 = tail chase). The launcher
-flies toward the target, nose on (aim='nose') or level.
++X. Layers are altitudes shared by both aircraft: the launcher is always at the
+target's altitude, flying level and pointed at it, so the missile leaves heading
+straight at the target and lofts only by its own guidance (Leo, 2026-10-26).
+Azimuth is the launcher's bearing from the target's nose (0 = head-on,
+180 = tail chase).
 
 Each layer is sampled along horizontal rays from the target. Along a ray the
 launch distance is searched for its hit/miss transitions; the nearest and
@@ -40,7 +42,6 @@ COARSE_RATIO = 1.6
 INTERIOR = 4.
 SHAPE = 5.
 MATCH = 2.5
-AIMS = ('nose', 'level')
 MAX_LAYERS = 25
 QUALITY = dict(quick=dict(azimuth_step_deg=30., detail_step_deg=3.75, edge_step_deg=1., tolerance=.03, tolerance_m=50.),
                standard=dict(azimuth_step_deg=15., detail_step_deg=1.875, edge_step_deg=.5, tolerance=.015, tolerance_m=30.),
@@ -83,12 +84,9 @@ def validate(request):
     if request.get('frame', 'target') != 'target': raise ValueError('Envelopes are drawn around the target; reload the page')
     launcher = request.get('launcher') or {}; target = request.get('target') or {}
     if not isinstance(launcher, dict) or not isinstance(target, dict): raise ValueError('Launcher and target settings are required')
-    aim = launcher.get('aim', 'nose')
-    if aim not in AIMS: raise ValueError("Launcher aim must be 'nose' or 'level'")
     clean = dict(missile=missile, frame='target',
-                 launcher=dict(speed_mps=number(launcher.get('speed_mps'), 'Launcher speed', 0., 2000.), aim=aim),
-                 target=dict(speed_mps=number(target.get('speed_mps'), 'Target speed', 0., 2000.),
-                             altitude_m=number(target.get('altitude_m'), 'Target altitude', 50., 25000.)))
+                 launcher=dict(speed_mps=number(launcher.get('speed_mps'), 'Launcher speed', 0., 2000.)),
+                 target=dict(speed_mps=number(target.get('speed_mps'), 'Target speed', 0., 2000.)))
     layers = request.get('layers_m')
     if not isinstance(layers, list) or not 1 <= len(layers) <= MAX_LAYERS:
         raise ValueError(f'Supply between 1 and {MAX_LAYERS} layer altitudes')
@@ -146,19 +144,18 @@ def states(config, layer, azimuth, distance):
     a shared placement lets the simulator tab replay any envelope sample exactly.
     """
     a = math.radians(azimuth)
-    altitude = config['target']['altitude_m']
-    target = dict(position=[-distance * math.cos(a), altitude, -distance * math.sin(a)],
+    # Both aircraft at the layer altitude; the launcher flies level, pointed at the target.
+    target = dict(position=[-distance * math.cos(a), layer, -distance * math.sin(a)],
                   velocity=_direction(0., 0., config['target']['speed_mps']), angles=[0., 0., 0.])
     heading = _wrap(azimuth + 180.)
-    pitch = math.degrees(math.atan2(altitude - layer, distance)) if config['launcher']['aim'] == 'nose' else 0.
-    launcher = dict(position=[0., layer, 0.], velocity=_direction(heading, pitch, config['launcher']['speed_mps']),
-                    angles=[heading, pitch, 0.])
+    launcher = dict(position=[0., layer, 0.], velocity=_direction(heading, 0., config['launcher']['speed_mps']),
+                    angles=[heading, 0., 0.])
     return launcher, target
 
 
 def vertical_offset(config, layer):
-    """Altitude of the launcher layer above the target."""
-    return layer - config['target']['altitude_m']
+    """Altitude of the launcher above the target: always zero (co-altitude launches)."""
+    return 0.
 
 
 def _intervals(a, b, c, low, high):
