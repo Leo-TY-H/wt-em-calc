@@ -144,6 +144,8 @@ function configEntries(c){
   if(c.compare_instructor&&entries.length===1)return [false,true].map((enabled,i)=>({...entries[0],id:`entry_${i+1}`,settings:{...entries[0].settings,instructor:enabled}}));
   return entries;
 }
+const COPY_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8"/><path d="M10.5 5.5v-3h-8v8h3"/></svg>';
+const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
 const EDIT_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"/><path d="M9 4l3 3"/></svg>';
 function renderEntries(){
   // The single settings editor lives in the settings popup while an entry is open (Leo, 2026-10-26); never clone form IDs.
@@ -151,9 +153,9 @@ function renderEntries(){
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
     <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong><code>${escapeText(nameCode(entryName(e))||e.aircraft_id)}</code></div>
     <p class="entry-summary"></p><div class="entry-actions">
-    <button type="button" class="entry-edit" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i+1}" title="Edit settings">${EDIT_ICON}</button>
-    <button type="button" data-action="duplicate" aria-label="Duplicate entry ${i+1}" ${state.entries.length>=8?'disabled':''}>Duplicate</button>
-    <button type="button" data-action="remove" aria-label="Remove entry ${i+1}">Remove</button></div></article>`).join('');
+    <button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i+1}" title="Edit settings">${EDIT_ICON}</button>
+    <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i+1}" title="Duplicate" ${state.entries.length>=8?'disabled':''}>${COPY_ICON}</button>
+    <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i+1}" title="Remove">${REMOVE_ICON}</button></div></article>`).join('');
   $('apply-settings-to-all').disabled=state.entries.length<2;
   $('apply-settings-status').textContent='';
   refreshEntrySummaries();
