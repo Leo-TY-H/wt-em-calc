@@ -78,14 +78,14 @@ body>header.topbar{position:sticky;top:0;z-index:1100}
   .sidebar-actions{margin:16px -10px 0}}
 
 /* Aircraft list: one compact row per aircraft, the name with its id small underneath, a "+" to add it. */
-#aircraft-list{max-height:310px;margin-top:8px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
-#aircraft-list .aircraft-option{gap:8px;margin:0;padding:6px 6px 6px 9px;border:0;border-radius:6px;background:none}
-#aircraft-list .aircraft-option:hover{background:#1a2535}
-#aircraft-list .aircraft-option strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#aircraft-list .aircraft-option small{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#aircraft-list code,.entry-heading code{font:11px/1.4 ui-monospace,Consolas,monospace;color:#6c7f97}
-#aircraft-list .aircraft-option button{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border-radius:6px;font-size:0}
-#aircraft-list .aircraft-option button::before{content:"+";font-size:18px;line-height:1}
+:is(#aircraft-list,#missile-list){max-height:310px;margin-top:8px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+:is(#aircraft-list,#missile-list) .aircraft-option{gap:8px;margin:0;padding:6px 6px 6px 9px;border:0;border-radius:6px;background:none}
+:is(#aircraft-list,#missile-list) .aircraft-option:hover{background:#1a2535}
+:is(#aircraft-list,#missile-list) .aircraft-option strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#aircraft-list,#missile-list) .aircraft-option small{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#aircraft-list,#missile-list) code,.entry-heading code{font:11px/1.4 ui-monospace,Consolas,monospace;color:#6c7f97}
+:is(#aircraft-list,#missile-list) .aircraft-option button{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;border-radius:6px;font-size:0}
+:is(#aircraft-list,#missile-list) .aircraft-option button::before{content:"+";font-size:18px;line-height:1}
 /* Added-aircraft cards: the name first, the id small underneath. */
 .entry-heading{align-items:center;flex-wrap:wrap;row-gap:2px}
 .entry-heading strong{font-size:14px}
@@ -199,8 +199,8 @@ body .mode-switch{background:none;border-color:var(--line)}
 body .mode-switch input:checked+span{background:var(--text);color:#000}
 body .text-button:hover{color:var(--text)}
 /* Lists, cards and badges */
-body #aircraft-list{background:#000;border-color:var(--line)}
-body #aircraft-list .aircraft-option:hover{background:#111116}
+body :is(#aircraft-list,#missile-list){background:#000;border-color:var(--line)}
+body :is(#aircraft-list,#missile-list) .aircraft-option:hover{background:#111116}
 body .aircraft-entry{background:#000}
 body .aircraft-option{background:#000;border-color:var(--line)}
 body .entry-number,body .missile-step-number{background:none;border:1px solid currentColor;width:20px;height:20px;font-size:11px}
