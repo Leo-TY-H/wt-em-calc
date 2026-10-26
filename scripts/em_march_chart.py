@@ -449,7 +449,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                 # S16 (Leo 2026-10-24): the SEP jump lines (NCurves.sep_jumps), drawn dotted; contours end at them
                 **({'sep_jumps': curves['sep_jumps']} if curves and curves.get('sep_jumps') else {}),
                 # Over-rev (Leo 2026-10-26): where an engine starts to over-rev
-                **({'overrev_lines': overrev_lines(envelope, columns)} if overrev_row(solver, points) else {}),
+                **({'overrev_lines': overrev_lines(envelope, columns, (curves or {}).get('sep_jumps'))}
+                   if overrev_row(solver, points) else {}),
                 # The complete curve solver record (knots, withheld checks, ends) for exports and replay.
                 curves=None if curves is None else {k: v for k, v in curves.items() if k not in ('seeds',)},
                 envelope_trace=dict(segments=envelope['segments'], mach_seams_kmh=envelope['mach_seams_kmh'],
@@ -1103,42 +1104,98 @@ def iso_path(knots, samples=240):
     return [float(x) for x in xs], [float(t) for t in rates]
 
 
-OVERREV_NEAR_DPS = 2.   # a column's crossing within this of a traced line at its speed lies on that line
+OVERREV_NEAR_DPS = 2.   # a column's crossing within this of a drawn line at its speed lies on that line
+OVERREV_SIDE = .005     # a column sample within this of RPMMaxAllowed (as a fraction) lies on either side of it
+
+
+def column_rows(column):
+    """Over-rev: a verified column's admitted samples with an RPM ratio, by load."""
+    from overrev import rpm_ratio
+    v = column['speed_kmh']
+    return sorted((p for p in column.get('points', []) if abs(p['speed_kmh']-v) <= 1e-9 and p.get('valid')
+                   and rpm_ratio(p) is not None), key=lambda p: p['load_g'])
 
 
 def column_crossings(column):
-    """Over-rev: the loads where a verified column's admitted samples cross RPMMaxAllowed (rpm / limit linear in load
-    between neighbouring samples)."""
+    """Over-rev: where a verified column's admitted samples cross RPMMaxAllowed: (load, turn rate of the sample below,
+    of the sample above), the load linear in rpm / limit between them."""
     from overrev import rpm_ratio
-    v = column['speed_kmh']
-    rows = sorted((p for p in column.get('points', []) if abs(p['speed_kmh']-v) <= 1e-9 and p.get('valid')
-                   and rpm_ratio(p) is not None), key=lambda p: p['load_g'])
+    rows = column_rows(column)
     out = []
     for a, b in zip(rows, rows[1:]):
         ra, rb = rpm_ratio(a)-1., rpm_ratio(b)-1.
         if (ra > 0.) != (rb > 0.) and b['load_g'] > a['load_g']:
-            out.append(a['load_g']+(b['load_g']-a['load_g'])*ra/(ra-rb))
+            out.append((a['load_g']+(b['load_g']-a['load_g'])*ra/(ra-rb), a['turn_dps'], b['turn_dps']))
     return out
 
 
-def on_lines(speed, turn, lines):
-    for line in lines:
-        xs, ts = line['speed_kmh'], line['turn_dps']
-        for x0, x1, t0, t1 in zip(xs, xs[1:], ts, ts[1:]):
-            if min(x0, x1)-1e-9 <= speed <= max(x0, x1)+1e-9:
-                t = t0 if x1 == x0 else t0+(t1-t0)*(speed-x0)/(x1-x0)
-                if abs(t-turn) <= OVERREV_NEAR_DPS:return True
-    return False
+def turns_at(speed, line):
+    """The turn rates where a drawn line passes a speed (it can pass one more than once)."""
+    xs, ts = line['speed_kmh'], line['turn_dps']
+    return [t0 if x1 == x0 else t0+(t1-t0)*(speed-x0)/(x1-x0)
+            for x0, x1, t0, t1 in zip(xs, xs[1:], ts, ts[1:]) if min(x0, x1)-1e-9 <= speed <= max(x0, x1)+1e-9]
 
 
-def overrev_lines(envelope, columns):
+def on_lines(speed, crossing, lines):
+    """A column's crossing lies on a drawn line: the line passes between its two samples (or within OVERREV_NEAR_DPS)."""
+    _, lo, hi = crossing
+    return any(lo-OVERREV_NEAR_DPS <= t <= hi+OVERREV_NEAR_DPS for line in lines for t in turns_at(speed, line))
+
+
+def on_chart(line, columns):
+    """Over-rev follow-up: a traced line piece lies on the chart's own propeller states: at every verified column inside
+    its speed span the column's samples either side of it (by turn rate) are not both on one side of RPMMaxAllowed. The
+    propeller can be bistable (the game's over-rev torque holds a branch over the limit), and the trace can follow a
+    branch the chart's columns are not on (Bf 109 F-4 RB at 100% pitch, 1,500 m: an iso-line at 665-700 km/h where the
+    chart's level flight runs 10-18% over)."""
+    from overrev import rpm_ratio
+    xs = line['speed_kmh']
+    for c in columns:
+        v = c['speed_kmh']
+        if not min(xs)+1e-6 < v < max(xs)-1e-6:continue
+        rows = column_rows(c)
+        for t in turns_at(v, line):
+            below = [p for p in rows if p['turn_dps'] <= t];above = [p for p in rows if p['turn_dps'] >= t]
+            if not below or not above:continue
+            ra, rb = rpm_ratio(below[-1])-1., rpm_ratio(above[0])-1.
+            if min(ra, rb) > OVERREV_SIDE or max(ra, rb) < -OVERREV_SIDE:return False
+    return True
+
+
+def jump_pieces(jumps):
+    """Over-rev follow-up: the stretches of the SEP jump lines (NCurves.sep_jumps) where the propeller jumps across
+    RPMMaxAllowed (the engine RPM over it on one side, within it on the other): there over-rev starts at the jump."""
+    out = []
+    for j in jumps or []:
+        rb, ra = j.get('rpm_ratio_before'), j.get('rpm_ratio_after')
+        if not rb or not ra:continue
+        piece = []
+        for v, t, b, a in zip(j['speed_kmh'], j['turn_dps'], rb, ra):
+            if b is not None and a is not None and (b > 1.) != (a > 1.):
+                piece.append((v, t))
+                continue
+            if len(piece) >= 2:out.append(piece)
+            piece = []
+        if len(piece) >= 2:out.append(piece)
+    return out
+
+
+def overrev_lines(envelope, columns, jumps=None):
     """Over-rev (option C): the lines where an engine starts to over-rev (RPM = RPMMaxAllowed) inside the envelope, each
-    {'speed_kmh', 'turn_dps', 'rpm_limit', 'engine', 'traced', 'stop_after_s'}: the native trace's iso-lines from level
-    flight (NTracer.overrev_trace; 'traced' True, in pieces where it jumps), and where none traced at all (every trace
-    failed, over-rev that starts above level flight) straight pieces through the verified columns' own crossings
-    (column_crossings; 'traced' False, approximate). 'stop_after_s': [[percent over RPMMaxAllowed, seconds until the game stops the engine]]."""
-    from overrev import report_table, rpm_ratio
+    {'speed_kmh', 'turn_dps', 'rpm_limit', 'engine', 'traced', 'kind', 'stop_after_s'}:
+    - 'iso': the native trace's iso-lines from level flight (NTracer.overrev_trace; in pieces where they jump), each kept
+      where it lies on the chart's own propeller states (on_chart);
+    - 'jump': the SEP jump lines' stretches where the propeller jumps across the limit (jump_pieces);
+    - 'link': where level flight itself jumps across the limit between two columns (the trace's 'level_jump_kmh'), a
+      straight piece from there at 1 g to the nearest end of such a jump line (traced False: approximate);
+    - 'columns': straight pieces through the verified columns' own crossings that no other line explains
+      (column_crossings; traced False: approximate).
+    'stop_after_s': [[percent over RPMMaxAllowed, seconds until the game stops the engine]]."""
+    from overrev import report_table
     table = report_table()
+    good = sorted((c for c in columns if ok(c)), key=lambda c: c['speed_kmh'])
+    limit = next((float(l) for c in good for p in c.get('points', [])
+                  for l in [((p.get('propulsion') or {}).get('engine_rpm_threshold') or [None])[0]] if l), None)
     lines = []
     for rec in envelope.get('overrev_lines') or []:
         if rec.get('status') != 'traced' or len(rec.get('knots') or []) < 2:continue
@@ -1152,17 +1209,28 @@ def overrev_lines(envelope, columns):
         for piece in pieces:
             if len(piece) < 2:continue
             xs, ts = iso_path(piece)
-            lines.append(dict(speed_kmh=xs, turn_dps=ts, rpm_limit=rec.get('rpm_limit'), engine=rec.get('engine'), traced=True,
-                              stop_after_s=table))
-    traced = list(lines)
-    if traced:return lines   # (the columns' crossings only where no line traced: they would repeat it around its jumps)
-    good = sorted((c for c in columns if ok(c)), key=lambda c: c['speed_kmh'])
-    limit = next((float(l) for c in good for p in c.get('points', [])
-                  for l in [((p.get('propulsion') or {}).get('engine_rpm_threshold') or [None])[0]] if l), None)
+            line = dict(speed_kmh=xs, turn_dps=ts, rpm_limit=rec.get('rpm_limit'), engine=rec.get('engine'), traced=True,
+                        kind='iso', stop_after_s=table)
+            if on_chart(line, good):lines.append(line)
+            else:rec.setdefault('off_chart_pieces_kmh', []).append([xs[0], xs[-1]])
+    pieces = jump_pieces(jumps)
+    for piece in pieces:
+        lines.append(dict(speed_kmh=[float(v) for v, _ in piece], turn_dps=[float(t) for _, t in piece], rpm_limit=limit,
+                          engine=None, traced=True, kind='jump', stop_after_s=table))
+    for rec in envelope.get('overrev_lines') or []:
+        if not rec.get('level_jump_kmh') or not pieces:continue
+        vm = .5*sum(rec['level_jump_kmh'])
+        width = abs(rec['edge_kmh'][1]-rec['edge_kmh'][0]) if rec.get('edge_kmh') else 0.
+        # (the jump line's end nearest the level-flight jump, within the columns' spacing of it)
+        end = min((p for piece in pieces for p in (min(piece, key=lambda q: q[1]),)), key=lambda q: abs(q[0]-vm))
+        if abs(end[0]-vm) <= max(width, 1e-6) and end[1] > 0.:
+            lines.append(dict(speed_kmh=[vm, float(end[0])], turn_dps=[0., float(end[1])], rpm_limit=limit, engine=None,
+                              traced=False, kind='link', stop_after_s=table))
+    drawn = list(lines)
     open_, done = [], []
     for c in good:
         v = c['speed_kmh']
-        loads = [n for n in column_crossings(c) if not on_lines(v, float(turn_rate(v, n)), traced)]
+        loads = [x[0] for x in column_crossings(c) if not on_lines(v, x, drawn)]
         if open_ and len(loads) == len(open_):
             for path, n in zip(open_, loads):path.append((v, n))
         else:
@@ -1172,7 +1240,7 @@ def overrev_lines(envelope, columns):
     for path in done:
         if len(path) < 2:continue
         lines.append(dict(speed_kmh=[float(v) for v, _ in path], turn_dps=[float(turn_rate(v, n)) for v, n in path],
-                          rpm_limit=limit, engine=None, traced=False, stop_after_s=table))
+                          rpm_limit=limit, engine=None, traced=False, kind='columns', stop_after_s=table))
     return lines
 
 
