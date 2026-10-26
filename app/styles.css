@@ -228,4 +228,5 @@ body .entry-dialog-header .text-button{font-size:16px;padding:2px 6px}
 body .entry-dialog-body{padding:4px 18px 16px}
 body .entry-dialog-body fieldset{margin:0;min-width:0;width:100%}
 /* Edit (pencil) button that opens an aircraft's settings. */
-body .entry-actions .entry-edit{display:inline-grid;place-items:center;width:28px;height:26px;padding:0}
+body .entry-actions .entry-icon{display:inline-grid;place-items:center;width:28px;height:26px;padding:0}
+body .entry-actions .entry-icon[data-action=remove]:hover{border-color:#a6533f;color:#f08070}
