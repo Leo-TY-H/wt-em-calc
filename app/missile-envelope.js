@@ -527,7 +527,7 @@
   }
   const runName = run => multi() ? escapeHtml(missileName(run.missile)) + ' · ' : '';
   async function renderContours() {
-    const traces = []; let radius = 0;
+    const traces = []; let radius = 0; labelLines = [];
     for (const run of shownRuns()) within(run, () => {
       const c = submitted, f = field(), n = c.layers_m.length; radius = Math.max(radius, f.radius);
       // Highest layer first in the legend; with several missiles the legend lists missiles and their altitudes share a colour ramp.
@@ -539,6 +539,8 @@
         traces.push({type: 'scatterpolar', mode: 'lines', name, legendgroup: group, r: o.r, theta: o.theta, text: o.text.map(t => t && runName(run) + t), connectgaps: false,
           line: {color, width: 2}, showlegend: multi() ? first : n > 1, hovertemplate: '%{text}<extra></extra>'});
         first = false;
+        const xy = o.r.map((r, i) => r == null || o.theta[i] == null ? [null, null] : [r * Math.sin(radians(o.theta[i])), r * Math.cos(radians(o.theta[i]))]);
+        labelLines.push({group, text: alt, color, order: li, x: xy.map(q => q[0]), y: xy.map(q => q[1])});
         if (el('envelope-show-rays').checked) traces.push({...rayTrace(f.lines[li]), legendgroup: group});
         traces.push({...markerTrace(boundaryPoints(f.lines[li]).map(p => [p[0], p[1], runName(run) + p[2], p[3]]), color, run, 4), legendgroup: group});
       }
@@ -548,7 +550,7 @@
     await draw(traces, polarLayout(radius, revision('contours')));
   }
   async function renderLayer() {
-    const li = Number(el('envelope-layer').value), traces = []; let radius = 0;
+    const li = Number(el('envelope-layer').value), traces = []; let radius = 0; labelLines = [];
     for (const run of shownRuns()) within(run, () => {
       const f = field(), line = f.lines[li]; radius = Math.max(radius, f.radius);
       if (!line?.az.length) return;
@@ -567,6 +569,7 @@
     await draw(traces, layout);
   }
   async function renderProfile() {
+    labelLines = [];
     const cutAz = Number(el('envelope-cut').value), label = a => `${fmt(Math.abs(a), 1)}° from target nose`;
     const extent = Math.max(...shownRuns().map(run => within(run, () => field().radius)));
     const nx = 401, xs = Array.from({length: nx}, (_, i) => -extent + 2 * extent * i / (nx - 1));
@@ -667,6 +670,59 @@
       // Equal km scale kept by widening the x range, so the plot fills the width and pans freely.
       xaxis: {...axis, constrain: 'range'}, yaxis: {...axis, scaleanchor: 'x', scaleratio: 1, constrain: 'range'}}};
   }
+  // Altitude labels on the contour outlines, placed like the EM chart's SEP labels: slanted along their line, never
+  // overlapping, clear of other outlines where the line leaves room, laid out again after zoom, pan or a legend toggle.
+  let labelLines = [], labeling = false;
+  function placeLabels() {
+    const node = el('envelope-chart'), L = node._fullLayout;
+    if (!L?.xaxis || !node.data) return;
+    const xa = L.xaxis, ya = L.yaxis, width = xa._length, height = ya._length, cell = 6;
+    const shown = labelLines.filter(line => node.data.some(t => t.legendgroup === line.group && t.mode === 'lines' && t.visible !== 'legendonly'))
+      .sort((a, b) => b.order - a.order);
+    const px = (x, y) => [xa.l2p(x), ya.l2p(y)], lines = new Map();
+    shown.forEach((line, key) => {
+      for (let i = 1; i < line.x.length; i++) {
+        if ([line.x[i - 1], line.y[i - 1], line.x[i], line.y[i]].some(v => v == null)) continue;
+        const [ax, ay] = px(line.x[i - 1], line.y[i - 1]), [bx, by] = px(line.x[i], line.y[i]), steps = Math.ceil(Math.hypot(bx - ax, by - ay) / (cell / 2)) + 1;
+        for (let k = 0; k <= steps; k++) {
+          const c = Math.floor((ax + (bx - ax) * k / steps) / cell) + ',' + Math.floor((ay + (by - ay) * k / steps) / cell);
+          if (!lines.has(c)) lines.set(c, new Set()); lines.get(c).add(key);
+        }
+      }
+    });
+    const placed = [], labels = [], inside = (x, y) => x >= 4 && y >= 4 && x <= width - 4 && y <= height - 4;
+    const crossings = (box, own) => { let n = 0;
+      for (let cx = Math.floor(box[0] / cell); cx <= Math.floor(box[2] / cell); cx++) for (let cy = Math.floor(box[1] / cell); cy <= Math.floor(box[3] / cell); cy++) {
+        const keys = lines.get(cx + ',' + cy); if (keys) for (const key of keys) if (key !== own) { n++; break; }
+      } return n; };
+    shown.forEach((line, key) => {
+      const w = line.text.length * 6.6 + 6, h = 15;
+      const pts = line.x.map((x, i) => x == null || line.y[i] == null ? null : px(x, line.y[i]));
+      const along = [0]; for (let i = 1; i < pts.length; i++) along.push(along[i - 1] + (pts[i] && pts[i - 1] ? Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) : 0));
+      const total = along.at(-1); if (total < w * 1.5) return;
+      let best = null;
+      for (let f = .04; f <= .96; f += .02) {
+        const target = total * f, i = along.findIndex(v => v >= target); if (i < 1 || !pts[i] || !pts[i - 1]) continue;
+        const t = (target - along[i - 1]) / ((along[i] - along[i - 1]) || 1), cx = pts[i - 1][0] + t * (pts[i][0] - pts[i - 1][0]), cy = pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
+        const ia = along.findIndex(v => v >= target + w / 2), ahead = pts[ia >= 0 ? ia : pts.length - 1], behind = pts[Math.max(0, along.findLastIndex(v => v <= target - w / 2))];
+        let angle = ahead && behind ? Math.atan2(ahead[1] - behind[1], ahead[0] - behind[0]) * 180 / Math.PI : 0; if (angle > 90) angle -= 180; if (angle < -90) angle += 180;
+        const c = Math.abs(Math.cos(radians(angle))), sn = Math.abs(Math.sin(radians(angle))), bw = w * c + h * sn, bh = w * sn + h * c;
+        const box = [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2];
+        if (!inside(box[0], box[1]) || !inside(box[2], box[3])) continue;
+        if (placed.some(q => box[0] < q[2] + 4 && q[0] < box[2] + 4 && box[1] < q[3] + 3 && q[1] < box[3] + 3)) continue;
+        const near = placed.reduce((m, q) => Math.min(m, Math.hypot((q[0] + q[2]) / 2 - cx, (q[1] + q[3]) / 2 - cy)), Infinity);
+        // Fewest crossed lines first, then away from other labels, then near this line's usual spot.
+        const score = crossings(box, key) * 10 + Math.max(0, 60 - near) / 6 + Math.abs(f - (key % 2 ? .62 : .38)) * 8;
+        if (!best || score < best.score) best = {score, cx, cy, box, angle};
+      }
+      if (!best) return;
+      placed.push(best.box);
+      labels.push({envLabel: true, x: xa.p2l(best.cx), y: ya.p2l(best.cy), xref: 'x', yref: 'y', text: line.text, textangle: best.angle, showarrow: false,
+        xanchor: 'center', yanchor: 'middle', bgcolor: 'rgba(0,0,0,.88)', borderpad: 1, font: {color: line.color, size: 11, family: font}});
+    });
+    labeling = true;
+    Plotly.relayout(node, {annotations: [...(node.layout.annotations || []).filter(a => !a.envLabel), ...labels]}).finally(() => { labeling = false; });
+  }
   async function draw(traces, layout) {
     if (layout.polar) ({traces, layout} = cartesianFromPolar(traces, layout));
     const node = el('envelope-chart');
@@ -681,6 +737,12 @@
       {name: 'Download envelope (JSON)', icon: icons.json, click: () => el('envelope-download-json').click()}] : [];
     await Plotly.react(node, traces, {...layout, dragmode: 'pan'}, {responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'],
       toImageButtonOptions: {filename: runs.map(run => run.missile).join('-vs-') + '-envelope', format: 'png', scale: 2}, modeBarButtonsToAdd: downloads});
+    if (labelLines.length) placeLabels();
+    node.removeAllListeners?.('plotly_relayout'); node.removeAllListeners?.('plotly_restyle');
+    node.on('plotly_relayout', event => {
+      if (!labeling && labelLines.length && Object.keys(event).some(key => key.startsWith('xaxis') || key.startsWith('yaxis') || key === 'autosize')) placeLabels();
+    });
+    node.on('plotly_restyle', () => { if (labelLines.length) placeLabels(); });
     node.removeAllListeners?.('plotly_click');
     node.on('plotly_click', event => {
       const point = event.points?.[0]; const cd = point?.customdata;
