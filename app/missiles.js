@@ -55,8 +55,8 @@
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
     <section class="missile-preview" aria-labelledby="missile-preview-title">
-      <div class="missile-preview-heading"><div><h2 id="missile-preview-title">Starting geometry</h2></div><span class="missile-preview-tag">Top view · X / Z</span></div>
-      <svg id="missile-geometry" viewBox="0 0 640 200" role="img" aria-label="Starting positions and flight directions"></svg>
+      <div class="missile-preview-heading"><div><h2 id="missile-preview-title">Starting geometry</h2></div></div>
+      <div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div>
       <div class="missile-setup-stats"><div><span>Aircraft separation</span><strong id="missile-separation">—</strong></div><div><span>Target altitude difference</span><strong id="missile-altitude-difference">—</strong></div><div><span>Aircraft closing speed</span><strong id="missile-closing">—</strong></div></div>
       <p id="missile-preview-note" class="hint"></p>
     </section>
@@ -213,7 +213,7 @@
     el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:'Add a missile to simulate.'):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
     if(!valid) {
       for(const id of ['missile-separation','missile-altitude-difference','missile-closing'])el(id).textContent='—';
-      el('missile-geometry').replaceChildren();
+      if(el('missile-geometry').data)Plotly.purge(el('missile-geometry'));
       el('missile-geometry').setAttribute('aria-label','Preview unavailable. Check the setup values.');
       el('missile-preview-note').textContent='Complete the numeric fields within their allowed ranges to see the preview.';
       return;
@@ -225,21 +225,67 @@
     el('missile-separation').textContent=(distance/1000).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' km';
     el('missile-altitude-difference').textContent=altitude===0?'Same altitude':`${format(Math.abs(altitude))} m ${altitude>0?'above':'below'}`;
     el('missile-closing').textContent=distance===0?'Same position':`${format(Math.abs(closing)*3.6)} km/h${closing<0?' · opening':closing>0?' · closing':''}`;
-    const width=Math.max(240,el('missile-geometry').clientWidth||640),height=150;
-    el('missile-geometry').setAttribute('viewBox',`0 0 ${width} ${height}`);
-    const scale=Math.min((width-150)/Math.max(Math.abs(offset[0]),1),70/Math.max(Math.abs(offset[2]),1));
-    const dx=offset[0]*scale,dz=offset[2]*scale;
-    const points=[[width/2-dx/2,height/2+dz/2],[width/2+dx/2,height/2-dz/2]];
-    const markers=[launch,target].map((state,i)=>{
-      const [x,y]=points[i],color=i?'#ffa66b':'#38c9d7',name=i?'Target aircraft':'Launcher aircraft';
-      const horizontal=Math.hypot(state.velocity[0],state.velocity[2]);
-      const vx=horizontal?state.velocity[0]/horizontal*34:0,vz=horizontal?-state.velocity[2]/horizontal*34:0;
-      return `<g fill="${color}">${horizontal?`<path d="M ${x} ${y} l ${vx} ${vz}" fill="none" stroke="${color}" stroke-width="2" marker-end="url(#missile-arrow-${i})"/>`:''}<circle cx="${x}" cy="${y}" r="5"/><text x="${x}" y="${y+(i?27:-16)}" text-anchor="middle">${name}</text></g>`;
-    }).join('');
-    el('missile-geometry').innerHTML=`<defs>${['#38c9d7','#ffa66b'].map((color,i)=>`<marker id="missile-arrow-${i}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join('')}<pattern id="missile-grid" width="32" height="25" patternUnits="userSpaceOnUse"><path d="M 32 0 H 0 V 25" fill="none" stroke="#223042" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="url(#missile-grid)"/><path d="M ${points[0].join(' ')} L ${points[1].join(' ')}" stroke="#78879a" stroke-dasharray="5 5"/>${markers}<path d="M 24 42 V 20 M 24 42 H 48" stroke="#8d9aae"/><g fill="#8d9aae" font-size="10"><text x="15" y="14">+Z</text><text x="53" y="46">+X</text></g>`;
-    el('missile-geometry').setAttribute('aria-label',`Top view of aircraft at release. Initial separation ${(distance/1000).toFixed(2)} kilometres. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
+    drawPreview(launch,target);
+    el('missile-geometry').setAttribute('aria-label',`3D view of aircraft at release. Initial separation ${(distance/1000).toFixed(2)} kilometres. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
     el('missile-preview-note').textContent='';
   }
+  // Starting geometry in 3D (Leo, 2026-10-26): the launcher, the target placed from it by azimuth, horizontal distance
+  // and altitude, and both travel headings. World X, Z and altitude are the scene's x, y and z, as in the flight chart.
+  function drawPreview(launch,target) {
+    const node=el('missile-geometry');if(!node.clientWidth)return;   // hidden tab: drawn once it is shown (ResizeObserver)
+    const light='#dce5f0',grey='#8d9aae',cyan='#38c9d7',orange='#ffa66b';
+    const scene=p=>[p[0],p[2],p[1]],L=scene(launch.position),T=scene(target.position),G=[T[0],T[1],L[2]];
+    const horizontal=Math.hypot(T[0]-L[0],T[1]-L[1]),rise=T[2]-L[2],size=Math.max(horizontal,Math.abs(rise),300);
+    const azimuth=Math.atan2(T[1]-L[1],T[0]-L[0]),deg=v=>`${+v.toFixed(1)}°`;
+    const along=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t),points=[L,T],traces=[],annotations=[];
+    const line=(ps,color,width,dash='solid')=>{points.push(...ps);traces.push({type:'scatter3d',mode:'lines',x:ps.map(p=>p[0]),y:ps.map(p=>p[1]),z:ps.map(p=>p[2]),line:{color,width,dash},hoverinfo:'skip',showlegend:false});};
+    // Labels beside the aircraft (the target's above it on a narrow preview); the scene leaves them room.
+    const W=node.clientWidth,H=node.clientHeight||260,narrow=W<560,widths={};
+    const context=(drawPreview.canvas||=document.createElement('canvas')).getContext('2d');context.font=`12px ${getComputedStyle(document.body).fontFamily}`;
+    const textWidth=text=>Math.max(...text.split('<br>').map(t=>context.measureText(t).width));
+    const place={above:{yanchor:'bottom',yshift:7},below:{yanchor:'top',yshift:-7},left:{xanchor:'right',xshift:-9,align:'right'},right:{xanchor:'left',xshift:9,align:'left'}};
+    const label=(p,text,color,where)=>{points.push(p);annotations.push({x:p[0],y:p[1],z:p[2],text,showarrow:false,font:{color,size:12},...place[where]});};
+    // Azimuth: the arc from the 0° (+X) reference to the target's bearing, in the launcher's horizontal plane.
+    const r=.22*size;
+    line([L,[L[0]+r*1.25,L[1],L[2]]],grey,2,'dot');
+    const steps=Math.max(1,Math.ceil(Math.abs(azimuth)*180/Math.PI/3));
+    if(horizontal>0&&azimuth)line(Array.from({length:steps+1},(_,i)=>{const a=azimuth*i/steps;return [L[0]+r*Math.cos(a),L[1]+r*Math.sin(a),L[2]];}),light,3);
+    label([L[0]+r*1.1*Math.cos(azimuth/2),L[1]+r*1.1*Math.sin(azimuth/2),L[2]],`Azimuth ${deg(azimuth*180/Math.PI)}${narrow?'<br>':' '}from +X`,light,'below');
+    // Horizontal distance, then the altitude difference and the line of sight.
+    if(horizontal>0){line([L,G],light,3);label(along(L,G,.62),`${(horizontal/1000).toFixed(2)} km`,light,'below');}
+    if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey,'left');line([L,T],grey,2,'dash');}
+    // Each aircraft with its travel heading (and climb) as an arrow.
+    // The view looks from behind the launcher, so its label goes left and the target's right (above when narrow).
+    for(const [state,p,color,name,climbName,side] of [[launch,L,cyan,'Launcher','launch angle','left'],[target,T,orange,'Target','climb',narrow?'above':'right']]) {
+      const v=scene(state.velocity),speed=Math.hypot(...v),[heading,climb]=state.angles;
+      traces.push({type:'scatter3d',mode:'markers',x:[p[0]],y:[p[1]],z:[p[2]],marker:{size:6,color},showlegend:false,
+        hovertemplate:`${name}<br>${Math.round(p[2]).toLocaleString()} m · ${Math.round(speed*3.6).toLocaleString()} km/h<br>Heading ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}<extra></extra>`});
+      const text=`${name}<br>heading ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}`;
+      widths[name]=textWidth(text);label(p,text,color,side);
+      if(!speed)continue;
+      const u=v.map(c=>c/speed),length=.3*size,head=.08*size,end=p.map((c,i)=>c+u[i]*length);
+      line([p,end],color,4);points.push(end.map((c,i)=>c+u[i]*head));
+      traces.push({type:'cone',x:[end[0]],y:[end[1]],z:[end[2]],u:[u[0]*head],v:[u[1]*head],w:[u[2]*head],anchor:'tail',sizemode:'raw',sizeref:1,
+        colorscale:[[0,color],[1,color]],showscale:false,hoverinfo:'skip',lighting:{ambient:1,diffuse:0,specular:0,roughness:1,fresnel:0}});
+    }
+    // Seen from behind the launcher's left, 35° above, so the target's bearing and the horizontal plane both read;
+    // a view turned by hand is kept and fitted as it is.
+    const view=azimuth-2*Math.PI/3,elevation=35*Math.PI/180,E=1.73;
+    const eye={x:E*Math.cos(elevation)*Math.cos(view),y:E*Math.cos(elevation)*Math.sin(view),z:E*Math.sin(elevation)};
+    const bounds=[0,1,2].map(i=>[Math.min(...points.map(p=>p[i])),Math.max(...points.map(p=>p[i]))]);
+    const margin=[widths.Launcher+16,narrow?widths.Target/2+8:widths.Target+16];
+    const domain={x:[Math.min(.35,margin[0]/W),1-Math.min(.35,margin[1]/W)],y:narrow?[44/H,1-44/H]:[.04,.96]};
+    const viewport=W*(domain.x[1]-domain.x[0])/(H*(domain.y[1]-domain.y[0]));
+    const fitted=sceneFit(bounds,{chart:node,floor:.05,pad:1.25,eye:previewCamera?.eye||eye,points,viewport}),axis=i=>{const c=(bounds[i][0]+bounds[i][1])/2,span=fitted.spans[i];return {range:[c-span/2,c+span/2],visible:false};};
+    Plotly.react(node,traces,{paper_bgcolor:'#000000',margin:{l:0,r:0,t:0,b:0},showlegend:false,
+      hoverlabel:{bgcolor:'#0c0c0f',font:{color:'#e3edf7',size:12}},
+      scene:{domain,xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera:previewCamera||fitted.camera,annotations}},
+      {displayModeBar:false,responsive:true,scrollZoom:false});
+    node.removeAllListeners?.('plotly_relayout');
+    node.on('plotly_relayout',event=>{if(event['scene.camera'])previewCamera=event['scene.camera'];});
+  }
+  // The preview's view once it has been turned by hand; a preset or Reset all turns it back.
+  let previewCamera=null;
   function busy(value) {
     for(const id of ['missile-run','missile-run-preview'])if(el(id))el(id).disabled=value||!meta||!selectedMissiles.length;
     el('missile-cancel').hidden=!value;el('missile-reset').disabled=value;
@@ -262,7 +308,7 @@
     const details=event.target.closest('details');if(details)details.open=true;
   },true);
   function applyPreset(preset) {
-    const states=JSON.parse(JSON.stringify(initial));
+    const states=JSON.parse(JSON.stringify(initial));previewCamera=null;
     if(preset==='head-on'){states.target.velocity=[-200,0,0];states.target.angles=[180,0,0];}
     if(preset==='crossing'){states.target.velocity=[0,0,200];states.target.angles=[90,0,0];}
     for(const role of ['launch','target']) {
@@ -348,16 +394,18 @@
     await Promise.all([...activeJobs].map(async id=>{try{await request('/api/missiles/jobs/'+id+'/cancel',{method:'POST'});}catch(error){showError(error.message);}}));
   });
   let camera={eye:{x:.15,y:-1.6,z:1},up:{x:0,y:0,z:1},projection:{type:'orthographic'}},flightBounds=null;
-  function sceneFit(bounds) {
+  function sceneFit(bounds,{chart=el('missile-chart'),floor=.08,pad=1.08,eye=null,points=null,viewport=null}={}) {
     const raw=bounds.map(([low,high])=>high-low),largest=Math.max(100,...raw);
-    const spans=raw.map(span=>Math.max(100,largest*.08,span)*1.08);
-    const eye=raw[0]>=raw[1]?{x:.15,y:-1.6,z:.65}:{x:1.6,y:.15,z:.65};
+    const spans=raw.map(span=>Math.max(100,largest*floor,span)*pad);
+    eye=eye||(raw[0]>=raw[1]?{x:.15,y:-1.6,z:.65}:{x:1.6,y:.15,z:.65});
     const horizontal=Math.hypot(eye.x,eye.y),length=Math.hypot(horizontal,eye.z);
     const right=[-eye.y/horizontal,eye.x/horizontal,0];
     const up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
     const ratio=spans.map(span=>span/largest);
-    const extent=basis=>basis.reduce((sum,value,i)=>sum+Math.abs(value)*ratio[i],0);
-    const chart=el('missile-chart'),viewport=(chart.clientWidth||640)/(chart.clientHeight||360);
+    // On screen: the box's projected size, or that of the given points.
+    const centre=bounds.map(([low,high])=>(low+high)/2),project=(basis,p)=>basis.reduce((sum,value,i)=>sum+value*ratio[i]*(p[i]-centre[i])/spans[i],0);
+    const extent=basis=>points?Math.max(...points.map(p=>project(basis,p)))-Math.min(...points.map(p=>project(basis,p))):basis.reduce((sum,value,i)=>sum+Math.abs(value)*ratio[i],0);
+    viewport=viewport||(chart.clientWidth||640)/(chart.clientHeight||360);
     const scale=Math.min(1.65*viewport/extent(right),1.45/extent(up));
     return {spans,aspectratio:Object.fromEntries(['x','y','z'].map((key,i)=>[key,ratio[i]*scale])),
       camera:{eye,up:{x:0,y:0,z:1},projection:{type:'orthographic'}}};
