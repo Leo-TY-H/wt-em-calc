@@ -405,10 +405,15 @@ async function refreshContours(){
     renderChart();
   }catch(e){if(token===state.contourRequest)error(e.message);}
 }
+function overrevText(percent,seconds){
+  // Hover line for an over-revving state (piston engines are not RPM-limited; Leo, 2026-10-26).
+  return Number.isFinite(percent)?`<br>Over-rev +${fmt(percent,1)}%${Number.isFinite(seconds)?` · engine quits after ${fmt(seconds,0)} s`:''}`:'';
+}
+const pathOverrev=path=>path.x.map((_,i)=>overrevText(path.percent_over?.[i],path.overrev_s?.[i]));
 function sustainedCurve(aircraft,data){
   // Both preview and completed curves follow the currently selected contour.
   const paths=aircraft.contours.filter(c=>c.level===0);
-  return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null])}:aircraft.sustained_curve;
+  return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null]),overrev:paths.flatMap(p=>[...pathOverrev(p),''])}:aircraft.sustained_curve;
 }
 function envelopeEnd(aircraft,data){
   // The speed axis ends just past the fastest drawn envelope, within the requested range.
@@ -439,6 +444,7 @@ function contourLabelTraces(displayed,data){
     const edge=(a.boundary||[]).filter(q=>Number.isFinite(q.speed_kmh)&&Number.isFinite(q.turn_dps));
     mark(a.id+'|envelope',edge.map(q=>q.speed_kmh),edge.map(q=>q.turn_dps));
     for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,path.x,path.y);
+    for(const line of [...(a.sep_jumps||[]),...(a.overrev_lines||[])])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
   }
   const placed=[],inside=(x,y)=>x>=4&&y>=4&&x<=width-4&&y<=height-4;
   const crossings=(box,own)=>{let n=0;
@@ -562,11 +568,11 @@ function renderChart(){
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
       if(!state.contourLevels.includes(level))continue;
       if(level===0&&a.sustained?.length>1)continue;
-      const x=[],y=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);}
+      const x=[],y=[],over=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);over.push(...pathOverrev(path),'');}
       traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
-        text:x.map((v,i)=>turnRadius(v,y[i])),
-        hovertemplate:`${a.name}<br>SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
+        text:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
+        hovertemplate:`${a.name}<br>SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}%{customdata}<extra></extra>`,showlegend:false});
     }
     // SEP jump lines: where SEP jumps along the turn (contours end at them); the hover names the cause
     for(const j of a.sep_jumps||[]){
@@ -579,10 +585,18 @@ function renderChart(){
         customdata:j.speed_kmh.map((v,i)=>[fmt(j.sep_before_mps[i],1),fmt(j.sep_after_mps[i],1)]),
         hovertemplate:`${a.name}<br>SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
     }
+    for(const line of a.overrev_lines||[]){
+      // Where over-rev starts (RPM = RPMMaxAllowed); the higher-speed side over-revs. Amber dots, apart from contours and jumps.
+      const stop=new Map((line.stop_after_s||[]).map(([over,seconds])=>[over,seconds]));
+      const quits=stop.has(0)?`<br>Engine quits after about ${fmt(stop.get(0),0)} s just over${stop.has(5)?`, ${fmt(stop.get(5),0)} s at 5% over`:''}`:'';
+      traces.push({type:'scatter',mode:'lines',x:line.speed_kmh,y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+        line:{color:'rgba(246,190,109,.95)',width:2.6,dash:'dot'},showlegend:false,
+        hovertemplate:`${a.name}<br>Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
+    }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
       name:cleanName(a.name),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
-      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result']),
-      hovertemplate:`${a.name}<br>%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h<extra></extra>`});
+      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)]),
+      hovertemplate:`${a.name}<br>%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
       traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,marker:{size:8,symbol:'x',color:'#f6be6d'},
@@ -600,7 +614,7 @@ function renderChart(){
       traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:curve?.x||data.speeds_kmh,y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
         name:a.name+' SEP 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
-        text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate);}),
+        text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate)+(curve?.overrev?.[i]||'');}),
         hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} SEP 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
     }
     const valid=a.points.map((p,i)=>({p,i})).filter(r=>chartUsable(r.p));
@@ -723,7 +737,7 @@ async function inspect(a,p,clicked){
       ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
       ['Compressor stage',(p.propulsion.compressor_stages??p.propulsion.controls.gears).map(v=>v+1).join(' / ')],
       ['RPM limit',p.propulsion.engine_rpm_threshold.map(v=>fmt(v,0)).join(' / ')],
-      ['Over-rev',p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No']]:[]),
+      ['Over-rev',p.overrev?`+${fmt(p.overrev.percent_over,1)}% over ${fmt(p.overrev.rpm_limit,0)} rpm${Number.isFinite(p.overrev.seconds_to_stop)?` · engine quits after ${fmt(p.overrev.seconds_to_stop,1)} s`:''}`:p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No']]:[]),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
