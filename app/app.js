@@ -202,19 +202,6 @@ function populate(c) {
   if(!selected){selected='custom';if(!$('quality').querySelector('[value=custom]'))$('quality').add(new Option('Saved sampling','custom'));}
   $('quality').value=selected;showCondition(state.entries[0]?.id);renderEntries();syncLabels();
 }
-function signature(c){
-  const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?
-    Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-  const shared=Object.fromEntries(Object.entries(c).filter(([k])=>!conditionKeys.includes(k)&&!['aircraft','aircraft_settings','compare_instructor','entries','sep_contour_levels_mps','enable_exports'].includes(k)));
-  // Instance IDs identify exports/inspection, not physical conditions. Preserve
-  // list order and duplicate multiplicity so colors and entries match the plot.
-  shared.entries=configEntries(c).map(e=>{
-    const settings=conditionsFrom(e.settings);
-    if(settings.mach_curve_mode==='auto')settings.mach_curve_mode=settings.trim_solver_mode==='stationary'?'stable':'native';
-    return {aircraft_id:e.aircraft_id,settings};
-  });
-  return JSON.stringify(canonical(shared));
-}
 function syncLabels(){
   $('fuel-label').textContent=$('fuel').value+'%';$('throttle-label').textContent=fmt(+$('throttle').value,0)+'%';
   $('sweep-label').textContent=$('sweep').value+'%';
@@ -249,8 +236,8 @@ function syncLabels(){
   $('flap-limit-help').textContent=flapLimitLabel(aircraft?.flaps,+$('flaps').value);
   $('sweep-field').hidden=!aircraft?.has_sweep;
   syncAircraftMenu();
-  const config=readConfig();refreshEntrySummaries();
-  $('stale').hidden=!state.data||(signature(config)===signature(state.data.settings));
+  // readConfig also stores the open entry's settings. No "settings have changed" notice (Leo, 2026-10-26).
+  readConfig();refreshEntrySummaries();
 }
 function flapLimitLabel(profile,percent){
   if(!profile?.available||percent<=0)return '';
