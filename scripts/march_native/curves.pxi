@@ -528,6 +528,21 @@ cdef class NCurves:
         if self.ok_root(p, anchor, target):
             self.eng.stats['s8_curve_budget'] = self.eng.stats.get('s8_curve_budget', 0)+1
             return p
+        if self.eng.wide_slide & 4 and self.eng.sliding and self.eng.is_prop:
+            # overrev follow-up, after every other rescue: the nearest blocking jump within SLIDE_WIDE of the anchor's
+            # shaft speed (a sliding anchor: from the shaft speed at its jump)
+            for i in range(5):sol[i] = attitude[i]
+            self.eng.slide_candidate(anchor, &spec, sol[0], sol[1], load, True, speed, True, SLIDE_WIDE)
+            if spec.n:
+                self.eng.slide_override = spec;self.eng.use_override = True
+                try:
+                    p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, ROBUST_NFEV, 0, self.allowance,
+                                         speed, NULL, NULL)
+                finally:
+                    self.eng.use_override = False
+                if self.ok_root(p, anchor, target):
+                    self.eng.stats['overrev_curve_slides'] = self.eng.stats.get('overrev_curve_slides', 0)+1
+                    return p
         self.eng.flush_counts()
         return -1
 
@@ -905,6 +920,42 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int level_slide(self, double speed, int anchor, phase) except -2:
+        """Overrev follow-up: level flight at ``speed`` where the fixed-load solve from ``anchor`` does not close next to
+        a blade-polar jump (the shaft has no regular torque balance: Bf 109 F-4 RB at 65% pitch, 650 km/h, a jump at about
+        4,072 rpm): the sliding state, the jump checked within slide_width of the anchor's shaft speed, then the nearest
+        blocking jump within SLIDE_WIDE (NTracer.slide_probe). The admitted state, or -1."""
+        cdef SlideSpec spec
+        cdef double sol[5]
+        cdef double wide
+        cdef int p = -1, i
+        if not (self.eng.wide_slide & 8 and self.eng.sliding and self.eng.is_prop) or anchor < 0:
+            return -1
+        for wide in (0., SLIDE_WIDE):
+            # (a sliding anchor: its jump checked again at the target, S9's transition, then the wide search)
+            self.eng.slide_candidate(anchor, &spec, self.eng.st[anchor].sol[0], self.eng.st[anchor].sol[1], 1., True, speed,
+                                     self.eng.st[anchor].slide.n > 0, wide)
+            if spec.n == 0:continue
+            for i in range(5):sol[i] = self.eng.st[anchor].sol[i]
+            self.eng.flush_counts()
+            before = self.ledger.snapshot()
+            self.eng.slide_override = spec;self.eng.use_override = True
+            try:
+                p = self.eng.correct(anchor, sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed, NULL,
+                                     NULL)
+            finally:
+                self.eng.use_override = False
+            if p >= 0:self.admit_transient(p)
+            self.eng.flush_counts()
+            self.ledger.charge(phase, before, 'admitted' if p >= 0 and self.eng.st[p].valid else 'unresolved',
+                               kind='fixed_load_sliding', speed_kmh=speed, load_g=1.)
+            if p >= 0 and self.eng.st[p].valid:
+                self.eng.stats['overrev_level_slides'] = self.eng.stats.get('overrev_level_slides', 0)+1
+                return p
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef int one_g(self, double speed, phase='seed_discovery', int anchor=-1) except -2:
         return self.fixed(speed, 1., anchor, phase)
 
@@ -950,6 +1001,11 @@ cdef class NCurves:
             mid = lo+(hi-lo)*fa/(fa-fb) if fa != fb else .5*(lo+hi)
             if not (pmin(lo, hi) < mid < pmax(lo, hi)):mid = .5*(lo+hi)
             p = self.fixed(mid, 1., a, phase)
+            if not self.eng.st[p].valid:
+                # overrev follow-up: level flight on a blade-polar jump (the sliding state)
+                q = self.level_slide(mid, a, phase)
+                if q < 0:q = self.level_slide(mid, b, phase)
+                if q >= 0:p = q
             if not self.eng.st[p].valid or not self.eng.compatible(p, a):
                 return None
             self.eng.stats['s9_end_solves'] = self.eng.stats.get('s9_end_solves', 0)+1
@@ -1023,6 +1079,11 @@ cdef class NCurves:
                 guess = lo+(hi-lo)*f_in/(f_in-f_out)
                 if pmin(lo, hi)+.1*fabs(hi-lo) < guess and guess < pmax(lo, hi)-.1*fabs(hi-lo):mid = guess
             p = self.fixed(mid, 1., a_out, 'endpoint')
+            if not self.eng.st[p].valid:
+                # overrev follow-up: level flight on a blade-polar jump (the sliding state)
+                q = self.level_slide(mid, a_out, 'endpoint')
+                if q < 0 and self.eng.st[a_in].load == 1.:q = self.level_slide(mid, a_in, 'endpoint')
+                if q >= 0:p = q
             if not self.eng.st[p].valid:
                 return dict(kind='unresolved', speed_kmh=[lo, hi], reason='1 g sample not admitted',
                             reasons=self.eng.reason_list(p))

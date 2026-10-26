@@ -547,7 +547,8 @@ def add_boundary_limits(aircraft, source):
            'Instructor pitch minimum-speed edge':'AoA limiter (Instructor)',
            'Instructor minimum-speed edge':'Instructor minimum-speed limit',
            'speed-range edge':'Selected speed range; aircraft limit not established',
-           'low-speed feasibility edge':'Low-speed feasibility limit'}
+           'low-speed feasibility edge':'Low-speed feasibility limit',
+           'unresolved level-flight edge':'Level flight unresolved below this speed; aircraft limit not established'}
     edges.update({kind:' · '.join(filter(None,label)) for kind,label in SPEED_BOUNDARY_LABELS.items()
                   if kind.startswith('Flap ')})
     # The march chart's high-speed edges (em_march_chart.outline): forward-IAS limits lean, the others stand vertical.
