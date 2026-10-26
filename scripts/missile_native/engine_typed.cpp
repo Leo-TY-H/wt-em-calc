@@ -17,7 +17,9 @@ namespace nt { double reference_pow(double,double); }
 #ifdef _WIN32
 #undef pow
 #endif
-#include "typed/typed_flight.h"
+#include "typed/typed_prelaunch.h"
+#include "typed/typed_launch.h"
+#include "reference_norm.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -216,6 +218,13 @@ Axis load_axis(const V& v, bool designation) {
     else a.initial = num_at(v, "initial");
     return a;
 }
+DesignationProps load_designation(const V& v) {
+    DesignationProps d;
+    d.shared = load_shared(field(v, "shared"));
+    d.distance = load_axis(field(v, "distance"), true); d.doppler = load_axis(field(v, "doppler"), true);
+    d.use_target_id = flag_at(v, "use_target_id"); d.doppler_to_distance = num_at(v, "doppler_to_distance");
+    return d;
+}
 void load_radar_props(const V& g, RadarProps& o) {
     V m = field(g, "manager");
     RadarManagerProps& p = o.manager;
@@ -236,12 +245,7 @@ void load_radar_props(const V& g, RadarProps& o) {
     md.distance = load_axis(field(modes, "distance"), false); md.doppler = load_axis(field(modes, "doppler"), false);
     md.prolongation = num_at(modes, "prolongation"); md.reset_time = num_at(modes, "reset_time");
     md.arret_angles = vec_at<2>(modes, "arret_angles"); md.use_target_id = flag_at(modes, "use_target_id");
-    V designation = field(modes, "designation");
-    md.designation.shared = load_shared(field(designation, "shared"));
-    md.designation.distance = load_axis(field(designation, "distance"), true);
-    md.designation.doppler = load_axis(field(designation, "doppler"), true);
-    md.designation.use_target_id = flag_at(designation, "use_target_id");
-    md.designation.doppler_to_distance = num_at(designation, "doppler_to_distance");
+    md.designation = load_designation(field(modes, "designation"));
     // missile_support.supported_radar_step prepares these designation axes.
     for (int k = 0; k < 2; ++k) {
         Axis& axis = k == 0 ? md.designation.distance : md.designation.doppler;
@@ -259,6 +263,25 @@ void load_radar_props(const V& g, RadarProps& o) {
     V in = field(g, "inertial");
     o.inertial = {num_at(in, "drift_speed"), int_at(in, "gnss"), int_at(in, "datalink"), int_at(in, "reconnect"),
                   int_at(in, "channels_max"), int_at(in, "keep_channels_for_last")};
+}
+// missile_initialization.radar_reset's launcher properties, already prepared
+// for the website policy (radar_activation and radar_prelaunch inputs).
+void load_radar_launcher(const V& p, RadarLauncherProps& L) {
+    L.permanent = flag_at(p, "permanent"); L.lock_after_launch = flag_at(p, "lock_after_launch");
+    L.primary_mask = int_at(p, "primary_mask"); L.fallback_mask = int_at(p, "fallback_mask");
+    L.seeker = load_designation(field(p, "seeker"));
+    L.warm_up = num_at(p, "warm_up"); L.work_time = num_at(p, "work_time");
+    L.uncage = flag_at(p, "uncage"); L.inertial = flag_at(p, "inertial"); L.designation_required = flag_at(p, "designation_required");
+    V m = field(p, "modes");
+    RadarModesProps& md = L.modes;
+    md.shared = load_shared(field(m, "shared"));
+    md.distance = load_axis(field(m, "distance"), false); md.doppler = load_axis(field(m, "doppler"), false);
+    md.prolongation = num_at(m, "prolongation"); md.reset_time = num_at(m, "reset_time");
+    md.arret_angles = vec_at<2>(m, "arret_angles"); md.use_target_id = flag_at(m, "use_target_id");
+    md.designation = load_designation(field(m, "designation"));
+    md.use_source_frame = false; md.beam_cosine = md.scan_half_sector = md.range_search_half = md.closure_search_half = 0.;   // mode 7 only
+    L.los_check_timeout = num_at(p, "los_check_timeout");
+    L.authored_rate = flag_at(p, "authored_rate"); L.include_gap_after_reject = flag_at(p, "include_gap_after_reject");
 }
 void load_flight_props(const V& p, const V& serialized_rocket, const V& session_props, FlightProps& F) {
     load_body_props(field(p, "body"), F.body);
@@ -313,6 +336,19 @@ void load_controllers(const V& g, Controllers& c) {
     for (int i = 0; i < 4; ++i) c.propulsion.stages[i] = ival(stages[i]);
     auto pid = vec_at<8>(pr, "pid"); for (int i = 0; i < 8; ++i) c.propulsion.pid[i] = (float)pid[i];
 }
+void load_optical_seeker(const V& seeker, OpticalSeekerState& s, Opaque& opaque) {
+    expect_keys(seeker, 2);
+    V st = field(seeker, "state"); expect_keys(st, 8);
+    s.angles = vec_at<2>(st, "angles"); s.direction = vec_at<3>(st, "direction"); s.angular_rate = vec_at<3>(st, "angular_rate");
+    s.widths = vec_at<2>(st, "widths"); s.gap = num_at(st, "gap"); s.distance = num_at(st, "distance");
+    s.los_check_time = num_at(st, "los_check_time"); s.los_cache_valid = flag_at(st, "los_cache_valid");
+    Args raw = iter(field(seeker, "opaque_state"));
+    if (raw.size() != 32) bail("ValueError: opaque_state requires 32 bytes");
+    for (int i = 0; i < 32; ++i) {
+        if (raw[i].kind() != Kind::Int || raw[i].as_int() < 0 || raw[i].as_int() > 255) bail("ValueError: opaque_state requires 32 bytes");
+        opaque[i] = raw[i].as_int();
+    }
+}
 void load_optical_state(const V& g, OpticalGuidance& o) {
     expect_keys(g, 5);
     V m = field(g, "manager"); expect_keys(m, 23);
@@ -327,18 +363,9 @@ void load_optical_state(const V& g, OpticalGuidance& o) {
     s.auxiliary = vec_at<3>(m, "auxiliary"); s.direction = vec_at<3>(m, "direction"); s.seeker_direction = vec_at<3>(m, "seeker_direction");
     s.inertial_point = vec_at<3>(m, "inertial_point"); s.inertial_offset = vec_at<3>(m, "inertial_offset");
     load_controllers(g, o.controllers);
-    V seeker = field(g, "seeker"); expect_keys(seeker, 2);
-    V st = field(seeker, "state"); expect_keys(st, 8);
-    o.seeker.angles = vec_at<2>(st, "angles"); o.seeker.direction = vec_at<3>(st, "direction"); o.seeker.angular_rate = vec_at<3>(st, "angular_rate");
-    o.seeker.widths = vec_at<2>(st, "widths"); o.seeker.gap = num_at(st, "gap"); o.seeker.distance = num_at(st, "distance");
-    o.seeker.los_check_time = num_at(st, "los_check_time"); o.seeker.los_cache_valid = flag_at(st, "los_cache_valid");
-    Args raw = iter(field(seeker, "opaque_state"));
-    if (raw.size() != 32) bail("ValueError: opaque_state requires 32 bytes");
-    for (int i = 0; i < 32; ++i) {
-        if (raw[i].kind() != Kind::Int || raw[i].as_int() < 0 || raw[i].as_int() > 255) bail("ValueError: opaque_state requires 32 bytes");
-        o.opaque[i] = raw[i].as_int();
-    }
+    load_optical_seeker(field(g, "seeker"), o.seeker, o.opaque);
 }
+void load_radar_seeker(const V& ss, RadarSeekerState& r);
 void load_radar_state(const V& g, RadarGuidance& o) {
     expect_keys(g, 5);
     V m = field(g, "manager"); expect_keys(m, 29);
@@ -358,8 +385,10 @@ void load_radar_state(const V& g, RadarGuidance& o) {
     for (int i = 0; i < 6; ++i) s.inertial_padding[i] = ival(padding[i]);
     s.inertial_velocity = vec_at<3>(m, "inertial_velocity");
     load_controllers(g, o.controllers);
-    V ss = field(g, "seeker"); expect_keys(ss, 20);
-    RadarSeekerState& r = o.seeker;
+    load_radar_seeker(field(g, "seeker"), o.seeker);
+}
+void load_radar_seeker(const V& ss, RadarSeekerState& r) {
+    expect_keys(ss, 20);
     Args pad = iter(field(ss, "padding"));
     if (pad.size() != 7) bail("typed loader: seeker padding");
     for (int i = 0; i < 7; ++i) r.padding[i] = ival(pad[i]);
@@ -535,18 +564,30 @@ void prepare_full(const V& missile, const V& launcher, const V& target, const V&
     V session_frame = attr(session, "frame"), session_flight = attr(session_frame, "flight");
     load_flight_props(attr(session_flight, "properties"), item(attr(session_flight, "serialized_properties"), V("rocket")), session_props, out.props);
     load_session(session, out.props.family, out.session);
+    validate_flight_numbers(out.session, out.props.family);
 }
 
 // One immutable profile per worker. All properties still pass the translated
 // FlightSession constructor, digest/motor checks and radar configuration once.
-// Geometry-dependent construction, prelaunch acquisition and release use the
-// same translated native functions on every sample. No state is shared between
-// flights. Keeping the source value alive makes the identity key unambiguous.
+// Release construction, launch spread, seeker reset, prelaunch acquisition and
+// launch initialization are computed for every sample: on typed state once the
+// typed setup has reproduced the translated one (see typed), otherwise with the
+// translated native functions. No state is shared between flights. Keeping the
+// source value alive makes the identity key unambiguous.
 struct ProfileSetup {
     V source, profile, properties, rocket, release, launch_properties;
     V proximity, distance_limit, family;
     FlightProps typed_props;
     std::vector<double> burn_end;
+    // Typed setup: per-profile inputs of the release, spread and reset, and the
+    // first sample's launched guidance, whose sample-dependent fields are replaced
+    // for every later sample. Enabled on this thread only after the typed setup
+    // reproduced a complete translated setup bit for bit.
+    int typed = 0;   // 0 not checked, 1 enabled, -1 disabled
+    LaunchProps launch{};
+    OpticalSeekerState optical_initial{}; Opaque optical_initial_raw{};
+    RadarLauncherProps radar_launcher{}; RadarSeekerState radar_template{};
+    OpticalGuidance launched_optical{}; RadarGuidance launched_radar{};
 };
 thread_local std::unique_ptr<ProfileSetup> profile_setup;
 ProfileSetup& prepared_profile(const V& w, const V& source, bool& hit) {
@@ -570,35 +611,164 @@ ProfileSetup& prepared_profile(const V& w, const V& source, bool& hit) {
     profile_setup = std::move(c);  // Publish only after complete validation.
     return *profile_setup;
 }
+// body_launch.initialize inputs for launch mode 2 (missile_worker.launch_body).
+void load_launch_props(const ProfileSetup& c, LaunchProps& L) {
+    const V& r = c.rocket;
+    L.max_delta_angle = num_at(r, "maxDeltaAngle"); L.advanced_spread = num(get_or(r, "advancedSpread", V(0.)));
+    L.start_speed = num_at(r, "startSpeed"); L.use_start_speed = truth(field(r, "useStartSpeed"));
+    L.vel_spread = num(get_or(r, "velSpread", V(1.))); L.distance_fuse = truth(get_or(r, "distanceFuse", V(true)));
+    L.time_life = num(get_or(r, "timeLife", V(-1.))); L.distance_limit = num(c.distance_limit);
+    Args motors = iter(invoke_fn("kernels", "motor_properties", {r}));
+    L.propulsion_count = (int64_t)motors.size(); L.first_delay = motors.empty() ? 0. : num(attr(motors[0], "delay"));
+    L.table.clear();
+    for (V row : iter(attr(import_module("body_launch"), "TABLE"))) L.table.push_back(vec<2>(row));
+}
+// The translated setup keeps the constructed and launched bodies and the seeker
+// reset of the last launcher state (seeds are fixed). Each sample receives its
+// own copy of the constructed body; the ready functions copy the reset state.
+struct LaunchSetup {
+    V source; d3 position{}, velocity{}, angles{};
+    V quaternion, body, launched, reset;
+};
+thread_local std::unique_ptr<LaunchSetup> launch_setup;
+bool same_bits(const d3& a, const d3& b) { return std::memcmp(a.data(), b.data(), sizeof(a)) == 0; }
+bool same_bits(const d4& a, const d4& b) { return std::memcmp(a.data(), b.data(), sizeof(a)) == 0; }
+LaunchSetup& launched_body(const V& w, const V& source, const ProfileSetup& c, const V& launcher) {
+    d3 position = vec_at<3>(launcher, "position"), velocity = vec_at<3>(launcher, "velocity"), angles = vec_at<3>(launcher, "angles");
+    if (launch_setup && launch_setup->source.node() == source.node() && same_bits(launch_setup->position, position)
+        && same_bits(launch_setup->velocity, velocity) && same_bits(launch_setup->angles, angles)) return *launch_setup;
+    auto s = std::make_unique<LaunchSetup>();
+    s->source = source; s->position = position; s->velocity = velocity; s->angles = angles;
+    s->quaternion = call(attr(w, "quaternion"), {item(launcher, "angles")});
+    V record = make_dict({{"position", item(launcher, "position")}, {"velocity", item(launcher, "velocity")},
+        {"quaternion", s->quaternion}, {"omega", make_list({0., 0., 0.})}, {"time", 0.}});
+    s->body = call(attr(w, "construct"), {record});
+    s->launched = call(attr(w, "launch_body"), {c.rocket, deepcopy(s->body), 123, 0x12345678},
+        {{"launch_time", 0.}, {"clock_time", 0.}, {"launch_mode", 2}, {"distance_limit", c.distance_limit}});
+    launch_setup = std::move(s);
+    return *launch_setup;
+}
+// constructed_guidance and guidance_launch.initialize for an acquired seeker: only
+// the seeker block and the manager fields that alias it depend on the sample.
+OpticalGuidance launched_optical_guidance(const OpticalGuidance& launched, const OpticalAcquired& a) {
+    OpticalGuidance g = launched;
+    g.seeker = a.state; g.seeker.los_check_time = 0.; g.seeker.los_cache_valid = false;
+    g.opaque = a.raw;
+    for (int i = 16; i < 20; ++i) g.opaque[i] = 255;
+    g.opaque[20] = 0;
+    if (g.opaque[0] == 1) bail("Optical point launch uses the translated setup");
+    g.manager.seeker_direction = g.seeker.direction; g.manager.seeker_distance = g.seeker.distance;
+    g.manager.seeker_point_valid = g.opaque[0] != 0;
+    return g;
+}
+// The whole per-sample setup on typed state: missile_worker.quaternion, construct,
+// launch_body, optical_reset/radar_reset, optical_ready/radar_ready and
+// launch_guidance. Writes the launched body and guidance into S.
+struct TypedLaunch { double lifetime; d3 origin; d4 launcher_q; };
+TypedLaunch typed_setup(const ProfileSetup& c, const FlightProps& P, const d3& position, const d3& velocity, const d3& angles,
+                        const TargetMotion& motion, Session& S) {
+    d4 launcher_q = angles_quaternion(angles);
+    wtm_body body = construct_body(position, launcher_q, velocity);
+    LaunchedBody launched = launch_body(c.launch, body);
+    d3 body_position = dv(body.position), body_velocity = dv(body.velocity); d4 body_q = dq(body.quaternion);
+    if (P.family == 0) {
+        auto none = [](const OpticalSeekerState&) -> OpticalObservation { bail("Optical reset observes nothing"); };
+        OpticalModesResult reset = optical_modes_update(P.optical.seeker, c.optical_initial, body_q, -2 * STEP, -STEP, none, 0,
+                                                        c.optical_initial_raw, true, true, false, -1.);
+        S.optical = launched_optical_guidance(c.launched_optical, optical_prelaunch_acquire(P.optical, reset.state, reset.opaque, body_q,
+                                                                                            body_position, motion.position));
+    } else {
+        RadarSeekerState reset = radar_reset_state(c.radar_launcher, c.radar_template, body_position, body_q, body_velocity);
+        S.radar = c.launched_radar;
+        radar_handoff(S.radar, c.launched_radar.seeker, radar_prelaunch(c.radar_launcher, P.radar.seeker, reset, body_position, body_q,
+                                                                        body_velocity, motion));
+    }
+    S.body = launched.body;
+    return {launched.lifetime, body_position, launcher_q};
+}
+// math.dist as the translated runtime computes it.
+double reference_dist(const d3& a, const d3& b) {
+    double d[3], maximum = 0.; int nan = 0;
+    for (int i = 0; i < 3; ++i) { d[i] = std::fabs(a[i] - b[i]); if (d[i] > maximum) maximum = d[i]; nan |= std::isnan(d[i]); }
+    return vector_norm(3, d, maximum, nan);
+}
+bool same_state(const Session& a, const Session& b, int family) {
+    Snapshot x = snapshot(a, family), y = snapshot(b, family);
+    if (x.size() != y.size()) return false;
+    for (size_t i = 0; i < x.size(); ++i) if (x[i].first != y[i].first || bits(x[i].second) != bits(y[i].second)) return false;
+    return true;
+}
+bool typed_log();
+void diagnostic(const V& value);
+// Keep the first sample's translated setup and enable the typed setup only if
+// it reproduces that sample bit for bit.
+void enable_typed_setup(ProfileSetup& c, const LaunchSetup& ls, const FlightProps& P, const Session& S, double lifetime, const d3& origin,
+                        const d4& launcher_q, const V& launcher, const V& target, const TargetMotion& motion) {
+    c.typed = -1;
+    try {
+        load_launch_props(c, c.launch);
+        if (P.family == 0) {
+            load_optical_seeker(field(invoke_fn("optical_prelaunch", "initial"), "seeker"), c.optical_initial, c.optical_initial_raw);
+            c.launched_optical = S.optical;
+        } else {
+            load_radar_launcher(item(ls.reset, 0), c.radar_launcher);
+            load_radar_seeker(field(item(c.release, "constructed_guidance"), "seeker"), c.radar_template);
+            c.launched_radar = S.radar;
+        }
+        Session check = S;
+        TargetMotion typed_motion = motion;
+        typed_motion.quaternion = angles_quaternion(vec_at<3>(target, "angles"));
+        TypedLaunch t = typed_setup(c, P, vec_at<3>(launcher, "position"), vec_at<3>(launcher, "velocity"), vec_at<3>(launcher, "angles"),
+                                    typed_motion, check);
+        if (same_state(check, S, P.family) && bits(t.lifetime) == bits(lifetime) && same_bits(t.origin, origin)
+            && same_bits(t.launcher_q, launcher_q) && same_bits(typed_motion.quaternion, motion.quaternion)) c.typed = 1;
+    } catch (const Bail&) {} catch (const PyError&) {}
+}
 void prepare_cached(const V& missile, const V& launcher, const V& target, const V& early_exit, const V& reach_m, Prepared& out) {
     V w = invoke_fn("missile_envelope", "_missile_worker");
     V source = invoke_fn("missile_envelope", "_profile", {missile});
     auto& c = prepared_profile(w, source, out.cache_hit);
     out.props = c.typed_props; out.family = c.family; out.distance_limit = c.distance_limit;
-    V quaternion = call(attr(w, "quaternion"), {item(launcher, "angles")});
-    V record = make_dict({{"position", item(launcher, "position")}, {"velocity", item(launcher, "velocity")},
-        {"quaternion", quaternion}, {"omega", make_list({0., 0., 0.})}, {"time", 0.}});
-    V body = call(attr(w, "construct"), {record});
-    V target_quaternion = call(attr(w, "quaternion"), {item(target, "angles")});
-    V templ = item(c.release, "constructed_guidance"), initialized;
-    if (out.props.family == 0) {
-        initialized = call(attr(w, "optical_ready"), {c.rocket, item(c.properties, "guidance"), templ, body, target});
-    } else {
-        V target_body = deepcopy(target);
-        dict_set(target_body, "quaternion", target_quaternion);
-        initialized = call(attr(w, "radar_ready"), {item(c.profile, "asset"), item(c.properties, "guidance"), templ, body, target_body});
-    }
-    V guidance = call(attr(w, "launch_guidance"), {c.launch_properties, item(initialized, 0), body, 123});
-    V launched = call(attr(w, "launch_body"), {c.rocket, body, 123, 0x12345678},
-        {{"launch_time", 0.}, {"clock_time", 0.}, {"launch_mode", 2}, {"distance_limit", c.distance_limit}});
+    d3 position = vec_at<3>(launcher, "position"), velocity = vec_at<3>(launcher, "velocity");
+    TargetMotion motion{vec_at<3>(target, "position"), vec_at<3>(target, "velocity"), {}};
     Session& S = out.session;
-    load_body(item(launched, "body"), S.body);
-    if (out.props.family == 0) load_optical_state(item(guidance, "state"), S.optical);
-    else load_radar_state(item(guidance, "state"), S.radar);
+    double lifetime; d3 origin; d4 launcher_q;
+    if (c.typed == 1) {
+        motion.quaternion = angles_quaternion(vec_at<3>(target, "angles"));
+        TypedLaunch t = typed_setup(c, out.props, position, velocity, vec_at<3>(launcher, "angles"), motion, S);
+        lifetime = t.lifetime; origin = t.origin; launcher_q = t.launcher_q;
+        out.lifetime = V(lifetime);
+    } else {
+        LaunchSetup& ls = launched_body(w, source, c, launcher);
+        V target_quaternion = call(attr(w, "quaternion"), {item(target, "angles")});
+        motion.quaternion = vec<4>(target_quaternion);
+        V body = deepcopy(ls.body);
+        V templ = item(c.release, "constructed_guidance"), initialized;
+        if (out.props.family == 0) {
+            if (ls.reset.is_none())
+                ls.reset = invoke_fn("missile_initialization", "optical_reset", {c.rocket, item(c.properties, "guidance"), item(ls.body, "quaternion")});
+            initialized = call(attr(w, "optical_ready"), {c.rocket, item(c.properties, "guidance"), templ, body, target}, {{"reset", ls.reset}});
+        } else {
+            if (ls.reset.is_none()) ls.reset = invoke_fn("missile_initialization", "radar_reset", {item(c.profile, "asset"), templ, ls.body});
+            V target_body = deepcopy(target);
+            dict_set(target_body, "quaternion", target_quaternion);
+            initialized = call(attr(w, "radar_ready"), {item(c.profile, "asset"), item(c.properties, "guidance"), templ, body, target_body},
+                               {{"reset", ls.reset}});
+        }
+        V guidance = call(attr(w, "launch_guidance"), {c.launch_properties, item(initialized, 0), body, 123});
+        load_body(item(ls.launched, "body"), S.body);
+        if (out.props.family == 0) load_optical_state(item(guidance, "state"), S.optical);
+        else load_radar_state(item(guidance, "state"), S.radar);
+        out.lifetime = item(ls.launched, "lifetime"); lifetime = num(out.lifetime);
+        origin = vec_at<3>(ls.body, "position"); launcher_q = vec<4>(ls.quaternion);
+        if (c.typed == 0) {
+            enable_typed_setup(c, ls, out.props, S, lifetime, origin, launcher_q, launcher, target, motion);
+            if (typed_log()) diagnostic(make_dict({{"type", "typed_setup"}, {"missile", missile}, {"enabled", V(c.typed == 1)}}));
+        }
+    }
     S.controls = vec<8>(item(c.release, "controls"));
-    out.lifetime = item(launched, "lifetime");
-    S.lifetime = num(out.lifetime); S.distance_limit = num(c.distance_limit);
-    S.origin = vec_at<3>(body, "position");
+    S.lifetime = lifetime; S.distance_limit = num(c.distance_limit);
+    S.origin = origin;
     S.proximity_origin = {S.body.position.x, S.body.position.y, S.body.position.z};
     S.proximity_enabled = reach_m.is_none(); S.offsets = {typed::f32(-.05), typed::f32(0.)};
     validate_flight_numbers(S, out.props.family);
@@ -616,11 +786,11 @@ void prepare_cached(const V& missile, const V& launcher, const V& target, const 
         E.radius = (truth(radius) ? num(radius) : 0.) + 30.;
     }
     E.burn_end = c.burn_end;
-    E.best_distance = num(call(attr(import_module("math"), "dist"), {item(item(launched, "body"), "position"), item(target, "position")}));
-    E.motion = {vec_at<3>(target, "position"), vec_at<3>(target, "velocity"), vec<4>(target_quaternion)};
+    E.best_distance = reference_dist({S.body.position.x, S.body.position.y, S.body.position.z}, motion.position);
+    E.motion = motion;
     finite_or_bail(E.motion.position); finite_or_bail(E.motion.velocity);
     E.target_velocity_raw = E.motion.velocity;
-    E.launch = {vec_at<3>(launcher, "position"), vec_at<3>(launcher, "velocity"), vec<4>(quaternion)};
+    E.launch = {position, velocity, launcher_q};
 }
 bool cached_setup() {
     static const bool enabled = [] { const char* v = std::getenv("WT_TYPED_SETUP"); return !v || std::string(v) != "0"; }();
