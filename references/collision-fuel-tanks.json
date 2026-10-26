@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "game_version": "2.59.0.86",
+  "scope": "tankN_dm part numbers, in node order, of installed collision models without a game-produced prop-mass asset. fuel_layout.layout reproduced every unchanged game-produced asset it did not refuse.",
+  "check": {
+    "matched": 749,
+    "refused": [],
+    "skipped": [
+      "fokker_d7--fokker_d7_collision",
+      "hp_12--hp_12_collision",
+      "li-2--li_2_collision",
+      "spad_13--spad_13_collision"
+    ]
+  },
+  "unavailable": [
+    "b_18a_skeleton_turrets_collision",
+    "b_18a_test_collision",
+    "dummy_plane_collision",
+    "g8n2_collision",
+    "gu_37_collision",
+    "h_75a_1_finland_collision",
+    "h_75a_1_france39_collision",
+    "h_75a_2_france_collision",
+    "h_75a_2_luftwaffe_collision",
+    "h_75a_3_france_collision",
+    "h_75a_4_finland_collision",
+    "h_75a_4_luftwaffe_collision",
+    "h_75a_5_collision",
+    "h_75a_6_collision",
+    "h_75a_7_collision",
+    "h_75n_collision",
+    "hudson_mk_v_gear_test_collision",
+    "ki_45_ko_tei_collision",
+    "lagg_3_1_collision",
+    "lagg_3_29_collision",
+    "night_fighter_mk_2_collision",
+    "p_26a_35_collision",
+    "p_51_mk1_collision",
+    "pandora_mk_1_collision",
+    "sb_2m_100a_spain_collision",
+    "spitfire_f22_test_collision",
+    "spitfire_mk9b_collision",
+    "yak_3_test_collision",
+    "zeppelin_class_r_collision"
+  ],
+  "resources": {
+    "a6m5hei_collision": {
+      "tank_parts": [
+        1,
+        2,
+        3,
+        6,
+        4,
+        5
+      ],
+      "pack": "jp_aircraft_logic.grp",
+      "stream_sha256": "1bf30f2fef5a3a10185297049161fc3b0de0f65cb5280c79c2200c960b41b620"
+    },
+    "a6m5ko_collision": {
+      "tank_parts": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "pack": "jp_aircraft_logic.grp",
+      "stream_sha256": "9e2906297de2984a5ff8b3008490296b2dc1013d0e45e55af6d5328c6a3e16e7"
+    },
+    "a6m5otsu_collision": {
+      "tank_parts": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "pack": "jp_aircraft_logic.grp",
+      "stream_sha256": "511b5a44e62cc4d41106288fb3e98e16df0c4c0c960f61ec001f06b4b51c73a8"
+    }
+  }
+}

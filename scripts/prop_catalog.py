@@ -13,15 +13,28 @@ NAMES={'yak-3':'Yak-3','bf-109f-4':'Bf 109 F-4','a2d':'A2D-1','a5m4':'A5M4','fw_
 
 
 def asset_mismatch(raw, propulsion, mass):
-    expected=hashlib.sha256(raw).hexdigest()
-    if propulsion.get('fm_sha256')!=expected or mass.get('fm_sha256')!=expected:
+    # A fuel-layout mass asset is derived from the current FM, so only the
+    # game-produced pair carries FM and executable pins.
+    expected=hashlib.sha256(raw).hexdigest();derived=mass.get('producer')=='fuel-layout'
+    if propulsion.get('fm_sha256')!=expected or not derived and mass.get('fm_sha256')!=expected:
         return 'Updated FM needs regenerated propulsion/collision assets; cached assets are from an older FM'
-    if propulsion.get('binary_sha256')!=mass.get('binary_sha256'):
+    if not derived and propulsion.get('binary_sha256')!=mass.get('binary_sha256'):
         return 'Propeller assets use different executable versions'
     return None
 
 
 def fm_source(name):return ROOT/'references/jet-catalog/fm'/(name+'.blkx')
+
+
+def mass_path(fm_id,resource):return ROOT/'references/prop-mass'/(fm_id+'--'+resource+'.json')
+
+
+def mass_asset(fm_id,resource,fm):
+    """Game-produced mass asset, else the fuel tank layout of a legacy-mass FM."""
+    path=mass_path(fm_id,resource)
+    if path.exists():return orjson.loads(path.read_bytes())
+    from fuel_layout import asset
+    return asset(fm,resource)
 
 
 @lru_cache(maxsize=1)
@@ -50,17 +63,17 @@ def catalog():
         raw=fm_source(fm_id).read_bytes();fm=normalize(orjson.loads(raw),_owned=True)
         propulsion_path=ROOT/'references/prop-propulsion'/(fm_id+'.json')
         resource=(vehicle['model'] or '')+'_collision'
-        mass_path=ROOT/'references/prop-mass'/(fm_id+'--'+resource+'.json')
         entry=dict(name=NAMES.get(name,name.replace('_',' ')),fm_id=fm_id,vehicle_id=name,resource=resource,
             color='#edb45e',has_sweep=False,has_flaps=bool(fm.get('AvailableControls',{}).get('hasFlapsControl',False)),
             propulsion='propeller',supported=False,reason='Propeller equilibrium integration in progress')
         if not propulsion_path.exists():entry['reason']='Pinned propulsion properties are unavailable'
-        elif not mass_path.exists():entry['reason']='Matching collision geometry is unavailable'
         else:
-            propulsion=orjson.loads(propulsion_path.read_bytes());m=orjson.loads(mass_path.read_bytes())
-            mismatch=asset_mismatch(raw,propulsion,m)
-            if mismatch:
-                entry['reason']=mismatch
+            propulsion=orjson.loads(propulsion_path.read_bytes())
+            try:
+                m=mass_asset(fm_id,resource,fm);mismatch=asset_mismatch(raw,propulsion,m)
+                if mismatch:raise ValueError(mismatch)
+            except ValueError as error:
+                entry['reason']=str(error)
                 out[name]=entry
                 continue
             p=propulsion['properties']
@@ -83,10 +96,10 @@ def load(name):return normalize(json.loads(fm_source(catalog()[name]['fm_id']).r
 def assets(name):
     row=catalog()[name];fm_id=row['fm_id']
     propulsion=json.loads((ROOT/'references/prop-propulsion'/(fm_id+'.json')).read_text())
-    mass=json.loads((ROOT/'references/prop-mass'/(fm_id+'--'+row['resource']+'.json')).read_text())
-    expected=hashlib.sha256(fm_source(fm_id).read_bytes()).hexdigest()
-    if propulsion['fm_sha256']!=expected or mass['fm_sha256']!=expected:raise ValueError('Propeller assets do not match the pinned FM')
-    if propulsion['binary_sha256']!=mass['binary_sha256']:raise ValueError('Propeller assets use different executable versions')
+    mass=mass_asset(fm_id,row['resource'],load(name))
+    expected=hashlib.sha256(fm_source(fm_id).read_bytes()).hexdigest();derived=mass.get('producer')=='fuel-layout'
+    if propulsion['fm_sha256']!=expected or not derived and mass['fm_sha256']!=expected:raise ValueError('Propeller assets do not match the pinned FM')
+    if not derived and propulsion['binary_sha256']!=mass['binary_sha256']:raise ValueError('Propeller assets use different executable versions')
     from aircraft_upgrades import apply_propulsion
     return apply_propulsion(name,propulsion['properties']),mass
 
