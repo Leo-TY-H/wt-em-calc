@@ -11,6 +11,7 @@
   const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296','#f08070'];
   const missileName=id=>meta?.missiles.find(m=>m.id===id)?.name||id;
   const missileLabel=id=>`${missileName(id)} [${id}]`;
+  const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   const escapeHtml=text=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const positionFields = role => `<div class="missile-vector"><span>Aircraft position · m</span><div class="${role==='launch'?'missile-altitude-input':'three-inputs'}">${['Along X','Altitude · Y','Along Z'].map((axis,i)=>role==='launch'&&i!==1?'':`<label>${axis}<input id="missile-${role}-position-${i}" aria-label="${role==='launch'?'Launcher':'Target'} ${axis}" type="number" step="any" required value="${initial[role].position[i]}" ${i===1?'min="0.001" max="30000"':'min="-200000" max="200000"'}></label>`).join('')}</div></div>`;
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Travel heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
@@ -24,18 +25,14 @@
       <button type="button" data-preset="head-on" aria-pressed="false"><span aria-hidden="true">⇄</span>Head-on</button>
       <button type="button" data-preset="crossing" aria-pressed="false"><span aria-hidden="true">↱</span>Crossing</button>
     </div><p id="missile-preset-note" class="hint"></p>
-    <fieldset id="missile-picker" class="missile-step"><legend>Add missiles</legend>
+    <fieldset id="missile-picker" class="missile-step"><legend class="visually-hidden">Add missiles</legend>
       <input id="missile-search" type="search" placeholder="Search missiles…" autocomplete="off" aria-label="Search missiles" aria-controls="missile-list">
       <div id="missile-list" class="aircraft-list" aria-label="Available missiles"></div>
       <p id="missile-search-empty" class="hint" hidden>No missiles match your search.</p>
       <p id="missile-catalog-note" class="hint" role="status">Loading missiles…</p>
-      <div class="section-heading"><span class="eyebrow">ADDED MISSILES</span><span id="missile-entry-count" class="hint">0 / 8</span></div>
       <div id="missile-selected" class="missile-selected" aria-label="Selected missiles"></div>
-      <p class="hint">All missiles launch at t = 0 from the same aircraft setup and fly independently toward the same target.</p>
-      <details class="missile-timing"><summary id="missile-timing-title">Automatic release &amp; timing</summary><dl id="missile-timing-values"></dl><p class="hint">Times start at release (t = 0). Each motor uses its own clock; later stages may wait for flight conditions. Guidance ramps and seeker search gates remain separate.</p><p class="hint">Seeker warm-up is complete before release. The missile starts at the launcher’s position, aligned with its body. Aircraft-specific hardpoint offsets and ejector impulses are not supplied.</p></details>
       <button id="missile-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    <div class="missile-coordinate-guide"><strong>One shared world coordinate system</strong><p>The launcher starts at X = 0, Z = 0. +X points right in the top view, +Z points up, and +Y is altitude. Target X and Z locate it relative to the launcher's starting horizontal position; altitude is absolute.</p><p>Aircraft face their travel heading and vertical angle (launcher: launch angle; target: climb angle), with zero roll.</p></div>
     ${stateFields('launch',2,'Launcher aircraft','Aircraft state at the instant of release (t = 0).')}
     ${stateFields('target',3,'Target aircraft','Flies in a straight line at constant velocity throughout the simulation.')}
     <fieldset class="missile-step"><legend><span class="missile-step-number">4</span>Simulation time</legend>
@@ -112,7 +109,7 @@
       }
       meta.missiles=[...unique.values()];
       meta.missiles.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})||a.id.localeCompare(b.id));
-      populateMissiles();renderSelected();updateTiming();busy(false);
+      populateMissiles();renderSelected();busy(false);
     }catch(error){meta=null;busy(false);el('missile-retry').hidden=false;showError('Could not load missile configurations. Check that the simulator server is running, then retry. '+error.message);}
     finally{loading=null;}})();return loading;
   }
@@ -134,13 +131,13 @@
       const row=document.createElement('div');row.className='aircraft-option';
       const family=item.family==='optical'?'Optical / infrared':'Radar';
       row.dataset.search=item.id+' '+item.name+' '+family;
-      const label=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small');
-      name.textContent=missileLabel(item.id);detail.textContent=family;label.append(name,detail);
+      const label=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small'),code=document.createElement('code');
+      name.textContent=item.name;code.textContent=item.id;detail.append(code);label.append(name,detail);label.title=missileLabel(item.id);
       const button=document.createElement('button');button.type='button';button.dataset.addMissile=item.id;
       button.textContent='Add';button.setAttribute('aria-label','Add '+missileLabel(item.id));
       row.append(label,button);return row;
     }));
-    el('missile-catalog-note').textContent=`${meta.missiles.length} available missiles`;
+    el('missile-catalog-note').hidden=true;
     filterMissiles();
   }
   function filterMissiles() {
@@ -161,35 +158,19 @@
   }
   function renderSelected() {
     el('missile-selected').replaceChildren(...selectedMissiles.map((id,i)=>{
-      const row=document.createElement('div');row.className='missile-selected-row';
-      const name=document.createElement('span');name.textContent=missileLabel(id);name.style.borderColor=flightColors[i];
-      const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.disabled=batchRunning;
-      remove.setAttribute('aria-label','Remove '+missileLabel(id));remove.title='Remove missile';
+      const card=document.createElement('article');card.className='aircraft-entry';card.style.setProperty('--entry-color',flightColors[i]);
+      card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong><code>${escapeHtml(id)}</code></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
+      const remove=card.querySelector('button');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+missileLabel(id));
       remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);renderSelected();filterMissiles();changed();busy(false);});
-      row.append(name,remove);return row;
+      return card;
     }));
-    el('missile-entry-count').textContent=`${selectedMissiles.length} / 8`;
-    updateTiming();updateAddButton();
+    updateAddButton();
   }
   el('missile-list').addEventListener('click',event=>{
     const button=event.target.closest('[data-add-missile]');
     if(!button||button.disabled)return;
     selectedMissiles.push(button.dataset.addMissile);renderSelected();filterMissiles();changed();busy(false);
   });
-  function updateTiming() {
-    const id=selectedMissiles.at(-1);
-    el('missile-timing-title').textContent=id?'Release & timing · '+missileName(id):'Automatic release & timing';
-    const timing=meta?.missiles.find(item=>item.id===id)?.timing;
-    const list=el('missile-timing-values');list.replaceChildren();
-    if(!timing){const note=document.createElement('dd');note.textContent=id?'Timing details need the updated local simulator server.':'Add a missile to see its timing details.';list.append(note);return;}
-    const seconds=value=>Number(value.toFixed(3))+' s';
-    const rows=[['Motor ignition delays',timing.motor_delays_s.map((delay,i)=>`Motor ${i+1}: ${seconds(delay)}`).join(' · ')],
-      ['Guidance gain over time',timing.guidance_gain.map(point=>`${seconds(point.time_s)}: ${Math.round(point.gain*100)}%`).join(' → ')],
-      ['Seeker search gate',`${seconds(timing.seeker_search_delay_s)}${timing.lock_after_launch?' · lock after launch':''}; geometry still applies`],
-      ['Proximity arming delay',timing.proximity_delay_s===null?'No proximity fuze':seconds(timing.proximity_delay_s)+' + distance / altitude gates'],
-      ['Seeker preparation',`${seconds(timing.warm_up_s)} warm-up completed before release`]];
-    for(const [label,value] of rows){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;list.append(dt,dd);}
-  }
   const radians = angle => angle*Math.PI/180;
   const degrees = angle => angle*180/Math.PI;
   function syncMotion(role,velocity=initial[role].velocity) {
@@ -281,7 +262,7 @@
   el('missile-reset').addEventListener('click',()=>{
     selectedMissiles=[];renderSelected();busy(false);
     el('missile-search').value='';filterMissiles();el('missile-duration').value=initial.duration;
-    applyPreset('chase');updateTiming();if(!meta)load();
+    applyPreset('chase');if(!meta)load();
   });
   for(const role of ['launch','target'])syncMotion(role);
   updatePreview();
