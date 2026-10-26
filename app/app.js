@@ -365,7 +365,7 @@ function rgba(hex,opacity){return `rgba(${parseInt(hex.slice(1,3),16)},${parseIn
 function updateDefaultContours(){
   if(state.customContours)return;
   const props=state.entries.length>0&&state.entries.every(e=>['piston','turboprop','mixed'].includes(state.meta.aircraft[e.aircraft_id].propulsion));
-  state.contourLevels=props?[20,10,0,-10,-20,-40,-80]:[100,0,-100,-200,-400];
+  state.contourLevels=props?[20,10,0,-20,-40,-80]:[100,0,-100,-200,-400];
   renderContourControls();
 }
 function renderContourControls(){
