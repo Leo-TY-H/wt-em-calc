@@ -569,8 +569,11 @@ function renderChart(){
     // SEP jump lines: where SEP jumps along the turn (contours end at them); the hover names the cause
     for(const j of a.sep_jumps||[]){
       const why={supercharger:'Supercharger has no valid stage',propeller:'Propeller changes state'}[j.cause]||'SEP is discontinuous here';
+      // A faint band under a dash-dot line, so jumps never read as contours (dashed) or the envelope (solid).
+      traces.push({type:'scatter',mode:'lines',x:j.speed_kmh,y:j.turn_dps,meta:{id:a.id,kind:'sep jump band'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+        line:{color:rgba(a.color,.22),width:11},hoverinfo:'skip',showlegend:false});
       traces.push({type:'scatter',mode:'lines',x:j.speed_kmh,y:j.turn_dps,name:`${a.name} · SEP jump`,meta:{id:a.id,kind:'sep jump'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-        line:{color:rgba(a.color,displayed.length===1?.9:.6),width:2.4,dash:'dot'},
+        line:{color:rgba(a.color,.95),width:2,dash:'12px,4px,2px,4px'},
         customdata:j.speed_kmh.map((v,i)=>[fmt(j.sep_before_mps[i],1),fmt(j.sep_after_mps[i],1)]),
         hovertemplate:`${a.name}<br>SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
     }
