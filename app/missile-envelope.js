@@ -491,11 +491,10 @@
     if (view === 'contours') await renderContours(); else if (view === 'layer') await renderLayer(); else await renderProfile();
     if (inspected) renderInspector();
   }
-  // The target at the centre and a short arrow along its heading (0°).
+  // The target at the centre.
   function polarTarget(radius) {
-    return [{type: 'scatterpolar', mode: 'lines', r: [0, kmOf(radius) * .07], theta: [0, 0], line: {color: '#ffd0ac', width: 2}, hoverinfo: 'skip', showlegend: false},
-      {type: 'scatterpolar', mode: 'markers', r: [kmOf(radius) * .07], theta: [0], marker: {symbol: 'triangle-up', size: 9, color: '#ffd0ac'}, hoverinfo: 'skip', showlegend: false},
-      {type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'},
+    // No heading arrow (Leo, 2026-10-26): the 0° head-on label already gives the target's direction.
+    return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'},
         hovertemplate: 'Target<extra></extra>', showlegend: false}];
   }
   // Searched samples: place(ray, az, range_m) returns [a, b] (polar r km and theta, or x and y) or null.
