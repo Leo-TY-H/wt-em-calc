@@ -429,9 +429,9 @@
         x:flight.trajectory.map(r=>r.time_s),y:flight.trajectory.map(r=>Number.isFinite(r.telemetry?.[field])?r.telemetry[field]*scale:null),
         customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,line:{color:resultColors[i],width:2,dash:s?'dash':'solid'},
         hovertemplate:`${escapeHtml(missileLabel(flight.scenario.missile))}<br>%{x:.3f} s<br>${name}: %{y:.3f} ${metric.unit}<extra></extra>`})));
-      await Plotly.react(node,traces,{paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{color:'#dce5f0',size:11},
-        margin:{l:62,r:18,t:30,b:55},xaxis:{title:'Time after release · s',gridcolor:'#263244',range:[0,totalTime()]},
-        yaxis:{title:metric.unit,gridcolor:'#263244',rangemode:'tozero'},showlegend:false,
+      await Plotly.react(node,traces,{paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0',size:11},
+        margin:{l:62,r:18,t:30,b:55},xaxis:{title:'Time after release · s',gridcolor:'rgba(240,240,250,.09)',range:[0,totalTime()]},
+        yaxis:{title:metric.unit,gridcolor:'rgba(240,240,250,.09)',rangemode:'tozero'},showlegend:false,
         hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+key},
         {responsive:true,displaylogo:false,toImageButtonOptions:{filename:'missile-comparison-'+kind+'-'+key,format:'png',scale:2}});
       node.removeAllListeners('plotly_click');
@@ -455,9 +455,9 @@
       return [Math.min(...values),Math.max(...values)];
     });
     flightBounds=bounds;const fitted=sceneFit(bounds);camera=fitted.camera;
-    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'#263244',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#121925'};};
-    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'#263244',zerolinecolor:'#455568',tickformat:',.0f',automargin:true});
-    const layout={paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{color:'#dce5f0'},hoverlabel:{bgcolor:'#172638',bordercolor:'#38c9d7',font:{color:'#e3edf7',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
+    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#000000'};};
+    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',tickformat:',.0f',automargin:true});
+    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#e3edf7',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
       ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#a9b8ca'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
         {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1},hovermode:'closest'})};
     el('missile-slice-note').hidden=is3d;
