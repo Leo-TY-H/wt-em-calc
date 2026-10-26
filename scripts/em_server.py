@@ -141,14 +141,37 @@ def point_solver(key,entry):
 
 
 def pitch_percent(point,solver):
-    """Clicked-point report only: blade angle on the game's pitch-control scale (100% = finest, 0% = coarsest)."""
+    """Clicked-point report only: the in-game prop pitch control value (%) of each propeller.
+
+    Manual control reports its own setting. Under automatic control it is the manual setting that
+    holds the same state, by the game's control law: blade-angle props (governor 6/8)
+    pitch = pitch_max - % x (pitch_max - pitch_min); RPM-governor props (1/2)
+    target RPM = min + % x (max - min), max = boost RPM while WEP is on. Fixed pitch: none.
+    """
+    from em_manual_controls import manual_rpm_governor
     propulsion=point.get('propulsion')
-    propellers=getattr(getattr(solver,'engine',None),'properties',{}).get('propellers') if propulsion else None
+    properties=getattr(getattr(solver,'engine',None),'properties',None) if propulsion else None
+    propellers=(properties or {}).get('propellers')
     if not propellers or len(propellers)!=len(propulsion.get('propeller_pitch_deg') or ()):return
-    def percent(deg,limits):
-        low,high=limits['pitch_min'],limits['pitch_max']
-        return (high-math.radians(deg))/(high-low)*100. if high>low else None
-    propulsion['propeller_pitch_percent']=[percent(deg,q['properties']) for deg,q in zip(propulsion['propeller_pitch_deg'],propellers)]
+    controls=propulsion.get('controls') or {}
+    automatic,commands=controls.get('automatic') or (),controls.get('commands') or ()
+    targets=(propulsion.get('stationarity') or {}).get('shaft_target_rpm') or ()
+    shaft={link['index']:t for t,transmission in enumerate(properties.get('transmissions') or ())
+           for link in transmission['propellers']}
+    rpm=lambda omega:omega*60./(2.*math.pi)
+    def percent(i,deg,pp):
+        if not pp['governor']:return None
+        if i<len(automatic) and not automatic[i] and i<len(commands):return commands[i]/255.*100.
+        if manual_rpm_governor(pp):
+            t=shaft.get(i)
+            target=(targets[t] if t is not None and t<len(targets) and targets[t] is not None else
+                    (propulsion.get('engine_rpm') or [None])[min(t or 0,len(propulsion.get('engine_rpm') or [0])-1)])
+            low,high=rpm(pp['min_omega']),rpm(pp['boost_omega'] if controls.get('afterburner') else pp['max_omega'])
+            return min(100.,max(0.,(target-low)/(high-low)*100.)) if target is not None and high>low else None
+        low,high=pp['pitch_min'],pp['pitch_max']
+        return min(100.,max(0.,(high-math.radians(deg))/(high-low)*100.)) if high>low else None
+    propulsion['propeller_pitch_percent']=[percent(i,deg,q['properties']) for i,(deg,q) in
+                                           enumerate(zip(propulsion['propeller_pitch_deg'],propellers))]
 
 
 def solve_point(key,entry,speed_kmh,load_g):
