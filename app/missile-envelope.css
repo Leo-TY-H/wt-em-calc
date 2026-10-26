@@ -12,13 +12,12 @@
 .envelope-layer-inputs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
 .envelope-layer-inputs .field{font-size:11px;margin:4px 0}
 .envelope-layer-inputs .input-unit input{padding:8px 24px 8px 7px}.envelope-layer-inputs .input-unit span{right:7px;font-size:10px}
-.envelope-sidebar [data-frame][hidden]{display:none}
 #envelope-status{min-height:20px;color:var(--cyan);font-size:12px;margin-top:12px}#envelope-status:empty{display:none}
 #envelope-progress-count{margin-left:auto;color:#98b5c3;font-variant-numeric:tabular-nums}
 #envelope-progress-fill{height:100%;width:0;background:var(--cyan);transition:width .3s}
 #envelope-chart{height:clamp(420px,62vh,820px);width:100%}
 #envelope-error{margin-bottom:16px}
-.envelope-legend span{font-size:11px}.envelope-key-max{color:var(--cyan)}.envelope-key-min{color:var(--orange)}.envelope-key-ref{color:#ffd0ac}
+.envelope-legend span{font-size:11px}.envelope-key-max{color:var(--cyan)}.envelope-key-ref{color:#ffd0ac}
 .envelope-check{display:flex;align-items:center;gap:5px;font-size:11px!important;color:#bdc9d8!important;padding-bottom:9px}
 #envelope-view-reset{flex-shrink:0;font-size:11px;border:1px solid var(--line);border-radius:5px;background:var(--panel2);padding:7px 12px}
 .envelope-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.envelope-metrics .missile-metric:first-child{grid-column:auto}
