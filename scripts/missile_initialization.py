@@ -32,14 +32,11 @@ def radar_properties():
     return json.loads((input_directory() / 'radar-launch-properties.json').read_text())['properties']
 
 
-def radar_ready(asset, guidance, template, body, target):
-    """Native launcher activation, ready updates and constructor handoff.
+def radar_reset(asset, template, body):
+    """Website launcher properties and the seeker reset at the launcher pose; no target input.
 
-    Warm-up is complete before the two supplied 48 Hz prelaunch intervals.
-    Both actors follow their entered constant velocities over those intervals,
-    with constant attitude. Signal/range/Doppler rejection is excluded by the
-    website policy; source masks and head geometry remain native. No prediction
-    preview or aircraft-associated-unit lookup is requested.
+    Every launch from the same launcher state shares this part of radar_ready,
+    so a caller may compute it once and pass it back in.
     """
     p = deepcopy(radar_properties()[Path(asset).name])
     p['modes']['shared']['gate_rate'] = BOUND
@@ -50,6 +47,29 @@ def radar_ready(asset, guidance, template, body, target):
             designated[name].update(minimum=0. if name=='distance' else -BOUND,
                                     maximum=BOUND, unambiguous=2*BOUND,
                                     signal_width_min=max(1., designated[name]['signal_width_min']))
+
+    def packet(t):
+        position = [f32(a+v*t) for a,v in zip(body['position'],body['velocity'])]
+        return [*position,*body['quaternion'],*body['velocity'],0.,0.,0.,f32(t)]
+
+    start = body_frame(packet(-2*STEP))
+    reset = radar_modes(p['modes'], template['seeker'], body_frame(packet(-3*STEP)),
+                        start, lambda _: {}, 0., mode=0)
+    return p, start, reset['state']
+
+
+def radar_ready(asset, guidance, template, body, target, reset=None):
+    """Native launcher activation, ready updates and constructor handoff.
+
+    Warm-up is complete before the two supplied 48 Hz prelaunch intervals.
+    Both actors follow their entered constant velocities over those intervals,
+    with constant attitude. Signal/range/Doppler rejection is excluded by the
+    website policy; source masks and head geometry remain native. No prediction
+    preview or aircraft-associated-unit lookup is requested. reset is
+    radar_reset() for the same asset, template and body when the caller kept it.
+    """
+    if reset is None: p, start, seeker_reset = radar_reset(asset, template, body)
+    else: p = reset[0]; start, seeker_reset = deepcopy(reset[1:])
     source = next((s for s in (6, 3, 5, 2, 1, 4, 7, 8, 9, 0) if p['primary_mask'] & (1 << s)), None)
 
     def packet(t):
@@ -64,11 +84,8 @@ def radar_ready(asset, guidance, template, body, target):
                      point=[f32(a+v*t) for a,v in zip(target['position'],target['velocity'])],
                      relative_velocity=[sub(a,b) for a,b in zip(target['velocity'],body['velocity'])])]
 
-    start = body_frame(packet(-2*STEP))
-    reset = radar_modes(p['modes'], template['seeker'], body_frame(packet(-3*STEP)),
-                        start, lambda _: {}, 0., mode=0)
     state = dict(phase=0, activation_time=-float.fromhex('0x1.fffffep127'), strength=0.,
-                 association_flag=False, seeker=reset['state'], inertial=inertial_initial(),
+                 association_flag=False, seeker=seeker_reset, inertial=inertial_initial(),
                  output=dict(half_angle=0., direction=[1.,0.,0.], range=-1., phase=-1,
                              strength=0., use_target_id=False, associated_id=-1))
     state = activate_radar(p, state, start, records(-2*STEP))['state']
@@ -107,23 +124,34 @@ def radar_ready(asset, guidance, template, body, target):
     return handed, diagnostics
 
 
-def optical_ready(rocket, guidance, template, body, target):
+def optical_reset(rocket, guidance, q):
+    """Launcher properties and the seeker reset in body attitude q; no target input.
+
+    Every launch from the same launcher state shares this part of
+    optical_ready, so a caller may compute it once and pass it back in.
+    """
+    p = properties(rocket, guidance)  # Reject unsupported launcher families.
+    launcher = initial()
+    ss = launcher['seeker']
+    # Reset in the supplied body frame. Constructor +X is not world boresight
+    # for a rotated launch, and must not leak from a reference trajectory.
+    reset = update(p['seeker'], ss['state'], q, -2*STEP, -STEP,
+                   lambda _: {}, mode=0, opaque_state=ss['opaque_state'])
+    return p, launcher, {key: reset[key] for key in ('state', 'opaque_state')}
+
+
+def optical_ready(rocket, guidance, template, body, target, reset=None):
     """Acquire once at the supplied pose, then use the native constructor copy.
 
     Warm-up is assumed complete. Acquisition uses mode 4, including its tighter
     lock-angle bound, rather than injecting a mode-8 track at arbitrary angles.
     Initial acquisition reseeds filter rate just as the recovered routine does.
     Failed acquisition still hands off the actual head state for in-flight search.
+    reset is optical_reset() for body['quaternion'] when the caller kept it.
     """
-    p = properties(rocket, guidance)  # Reject unsupported launcher families.
-    launcher = initial()
     q = body['quaternion']
-    ss = launcher['seeker']
-    # Reset in the supplied body frame. Constructor +X is not world boresight
-    # for a rotated launch, and must not leak from a reference trajectory.
-    reset = update(p['seeker'], ss['state'], q, -2*STEP, -STEP,
-                   lambda _: {}, mode=0, opaque_state=ss['opaque_state'])
-    ss = {key: reset[key] for key in ('state', 'opaque_state')}
+    if reset is None: p, launcher, ss = optical_reset(rocket, guidance, q)
+    else: p = reset[0]; launcher, ss = deepcopy(reset[1:])
     raw = ss['opaque_state']
     mask = p['seeker']['designation_mask']
     source = next((s for s in (6, 3, 5, 2, 1, 4, 7, 8, 9, 0) if mask & (1 << s)), None)
