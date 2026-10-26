@@ -521,6 +521,7 @@
 !/scripts/missile_telemetry.py
 !/scripts/missile_tracking.py
 !/scripts/missile_worker.py
+!/scripts/overrev.py
 !/scripts/piston_compressor.py
 !/scripts/piston_general.py
 !/scripts/piston_model.py
