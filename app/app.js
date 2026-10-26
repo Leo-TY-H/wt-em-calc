@@ -697,9 +697,10 @@ async function inspect(a,p,clicked){
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
   $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.turn_dps,2)} °/s`;
-  $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
+  // Only exceptions get a status tag; a normal solved point needs none (Leo, 2026-10-26).
+  $('point-status').innerHTML=clicked?.nearest||!chartUsable(p)?`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`:'';
   const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
-  const note=clicked?`<div class="point-note">Clicked ${where}. ${clicked.nearest?'The details are for the nearest solved point; this server cannot solve the clicked point.':'This state is solved there with the full model.'}</div>`:'';
+  const note=clicked?.nearest?`<div class="point-note">Clicked ${where}. The details are for the nearest solved point; this server cannot solve the clicked point.</div>`:'';
   // A third row entry hides that row on the page; it stays in the markup (Leo, 2026-10-23).
   const dl=rows=>'<dl>'+rows.map(([k,v,hide])=>`<dt${hide?' hidden':''}>${k}</dt><dd${hide?' hidden':''}>${v}</dd>`).join('')+'</dl>';
   if(p.not_evaluated){$('point-content').innerHTML=dl([['Not calculated',escapeText(p.reasons.join(', '))]])+note;return;}
