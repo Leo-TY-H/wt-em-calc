@@ -695,11 +695,28 @@
       for (let cx = Math.floor(box[0] / cell); cx <= Math.floor(box[2] / cell); cx++) for (let cy = Math.floor(box[1] / cell); cy <= Math.floor(box[3] / cell); cy++) {
         const keys = lines.get(cx + ',' + cy); if (keys) for (const key of keys) if (key !== own) { n++; break; }
       } return n; };
+    // One label on each outline's farthest loop (the maximum range). The smaller loops near the target (minimum
+    // range) get their own label only once zoomed in far enough that the loop spans MIN_LOOP_PX on screen.
+    const MIN_LOOP_PX = 160, items = [];
     shown.forEach((line, key) => {
+      const loops = []; let loop = [];
+      line.x.forEach((x, i) => { if (x == null || line.y[i] == null) { if (loop.length > 1) loops.push(loop); loop = []; } else loop.push([x, line.y[i]]); });
+      if (loop.length > 1) loops.push(loop);
+      if (!loops.length) return;
+      const reach = l => Math.max(...l.map(([x, y]) => Math.hypot(x, y))), main = loops.reduce((m, l) => reach(l) > reach(m) ? l : m);
+      items.push({line, key, loop: main});
+      for (const l of loops) {
+        if (l === main) continue;
+        const q = l.map(([x, y]) => px(x, y)), span = Math.max(Math.max(...q.map(v => v[0])) - Math.min(...q.map(v => v[0])), Math.max(...q.map(v => v[1])) - Math.min(...q.map(v => v[1])));
+        if (span >= MIN_LOOP_PX) items.push({line, key, loop: l, minor: true});
+      }
+    });
+    items.sort((a, b) => !!a.minor - !!b.minor);
+    for (const {line, key, loop} of items) {
       const w = line.text.length * 6.6 + 6, h = 15;
-      const pts = line.x.map((x, i) => x == null || line.y[i] == null ? null : px(x, line.y[i]));
+      const pts = loop.map(([x, y]) => px(x, y));
       const along = [0]; for (let i = 1; i < pts.length; i++) along.push(along[i - 1] + (pts[i] && pts[i - 1] ? Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) : 0));
-      const total = along.at(-1); if (total < w * 1.5) return;
+      const total = along.at(-1); if (total < w * 1.5) continue;
       let best = null;
       for (let f = .04; f <= .96; f += .02) {
         const target = total * f, i = along.findIndex(v => v >= target); if (i < 1 || !pts[i] || !pts[i - 1]) continue;
@@ -715,11 +732,11 @@
         const score = crossings(box, key) * 10 + Math.max(0, 60 - near) / 6 + Math.abs(f - (key % 2 ? .62 : .38)) * 8;
         if (!best || score < best.score) best = {score, cx, cy, box, angle};
       }
-      if (!best) return;
+      if (!best) continue;
       placed.push(best.box);
       labels.push({envLabel: true, x: xa.p2l(best.cx), y: ya.p2l(best.cy), xref: 'x', yref: 'y', text: line.text, textangle: best.angle, showarrow: false,
         xanchor: 'center', yanchor: 'middle', bgcolor: 'rgba(0,0,0,.88)', borderpad: 1, font: {color: line.color, size: 11, family: font}});
-    });
+    }
     labeling = true;
     Plotly.relayout(node, {annotations: [...(node.layout.annotations || []).filter(a => !a.envLabel), ...labels]}).finally(() => { labeling = false; });
   }
