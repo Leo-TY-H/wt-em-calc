@@ -15,13 +15,25 @@ the missile pointed at the target, and layers are target altitudes
 (Leo, 2026-10-26). Azimuth is the launcher's bearing from the target's nose
 (0 = head-on, 180 = tail chase).
 
-Each layer is sampled along horizontal rays from the target. Along a ray the
-launch distance is searched for its hit/miss transitions; the nearest and
-farthest hit boundaries are the minimum and maximum launch ranges. Rays start on
-a regular azimuth grid (Planner). Between two finished neighbours another ray is
-added where one hits and the other does not, down to the edge step, and where
-their gaps between hits differ or their boundaries bend, down to the detail
-step. Boundary changes are judged against the envelope's own size, so the
+frame='launcher' (air-to-air only) is the shooter-centred launch acceptable
+region: the launcher flies level along +X at the layer altitude and keeps that
+heading, and the target, at the same altitude, sits at a bearing off the
+launcher's nose (azimuth; positive toward +Z, the launcher's right). The target
+flies level toward the launcher ('hot'), away from it ('cold'), along +X
+('same'), along -X ('opposite'), or at a fixed heading in degrees relative to
+the launcher's. Were the launcher to turn toward the target, this view would
+only be the target frame turned 180 degrees; keeping the heading shows the
+off-boresight limits: the missile's launch zone (launch_angles), an optional
+gimbal limit of the launching aircraft, and the seeker's own limits in flight.
+Bearings outside the launch zone are not launched at (and not simulated).
+
+Each layer is sampled along horizontal rays from the aircraft at the centre.
+Along a ray the launch distance is searched for its hit/miss transitions; the
+nearest and farthest hit boundaries are the minimum and maximum launch ranges.
+Rays start on a regular azimuth grid (Planner). Between two finished neighbours
+another ray is added where one hits and the other does not, down to the edge
+step, and where their gaps between hits differ or their boundaries bend, down to
+the detail step. Boundary changes are judged against the envelope's own size, so the
 outline is resolved where it bends or ends while directions without hits, and
 scattered hits close to the target, cost little.
 
@@ -40,6 +52,8 @@ STEP_GRAVITY = 9.81
 SLANT_MINIMUM_M = 150.
 HORIZONTAL_MINIMUM_M = 50.
 PLATFORMS = ('air', 'ground')
+FRAMES = ('target', 'launcher')
+HEADINGS = ('hot', 'cold', 'same', 'opposite')
 GROUND_LAUNCH_M = 2.                # surface-to-air launch height above flat ground
 RANGE_CAP_M = 195000.
 COARSE_RATIO = 1.6
@@ -85,15 +99,26 @@ def validate(request):
         return float(value)
     missile = request.get('missile')
     if not isinstance(missile, str) or missile not in profiles(): raise ValueError('Select a supported missile')
-    if request.get('frame', 'target') != 'target': raise ValueError('Envelopes are drawn around the target; reload the page')
+    frame = request.get('frame', 'target')
+    if frame not in FRAMES: raise ValueError("Frame must be 'target' or 'launcher'")
     launcher = request.get('launcher') or {}; target = request.get('target') or {}
     if not isinstance(launcher, dict) or not isinstance(target, dict): raise ValueError('Launcher and target settings are required')
     platform = launcher.get('platform', 'air')
     if platform not in PLATFORMS: raise ValueError("Launcher platform must be 'air' or 'ground'")
-    clean = dict(missile=missile, frame='target',
+    if frame == 'launcher' and platform != 'air': raise ValueError('The launcher-centred envelope is air-to-air only')
+    clean = dict(missile=missile, frame=frame,
                  launcher=dict(platform=platform,
                                speed_mps=0. if platform == 'ground' else number(launcher.get('speed_mps'), 'Launcher speed', 0., 2000.)),
                  target=dict(speed_mps=number(target.get('speed_mps'), 'Target speed', 0., 2000.)))
+    if frame == 'launcher':
+        heading = target.get('heading', 'hot')
+        if isinstance(heading, str):
+            if heading not in HEADINGS: raise ValueError('Unknown target heading rule')
+        else: heading = number(heading, 'Target heading', -180., 180.)
+        clean['target']['heading'] = heading
+        # Optional off-nose limit of the launching aircraft's sensor (Leo, 2026-10-26).
+        gimbal = launcher.get('gimbal_deg')
+        clean['launcher']['gimbal_deg'] = None if gimbal is None else number(gimbal, 'Launcher gimbal limit', 1., 180.)
     layers = request.get('layers_m')
     if not isinstance(layers, list) or not 1 <= len(layers) <= MAX_LAYERS:
         raise ValueError(f'Supply between 1 and {MAX_LAYERS} layer altitudes')
@@ -116,10 +141,14 @@ def validate(request):
 def mirrored(config):
     """Left/right symmetric setups are searched on one side and mirrored.
 
-    The target flies along +X and the launcher always heads toward it, so every
-    envelope is symmetric about the target's track.
+    Target frame: the target flies along +X and the launcher always heads toward
+    it, so every envelope is symmetric about the target's track. Launcher frame:
+    symmetric about the launcher's track unless the target crosses it at a
+    fixed heading.
     """
-    return True
+    if config['frame'] == 'target': return True
+    heading = config['target']['heading']
+    return isinstance(heading, str) or heading % 180. == 0.
 
 
 def azimuths(config):
@@ -151,6 +180,14 @@ def states(config, layer, azimuth, distance):
     a shared placement lets the simulator tab replay any envelope sample exactly.
     """
     a = math.radians(azimuth)
+    if config['frame'] == 'launcher':
+        # Both at the layer altitude; the launcher keeps flying along +X whatever the target's bearing.
+        launcher = dict(position=[0., layer, 0.], velocity=_direction(0., 0., config['launcher']['speed_mps']), angles=[0., 0., 0.])
+        rule = config['target']['heading']
+        heading = _wrap(dict(hot=azimuth + 180., cold=azimuth, same=0., opposite=180.)[rule] if isinstance(rule, str) else rule)
+        target = dict(position=[distance * math.cos(a), layer, distance * math.sin(a)],
+                      velocity=_direction(heading, 0., config['target']['speed_mps']), angles=[heading, 0., 0.])
+        return launcher, target
     target = dict(position=[-distance * math.cos(a), layer, -distance * math.sin(a)],
                   velocity=_direction(0., 0., config['target']['speed_mps']), angles=[0., 0., 0.])
     heading = _wrap(azimuth + 180.)
@@ -303,7 +340,48 @@ def missile_limits(missile):
     rocket = frame.flight.properties['rocket']
     fuze = float(rocket.get('proximityFuse', {}).get('radius', 0.) or 0.) if rocket.get('hasProximityFuse', False) else 0.
     return dict(lifetime_s=frame.limits['lifetime'], distance_limit_m=frame.limits['distance_limit'], family=frame.flight.family,
-                fuze_radius_m=fuze)
+                fuze_radius_m=fuze, launch_angle_deg=launch_angles(rocket, frame.flight.family))
+
+
+def launch_angles(rocket, family):
+    """Launch-zone half-angles off the launcher's nose (yaw, pitch) in degrees.
+
+    aces.exe 2.59.0.86: every guided launcher loads guidance.launchAngleMax
+    (default 90/90 for optical launchers 0x143ec3d00, 0/0 for radar launchers
+    0x1452b9570) and its seeker's lockAngleMax (default 5, 0x14332b300). The
+    launch-zone query the HUD reads (launcher properties vtable +0x78: radar
+    0x1452ba6d0, optical 0x143ec52d0) reports max(launchAngleMax, lockAngleMax)
+    per axis for radar launchers and min(launchAngleMax, lockAngleMax) for
+    optical ones. So a radar missile launches within its seeker's lock angle
+    unless launchAngleMax widens it (R-77-1, RVV-SD, MICA-EM, PL-12: 180/90),
+    and an optical one within the smaller of the two.
+    """
+    guidance = rocket.get('guidance', {})
+    if family == 'radar':
+        seeker = guidance.get('radarSeeker', {})
+        default = [0., 0.]
+    else:
+        seeker = guidance.get('irSeeker', guidance.get('opticalSeeker', {}))
+        default = [90., 90.]
+    lock = float(seeker.get('lockAngleMax', 5.))
+    launch = [float(v) for v in guidance.get('launchAngleMax', default)]
+    if family == 'radar': return [max(a, lock) for a in launch]
+    return [min(a, lock) for a in launch]
+
+
+def launch_yaw_limit(config, limits):
+    """Largest target bearing off the nose (deg) that can be launched at, or None without a limit.
+
+    In the launcher frame both aircraft fly level at the same altitude, so the
+    target's pitch off the nose is zero and only the yaw limit applies: the
+    missile's launch zone and the launching aircraft's gimbal limit. In the
+    target frame the launcher points at the target.
+    """
+    if config['frame'] != 'launcher': return None
+    limit = limits['launch_angle_deg'][0]
+    gimbal = config['launcher']['gimbal_deg']
+    if gimbal is not None and gimbal < limit: limit = gimbal
+    return limit
 
 
 def _middle(a, b):
@@ -326,6 +404,7 @@ class Ray:
         self.simulations = 0
         self.started = self.finished = None
         self.seed_source = None
+        self.blocked = False   # outside the launch zone: no launch, nothing to simulate
 
     def width(self, r): return max(self.tolerance_m, self.tolerance * r)
 
@@ -349,6 +428,7 @@ class Ray:
             if values:
                 outcomes = yield values
                 self.samples.update(zip(values, outcomes))
+        if self.blocked: return self.finish()
         hits = lambda: sorted(r for r, o in self.samples.items() if o['hit'])
         out = inward = down = up = .1
         descend = ascend = bottom = None   # inner probes of the predicted maximum and minimum
@@ -450,6 +530,7 @@ class Ray:
                                max_time_s=self.samples[last['last']]['time_s'], min_time_s=self.samples[first['first']]['time_s'])
         else:
             self.result.update(min_range_m=None, max_range_m=None)
+        if self.blocked: self.result['blocked'] = True
         return self.result
 
 
@@ -468,6 +549,7 @@ def plan(config, limits):
     slant = limits['distance_limit_m'] if limits['distance_limit_m'] > 0 else 3000. * limits['lifetime_s']
     slant += config['target']['speed_mps'] * limits['lifetime_s'] + 2000.
     unit = finest_step(config)
+    yaw_limit = launch_yaw_limit(config, limits)
     rays = []
     for li, layer in enumerate(config['layers_m']):
         dh = abs(vertical_offset(config, layer))
@@ -477,10 +559,16 @@ def plan(config, limits):
         for ai, azimuth in enumerate(azimuths(config)):
             ray = Ray((li, round(azimuth / unit)), layer, azimuth, low, max(high, low), config['tolerance'], config['tolerance_m'])
             ray.cell = (li, ai)
+            ray.blocked = outside(yaw_limit, azimuth)
             rays.append(ray)
     if len(rays) > MAX_RAYS:
         raise ValueError(f'Too many search directions ({len(rays)}); use fewer layers or a coarser azimuth step (limit {MAX_RAYS})')
     return rays
+
+
+def outside(yaw_limit, azimuth):
+    """Whether a ray's bearing lies outside the launch zone (yaw_limit None: no limit)."""
+    return yaw_limit is not None and abs(_wrap(azimuth)) > yaw_limit + 1e-9
 
 
 def finest_step(config):
@@ -603,6 +691,7 @@ class Planner:
     def __init__(self, config, limits):
         self.config = config
         self.unit = finest_step(config)
+        self.yaw_limit = launch_yaw_limit(config, limits)
         self.circular = not mirrored(config)
         self.period = round(360. / self.unit)
         angles = azimuths(config)
@@ -688,6 +777,7 @@ class Planner:
         key = (layer, position)
         ray = Ray(key, left.layer, position * self.unit, left.low, left.high, left.tolerance, left.tolerance_m,
                   level=max(left.level, right.level) + 1)
+        ray.blocked = outside(self.yaw_limit, ray.azimuth)
         line = self.lines[layer]
         index = 0
         while index < len(line) and line[index] < position: index += 1

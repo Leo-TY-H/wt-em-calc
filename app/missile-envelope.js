@@ -12,7 +12,8 @@
   }
   const REMOVE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-  const radians = a => a * Math.PI / 180;
+  // As Python's math.radians (x * (pi / 180)), so a replayed shot starts from the searched sample's exact numbers.
+  const radians = a => a * (Math.PI / 180);
   // Base directions per layer; the search adds directions where the envelope bends, splits or ends.
   const qualities = {
     quick: {step: 30, edge: 1, label: 'Quick · 30° directions, edges to 1°'},
@@ -22,6 +23,11 @@
     target: {speed: 900},
     launcher: {speed: 900},
     altitudes: [1000, 2000, 4000, 6000, 8000, 10000]};
+  // Launcher at centre (shooter-centred launch acceptable region, Leo 2026-10-26): the launcher keeps its heading
+  // and the target, at its altitude, flies one of these ways; 'crossing' is a heading relative to the launcher's.
+  const motions = {hot: {label: 'Toward me', text: 'Target flying toward you'}, cold: {label: 'Away from me', text: 'Target flying away from you'},
+    same: {label: 'Same way as me', text: 'Target flying your heading'}, opposite: {label: 'Opposite way', text: 'Target flying the opposite heading'},
+    crossing: {label: 'At a heading…', text: 'Target heading'}};
   // One colour per added missile, as on the trajectory page.
   const COLORS = ['#38c9d7', '#b79aff', '#91d477', '#ee8eb6', '#f0d367', '#79a7fa', '#cfb296', '#f08070'], MAX_MISSILES = 8, MAX_ALTITUDES = 25;
   const numberField = (id, label, unit, value, min, max, step = 'any') =>
@@ -41,6 +47,9 @@
     </fieldset>
     <span class="eyebrow">SCENARIO</span>
     <div class="mode-switch" role="radiogroup" aria-label="Launch platform"><label><input id="envelope-platform-air" type="radio" name="envelope-platform" value="air" checked><span>Air-to-air</span></label><label><input id="envelope-platform-ground" type="radio" name="envelope-platform" value="ground"><span>Surface-to-air</span></label></div>
+    <div class="mode-switch" role="radiogroup" aria-label="Plot centre"><label><input id="envelope-centre-target" type="radio" name="envelope-centre" value="target" checked><span>Target at centre</span></label><label><input id="envelope-centre-launcher" type="radio" name="envelope-centre" value="launcher"><span>Launcher at centre</span></label></div>
+    <div id="envelope-motion" class="envelope-motion" hidden><label class="field">Target flies<select id="envelope-target-heading">${Object.entries(motions).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('')}</select></label>${numberField('envelope-crossing', 'Target heading', '°', 90, -180, 180)}<label class="field">Launcher gimbal limit<div class="input-unit"><input id="envelope-gimbal" type="number" min="1" max="180" step="any" placeholder="None" aria-label="Launcher gimbal limit"><span>±°</span></div></label></div>
+    <p id="envelope-centre-note" class="hint" hidden>A ground launcher turns toward the target, so this is the target-centred envelope drawn around the launcher, with the target flying up the plot.</p>
     <div class="envelope-pair">${numberField('envelope-launcher-speed', 'Launcher speed', 'km/h', defaults.launcher.speed, 0, 7200)}${numberField('envelope-target-speed', 'Target speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
     <div class="field contour-settings"><span id="envelope-altitudes-label">Altitudes · m</span><div id="envelope-altitudes" class="contour-levels"></div><div class="contour-add"><input id="envelope-altitude-input" type="number" min="50" max="25000" step="any" aria-label="New altitude in metres" placeholder="New altitude"><button id="envelope-altitude-add" type="button">Add</button></div><span id="envelope-altitude-status" class="hint" role="status"></span></div>
     <span class="eyebrow">SEARCH</span>
@@ -68,6 +77,8 @@
 
   // Each added missile gets its own envelope run; the geometry helpers read the run in use (rays, submitted, jobInfo, cache).
   let meta = null, loading = null, selected = [], runs = [], job = null, cancelRequested = false, altitudes = [...defaults.altitudes];
+  // Results are kept for each plot centre, so switching between them never recalculates.
+  const runSets = {target: [], launcher: []}, statusText = {target: '', launcher: ''};
   let rays = new Map(), submitted = null, summary = null;
   let jobInfo = null, polling = false, renderTimer = null, lastRender = 0, downloadUrls = [], inspected = null, cache = null;
 
@@ -85,12 +96,21 @@
   const layers = () => [...altitudes].sort((a, b) => a - b);
   // Surface-to-air (Leo, 2026-10-26): the launcher stands on the ground and the altitudes are the target's.
   const ground = () => el('envelope-platform-ground').checked;
+  const centreOn = () => el('envelope-centre-launcher').checked ? 'launcher' : 'target';
+  // The searched frame: a ground launcher turns toward the target, so around it the target frame is only redrawn.
+  const frameOf = () => centreOn() === 'launcher' && !ground() ? 'launcher' : 'target';
   function platformControls() {
     const launcherSpeed = el('envelope-launcher-speed').closest('.field');
     launcherSpeed.hidden = ground(); el('envelope-launcher-speed').disabled = ground();
     el('envelope-altitudes-label').textContent = ground() ? 'Target altitudes · m' : 'Altitudes · m';
+    const motion = frameOf() === 'launcher', crossing = el('envelope-target-heading').value === 'crossing';
+    el('envelope-motion').hidden = !motion;
+    el('envelope-crossing').closest('.field').hidden = !crossing; el('envelope-crossing').disabled = !motion || !crossing;
+    el('envelope-gimbal').disabled = !motion;
+    el('envelope-centre-note').hidden = !(centreOn() === 'launcher' && ground());
   }
-  for (const id of ['envelope-platform-air', 'envelope-platform-ground']) el(id).addEventListener('change', () => { platformControls(); updateForm(); });
+  for (const id of ['envelope-platform-air', 'envelope-platform-ground', 'envelope-target-heading']) el(id).addEventListener('change', () => { platformControls(); updateForm(); });
+  for (const id of ['envelope-centre-target', 'envelope-centre-launcher']) el(id).addEventListener('change', () => { platformControls(); updateForm(); showCentre(); });
   function renderAltitudes() {
     el('envelope-altitudes').innerHTML = layers().map(a => `<button type="button" data-altitude-remove="${a}" aria-label="Remove ${fmt(a)} m">${fmt(a)} ×</button>`).join('');
   }
@@ -107,9 +127,11 @@
   });
   el('envelope-altitude-input').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); el('envelope-altitude-add').click(); } });
   function inputs() {
-    return {quality: el('envelope-quality').value, layers_m: layers(),
-      target: {speed_mps: value('envelope-target-speed') / 3.6},
-      launcher: ground() ? {platform: 'ground', speed_mps: 0} : {platform: 'air', speed_mps: value('envelope-launcher-speed') / 3.6}};
+    const frame = frameOf(), rule = el('envelope-target-heading').value, gimbal = el('envelope-gimbal').value.trim();
+    return {quality: el('envelope-quality').value, layers_m: layers(), frame,
+      target: {speed_mps: value('envelope-target-speed') / 3.6, ...(frame === 'launcher' ? {heading: rule === 'crossing' ? value('envelope-crossing') : rule} : {})},
+      launcher: ground() ? {platform: 'ground', speed_mps: 0} : {platform: 'air', speed_mps: value('envelope-launcher-speed') / 3.6,
+        ...(frame === 'launcher' ? {gimbal_deg: gimbal ? Number(gimbal) : null} : {})}};
   }
   function updateForm() {
     const fields = [...el('envelope-form').querySelectorAll('input[type=number]:not(:disabled):not(#envelope-altitude-input)')];
@@ -184,8 +206,8 @@
   el('envelope-form').addEventListener('input', event => { if (!['envelope-search', 'envelope-altitude-input'].includes(event.target.id)) updateForm(); });
   el('envelope-form').addEventListener('change', event => { if (!['envelope-search', 'envelope-altitude-input'].includes(event.target.id)) updateForm(); });
   function reset() {
-    for (const [id, v] of [['envelope-target-speed', defaults.target.speed], ['envelope-launcher-speed', defaults.launcher.speed]]) el(id).value = v;
-    el('envelope-platform-air').checked = true; platformControls();
+    for (const [id, v] of [['envelope-target-speed', defaults.target.speed], ['envelope-launcher-speed', defaults.launcher.speed], ['envelope-crossing', 90]]) el(id).value = v;
+    el('envelope-platform-air').checked = true; el('envelope-target-heading').value = 'hot'; el('envelope-gimbal').value = ''; platformControls();
     altitudes = [...defaults.altitudes]; renderAltitudes(); el('envelope-altitude-status').textContent = '';
     el('envelope-quality').value = defaults.quality; el('envelope-search').value = '';
     if (meta) filter();
@@ -197,6 +219,7 @@
   const RUN_LABEL = el('envelope-run').innerHTML;
   function busy(on) {
     el('envelope-cancel').hidden = !on; el('envelope-reset').disabled = on;
+    for (const id of ['envelope-centre-target', 'envelope-centre-launcher']) el(id).disabled = on;
     const run = el('envelope-run');
     run.innerHTML = on ? 'Calculating…' : RUN_LABEL; run.classList.toggle('calculating', on); run.style.setProperty('--progress', '0%');
     filter(); renderSelected(); updateForm();
@@ -207,8 +230,8 @@
   el('envelope-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (job || el('envelope-run').disabled) return;
-    const base = inputs();
-    runs = selected.map((missile, index) => ({missile, index, color: COLORS[index], submitted: {...base, missile}, rays: new Map(), jobInfo: null, summary: null, cache: null}));
+    const base = inputs(), centre = centreOn();
+    runs = runSets[centre] = selected.map((missile, index) => ({missile, index, color: COLORS[index], submitted: {...base, missile}, rays: new Map(), jobInfo: null, summary: null, cache: null}));
     showError(''); inspected = null; cancelRequested = false; el('envelope-status').textContent = '';
     renderInspector(); setExports(false); render().catch(error => showError(error.message));
     job = 'starting'; busy(true);
@@ -224,7 +247,7 @@
     }
     job = null; el('envelope-cancel').disabled = false; busy(false);
     const directions = runs.reduce((n, run) => n + run.rays.size, 0), sims = runs.reduce((n, run) => n + (run.summary?.simulations || 0), 0);
-    el('envelope-status').textContent = cancelRequested ? `Stopped · ${fmt(directions)} directions kept`
+    el('envelope-status').textContent = statusText[centre] = cancelRequested ? `Stopped · ${fmt(directions)} directions kept`
       : `Calculated in ${fmt((performance.now() - started) / 1000, 1)} s · ${fmt(directions)} directions, ${fmt(sims)} simulations`;
     if (errors.length) showError(errors.join(' · '));
     await render(); setExports(directions > 0);
@@ -265,17 +288,33 @@
   function states(c, layer, azimuth, distance) {
     const a = radians(azimuth);
     const direction = (h, p, s) => [s * Math.cos(radians(p)) * Math.cos(radians(h)), s * Math.sin(radians(p)), s * Math.cos(radians(p)) * Math.sin(radians(h))];
+    if (c.frame === 'launcher') {
+      // The launcher keeps flying along +X; the target sits off its nose (Python's _wrap, so replays match exactly).
+      const rule = c.target.heading, raw = typeof rule === 'string' ? {hot: azimuth + 180, cold: azimuth, same: 0, opposite: 180}[rule] : rule;
+      let h = raw % 360; if (h > 180) h -= 360; if (h <= -180) h += 360;
+      return {launcher: {position: [0, layer, 0], velocity: direction(0, 0, c.launcher.speed_mps), angles: [0, 0, 0]},
+        target: {position: [distance * Math.cos(a), layer, distance * Math.sin(a)], velocity: direction(h, 0, c.target.speed_mps), angles: [h, 0, 0]}};
+    }
     const h = wrap(azimuth + 180), target = {position: [-distance * Math.cos(a), layer, -distance * Math.sin(a)], velocity: direction(0, 0, c.target.speed_mps), angles: [0, 0, 0]};
     if (c.launcher.platform === 'ground') {
-      const p = Math.atan2(layer - GROUND_LAUNCH_M, distance) * 180 / Math.PI;
+      const p = Math.atan2(layer - GROUND_LAUNCH_M, distance) * (180 / Math.PI);   // as math.degrees
       return {launcher: {position: [0, GROUND_LAUNCH_M, 0], velocity: [0, 0, 0], angles: [h, p, 0]}, target};
     }
     return {launcher: {position: [0, layer, 0], velocity: direction(h, 0, c.launcher.speed_mps), angles: [h, 0, 0]}, target};
   }
+  // Bearings name the run in use: from the target's nose, or off the launcher's nose (positive to its right, +Z).
+  const launcherFrame = () => submitted?.frame === 'launcher';
   const bearingName = az => {
-    const a = Math.abs(wrap(az)), side = wrap(az) > 0 ? ' · +Z side' : wrap(az) < 0 ? ' · −Z side' : '';
+    const a = Math.abs(wrap(az));
+    if (launcherFrame()) {
+      const side = a > 0 && a < 180 ? (wrap(az) > 0 ? ' right' : ' left') : '';
+      return `Target ${fmt(a, a % 1 ? 2 : 0)}°${side} off the launcher's nose${a === 0 ? ' (dead ahead)' : a === 180 ? ' (behind)' : ''}`;
+    }
+    const side = wrap(az) > 0 ? ' · +Z side' : wrap(az) < 0 ? ' · −Z side' : '';
     return `${fmt(a, a % 1 ? 2 : 0)}° from the target's nose${a === 0 ? ' (head-on)' : a === 180 ? ' (tail chase)' : a === 90 ? ' (beam)' + side : side}`;
   };
+  const angleText = t => launcherFrame() ? `${fmt(Math.abs(t), 1)}°${Math.abs(t) > 0 && Math.abs(t) < 180 ? (t > 0 ? ' right' : ' left') : ''} off the nose`
+    : `${fmt(Math.abs(t), 1)}° from the target's nose`;
   function rayText(ray, az) {
     const lines = [`<b>${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}</b>`];
     if (ray.max_range_m === null) lines.push('No hit at any searched distance');
@@ -414,7 +453,7 @@
   // The layer's outline as polar polylines: theta in degrees, r in km.
   function polarOutline(li) {
     const g = polarField(li), o = outline(g.thetas, g.Ls, g.z), r = o.y.map(unlogKm);
-    const text = o.x.map((t, i) => t === null ? null : `${fmt(Math.abs(t), 1)}° from the target's nose · ${fmt(r[i], 2)} km`);
+    const text = o.x.map((t, i) => t === null ? null : `${angleText(t)} · ${fmt(r[i], 2)} km`);
     return {theta: o.x, r, text};
   }
   // Hit intervals along every grid bearing (km), for the filled region.
@@ -465,11 +504,24 @@
   };
   const multi = () => runs.length > 1;
   const shownRuns = () => runs.filter(run => run.rays.size);
-  const revision = view => view + ':' + JSON.stringify(runs.map(run => run.submitted));
+  const revision = view => view + ':' + centreOn() + JSON.stringify(runs.map(run => run.submitted));
+  // What the plot is drawn around. A ground launch searched around the target is turned half a circle to put the
+  // launcher at the centre, the target flying up the plot; its bearings still name the target's aspect.
+  const sight = () => {
+    const c = runs[0]?.submitted, turned = c?.frame === 'target' && centreOn() === 'launcher';
+    return {launcher: c?.frame === 'launcher', centre: c?.frame === 'launcher' || turned ? 'launcher' : 'target', turn: turned ? 180 : 0};
+  };
+  // Top views on km axes: bearing 0 up, positive bearings to the right, after the view's turn.
+  const plotXY = (r, t) => r == null || t == null ? [null, null] : [r * Math.sin(radians(t + sight().turn)), r * Math.cos(radians(t + sight().turn))];
+  // Label of a bearing a (deg, 0..360 clockwise) in the run's own frame.
+  const bearingTick = a => {
+    const b = a > 180 ? 360 - a : a;
+    return sight().launcher ? (b === 0 ? '0° ahead' : b === 180 ? '180° behind' : `${b}°`) : b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`;
+  };
   function polarLayout(radius, revision, annotations = []) {
     const ticks = Array.from({length: 12}, (_, i) => i * 30);
-    const label = a => { const b = a > 180 ? 360 - a : a; return b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`; };
-    return {...theme, margin: {l: 40, r: 40, t: 40, b: 40}, hovermode: 'closest', uirevision: revision, annotations,
+    const label = bearingTick;
+    return {...theme, margin: {l: 40, r: 40, t: 40, b: 40}, hovermode: 'closest', uirevision: revision, annotations: [...motionNotes(), ...annotations],
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {color: tick, size: 12}, bgcolor: 'rgba(0,0,0,0)', groupclick: 'togglegroup',
         ...(multi() ? {} : {title: {text: runs[0]?.submitted.launcher.platform === 'ground' ? 'Target altitude' : 'Altitude', font: {color: tick, size: 12}}})},
       polar: {bgcolor: '#000000',
@@ -491,7 +543,7 @@
     layerSelect.value = current !== '' && current < c.layers_m.length ? current : nearestLayer(c);
     const cutSelect = el('envelope-cut'), cut = cutSelect.value, step = Math.min(15, baseStep());
     const cuts = Array.from({length: Math.round(180 / step)}, (_, i) => i * step);
-    cutSelect.replaceChildren(...cuts.map(a => { const o = document.createElement('option'); o.value = a; o.textContent = `${fmt(a, 1)}° / ${fmt(wrap(a + 180), 1)}°${a === 0 ? ' · head-on / tail' : ''}`; return o; }));
+    cutSelect.replaceChildren(...cuts.map(a => { const o = document.createElement('option'); o.value = a; o.textContent = `${fmt(a, 1)}° / ${fmt(wrap(a + 180), 1)}°${a === 0 ? (launcherFrame() ? ' · ahead / behind' : ' · head-on / tail') : ''}`; return o; }));
     cutSelect.value = cut !== '' && cuts.includes(Number(cut)) ? cut : 0;
   }
   async function render() {
@@ -506,11 +558,43 @@
     if (view === 'contours') await renderContours(); else if (view === 'layer') await renderLayer(); else await renderProfile();
     if (inspected) renderInspector();
   }
-  // The target at the centre.
+  // The target at the centre, or the launcher.
   function polarTarget(radius) {
     // No heading arrow (Leo, 2026-10-26): the 0° head-on label already gives the target's direction.
+    if (sight().centre === 'launcher') {
+      const air = sight().launcher;
+      return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: air ? 'triangle-up' : 'square', size: 11, color: '#eff7ff'},
+        hovertemplate: (air ? 'Launcher, flying up the plot' : 'Launcher on the ground') + '<extra></extra>', showlegend: false}];
+    }
     return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'},
         hovertemplate: 'Target<extra></extra>', showlegend: false}];
+  }
+  // Bearings beyond the launching aircraft's gimbal limit are greyed out (Leo, 2026-10-26).
+  function gimbalTrace(radius) {
+    const g = runs[0]?.submitted.launcher.gimbal_deg;
+    if (!sight().launcher || !g || g >= 180) return [];
+    const R = kmOf(radius) * 1.3, theta = [0], r = [0];
+    for (let a = g; a < 360 - g; a += 1) { theta.push(a); r.push(R); }
+    theta.push(360 - g, 0); r.push(R, 0);
+    return [{type: 'scatterpolar', mode: 'lines', r, theta, fill: 'toself', fillcolor: 'rgba(240,240,250,.07)', line: {width: 0},
+      hoveron: 'fills', name: `Beyond the launcher's gimbal limit (±${fmt(g, g % 1 ? 1 : 0)}°)`, showlegend: false}];
+  }
+  // Around the launcher, a note in the top-right corner says how the target flies, with an arrow when its heading is fixed.
+  function motionNotes() {
+    const s = sight(), c = runs[0]?.submitted;
+    if (s.centre !== 'launcher' || !c) return [];
+    const rule = c.target.heading, speed = `${fmt(c.target.speed_mps * 3.6)} km/h`;
+    let text, heading = null;
+    if (!s.launcher) { text = `Target flying up the plot · ${speed}`; heading = 0; }
+    else if (typeof rule === 'number') { text = `Target heading ${fmt(Math.abs(rule), rule % 1 ? 1 : 0)}°${rule % 180 ? (rule > 0 ? ' right' : ' left') + ' of yours' : ''} · ${speed}`; heading = rule; }
+    else { text = `${motions[rule].text} · ${speed}`; heading = {same: 0, opposite: 180}[rule] ?? null; }
+    const notes = [{xref: 'paper', yref: 'paper', x: 1, y: 1, xanchor: 'right', yanchor: 'top', showarrow: false, text, font: {size: 12, color: '#ffd0ac'}}];
+    if (heading !== null) {
+      const L = 34, dx = Math.sin(radians(heading)), dy = Math.cos(radians(heading));
+      notes.push({xref: 'paper', yref: 'paper', x: 1, y: 1, xshift: -24 + L / 2 * dx, yshift: -44 + L / 2 * dy, ax: -L * dx, ay: L * dy, text: '',
+        showarrow: true, arrowhead: 2, arrowsize: 1.2, arrowwidth: 1.6, arrowcolor: '#ffd0ac'});
+    }
+    return notes;
   }
   // Searched samples: place(ray, az, range_m) returns [a, b] (polar r km and theta, or x and y) or null.
   function sampleTraces(filterRay, place, polar) {
@@ -554,13 +638,14 @@
         traces.push({type: 'scatterpolar', mode: 'lines', name, legendgroup: group, r: o.r, theta: o.theta, text: o.text.map(t => t && runName(run) + t), connectgaps: false,
           line: {color, width: 2}, showlegend: multi() ? first : n > 1, hovertemplate: '%{text}<extra></extra>'});
         first = false;
-        const xy = o.r.map((r, i) => r == null || o.theta[i] == null ? [null, null] : [r * Math.sin(radians(o.theta[i])), r * Math.cos(radians(o.theta[i]))]);
+        const xy = o.r.map((r, i) => plotXY(r, o.theta[i]));
         labelLines.push({group, text: alt, color, order: li, x: xy.map(q => q[0]), y: xy.map(q => q[1])});
         if (el('envelope-show-rays').checked) traces.push({...rayTrace(f.lines[li]), legendgroup: group});
         traces.push({...markerTrace(boundaryPoints(f.lines[li]).map(p => [p[0], p[1], runName(run) + p[2], p[3]]), color, run, 4), legendgroup: group});
       }
       if (el('envelope-show-samples').checked) traces.push(...sampleTraces(() => true, (ray, az, r) => [kmOf(r), az], true));
     });
+    traces.unshift(...gimbalTrace(radius));
     traces.push(...polarTarget(radius));
     await draw(traces, polarLayout(radius, revision('contours')));
   }
@@ -578,6 +663,7 @@
       if (el('envelope-show-samples').checked) traces.push(...sampleTraces(ray => ray.key[0] === li, (ray, az, r) => [kmOf(r), az], true));
       traces.push({...markerTrace(boundaryPoints(line).map(p => [p[0], p[1], runName(run) + p[2], p[3]]), color, run), legendgroup: run.missile});
     });
+    traces.unshift(...gimbalTrace(radius));
     traces.push(...polarTarget(radius));
     const layout = polarLayout(radius, revision('layer'));
     layout.polar.bargap = 0; layout.showlegend = multi();
@@ -585,7 +671,7 @@
   }
   async function renderProfile() {
     labelLines = [];
-    const cutAz = Number(el('envelope-cut').value), label = a => `${fmt(Math.abs(a), 1)}° from target nose`;
+    const cutAz = Number(el('envelope-cut').value), label = a => launcherFrame() ? angleText(a) : `${fmt(Math.abs(a), 1)}° from target nose`;
     const extent = Math.max(...shownRuns().map(run => within(run, () => field().radius)));
     const nx = 401, xs = Array.from({length: nx}, (_, i) => -extent + 2 * extent * i / (nx - 1));
     const along = x => [Math.abs(x), x >= 0 ? cutAz : wrap(cutAz + 180)];
@@ -622,9 +708,10 @@
         hovertemplate: '%{text}<extra></extra>', marker: {size: 6, color, opacity: .55}, name: missileName(run.missile), showlegend: multi()});
       perLayer.forEach(v => v.forEach((s, i) => { if (s > 0) { reach[0] = Math.min(reach[0], xs[i]); reach[1] = Math.max(reach[1], xs[i]); } }));
     });
-    // The target is at every altitude: a line through the centre.
-    traces.push({type: 'scatter', mode: 'lines', x: [0, 0], y: [layersShown[0], layersShown.at(-1)], line: {color: '#ffd0ac', width: 2, dash: 'dot'},
-      hovertemplate: 'Target<extra></extra>', showlegend: false});
+    // The target (or the launcher, around it) is at every altitude: a line through the centre.
+    const centre = sight().centre === 'launcher' ? ['#eff7ff', sight().launcher ? 'Launcher' : 'Above the launcher'] : ['#ffd0ac', 'Target'];
+    traces.push({type: 'scatter', mode: 'lines', x: [0, 0], y: [layersShown[0], layersShown.at(-1)], line: {color: centre[0], width: 2, dash: 'dot'},
+      hovertemplate: centre[1] + '<extra></extra>', showlegend: false});
     // Show both sides of the cut only as far as hits reach.
     const margin = .07 * Math.max(1000, reach[1] - reach[0]);
     const layout = {...theme, margin: {l: 70, r: 25, t: multi() ? 50 : 30, b: 60}, showlegend: multi(), hovermode: 'closest', uirevision: revision('profile') + cutAz,
@@ -637,7 +724,7 @@
   // range rings and bearing spokes: same picture, the EM chart's mouse interaction. Bearing 0 (head-on) is up,
   // positive bearings (+Z side) to the right.
   function cartesianFromPolar(traces, layout) {
-    const xy = (r, t) => r == null || t == null ? [null, null] : [r * Math.sin(radians(t)), r * Math.cos(radians(t))];
+    const xy = plotXY;
     const out = [];
     for (const trace of traces) {
       if (trace.type === 'scatterpolar') {
@@ -675,8 +762,8 @@
     for (let a = 0; a < 360; a += 30) {
       const [u, v] = xy(R, a);
       shapes.push({type: 'line', xref: 'x', yref: 'y', x0: 0, y0: 0, x1: u, y1: v, line, layer: 'below'});
-      const b = a > 180 ? 360 - a : a, [lx, ly] = xy(R * 1.07, a);
-      annotations.push({x: lx, y: ly, xref: 'x', yref: 'y', showarrow: false, text: b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`,
+      const [lx, ly] = xy(R * 1.07, a);
+      annotations.push({x: lx, y: ly, xref: 'x', yref: 'y', showarrow: false, text: bearingTick(a),
         font: {size: 11, color: '#b9b9c4'}});
     }
     const {polar, ...rest} = layout, span = R * 1.16;
@@ -795,14 +882,27 @@
     if (!shown.length) return;
     const step = within(runs[0], baseStep), every = Math.ceil(30 / step - 1e-9) * step;
     const columns = Array.from({length: Math.floor(180 / every + 1e-9) + 1}, (_, i) => i * every);
-    const name = a => a === 0 ? 'Head-on' : a === 180 ? 'Tail' : a === 90 ? 'Beam' : `${fmt(a)}°`;
+    // A target crossing at a fixed heading is not symmetric: list the left side too.
+    const sided = !within(runs[0], mirrored);
+    if (sided) columns.unshift(...columns.slice(1, -1).map(a => -a).reverse());
+    const name = !within(runs[0], launcherFrame) ? a => a === 0 ? 'Head-on' : a === 180 ? 'Tail' : a === 90 ? 'Beam' : `${fmt(a)}°`
+      : a => a === 0 ? 'Ahead' : a === 180 ? 'Behind' : `${fmt(Math.abs(a))}°${sided ? (a > 0 ? ' right' : ' left') : ''}`;
     el('envelope-table').tHead.innerHTML = `<tr><th>${multi() ? 'Missile · altitude' : 'Altitude'}</th>${columns.map(a => `<th>${name(a)}<small>min – max</small></th>`).join('')}</tr>`;
     el('envelope-table').tBodies[0].innerHTML = shown.map(run => within(run, () => submitted.layers_m.map((alt, li) => `<tr><td>${runName(run)}${fmt(alt)} m</td>${columns.map(a => {
       const ray = rayNear(li, a);
       if (!ray) return '<td class="hint">…</td>';
+      if (ray.blocked) return '<td class="hint">no launch</td>';
       if (ray.max_range_m === null) return '<td class="hint">no hit</td>';
       return `<td>${ray.intervals[0].min_at_search_limit ? '≤' : ''}${km(ray.min_range_m)} – ${km(ray.max_range_m)}${ray.intervals.length > 1 ? ' *' : ''}</td>`;
     }).join('')}</tr>`).slice().reverse().join(''))).join('');
+  }
+  // The launch zone in words: the missile's own (the game's launch-zone angles) and the launcher's gimbal limit.
+  function launchZoneText(run) {
+    const zone = run.jobInfo?.plan?.limits?.launch_angle_deg, g = run.submitted.launcher.gimbal_deg, deg = v => `±${fmt(v, v % 1 ? 1 : 0)}°`;
+    const parts = [];
+    if (zone) parts.push(`the ${missileName(run.missile)} launches within ${deg(zone[0])} of the nose`);
+    if (g) parts.push(`the launcher's gimbal limit is ${deg(g)}`);
+    return parts.join(' and ') || 'the target is beyond the launch angle';
   }
   function renderInspector() {
     const box = el('envelope-inspect'), button = el('envelope-open-simulator');
@@ -813,6 +913,9 @@
     const c = submitted, ray = rayNear(inspected.layer, inspected.azimuth); run.cache = cache;
     el('envelope-inspect-title').textContent = `${multi() ? missileName(run.missile) + ' · ' : ''}${fmt(c.layers_m[inspected.layer])} m · ${bearingName(inspected.azimuth)}`;
     if (!ray) { box.innerHTML = '<p class="muted">This direction has not finished yet.</p>'; button.hidden = true; return; }
+    if (ray.blocked) {
+      box.innerHTML = `<p class="muted">Outside the launch zone, so nothing is launched: ${escapeHtml(launchZoneText(run))}.</p>`; button.hidden = true; return;
+    }
     const rows = ray.samples.map(s => `<tr><td>${km(s.range_m)}</td><td class="${s.hit ? 'envelope-hit' : 'envelope-miss'}">${s.hit ? 'Hit' : 'Miss'}</td><td>${escapeHtml(outcomeLabel(s.outcome))}</td><td>${Number.isFinite(s.time_s) ? fmt(s.time_s, 2) + ' s' : '—'}</td><td>${Number.isFinite(s.closest_m) ? closestText(s) : '—'}</td></tr>`).join('');
     const summaryText = ray.max_range_m === null ? 'No searched distance produced a hit.' :
       `Hits from ${ray.intervals[0].min_at_search_limit ? 'the closest searched distance, ' : ''}${km(ray.min_range_m)} to ${km(ray.max_range_m)}${ray.intervals.at(-1).max_at_search_limit ? ' (the search limit)' : ''}. Farthest hit flew ${fmt(ray.max_time_s, 1)} s.${ray.intervals.length > 1 ? ` Hits stop and resume ${ray.intervals.length - 1} time(s) in between.` : ''}`;
@@ -830,6 +933,20 @@
   });
   for (const id of ['envelope-view', 'envelope-layer', 'envelope-cut', 'envelope-show-rays', 'envelope-show-samples'])
     el(id).addEventListener('change', () => render().catch(error => showError(error.message)));
+  // Show the results kept for the chosen centre. Around the launcher, a ground launch calculated around the target is
+  // reused (turned half a circle) until one is calculated here.
+  function showCentre() {
+    const centre = centreOn();
+    runs = centre === 'launcher' && !runSets.launcher.length && runSets.target[0]?.submitted.launcher.platform === 'ground' ? runSets.target : runSets[centre];
+    inspected = null; renderInspector();
+    el('envelope-status').textContent = runs === runSets[centre] ? statusText[centre] : statusText.target;
+    if (!runs.length) {
+      if (el('envelope-chart').data) Plotly.purge(el('envelope-chart'));
+      el('envelope-chart').innerHTML = `<div class="empty"><span class="empty-glyph">◎</span><h2>${selected.length ? 'Calculate to see the envelope around the ' + centre : 'Add a missile using the panel on the left to get started'}</h2></div>`;
+      root.querySelector('.envelope-table-card').hidden = true; setExports(false); return;
+    }
+    render().then(() => setExports(shownRuns().length > 0)).catch(error => showError(error.message));
+  }
 
   // ---- Export -----------------------------------------------------------------------
   function setExports(enabled) {
@@ -842,7 +959,13 @@
       const ordered = [...rays.values()].sort((a, b) => a.key[0] - b.key[0] || a.azimuth_deg - b.azimuth_deg);
       envelopes.push({format: 'missile-envelope-v2', missile: run.missile, missile_name: missileName(run.missile), request: submitted,
         config: jobInfo?.config || null, mirrored: mirrored(), complete: jobInfo?.status === 'complete', summary, rays: ordered,
-        conventions: {frame: 'Target at the origin flying level along +X; each point is a launcher position at release, heading toward the target',
+        conventions: submitted.frame === 'launcher' ? {frame: 'Launcher at the origin flying level along +X and keeping that heading; each point is a target position at release',
+          azimuth: 'Target bearing off the launcher nose; 0 = dead ahead, 180 = behind, positive toward +Z (the launcher\'s right)',
+          target_heading: "'hot' toward the launcher, 'cold' away from it, 'same' along +X, 'opposite' along -X, or degrees from +X toward +Z",
+          launch_zone: 'Bearings beyond the missile launch zone (config limits.launch_angle_deg) or the launcher gimbal limit are not launched at (rays marked blocked)',
+          range: 'Horizontal distance in metres from the launcher at release', layer: 'Altitude of both aircraft (m)',
+          hit: 'Native proximity-fuze event against the constant-velocity point target'}
+          : {frame: 'Target at the origin flying level along +X; each point is a launcher position at release, heading toward the target',
           azimuth: 'Launcher bearing from the target nose; 0 = ahead of the target (head-on), 180 = behind it (tail chase), positive toward +Z',
           range: 'Horizontal distance in metres from the target at release', layer: 'Altitude of both aircraft (m); the launcher flies level, pointed at the target',
           hit: 'Native proximity-fuze event against the constant-velocity point target'}});
