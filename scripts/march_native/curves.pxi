@@ -3069,7 +3069,8 @@ cdef class NCurves:
             if self.eng.st[hi].alpha-self.eng.st[lo].alpha > 1e-9:
                 tl = tl+(th-tl)*(am-self.eng.st[lo].alpha)/(self.eng.st[hi].alpha-self.eng.st[lo].alpha)
             out.append(dict(speed=v, lo=lo, hi=hi, gap=gap, cause=cause, alpha=am, turn=tl, load=sqrt(1.+(tl*(v/3.6)/(RAD_TO_DEG*G_TURN))**2),
-                            sep_before=self.eng.st[lo].ps, sep_after=self.eng.st[hi].ps))
+                            sep_before=self.eng.st[lo].ps, sep_after=self.eng.st[hi].ps,
+                            rpm_before=self.knot_rpm(lo), rpm_after=self.knot_rpm(hi)))
         return out
 
     @cython.boundscheck(True)
@@ -3366,7 +3367,11 @@ cdef class NCurves:
             res.append(dict(cause='supercharger' if 'supercharger' in causes else max(set(causes), key=causes.count), speed_kmh=[q['speed'] for q in o], turn_dps=[q['turn'] for q in o],
                             ends=[o[0].get('edge'), o[-1].get('edge')],
                             load_g=[q['load'] for q in o], sep_before_mps=[q['sep_before'] for q in o],
-                            sep_after_mps=[q['sep_after'] for q in o]))
+                            sep_after_mps=[q['sep_after'] for q in o],
+                            # over-rev: the engine RPM against RPMMaxAllowed either side (the line where the propeller
+                            # jumps across the limit is where over-rev starts: em_march_chart.overrev_lines)
+                            **(dict(rpm_ratio_before=[q.get('rpm_before') for q in o],
+                                    rpm_ratio_after=[q.get('rpm_after') for q in o]) if self.eng.overrev else {})))
         self.eng.stats['s16_jump_lines'] = self.eng.stats.get('s16_jump_lines', 0)+len(res)
         for k_, v_ in self.jump_work.items():self.eng.stats['s16_jump_'+k_] = self.eng.stats.get('s16_jump_'+k_, 0)+v_
         return res
