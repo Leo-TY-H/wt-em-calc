@@ -311,6 +311,9 @@ cdef class MarchEngine:
     # engine RPM limit (soft) starts the march like one over a forward-IAS limit: in a turn the propeller turns slower, so
     # states within the limit lie above a lower edge there (Leo 2026-10-23, Bf 109 F-4 at 65% pitch); the edge is traced
     cdef public bint s16
+    # Over-rev (Leo 2026-10-26, option C; WT_OVERREV=0 restores S16): an engine over RPMMaxAllowed is no chart limit
+    # (Finisher.overrev); the tracer draws the iso-line RPM = RPMMaxAllowed where over-rev starts (NTracer.overrev_trace)
+    cdef public bint overrev
     cdef public list brake_log           # diagnostics (WT_MARCH_BRAKE_LOG=1): every braking search's attempts, else None
     cdef int brake_depth                 # S12: braking search rounds in progress
     cdef bint brake_retry
@@ -384,6 +387,7 @@ cdef class MarchEngine:
         self.s14 = self.s12 and os.environ.get("WT_MARCH_S13", "1") != "0" and os.environ.get("WT_MARCH_S14", "1") != "0"
         self.s16 = self.s14 and os.environ.get("WT_MARCH_S15", "1") != "0" and os.environ.get("WT_MARCH_S16", "1") != "0"
         if self.fin is not None and self.fin.pm is not None:self.fin.pm.s16 = self.s16
+        self.overrev = self.fin is not None and self.fin.overrev
         self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
         self.brake_depth = 0
         self.brake_retry = False

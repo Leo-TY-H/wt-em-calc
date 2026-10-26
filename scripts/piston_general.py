@@ -1,5 +1,5 @@
 from component_assembly import f32,add,sub,mul
-from piston_model import div,inlet_pressure,rpm_torque,mixture,boost_active
+from piston_model import div,inlet_pressure,rpm_torque,mixture,boost_active,overrev_torque
 from piston_compressor import step as compressor
 from engine_supply import mechanical_multiplier
 
@@ -11,7 +11,7 @@ def reservoir_torque(p,omega,throttle,multiplier,reservoir,afterburner,gear,nitr
     if reservoir<=half:fuel=f32(.6)
     elif reservoir>=p['reservoir_capacity']:fuel=1.
     else:fuel=add(f32(.6),div(mul(sub(reservoir,half),sub(1.,f32(.6))),sub(p['reservoir_capacity'],half)))
-    tq=mul(mul(mul(mul(p['throttle_boost'] if throttle>1. else 1.,multiplier),p['torque_base']),fuel),shape)
+    tq=overrev_torque(p,omega,mul(mul(mul(mul(p['throttle_boost'] if throttle>1. else 1.,multiplier),p['torque_base']),fuel),shape))
     if boost_active(p,throttle,afterburner,gear,nitro):tq=mul(tq,mul(p['stages'][gear]['boost'],p['afterburner_boost']))
     if tq<0.:tq=max(tq,mul(mul(mul(mul(multiplier,f32(-.8)),omega),p['inverse_omega']),p['torque_base']))
     return tq

@@ -62,6 +62,10 @@ def s15_on():
 # the engine RPM edge leans and is drawn from the native trace along the limit (rpm_trace), as the forward-IAS edge
 def s16_on():
     return s15_on() and os.environ.get('WT_MARCH_S16', '1') != '0'
+# Over-rev (Leo 2026-10-26, option C; WT_OVERREV=0 restores S16): an engine RPM over RPMMaxAllowed is no chart limit;
+# the chart carries where over-rev starts (overrev_lines) and, on every over-rev row, contour and outline point, the
+# seconds the game gives that engine (overrev.py)
+from overrev import RULE as OVERREV
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
 COLUMN_SPACING_KMH = 80.
@@ -232,8 +236,15 @@ def assemble(config, rows, started, preview=False):
     for i, a in enumerate(data['aircraft']):a['color'] = COLORS[i % 2]
     if config.get('global_load_cap_g') is not None:
         data['assumptions'].append(f"Additional global search ceiling: {config['global_load_cap_g']:g} g; not a proved physical limit.")
+    if OVERREV and any(a.get('overrev_lines') is not None for a in rows):
+        data['assumptions'].append(OVERREV_ASSUMPTION)
     if preview:data['preview'] = True
     return data
+
+
+OVERREV_ASSUMPTION = ('Engine over-rev (RPM above RPMMaxAllowed) is charted, not a limit; a line marks where it starts. With '
+                      'Engine_Overheat on (Realistic, Simulator) the game stops an over-revving engine after the seconds '
+                      'given (steady RPM, fresh engine) and adds its over-rev torque, as charted')
 
 
 # ----- one aircraft --------------------------------------------------------------
@@ -433,6 +444,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                 curve_knots=[k for comp in (curves or {}).get('components', []) for k in comp['knots']],
                 # S16 (Leo 2026-10-24): the SEP jump lines (NCurves.sep_jumps), drawn dotted; contours end at them
                 **({'sep_jumps': curves['sep_jumps']} if curves and curves.get('sep_jumps') else {}),
+                # Over-rev (Leo 2026-10-26): where an engine starts to over-rev
+                **({'overrev_lines': overrev_lines(envelope, columns)} if overrev_row(solver, points) else {}),
                 # The complete curve solver record (knots, withheld checks, ends) for exports and replay.
                 curves=None if curves is None else {k: v for k, v in curves.items() if k not in ('seeds',)},
                 envelope_trace=dict(segments=envelope['segments'], mach_seams_kmh=envelope['mach_seams_kmh'],
@@ -442,7 +455,8 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                                     speed_limit=envelope['speed_limit'], turn_tolerance_dps=tracer.ttol,
                                     placement_tolerance_kmh=tracer.place_tol,
                                     **({'ias_trace': envelope['ias_trace']} if envelope.get('ias_trace') else {}),
-                                    **({'rpm_trace': envelope['rpm_trace']} if envelope.get('rpm_trace') else {})),
+                                    **({'rpm_trace': envelope['rpm_trace']} if envelope.get('rpm_trace') else {}),
+                                    **({'overrev_lines': envelope['overrev_lines']} if envelope.get('overrev_lines') else {})),
                 interpolation=dict(target_mps=cfg['sep_tolerance_mps'], target_contour_dps=turn_tolerance(cfg['sep_tolerance_mps']),
                                    target_speed_kmh=speed_tolerance(cfg), scope='contours', checked_sep_levels_mps=levels,
                                    unresolved_speed_intervals=gaps, mach_transition_intervals=[], mach_events=mach['events'],
@@ -483,7 +497,12 @@ def compact_component(comp):
                 **({'fold_unresolved': True} if (comp.get('fold') or {}).get('unresolved') else {}),
                 # S16: where a piece meets an SEP jump line: [direction, speed, load, the speed of the knot drawn from]
                 **({'jump_ends': [[j['direction'], j['speed_kmh'], j['load_g'], j['from_kmh']] for j in comp['jump_ends']]}
-                   if comp.get('jump_ends') else {}))
+                   if comp.get('jump_ends') else {}),
+                # over-rev: each knot's highest engine RPM against its RPMMaxAllowed (fold knots apart)
+                **({'rpm': [k.get('engine_rpm_ratio') for k in comp['knots']]}
+                   if any(k.get('engine_rpm_ratio') is not None for k in comp['knots']) else {}),
+                **({'fold_rpm': [k.get('engine_rpm_ratio') for k in comp['fold']['knots']]}
+                   if comp.get('fold') and any(k.get('engine_rpm_ratio') is not None for k in comp['fold']['knots']) else {}))
 
 
 def ok(c):
@@ -1001,13 +1020,157 @@ def contours(aircraft, levels=None):
     out = []
     for comp in aircraft.get('curve_components', []):
         if comp['level'] not in wanted:continue
-        for piece in polyline(comp):
-            if len(piece) > 1:out.append(dict(level=float(comp['level']), x=[p[0] for p in piece], y=[p[1] for p in piece]))
+        pieces = polyline(comp)
+        fold = len(pieces)-1 if comp.get('fold') and not comp.get('fold_unresolved') else -1
+        for i, piece in enumerate(pieces):
+            if len(piece) > 1:
+                path = dict(level=float(comp['level']), x=[p[0] for p in piece], y=[p[1] for p in piece])
+                if OVERREV:contour_overrev(path, comp, i == fold)
+                out.append(path)
     return out
+
+
+def load_of(speed, turn):
+    """The load of a turn rate (deg/s) at a speed (km/h): the inverse of turn_rate."""
+    w = np.radians(np.asarray(turn, dtype=float))*np.asarray(speed, dtype=float)/3.6/9.8100004196167
+    return np.sqrt(1.+w*w)
+
+
+def overrev_points(path, ratio):
+    """Over-rev: a drawn path's per-point 'percent_over' (RPM over RPMMaxAllowed, %) and 'overrev_s' (seconds the game
+    gives the engine at that RPM, overrev.seconds_to_stop), None where within the limit; nothing where all are."""
+    from overrev import seconds_to_stop
+    over = np.isfinite(ratio) & (ratio > 1.+1e-6)
+    if not over.any():return
+    path['percent_over'] = [round(100.*(r-1.), 3) if o else None for r, o in zip(ratio.tolist(), over.tolist())]
+    path['overrev_s'] = [seconds_to_stop(r) if o else None for r, o in zip(ratio.tolist(), over.tolist())]
+
+
+def contour_overrev(path, comp, fold):
+    """Over-rev: a contour path's over-rev points from its knots' RPM ratios (compact_component 'rpm', 'fold_rpm'):
+    linear in speed between knots (a fold piece: in load)."""
+    if fold:
+        pairs = sorted((k[1], r) for k, r in zip(comp['fold'], comp.get('fold_rpm') or []) if r is not None)
+        x = load_of(path['x'], path['y'])
+    else:
+        pairs = sorted((k[0], r) for k, r in zip(comp['knots'], comp.get('rpm') or []) if r is not None)
+        x = np.asarray(path['x'], dtype=float)
+    if not pairs:return
+    overrev_points(path, np.interp(x, [a for a, _ in pairs], [r for _, r in pairs]))
+
+
+def overrev_row(solver, points):
+    """Over-rev: the chart row carries the over-rev record (a propeller aircraft under the rule); every point row gets
+    its own (overrev.annotate)."""
+    if not (OVERREV and getattr(solver, 'is_prop', False) and getattr(solver, 'soft_admission', False)):return False
+    from overrev import annotate
+    for p in points:annotate(p)
+    return True
+
+
+def iso_path(knots, samples=240):
+    """An over-rev line from the native trace (NTracer.overrev_trace): speed and w = n^2-1 as cubic Hermites in body
+    alpha through its knots [speed, load, dV/dalpha, dw/dalpha, alpha] (missing slopes as hermite_slopes), from level
+    flight to where it meets the envelope's boundary."""
+    a = np.array([k[4] for k in knots], dtype=float)
+    v = np.array([k[0] for k in knots], dtype=float);w = np.array([k[1] for k in knots], dtype=float)**2-1.
+    vl, vr = hermite_slopes(a, v, [k[2] for k in knots], [k[2] for k in knots])
+    wl, wr = hermite_slopes(a, w, [k[3] for k in knots], [k[3] for k in knots])
+    aq = np.unique(np.r_[np.linspace(a[0], a[-1], samples+1), a])
+    xs = hermite(a, v, vl, vr, aq);wq = hermite(a, w, wl, wr, aq)
+    rates = turn_rate(xs, np.sqrt(1.+np.maximum(wq, 0.)))
+    if knots[0][1] <= 1.+1e-9:rates[0] = 0.
+    return [float(x) for x in xs], [float(t) for t in rates]
+
+
+OVERREV_NEAR_DPS = 2.   # a column's crossing within this of a traced line at its speed lies on that line
+
+
+def column_crossings(column):
+    """Over-rev: the loads where a verified column's admitted samples cross RPMMaxAllowed (rpm / limit linear in load
+    between neighbouring samples)."""
+    from overrev import rpm_ratio
+    v = column['speed_kmh']
+    rows = sorted((p for p in column.get('points', []) if abs(p['speed_kmh']-v) <= 1e-9 and p.get('valid')
+                   and rpm_ratio(p) is not None), key=lambda p: p['load_g'])
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        ra, rb = rpm_ratio(a)-1., rpm_ratio(b)-1.
+        if (ra > 0.) != (rb > 0.) and b['load_g'] > a['load_g']:
+            out.append(a['load_g']+(b['load_g']-a['load_g'])*ra/(ra-rb))
+    return out
+
+
+def on_lines(speed, turn, lines):
+    for line in lines:
+        xs, ts = line['speed_kmh'], line['turn_dps']
+        for x0, x1, t0, t1 in zip(xs, xs[1:], ts, ts[1:]):
+            if min(x0, x1)-1e-9 <= speed <= max(x0, x1)+1e-9:
+                t = t0 if x1 == x0 else t0+(t1-t0)*(speed-x0)/(x1-x0)
+                if abs(t-turn) <= OVERREV_NEAR_DPS:return True
+    return False
+
+
+def overrev_lines(envelope, columns):
+    """Over-rev (option C): the lines where an engine starts to over-rev (RPM = RPMMaxAllowed) inside the envelope, each
+    {'speed_kmh', 'turn_dps', 'rpm_limit', 'engine', 'traced', 'stop_after_s'}: the native trace's iso-lines from level
+    flight (NTracer.overrev_trace; 'traced' True), and where none traced (a line whose trace failed, over-rev that
+    starts above level flight) straight pieces through the verified columns' own crossings (column_crossings; 'traced'
+    False, approximate). 'stop_after_s': [[percent over RPMMaxAllowed, seconds until the game stops the engine]]."""
+    from overrev import report_table, rpm_ratio
+    table = report_table()
+    lines = []
+    for rec in envelope.get('overrev_lines') or []:
+        if rec.get('status') != 'traced' or len(rec.get('knots') or []) < 2:continue
+        xs, ts = iso_path(rec['knots'])
+        lines.append(dict(speed_kmh=xs, turn_dps=ts, rpm_limit=rec.get('rpm_limit'), engine=rec.get('engine'), traced=True,
+                          stop_after_s=table))
+    traced = list(lines)
+    good = sorted((c for c in columns if ok(c)), key=lambda c: c['speed_kmh'])
+    limit = next((float(l) for c in good for p in c.get('points', [])
+                  for l in [((p.get('propulsion') or {}).get('engine_rpm_threshold') or [None])[0]] if l), None)
+    open_, done = [], []
+    for c in good:
+        v = c['speed_kmh']
+        loads = [n for n in column_crossings(c) if not on_lines(v, float(turn_rate(v, n)), traced)]
+        if open_ and len(loads) == len(open_):
+            for path, n in zip(open_, loads):path.append((v, n))
+        else:
+            done += open_
+            open_ = [[(v, n)] for n in loads]
+    done += open_
+    for path in done:
+        if len(path) < 2:continue
+        lines.append(dict(speed_kmh=[float(v) for v, _ in path], turn_dps=[float(turn_rate(v, n)) for v, n in path],
+                          rpm_limit=limit, engine=None, traced=False, stop_after_s=table))
+    return lines
+
+
+def outline_overrev(aircraft):
+    """Over-rev: the outline points' over-rev record (overrev_points), the verified columns' RPM ratios linear in
+    speed: their boundary states' for points above level flight, their level flights' for points on it."""
+    from overrev import rpm_ratio
+    good = sorted((c for c in aircraft.get('columns', []) if ok(c)), key=lambda c: c['speed_kmh'])
+    top = [(c['speed_kmh'], rpm_ratio(c['boundary'])) for c in good if rpm_ratio(c['boundary']) is not None]
+    level = [(c['speed_kmh'], rpm_ratio(p)) for c in good for p in c.get('points', [])
+             if abs(p['load_g']-1.) <= 1e-9 and abs(p['speed_kmh']-c['speed_kmh']) <= 1e-9 and rpm_ratio(p) is not None]
+    points = [p for p in aircraft.get('boundary', []) if p.get('turn_dps') is not None]
+    if not points or not top:return
+    v = np.array([p['speed_kmh'] for p in points], dtype=float)
+    r = np.interp(v, [a for a, _ in top], [b for _, b in top])
+    if level:
+        flat = np.array([p['turn_dps'] == 0. for p in points])
+        r = np.where(flat, np.interp(v, [a for a, _ in level], [b for _, b in level]), r)
+    record = {}
+    overrev_points(record, r)
+    for k, p in enumerate(points):
+        if record.get('percent_over') and record['percent_over'][k] is not None:
+            p['percent_over'] = record['percent_over'][k];p['overrev_s'] = record['overrev_s'][k]
 
 
 def enrich(data, aircraft):
     aircraft['boundary'] = outline(data, aircraft)
+    if OVERREV and aircraft.get('overrev_lines') is not None:outline_overrev(aircraft)
     aircraft['contours'] = contours(aircraft, data['settings'].get('sep_contour_levels_mps'))
     zeros = [p for p in aircraft['contours'] if p['level'] == 0.]
     aircraft['sustained_curve'] = dict(x=[x for p in zeros for x in [*p['x'], None]], y=[y for p in zeros for y in [*p['y'], None]])

@@ -219,6 +219,7 @@ DEF S16_RPM_CLOSE = 2e-6    # S16: an engine RPM edge state's rpm / limit within
 DEF S16_ITER = 16           # S16: speed iterations of one engine RPM edge state (secant on rpm / limit)
 DEF S16_PROBE = .5          # km/h: the first speed step where no slope of rpm / limit with speed is known yet
 DEF S16_MAX_DV = 10.        # km/h: the largest speed step of that iteration
+DEF OVERREV_LINES = 4       # over-rev: the most iso-lines RPM = RPMMaxAllowed traced from level flight (overrev_trace)
 
 
 cdef inline double hermite_dload(double va, double na, double sa, double vb, double nb, double sb, double v) noexcept nogil:
@@ -300,6 +301,10 @@ cdef class NTracer:
     cdef double rpm_slope             # S16: d(rpm / limit)/dV (per km/h) at fixed alpha from the last engine RPM edge state
     cdef public dict edge_rows        # S16: the rows of each traced edge's knots ('ias', 'rpm'), for the curve solver's seeds
     cdef bint s16_settle              # S16 follow-up: an unsettled level flight inside the envelope is no edge (WT_MARCH_S16B=0: off)
+    # Over-rev (Leo 2026-10-26, option C): the iso-line RPM = RPMMaxAllowed traced as a line inside the envelope, not an edge
+    cdef bint line_mode               # the engine RPM trace runs as that line (overrev_trace)
+    cdef object line_out              # the record of the line being traced
+    cdef public list overrev_out      # the traced lines (the envelope's 'overrev_lines' records)
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -338,6 +343,7 @@ cdef class NTracer:
         self.rpm_trace_out = None;self.iso_lim = KD_IAS;self.rpm_slope = NAN;self.edge_rows = {}
         # S16 follow-up (2026-10-24): WT_MARCH_S16B=0 restores the deployed 2026.10.24.1 exactly
         self.s16_settle = self.eng.s16 and os.environ.get('WT_MARCH_S16B', '1') != '0'
+        self.line_mode = False;self.line_out = None;self.overrev_out = []
 
     # ------------------------------------------------------------------ one column
     @cython.boundscheck(True)
@@ -1415,7 +1421,10 @@ cdef class NTracer:
         return 0
 
     cdef bint over_kind(self, int sid, int kind) noexcept:
-        """S16: a level flight over the soft limit ``kind`` only: forward IAS (ias_soft) or engine RPM (rpm_soft)."""
+        """S16: a level flight over the soft limit ``kind`` only: forward IAS (ias_soft) or engine RPM (rpm_soft).
+        Over-rev line: an admitted state over RPMMaxAllowed."""
+        if self.line_mode and kind == KD_RPM:
+            return self.eng.st[sid].converged and self.eng.st[sid].valid and self.eng.rpm_ratio(sid) > 1.
         return self.eng.rpm_soft(sid) if kind == KD_RPM else self.eng.ias_soft(sid)
 
     # ------------------------------------------------------------------ S15: the forward-IAS edge itself
@@ -1555,6 +1564,11 @@ cdef class NTracer:
         """S15: 0 an edge state the chart keeps (admitted, or rejected for soft limits only: within its tolerance of the
         forward-IAS limit), 1 past the first hard limit (or above the load cap: the plot ceiling), -1 neither."""
         if not self.eng.st[sid].converged:return -1
+        if self.line_mode:
+            # over-rev line: an admitted state is on it; one past the envelope (a hard limit, or a soft one: the forward-IAS
+            # edge) ends it there
+            if self.eng.st[sid].valid:return 1 if self.eng.st[sid].load > self.eng.cap(self.eng.st[sid].speed)+1e-9 else 0
+            return 1 if self.eng.passable(sid) or self.eng.hard_rejected(sid) else -1
         # S16: on the engine RPM limit only an admitted state (one over a forward-IAS limit there is another edge's)
         if self.eng.st[sid].valid if self.iso_lim == KD_RPM else self.eng.passable(sid):
             return 1 if self.eng.st[sid].load > self.eng.cap(self.eng.st[sid].speed)+1e-9 else 0
@@ -1726,6 +1740,50 @@ cdef class NTracer:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int overrev_trace(self) except -1:
+        """Over-rev (Leo 2026-10-26, option C: over-rev is no chart limit; a dashed line shows where it starts): the
+        iso-line RPM = RPMMaxAllowed inside the envelope, traced with S16's engine RPM edge machinery (iso_rpm, the split
+        rule) as a line from each speed where level flight starts to over-rev (between verified columns, the lower with
+        its level flight within the limit, the upper over it) up to where it meets the envelope's boundary: the first
+        hard limit, the forward-IAS edge, the plot ceiling or the chart's speed range. Each line's record ('overrev_lines')
+        says why where it fails; em_march_chart.overrev_lines draws the traced ones and the columns' crossings elsewhere."""
+        cdef NColumn a, b
+        cdef PropModel pm
+        cdef bint saved[NP]
+        cdef int k
+        if not (self.eng.overrev and self.eng.soft and self.eng.is_prop):return 0
+        good = sorted((c for c in self.columns.values() if NTracer.ok(c) and c.level >= 0), key=lambda c: c.speed)
+        feet = []
+        for a, b in zip(good, good[1:]):
+            if not (self.eng.st[a.level].valid and self.eng.st[b.level].converged):continue
+            if self.eng.rpm_ratio(a.level) <= 1. < self.eng.rpm_ratio(b.level):feet.append((a.speed, b.speed))
+        caps = set(self.eng.ceilings)
+        # The line's states lie within the limit, where the game's over-rev torque is exactly 1: the same states without it.
+        # It is off while the line is traced (its kink at the limit is where every correction of the trace ends; the
+        # propulsion iterates that cross it close badly), and on again for everything else.
+        pm = self.eng.fin.pm if self.eng.fin is not None else None
+        if pm is not None:
+            for k in range(pm.ne):
+                saved[k] = pm.engines[k].overrev_torque;pm.engines[k].overrev_torque = False
+        try:
+            for lo, hi in feet[:OVERREV_LINES]:
+                self.iso_lim = KD_RPM;self.line_mode = True;self.rpm_slope = NAN;self.line_out = None
+                try:
+                    self.ias_trace_body(dict(kind='overrev', speed_kmh=[lo, hi]))
+                finally:
+                    self.iso_lim = KD_IAS;self.line_mode = False
+                    for v in [v for v in self.eng.ceilings if v not in caps]:del self.eng.ceilings[v]
+                if self.line_out is not None:self.overrev_out.append(self.line_out)
+        finally:
+            if pm is not None:
+                for k in range(pm.ne):pm.engines[k].overrev_torque = saved[k]
+        if len(feet) > OVERREV_LINES:
+            self.overrev_out.append(dict(status='failed: more level-flight over-rev onsets than traced lines',
+                                         limit='engine RPM', line=True, edge_kmh=list(feet[OVERREV_LINES])))
+        return 0
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef tuple rpm_return(self, list knots):
         """S16: (why, knots) of an engine RPM edge whose iso-line goes below the speed of its foot (level flight at the
         limit): the knots from where it last comes back to that speed (located by regula falsi in alpha to 0.001 km/h),
@@ -1776,7 +1834,12 @@ cdef class NTracer:
         cdef double* wr
         rpm = self.iso_lim == KD_RPM
         pre = 's16_rpm_' if rpm else 's15_'
-        if rpm:
+        line = rpm and self.line_mode
+        if line:
+            pre = 'overrev_'
+            out = dict(status='failed', limit='engine RPM', line=True, edge_kmh=list(edge['speed_kmh']) if edge else None)
+            self.line_out = out
+        elif rpm:
             # S16: the engine RPM edge (the envelope's 'rpm_trace' record, the same fields)
             out = dict(status='failed', limit='engine RPM', edge_kmh=list(edge['speed_kmh']) if edge else None)
             self.rpm_trace_out = out
@@ -1788,7 +1851,7 @@ cdef class NTracer:
                 min(c.speed for c in self.columns.values() if NTracer.ok(c) and c.lower >= 0
                     and (not self.eng.s16 or c.lower_kind == self.iso_lim)))
         cands = [c for c in self.columns.values() if NTracer.ok(c) and c.level >= 0 and c.speed <= good+1e-9
-                 and self.eng.st[c.level].valid]
+                 and self.eng.st[c.level].valid and not (line and self.eng.rpm_ratio(c.level) > 1.)]
         if not cands:
             out['status'] = 'failed: no column with level flight within the limit'
             self.eng.stats[pre+'failed'] = self.eng.stats.get(pre+'failed', 0)+1
@@ -1830,6 +1893,10 @@ cdef class NTracer:
                     if foot < 0 or self.iso_kind(foot) != 0:foot = self.iso_state(p, 1., 1, True)
                 if why is None and (foot < 0 or self.iso_kind(foot) != 0):
                     why = 'level flight at the limit does not close' if foot < 0 else 'level flight at the limit is rejected'
+                if why is None and line and not self.eng.st[foot].valid:
+                    # over-rev line: level flight at RPMMaxAllowed lies outside the envelope (past the forward-IAS limit)
+                    why = 'level flight at the limit is outside the envelope (%s)' % ', '.join(
+                        str(r) for r in self.eng.reason_list(foot))
                 if why is None and not (self.eng.st[foot].valid or self.eng.ias_soft(foot)):
                     # level flight there is over another soft limit (the engine over-revs at 1 g: an edge before the
                     # forward-IAS limit is reached)
@@ -1875,11 +1942,16 @@ cdef class NTracer:
                             why = 'too many edge knots';break
                 if why is None and not range_end:
                     plo, hard, width, bk = self.iso_corner(knots, hard, hi_a)
-                    if width > 50.*S15_CORNER_TOL:
+                    if width > 50.*S15_CORNER_TOL and line:
+                        # over-rev line: it ends at its last state within the envelope; where it meets the boundary
+                        # beyond that is left open (no state there closes)
+                        out['end_unresolved_alpha_deg'] = [self.eng.st[plo].alpha, self.eng.st[plo].alpha+width]
+                        if plo != knots[-1]:knots.append(plo)
+                    elif width > 50.*S15_CORNER_TOL:
                         why = 'corner unresolved between alpha %.3f and %.3f' % (self.eng.st[plo].alpha, self.eng.st[plo].alpha+width)
                     elif plo != knots[-1]:knots.append(plo)
                 if why is None and len(knots) < 2:why = 'one edge state only'
-                if why is None and rpm:
+                if why is None and rpm and not line:
                     # S16: where the propeller first turns faster as alpha rises (Gladiator Mk II at 3,000 m: 3,097 rpm at
                     # 1 g, 3,107 at 3.9 g, 3,096 from 6.9 g at 465 km/h against a 3,100 limit) the limit's iso-line turns
                     # back below the speed where level flight reaches the limit: below that speed the over-rev stretch is
@@ -1952,6 +2024,26 @@ cdef class NTracer:
         finally:
             row = self.work.setdefault('ias trace', dict(columns=0, evaluations=0))
             row['columns'] += 1;row['evaluations'] += wk.counts.get('aircraft_evaluations', 0)
+        if why is None and line:
+            # over-rev line: no edge, so no column past it to check and no corner column; its end is where it meets the
+            # envelope's boundary (or the chart's speed range)
+            q = knots[-1]
+            k = self.eng.rpm_engine(knots[0])
+            out.update(status='traced', foot_kmh=self.eng.st[knots[0]].speed, foot_alpha_deg=self.eng.st[knots[0]].alpha,
+                       end=dict(speed_kmh=self.eng.st[q].speed, load_g=self.eng.st[q].load, turn_dps=self.eng.st[q].turn,
+                                alpha_deg=self.eng.st[q].alpha,
+                                beyond=(['chart speed range or vertical limit'] if range_end else
+                                        [KIND_TEXT[bk]+' (no equilibrium past it)'] if bk >= 0 else
+                                        (['plot ceiling'] if self.eng.st[hard].valid else
+                                         [str(r)[:60] for r in self.eng.reason_list(hard)][:3]) if hard >= 0 else None)),
+                       engine=k, rpm_limit=self.eng.st[knots[0]].rpm_limit[k] if k >= 0 else None,
+                       knots=[[self.eng.st[p].speed, self.eng.st[p].load,
+                               slopes[p][0] if p in slopes else None, slopes[p][1] if p in slopes else None,
+                               self.eng.st[p].alpha] for p in knots])
+            self.events.append(dict(kind='overrev line', speed_kmh=[self.eng.st[knots[0]].speed, self.eng.st[q].speed],
+                                    located_by='traced iso-line RPM = RPMMaxAllowed'))
+            self.eng.stats[pre+'knots'] = self.eng.stats.get(pre+'knots', 0)+len(knots)
+            return 0
         if why is None:
             vc = self.eng.st[knots[-1]].speed
             # the first column past the edge with nothing inside the limit (the edge's own column may be unresolved,
@@ -3036,6 +3128,7 @@ cdef class NTracer:
         if self.eng.s16:
             self.rpm_trace()
             if not self.rpm_traced():self.ias_one_g(KD_RPM)
+        if self.eng.overrev:self.overrev_trace()
         checks = self.check()
         if self.nudge:checks += self.resolve_gaps(segments)
         for c in self.witnesses:
@@ -3046,7 +3139,8 @@ cdef class NTracer:
         return dict(columns=cols, segments=segments, mach_seams_kmh=self.mach_seams, sweep_gaps_kmh=self.sweep_gaps,
                     events=self.events, checks=checks, work_by_role=self.work, elapsed_s=time.perf_counter()-started,
                     speed_limit=dict(kind=limit['kind'], speed_kmh=limit['speed_kmh'], enforced=limit['enforced']),
-                    ias_trace=self.ias_trace_out, rpm_trace=self.rpm_trace_out)
+                    ias_trace=self.ias_trace_out, rpm_trace=self.rpm_trace_out,
+                    **({'overrev_lines': self.overrev_out} if self.eng.overrev else {}))
 
     # ------------------------------------------------------------------ column records
     @cython.boundscheck(True)

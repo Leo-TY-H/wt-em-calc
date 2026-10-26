@@ -178,6 +178,7 @@ cdef class PropModel:
         from prop_quasisteady import prepare_blades
         from polar_model import mach_curve
         from component_assembly import f32
+        from overrev import TORQUE as OVERREV_TORQUE
         engine = solver.engine
         p = engine.properties
         cfg = solver.config
@@ -214,6 +215,7 @@ cdef class PropModel:
             E.max_ata = ep.get('max_ata', 0);E.ram_recovery = ep.get('ram_recovery', 0);E.boost_ata_ratio = ep.get('boost_ata_ratio', 0)
             E.compressor_zero = ep.get('compressor_zero', 0);E.throttle_boost = ep.get('throttle_boost', 0)
             E.afterburner_boost = ep.get('afterburner_boost', 0);E.reservoir_capacity = ep.get('reservoir_capacity', 0)
+            E.overrev_torque = OVERREV_TORQUE and e['family'] in (0, 1)
             for i in range(3):E.amplitude[i] = ep.get('amplitude', (0., 0., 0.))[i]
             for i in range(4):E.consumption[i] = ep.get('consumption', (0., 0., 0., 0.))[i]
             if len(ep.get('stages', ())) > 8:raise PropUnsupported('compressor stages')

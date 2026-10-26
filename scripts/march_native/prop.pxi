@@ -59,6 +59,7 @@ cdef struct EngineT:
     double base_hp, min_throttle, max_throttle, max_omega, afterburner_omega, omega_limit, inverse_omega
     double compressor_reference, torque_base, mixer_scale, compressor_sq, max_ata, ram_recovery, boost_ata_ratio
     double compressor_zero, throttle_boost, afterburner_boost, reservoir_capacity
+    bint overrev_torque   # the game's over-rev torque (overrev.py; WT_OVERREV=0 / WT_OVERREV_TORQUE=0: off)
     double amplitude[3]
     double consumption[4]
     StageT stages[8]
@@ -443,6 +444,14 @@ cdef double target_omega(const EngineT* p, const EngState* s, double nitro) noex
     return p.target_y[p.ntargets-1]
 
 
+cdef inline double overrev_torque(const EngineT* p, double omega, double torque) noexcept nogil:
+    """piston_model.overrev_torque: the game's torque of an engine over RPMMaxAllowed (the first over-rev step of a fresh
+    engine), 1 + 0.01 x (omega - 0.999965 x limit) (rad/s)."""
+    if not p.overrev_torque or not p.omega_limit > 0. or not omega > F(p.omega_limit):
+        return torque
+    return M(torque, A(M(S(omega, M(F(.9999650120735168), p.omega_limit)), F(.009999999776482582)), 1.))
+
+
 cdef double rpm_torque(const EngineT* p, double omega, double throttle, double torque_multiplier, bint afterburner,
                        int gear, double nitro) noexcept nogil:
     cdef double effective, wref, x, shape, scale, torque, tboost
@@ -460,6 +469,7 @@ cdef double rpm_torque(const EngineT* p, double omega, double throttle, double t
         if throttle < F(1.1):
             tboost = A(M(A(M(tboost, F(9.999998092651367)), F(-9.999998092651367)), S(throttle, 1.)), 1.)
         torque = M(torque, tboost)
+    torque = overrev_torque(p, omega, torque)
     if boost:
         torque = M(torque, M(p.afterburner_boost, p.stages[gear].boost))
     if torque < 0.:
@@ -479,7 +489,7 @@ cdef double reservoir_torque(const EngineT* p, double omega, double throttle, do
         fuel = 1.
     else:
         fuel = A(F(.6), pdiv(M(S(reservoir, half), S(1., F(.6))), S(p.reservoir_capacity, half)))
-    tq = M(M(M(M(p.throttle_boost if throttle > 1. else 1., multiplier), p.torque_base), fuel), shape)
+    tq = overrev_torque(p, omega, M(M(M(M(p.throttle_boost if throttle > 1. else 1., multiplier), p.torque_base), fuel), shape))
     if boost_active(p, throttle, afterburner, gear, nitro):
         tq = M(tq, M(p.stages[gear].boost, p.afterburner_boost))
     if tq < 0.:

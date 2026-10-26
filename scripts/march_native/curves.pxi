@@ -3444,6 +3444,11 @@ cdef class NCurves:
         if isinstance(one, dict):return one.get('ps_mps')
         return self.eng.st[one].ps if isfinite(self.eng.st[one].ps) else None
 
+    cdef object knot_rpm(self, int sid):
+        """Over-rev: a state's highest engine RPM against its RPMMaxAllowed (MarchEngine.rpm_ratio), None without one."""
+        cdef double r = self.eng.rpm_ratio(sid)
+        return r if isfinite(r) else None
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef dict report(self, dict comp):
@@ -3455,6 +3460,9 @@ cdef class NCurves:
                 else:out[k] = v
             return out
         knots = [self.compact(p) for p in comp['knots']]
+        if self.eng.overrev:
+            # over-rev: each knot's highest engine RPM against its RPMMaxAllowed (the contour's over-rev seconds)
+            for p, k in zip(comp['knots'], knots):k['engine_rpm_ratio'] = self.knot_rpm(p)
         if self.s7:
             for p, k in zip(comp['knots'], knots):
                 l, r = self.knot_slope(p)
@@ -3473,6 +3481,7 @@ cdef class NCurves:
                 for q in sorted(fold['knots'], key=lambda q: self.eng.st[q].load):
                     k = self.compact(q);d = self.fold_dvdw(q)
                     k['fold_dv_dw'] = d if isfinite(d) else None
+                    if self.eng.overrev:k['engine_rpm_ratio'] = self.knot_rpm(q)
                     fk.append(k)
                 out['fold'] = dict(knots=fk, unresolved=bool(fold.get('unresolved')))
         if comp.get('jump_ends'):out['jump_ends'] = comp['jump_ends']
