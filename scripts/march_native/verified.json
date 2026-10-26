@@ -1,5 +1,5 @@
 {
- "native_sha256": "1ee1c82af4f008ed1476438e4317330d785d1a824853cb1f3a55bf52975d32b4",
+ "native_sha256": "05b227a75c74bc2c355f516156abce1889adee35909406039cc63295060729c2",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -100,7 +100,7 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "fad2176b88903ce6190294648f39779657a4365dc4168169deb274a9bba95164",
+ "python_sha256": "fbc436e6cce9d7c014375b50bf848c918becbec9d286073b0c31e5288188b0e8",
  "verification": {
   "date": "2026-10-26",
   "aircraft": [
@@ -112,7 +112,8 @@
    "f_14a_early:rb",
    "ki_61_1a_ko:sb",
    "bf-109f-4:rb",
-   "he51a1:sb"
+   "he51a1:sb",
+   "a6m5hei:rb"
   ],
   "checks": {
    "bi:sb": {
@@ -1846,9 +1847,116 @@
       }
      ]
     }
+   },
+   "a6m5hei:rb": {
+    "instructor": {
+     "checked": 1115,
+     "mismatched": 815,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 1.1546319456101628e-14
+     },
+     "examples": [
+      {
+       "speed": 215.83234350585937,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501450066507625",
+         "-1.350145006650761"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858583918272881",
+         "-0.03858583918272867"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 13.88845735268559,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501856045384264",
+         "-1.350185604538427"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858306717509192",
+         "-0.038583067175092196"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761623668801372",
+         "-0.12761623668801353"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 13.88845735268559,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501856045384264",
+         "-1.350185604538427"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858306717509192",
+         "-0.038583067175092196"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761623668801372",
+         "-0.12761623668801353"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501450066507625",
+         "-1.350145006650761"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858583918272881",
+         "-0.03858583918272867"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 11.499601940439035,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501743110611204",
+         "-1.3501743110611195"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858384686900265",
+         "-0.038583846869002014"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761387311823225",
+         "-0.1276138731182324"
+        ]
+       ]
+      }
+     ]
+    }
    }
   },
-  "finish_rows": 6324,
+  "finish_rows": 6877,
   "method": "scripts/verify_march_native.py"
  }
 }
