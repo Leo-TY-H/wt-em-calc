@@ -319,7 +319,9 @@ $('apply-settings-to-all').addEventListener('click',()=>{
   renderEntries();syncLabels();
   $('apply-settings-status').textContent=`Applied to all ${state.entries.length} aircraft.`;
 });
-function setRunning(value){state.running=value;$('calculate').disabled=value;$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=!value;}
+// No progress panel or step text while calculating; the button says so instead (Leo, 2026-10-26). #progress stays hidden.
+const CALCULATE_LABEL=$('calculate').innerHTML;
+function setRunning(value){state.running=value;$('calculate').disabled=value;$('calculate').innerHTML=value?'Calculating…':CALCULATE_LABEL;$('calculate').classList.toggle('calculating',value);$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=true;}
 async function loadData(id,populateForm=false,preview=false){
   const sameResult=state.dataJob===id;
   const data=await api(`/api/jobs/${id}/${preview?'preview.json':'chart.json'}`);state.data=data;state.dataJob=id;
