@@ -321,7 +321,7 @@ $('apply-settings-to-all').addEventListener('click',()=>{
 });
 // No progress panel or step text while calculating; the button says so instead (Leo, 2026-10-26). #progress stays hidden.
 const CALCULATE_LABEL=$('calculate').innerHTML;
-function setRunning(value){state.running=value;$('calculate').disabled=value;$('calculate').innerHTML=value?'Calculating…':CALCULATE_LABEL;$('calculate').classList.toggle('calculating',value);$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=true;}
+function setRunning(value){state.running=value;$('calculate').disabled=value;$('calculate').innerHTML=value?'Calculating…':CALCULATE_LABEL;$('calculate').classList.toggle('calculating',value);$('calculate').style.setProperty('--progress','0%');$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=true;}
 async function loadData(id,populateForm=false,preview=false){
   const sameResult=state.dataJob===id;
   const data=await api(`/api/jobs/${id}/${preview?'preview.json':'chart.json'}`);state.data=data;state.dataJob=id;
@@ -762,7 +762,7 @@ async function poll(id){
     $('progress-label').textContent=job.status==='stopping'?'Stopping calculation and retaining partial results…':job.status==='exporting'?(job.partial_result?'Preparing partial results…':'Preparing diagram and result data…'):
       p.phase?`${p.phase}${name?' · '+name:''}`:name?`Solving ${name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`:'Queued for calculation…';
     const percent=p.total?Math.min(99,100*p.done/p.total):0;
-    $('progress-fill').style.width=percent+'%';$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
+    $('progress-fill').style.width=percent+'%';$('calculate').style.setProperty('--progress',percent+'%');$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
     setTimeout(()=>poll(id),900);
   }catch(e){
     if(state.activeJob!==id)return;
