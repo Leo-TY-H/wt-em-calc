@@ -1,5 +1,5 @@
 {
- "native_sha256": "5f779a504ec15842bb0f345737d251a61e6f7a7526a5c3d964f7a6cf8b5257ef",
+ "native_sha256": "447dee9275826a7d2af098d8c846b1866b144836527131304d4eee30a6fd9fce",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -68,6 +68,7 @@
   "kinematics",
   "mach_cubic",
   "mass_model",
+  "overrev",
   "piston_compressor",
   "piston_general",
   "piston_model",
@@ -99,16 +100,19 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "ffe87fb81fa8d50a817b8550cd3266feb63609cf802601d03609feb52755891a",
+ "python_sha256": "fad2176b88903ce6190294648f39779657a4365dc4168169deb274a9bba95164",
  "verification": {
-  "date": "2026-10-24",
+  "date": "2026-10-25",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
    "f_16a_block_10:sb",
    "a6m2_zero:sb",
    "ki_61_1a_otsu:rb",
-   "f_14a_early:rb"
+   "f_14a_early:rb",
+   "ki_61_1a_ko:sb",
+   "bf-109f-4:rb",
+   "he51a1:sb"
   ],
   "checks": {
    "bi:sb": {
@@ -1229,9 +1233,622 @@
      "worst": {},
      "examples": []
     }
+   },
+   "ki_61_1a_ko:sb": {
+    "operating_point": {
+     "checked": 139,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    },
+    "event": {
+     "checked": 5,
+     "mismatched": 4,
+     "decision": 0,
+     "worst": {
+      "/load_g": 1.3322676295501878e-15,
+      "/turn_dps": 1.7763568394002505e-14,
+      "/ps_continuous_mps": 5.844214001626824e-13,
+      "/alpha_deg": 5.186961971048731e-13,
+      "/bank_deg": 2.1316282072803006e-14,
+      "/upright_bank_margin_deg": 2.1316282072803006e-14,
+      "/force_error_g": 1.7551953093998779e-15,
+      "/angular_error_rad_s": 1.9984013913857226e-15,
+      "/force_n[]": 9.822542779147625e-11,
+      "/moment_nm[]": 2.3646862246096134e-11,
+      "/engine_force_n[]": 9.640643838793039e-11,
+      "/solution[]": 1.0347278589506459e-12,
+      "/_propulsion_seed/transmissions[]/omega": 8.526512829121202e-13,
+      "/_propulsion_seed/transmissions[]/previous_omega": 8.526512829121202e-13,
+      "/_propulsion_seed/transmissions[]/outputs[]": 9.640643838793039e-11,
+      "/_propulsion_seed/engines[]/omega": 8.526512829121202e-13,
+      "/_propulsion_seed/propellers[]/flow[]": 1.6342482922482304e-13,
+      "/_propulsion_seed/propellers[]/equilibrium_flow[]": 1.7053025658242404e-13,
+      "/_propulsion_seed/propellers[]/outputs[]": 9.640643838793039e-11,
+      "/_propulsion_seed/aggregate_force[]": 9.640643838793039e-11,
+      "/_propulsion_seed/aggregate_moment[]": 2.2737367544323206e-11,
+      "/_propulsion_seed/engine_angular_momentum[]": 7.275957614183426e-11,
+      "/_propulsion_seed/engine_wash[]": 1.6342482922482304e-13,
+      "/_propulsion_seed/per_engine_force[][]": 9.640643838793039e-11,
+      "/propulsion/stationarity/residual": 3.55271373174006e-16,
+      "/propulsion/stationarity/shaft_torque_residual_nm[]": 2.2737367544323206e-11,
+      "/propulsion/stationarity/shaft_rpm_error[]": 8.142819751810748e-12,
+      "/propulsion/stationarity/induced_flow_residual_mps[][]": 7.105427357601002e-15,
+      "/propulsion/phase_check/force_error_g": 1.7551953093998779e-15,
+      "/propulsion/phase_check/angular_error_rad_s": 1.9984013913857226e-15,
+      "/propulsion/engine_rpm[]": 8.185452315956354e-12,
+      "/propulsion/shaft_power_kw[]": 2.9558577807620168e-12,
+      "/propulsion/wash_mps[]": 1.6342482922482304e-13,
+      "/propulsion/angular_momentum[]": 7.275957614183426e-11,
+      "/stationary_coordinates[]": 1.0347278589506459e-12,
+      "/stationary_residual[]": 1.9984013807978107e-14,
+      "/propeller_admission[]/margins[]/value": 7.389644451905042e-13,
+      "/propeller_admission[]/rotors[]/torque": 3.54702933691442e-11,
+      "/propeller_admission[]/rotors[]/power": 8.614733815193176e-09,
+      "/propeller_admission[]/rotors[]/sections[]/alpha_deg": 4.440892098500626e-14,
+      "/propeller_admission[]/rotors[]/sections[]/mach": 2.220446049250313e-15,
+      "/propeller_admission[]/rotors[]/sections[]/critical_deg[]": 3.552713678800501e-15,
+      "/propeller_admission[]/rotors[]/sections[]/stall_margins_deg/lower_deg": 4.618527782440651e-14,
+      "/propeller_admission[]/rotors[]/sections[]/stall_margins_deg/upper_deg": 4.263256414560601e-14,
+      "/propeller_admission[]/rotors[]/sections[]/margins[]/value": 7.389644451905042e-13,
+      "/propeller_admission[]/rotors[]/margins[]/value": 7.389644451905042e-13,
+      "/stationary_candidates[]/load_g": 1.3322676295501878e-15,
+      "/stationary_candidates[]/solution[]": 1.0347278589506459e-12,
+      "/stationary_candidates[]/stationary_coordinates[]": 1.0347278589506459e-12,
+      "/stationary_candidates[]/turn_dps": 1.7763568394002505e-14,
+      "/stationary_candidates[]/force_error_g": 1.7551953093998779e-15,
+      "/stationary_candidates[]/angular_error_rad_s": 1.9984013913857226e-15,
+      "/chart_candidate/load_g": 1.3322676295501878e-15,
+      "/chart_candidate/solution[]": 1.0347278589506459e-12,
+      "/chart_candidate/stationary_coordinates[]": 1.0347278589506459e-12,
+      "/chart_candidate/turn_dps": 1.7763568394002505e-14,
+      "/chart_candidate/force_error_g": 1.7551953093998779e-15,
+      "/chart_candidate/angular_error_rad_s": 1.9984013913857226e-15
+     },
+     "examples": [
+      {
+       "speed": 174.99823356933592,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "1.713260545701439",
+         "1.7132605457014376"
+        ],
+        [
+         "/turn_dps",
+         "16.08534369075658",
+         "16.085343690756563"
+        ],
+        [
+         "/ps_continuous_mps",
+         "10.953144072683655",
+         "10.953144072684239"
+        ],
+        [
+         "/alpha_deg",
+         "16.079039670116746",
+         "16.079039670116227"
+        ],
+        [
+         "/bank_deg",
+         "56.056124478884016",
+         "56.056124478883994"
+        ],
+        [
+         "/upright_bank_margin_deg",
+         "33.943875521115984",
+         "33.943875521116006"
+        ]
+       ]
+      },
+      {
+       "speed": 187.49823356933592,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "1.9376428514118926",
+         "1.9376428514118922"
+        ],
+        [
+         "/turn_dps",
+         "17.910808864386762",
+         "17.910808864386755"
+        ],
+        [
+         "/ps_continuous_mps",
+         "9.555024112727136",
+         "9.555024112727141"
+        ],
+        [
+         "/alpha_deg",
+         "16.14504530091583",
+         "16.145045300915825"
+        ],
+        [
+         "/force_error_g",
+         "1.1775286976178698e-06",
+         "1.17752869700805e-06"
+        ],
+        [
+         "/moment_nm[1]",
+         "61.56047950719585",
+         "61.56047950719949"
+        ]
+       ]
+      },
+      {
+       "speed": 399.9982335693359,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.22389427392709013",
+         "0.22389427392709024"
+        ],
+        [
+         "/solution[3]",
+         "0.993965628988353",
+         "0.9939656289883531"
+        ],
+        [
+         "/solution[4]",
+         "-0.25579852095190025",
+         "-0.2557985209519003"
+        ],
+        [
+         "/_propulsion_seed/transmissions[0]/outputs[9]",
+         "7.257218817741219",
+         "7.257218817741213"
+        ],
+        [
+         "/_propulsion_seed/transmissions[0]/outputs[11]",
+         "4.539771209795241",
+         "4.539771209795242"
+        ],
+        [
+         "/_propulsion_seed/propellers[0]/flow[0]",
+         "7.257218817741219",
+         "7.257218817741213"
+        ]
+       ]
+      },
+      {
+       "speed": 506.248233569336,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/_propulsion_seed/transmissions[0]/outputs[9]",
+         "4.570128259956596",
+         "4.570128259956595"
+        ],
+        [
+         "/_propulsion_seed/propellers[0]/flow[0]",
+         "4.570128259956596",
+         "4.570128259956595"
+        ],
+        [
+         "/_propulsion_seed/propellers[0]/outputs[32]",
+         "4.570128259956596",
+         "4.570128259956595"
+        ],
+        [
+         "/_propulsion_seed/engine_wash[0]",
+         "4.570128259956596",
+         "4.570128259956595"
+        ],
+        [
+         "/propulsion/stationarity/induced_flow_residual_mps[0][0]",
+         "9.461403259969359e-06",
+         "9.461403260857537e-06"
+        ],
+        [
+         "/propulsion/wash_mps[0]",
+         "4.570128259956596",
+         "4.570128259956595"
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   "bf-109f-4:rb": {
+    "instructor": {
+     "checked": 1080,
+     "mismatched": 696,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 7.716050021144838e-15
+     },
+     "examples": [
+      {
+       "speed": 219.4434580078125,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5282995478699951",
+         "-0.5282995478699958"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.042368600916958314",
+         "-0.04236860091695815"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.08789894270519732",
+         "-0.08789894270519741"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 12.016790992049447,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5284643567992462",
+         "-0.5284643567992475"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04233593835202933",
+         "-0.04233593835202886"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.08795902796218497",
+         "-0.08795902796218524"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 12.016790992049447,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5284643567992462",
+         "-0.5284643567992475"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04233593835202933",
+         "-0.04233593835202886"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.08795902796218497",
+         "-0.08795902796218524"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 4.055640688430951,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5282778372531747",
+         "-0.5282778372531729"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04237316967245887",
+         "-0.04237316967245856"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0878907350086076",
+         "-0.08789073500860763"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 4.055640688430951,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5282778372531747",
+         "-0.5282778372531729"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04237316967245887",
+         "-0.04237316967245856"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0878907350086076",
+         "-0.08789073500860763"
+        ]
+       ]
+      }
+     ]
+    },
+    "operating_point": {
+     "checked": 30,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "he51a1:sb": {
+    "operating_point": {
+     "checked": 238,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    },
+    "event": {
+     "checked": 16,
+     "mismatched": 14,
+     "decision": 0,
+     "worst": {
+      "/solution[]": 1.0658141036401503e-14,
+      "/stationary_coordinates[]": 1.0658141036401503e-14,
+      "/stationary_candidates[]/solution[]": 1.0658141036401503e-14,
+      "/stationary_candidates[]/stationary_coordinates[]": 1.0658141036401503e-14,
+      "/chart_candidate/solution[]": 1.0658141036401503e-14,
+      "/chart_candidate/stationary_coordinates[]": 1.0658141036401503e-14,
+      "/_propulsion_seed/transmissions[]/outputs[]": 1.7763568394002505e-15,
+      "/_propulsion_seed/propellers[]/flow[]": 1.7763568394002505e-15,
+      "/_propulsion_seed/propellers[]/outputs[]": 1.7763568394002505e-15,
+      "/_propulsion_seed/engine_wash[]": 1.7763568394002505e-15,
+      "/propulsion/stationarity/induced_flow_residual_mps[][]": 1.7763568394002505e-15,
+      "/propulsion/wash_mps[]": 1.7763568394002505e-15,
+      "/stationary_residual[]": 1.3322675660227168e-14,
+      "/load_g": 3.552713678800501e-15,
+      "/turn_dps": 2.842170943040401e-14,
+      "/ps_continuous_mps": 1.7053025658242404e-13,
+      "/alpha_deg": 1.0658141036401503e-14,
+      "/force_error_g": 6.4233358656161105e-15,
+      "/moment_nm[]": 7.275957614183426e-12,
+      "/propulsion/phase_check/force_error_g": 6.4233358656161105e-15,
+      "/stationary_candidates[]/load_g": 3.552713678800501e-15,
+      "/stationary_candidates[]/turn_dps": 2.842170943040401e-14,
+      "/stationary_candidates[]/force_error_g": 6.4233358656161105e-15,
+      "/chart_candidate/load_g": 3.552713678800501e-15,
+      "/chart_candidate/turn_dps": 2.842170943040401e-14,
+      "/chart_candidate/force_error_g": 6.4233358656161105e-15,
+      "/pitch_response/margin": 2.609024107869118e-14,
+      "/pitch_response/gain_rad_s": 9.166001291305292e-13,
+      "/pitch_response/samples[]/gain_rad_s": 9.166001291305292e-13,
+      "/pitch_response/samples[]/margin": 2.609024107869118e-14,
+      "/pitch_response/samples[]/rounding": 3.366955965335844e-20,
+      "/history_error": 1.7763568394002505e-15,
+      "/propulsion/phase_check/history_error": 1.7763568394002505e-15,
+      "/stationary_candidates[]/history_error": 1.7763568394002505e-15,
+      "/chart_candidate/history_error": 1.7763568394002505e-15
+     },
+     "examples": [
+      {
+       "speed": 299.99822136230466,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[4]",
+         "-0.42332775939783424",
+         "-0.4233277593978343"
+        ],
+        [
+         "/stationary_coordinates[4]",
+         "-0.42332775939783424",
+         "-0.4233277593978343"
+        ],
+        [
+         "/stationary_candidates[0]/solution[4]",
+         "-0.42332775939783424",
+         "-0.4233277593978343"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[4]",
+         "-0.42332775939783424",
+         "-0.4233277593978343"
+        ],
+        [
+         "/chart_candidate/solution[4]",
+         "-0.42332775939783424",
+         "-0.4233277593978343"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[4]",
+         "-0.42332775939783424",
+         "-0.4233277593978343"
+        ]
+       ]
+      },
+      {
+       "speed": 249.99822136230466,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.04719669139176112",
+         "0.04719669139176123"
+        ],
+        [
+         "/solution[4]",
+         "-0.46516237259465737",
+         "-0.4651623725946571"
+        ],
+        [
+         "/_propulsion_seed/transmissions[0]/outputs[11]",
+         "3.8917192169278323",
+         "3.891719216927833"
+        ],
+        [
+         "/_propulsion_seed/propellers[0]/flow[2]",
+         "3.8917192169278323",
+         "3.891719216927833"
+        ],
+        [
+         "/_propulsion_seed/propellers[0]/outputs[33]",
+         "3.8917192169278323",
+         "3.891719216927833"
+        ],
+        [
+         "/_propulsion_seed/engine_wash[1]",
+         "-3.8917192169278323",
+         "-3.891719216927833"
+        ]
+       ]
+      },
+      {
+       "speed": 187.49822136230466,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/load_g",
+         "3.4518979416403894",
+         "3.451897941640389"
+        ],
+        [
+         "/turn_dps",
+         "35.65502959108892",
+         "35.65502959108891"
+        ],
+        [
+         "/ps_continuous_mps",
+         "-1.706304306553446",
+         "-1.7063043065534362"
+        ],
+        [
+         "/alpha_deg",
+         "14.563133368322855",
+         "14.563133368322854"
+        ],
+        [
+         "/force_error_g",
+         "7.228380549424108e-07",
+         "7.228380544579772e-07"
+        ],
+        [
+         "/moment_nm[1]",
+         "81.36169814594541",
+         "81.36169814594632"
+        ]
+       ]
+      },
+      {
+       "speed": 349.99822136230466,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.007763474425386842",
+         "0.007763474425386853"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.007763474425386842",
+         "0.007763474425386853"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.007763474425386842",
+         "0.007763474425386853"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[2]",
+         "0.007763474425386842",
+         "0.007763474425386853"
+        ],
+        [
+         "/chart_candidate/solution[2]",
+         "0.007763474425386842",
+         "0.007763474425386853"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[2]",
+         "0.007763474425386842",
+         "0.007763474425386853"
+        ]
+       ]
+      },
+      {
+       "speed": 224.99822136230466,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/ps_continuous_mps",
+         "-11.242005119267505",
+         "-11.242005119267514"
+        ],
+        [
+         "/alpha_deg",
+         "14.03890677884459",
+         "14.038906778844591"
+        ],
+        [
+         "/force_error_g",
+         "1.690366687749598e-07",
+         "1.690366687818987e-07"
+        ],
+        [
+         "/solution[0]",
+         "14.03890677884459",
+         "14.038906778844591"
+        ],
+        [
+         "/solution[2]",
+         "0.08040691201921792",
+         "0.08040691201921796"
+        ],
+        [
+         "/solution[4]",
+         "-0.49618643081590075",
+         "-0.4961864308159008"
+        ]
+       ]
+      }
+     ]
+    }
    }
   },
-  "finish_rows": 4716,
+  "finish_rows": 6324,
   "method": "scripts/verify_march_native.py"
  }
 }
