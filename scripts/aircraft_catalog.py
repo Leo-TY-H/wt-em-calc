@@ -71,7 +71,8 @@ def asset_sources():
     from aircraft_loadouts import PROFILE as LOADOUTS
     from aircraft_upgrades import source_paths
     from vehicle_names import source_paths as name_sources
+    from fuel_layout import TANK_PARTS
     return (sorted((root/'references/prop-propulsion').glob('*.json'))+
             sorted((root/'references/prop-mass').glob('*.json'))+source_paths()+
-            name_sources()+([PROFILE] if PROFILE.exists() else [])+([LOADOUTS] if LOADOUTS.exists() else [])+[EXCLUSIONS,root/'app/fonts/wt-symbols.ttf',root/'references/prop-native-config.json',
+            name_sources()+([PROFILE] if PROFILE.exists() else [])+([LOADOUTS] if LOADOUTS.exists() else [])+([TANK_PARTS] if TANK_PARTS.exists() else [])+[EXCLUSIONS,root/'app/fonts/wt-symbols.ttf',root/'references/prop-native-config.json',
              root/'references/body-gameplay.blkx',root/'references/body-gameparams.blkx'])

@@ -3,6 +3,7 @@
 !requirements-plotter.txt
 !references/
 !references/aircraft-exclusions.json
+!references/collision-fuel-tanks.json
 !scripts/
 !scripts/*.py
 !scripts/missile_native/
