@@ -39,9 +39,10 @@
       <div id="envelope-selected" class="envelope-selected" aria-live="polite"></div>
       <button id="envelope-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    <span class="eyebrow">AIRCRAFT</span>
+    <span class="eyebrow">SCENARIO</span>
+    <div class="mode-switch" role="radiogroup" aria-label="Launch platform"><label><input id="envelope-platform-air" type="radio" name="envelope-platform" value="air" checked><span>Air-to-air</span></label><label><input id="envelope-platform-ground" type="radio" name="envelope-platform" value="ground"><span>Surface-to-air</span></label></div>
     <div class="envelope-pair">${numberField('envelope-launcher-speed', 'Launcher speed', 'km/h', defaults.launcher.speed, 0, 7200)}${numberField('envelope-target-speed', 'Target speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
-    <div class="field contour-settings"><span>Altitudes · m</span><div id="envelope-altitudes" class="contour-levels"></div><div class="contour-add"><input id="envelope-altitude-input" type="number" min="50" max="25000" step="any" aria-label="New altitude in metres" placeholder="New altitude"><button id="envelope-altitude-add" type="button">Add</button></div><span id="envelope-altitude-status" class="hint" role="status"></span></div>
+    <div class="field contour-settings"><span id="envelope-altitudes-label">Altitudes · m</span><div id="envelope-altitudes" class="contour-levels"></div><div class="contour-add"><input id="envelope-altitude-input" type="number" min="50" max="25000" step="any" aria-label="New altitude in metres" placeholder="New altitude"><button id="envelope-altitude-add" type="button">Add</button></div><span id="envelope-altitude-status" class="hint" role="status"></span></div>
     <span class="eyebrow">SEARCH</span>
     <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="sidebar-actions">
@@ -82,6 +83,14 @@
   const closestText = s => s.outcome === 'unreachable' ? `≤ ${km(s.closest_m)} so far` : km(s.closest_m);
 
   const layers = () => [...altitudes].sort((a, b) => a - b);
+  // Surface-to-air (Leo, 2026-10-26): the launcher stands on the ground and the altitudes are the target's.
+  const ground = () => el('envelope-platform-ground').checked;
+  function platformControls() {
+    const launcherSpeed = el('envelope-launcher-speed').closest('.field');
+    launcherSpeed.hidden = ground(); el('envelope-launcher-speed').disabled = ground();
+    el('envelope-altitudes-label').textContent = ground() ? 'Target altitudes · m' : 'Altitudes · m';
+  }
+  for (const id of ['envelope-platform-air', 'envelope-platform-ground']) el(id).addEventListener('change', () => { platformControls(); updateForm(); });
   function renderAltitudes() {
     el('envelope-altitudes').innerHTML = layers().map(a => `<button type="button" data-altitude-remove="${a}" aria-label="Remove ${fmt(a)} m">${fmt(a)} ×</button>`).join('');
   }
@@ -99,7 +108,8 @@
   el('envelope-altitude-input').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); el('envelope-altitude-add').click(); } });
   function inputs() {
     return {quality: el('envelope-quality').value, layers_m: layers(),
-      target: {speed_mps: value('envelope-target-speed') / 3.6}, launcher: {speed_mps: value('envelope-launcher-speed') / 3.6}};
+      target: {speed_mps: value('envelope-target-speed') / 3.6},
+      launcher: ground() ? {platform: 'ground', speed_mps: 0} : {platform: 'air', speed_mps: value('envelope-launcher-speed') / 3.6}};
   }
   function updateForm() {
     const fields = [...el('envelope-form').querySelectorAll('input[type=number]:not(:disabled):not(#envelope-altitude-input)')];
@@ -175,6 +185,7 @@
   el('envelope-form').addEventListener('change', event => { if (!['envelope-search', 'envelope-altitude-input'].includes(event.target.id)) updateForm(); });
   function reset() {
     for (const [id, v] of [['envelope-target-speed', defaults.target.speed], ['envelope-launcher-speed', defaults.launcher.speed]]) el(id).value = v;
+    el('envelope-platform-air').checked = true; platformControls();
     altitudes = [...defaults.altitudes]; renderAltitudes(); el('envelope-altitude-status').textContent = '';
     el('envelope-quality').value = defaults.quality; el('envelope-search').value = '';
     if (meta) filter();
@@ -248,14 +259,18 @@
   // ---- Geometry ---------------------------------------------------------------------
   const wrap = a => { let x = ((a + 180) % 360 + 360) % 360 - 180; return x === -180 ? 180 : x; };
   function mirrored() { return jobInfo ? jobInfo.mirrored : true; }
+  const GROUND_LAUNCH_M = 2;   // as scripts/missile_envelope.py
   const baseStep = () => jobInfo?.config?.azimuth_step_deg || qualities[submitted.quality].step;
   // Launcher and target states at release for a sample (mirrors scripts/missile_envelope.py states()).
   function states(c, layer, azimuth, distance) {
     const a = radians(azimuth);
     const direction = (h, p, s) => [s * Math.cos(radians(p)) * Math.cos(radians(h)), s * Math.sin(radians(p)), s * Math.cos(radians(p)) * Math.sin(radians(h))];
-    const altitude = layer, h = wrap(azimuth + 180), p = 0;
-    return {launcher: {position: [0, layer, 0], velocity: direction(h, p, c.launcher.speed_mps), angles: [h, p, 0]},
-      target: {position: [-distance * Math.cos(a), altitude, -distance * Math.sin(a)], velocity: direction(0, 0, c.target.speed_mps), angles: [0, 0, 0]}};
+    const h = wrap(azimuth + 180), target = {position: [-distance * Math.cos(a), layer, -distance * Math.sin(a)], velocity: direction(0, 0, c.target.speed_mps), angles: [0, 0, 0]};
+    if (c.launcher.platform === 'ground') {
+      const p = Math.atan2(layer - GROUND_LAUNCH_M, distance) * 180 / Math.PI;
+      return {launcher: {position: [0, GROUND_LAUNCH_M, 0], velocity: [0, 0, 0], angles: [h, p, 0]}, target};
+    }
+    return {launcher: {position: [0, layer, 0], velocity: direction(h, 0, c.launcher.speed_mps), angles: [h, 0, 0]}, target};
   }
   const bearingName = az => {
     const a = Math.abs(wrap(az)), side = wrap(az) > 0 ? ' · +Z side' : wrap(az) < 0 ? ' · −Z side' : '';
@@ -456,7 +471,7 @@
     const label = a => { const b = a > 180 ? 360 - a : a; return b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`; };
     return {...theme, margin: {l: 40, r: 40, t: 40, b: 40}, hovermode: 'closest', uirevision: revision, annotations,
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {color: tick, size: 12}, bgcolor: 'rgba(0,0,0,0)', groupclick: 'togglegroup',
-        ...(multi() ? {} : {title: {text: 'Altitude', font: {color: tick, size: 12}}})},
+        ...(multi() ? {} : {title: {text: runs[0]?.submitted.launcher.platform === 'ground' ? 'Target altitude' : 'Altitude', font: {color: tick, size: 12}}})},
       polar: {bgcolor: '#000000',
         angularaxis: {rotation: 90, direction: 'clockwise', tickmode: 'array', tickvals: ticks, ticktext: ticks.map(label),
           gridcolor: grid, linecolor: 'rgba(240,240,250,.2)', color: tick, tickfont: {size: 11}},
@@ -615,7 +630,7 @@
     const layout = {...theme, margin: {l: 70, r: 25, t: multi() ? 50 : 30, b: 60}, showlegend: multi(), hovermode: 'closest', uirevision: revision('profile') + cutAz,
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {color: tick, size: 12}, bgcolor: 'rgba(0,0,0,0)'},
       xaxis: {...axis2d(`← ${label(wrap(cutAz + 180))} · horizontal distance (m) · ${label(cutAz)} →`), range: [reach[0] - margin, reach[1] + margin]},
-      yaxis: {...axis2d('Altitude · m'), rangemode: 'tozero'}};
+      yaxis: {...axis2d(runs[0]?.submitted.launcher.platform === 'ground' ? 'Target altitude · m' : 'Altitude · m'), rangemode: 'tozero'}};
     await draw(traces, layout);
   }
   // Plotly's polar plots cannot pan or wheel-zoom, so the top views are drawn on equal-scaled km axes with polar
