@@ -98,7 +98,7 @@ def start(request):
         config = missile_envelope.validate(request)
         angles = missile_envelope.azimuths(config)
         setup = dict(config=config, azimuths_deg=angles, mirrored=missile_envelope.mirrored(config),
-                     rays_total=len(config['layers_m']) * len(angles))
+                     rays_total=len(config['layers_m']) * len(angles) * (1 if config['escape'] is None else 2))
     else:
         try:
             setup = missile_engine.calculate('envelope-setup', request)

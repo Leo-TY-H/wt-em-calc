@@ -862,6 +862,24 @@ void install_reference_trace() {
     }));
 }
 
+// missile_worker.escape_motion as computed by the translated function, so the
+// path constants are the reference's; typed target_at evaluates it per time.
+void load_escape(const V& m, EvaluateSetup& E) {
+    if (field(m, "kind").as_string() != "escape") bail("typed loader: escape motion expected");
+    TargetMotion& t = E.motion;
+    t.position = vec_at<3>(m, "position"); t.velocity = vec_at<3>(m, "velocity"); t.quaternion = vec_at<4>(m, "quaternion");
+    t.escape = true;
+    t.start = num_at(m, "start"); t.end = num_at(m, "end"); t.heading = num_at(m, "heading");
+    t.sine = num_at(m, "sine"); t.cosine = num_at(m, "cosine"); t.rate = num_at(m, "rate"); t.radius = num_at(m, "radius");
+    t.speed = num_at(m, "speed"); t.roll = num_at(m, "roll");
+    t.turn_point = vec_at<3>(m, "turn_point"); t.exit_point = vec_at<3>(m, "exit_point"); t.run = vec_at<3>(m, "run");
+    t.run_quaternion = vec_at<4>(m, "run_quaternion");
+    for (double x : {t.start, t.end, t.heading, t.sine, t.cosine, t.rate, t.radius, t.speed, t.roll}) finite_or_bail(x);
+    finite_or_bail(t.position); finite_or_bail(t.velocity); finite_or_bail(t.quaternion);
+    finite_or_bail(t.turn_point); finite_or_bail(t.exit_point); finite_or_bail(t.run); finite_or_bail(t.run_quaternion);
+    E.target_velocity_raw = t.run; E.straight_from = t.end;
+}
+
 V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Mode mode = typed_mode();
     if (mode == Mode::Off) return call(reference, args, kwargs);
@@ -884,7 +902,15 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     V typed_result;
     try {
         auto began = std::chrono::steady_clock::now();
-        (cached_setup() ? prepare_cached : prepare_full)(a[0], a[1], a[2], a[3], a[4], p);
+        // An escaping target (no-escape zone) is set up from its release state,
+        // as missile_envelope.evaluate does.
+        V target = a[2], escape = dict_get(a[2], V("escape"), V());
+        if (!escape.is_none())
+            target = make_dict({{"position", item(a[2], V("position"))}, {"velocity", item(a[2], V("velocity"))},
+                                {"angles", item(a[2], V("angles"))}});
+        (cached_setup() ? prepare_cached : prepare_full)(a[0], a[1], target, a[3], a[4], p);
+        if (!escape.is_none())
+            load_escape(invoke_fn("missile_worker", "escape_motion", {target, escape, item(a[1], V("position"))}), p.setup);
         auto prepared = std::chrono::steady_clock::now();
         if (mode == Mode::Compare) comparison.state = p.session;
         EvaluateResult r = evaluate_loop(p.props, p.session, p.setup);

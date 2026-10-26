@@ -64,6 +64,95 @@ def quaternion(angles):
                           [math.sin(roll),0,0,math.cos(roll)])]
 
 
+ESCAPE_GRAVITY = 9.81
+ESCAPE_LOAD_G = (1.5, 15.)
+ESCAPE_DELAY_S = (0., 60.)
+
+
+def escape_motion(target, escape, origin):
+    """Target path of the no-escape zone: a level break away from the launch point.
+
+    The target holds its course for escape['delay_s'], then turns at
+    escape['load_g'] the shorter way until origin (the launch point) lies directly
+    behind it, and flies straight on. The turn is level and coordinated: rate
+    g sqrt(n^2 - 1) / V, banked acos(1 / n) into the turn. Speed and altitude stay
+    constant, so the path has a closed form; target_point() evaluates it at any
+    time after release.
+    """
+    position, velocity = list(target['position']), list(target['velocity'])
+    if velocity[1] != 0: raise ValueError('An escaping target must fly level')
+    delay, load = float(escape['delay_s']), float(escape['load_g'])
+    if not ESCAPE_DELAY_S[0] <= delay <= ESCAPE_DELAY_S[1] or not ESCAPE_LOAD_G[0] <= load <= ESCAPE_LOAD_G[1]:
+        raise ValueError('Escape load factor or delay out of range')
+    def wrapped(angle):   # (-pi, pi]
+        angle = math.fmod(angle, 2 * math.pi)
+        if angle > math.pi: angle -= 2 * math.pi
+        if angle <= -math.pi: angle += 2 * math.pi
+        return angle
+    speed = math.sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2])
+    turn_point = [p + v * delay for p, v in zip(position, velocity)]
+    heading = math.atan2(velocity[2], velocity[0])
+    turn = wrapped(math.atan2(turn_point[2] - origin[2], turn_point[0] - origin[0]) - heading)   # head-on: toward +Z
+    sine, cosine = math.sin(heading), math.cos(heading)
+    rate = radius = 0.; end = delay; exit_point = turn_point[:]; run = velocity[:]; exit_heading = heading
+    if speed > 0 and turn != 0:
+        rate = math.copysign(ESCAPE_GRAVITY * math.sqrt(load * load - 1.) / speed, turn)
+        radius = speed / rate
+        sign = math.copysign(1., turn)
+        def ahead(tau):
+            """Turn still needed tau seconds into the turn until origin lies dead astern."""
+            h = heading + rate * tau
+            x, z = turn_point[0] + radius * (math.sin(h) - sine), turn_point[2] - radius * (math.cos(h) - cosine)
+            return sign * wrapped(math.atan2(z - origin[2], x - origin[0]) - h)
+        # First crossing in 1-degree steps of heading (a jump across +-180 degrees is no
+        # crossing), then bisection. Without one in a full circle (origin close to the
+        # turn), the turn ends on the bearing seen from its start.
+        step = math.pi / 180. / abs(rate)
+        duration = turn / rate; previous = ahead(0.)
+        for k in range(1, 361):
+            value = ahead(k * step)
+            if value <= 0. and previous < math.pi / 2:
+                low, high = (k - 1) * step, k * step
+                for _ in range(60):
+                    middle = (low + high) / 2
+                    if ahead(middle) > 0.: low = middle
+                    else: high = middle
+                duration = high
+                break
+            previous = value
+        end = delay + duration
+        exit_heading = heading + rate * (end - delay)
+        exit_point = [turn_point[0] + radius * (math.sin(exit_heading) - sine), turn_point[1],
+                      turn_point[2] - radius * (math.cos(exit_heading) - cosine)]
+        run = [speed * math.cos(exit_heading), 0., speed * math.sin(exit_heading)]
+    return dict(kind='escape', position=position, velocity=velocity, quaternion=quaternion(target['angles']),
+                load_g=load, delay_s=delay, speed=speed, start=delay, end=end, heading=heading, sine=sine, cosine=cosine,
+                rate=rate, radius=radius, roll=math.copysign(math.degrees(math.acos(1. / load)), turn),
+                turn_point=turn_point, exit_point=exit_point, run=run,
+                run_quaternion=quaternion([math.degrees(exit_heading), 0., 0.]))
+
+
+def target_point(motion, time):
+    """Target position, velocity and attitude at time: linear_point() or an escape_motion() path."""
+    if motion.get('kind') != 'escape': return linear_point(motion, time)
+    if time <= motion['start']:
+        position = [p + v * time for p, v in zip(motion['position'], motion['velocity'])]
+        velocity, attitude = motion['velocity'], motion['quaternion']
+    elif time < motion['end']:
+        heading = motion['heading'] + motion['rate'] * (time - motion['start'])
+        point, radius = motion['turn_point'], motion['radius']
+        position = [point[0] + radius * (math.sin(heading) - motion['sine']), point[1],
+                    point[2] - radius * (math.cos(heading) - motion['cosine'])]
+        velocity = [motion['speed'] * math.cos(heading), 0., motion['speed'] * math.sin(heading)]
+        attitude = quaternion([math.degrees(heading), 0., motion['roll']])
+    else:
+        delta = time - motion['end']
+        position = [p + v * delta for p, v in zip(motion['exit_point'], motion['run'])]
+        velocity, attitude = motion['run'], motion['run_quaternion']
+    return dict(position=[f32(x) for x in position], velocity=[f32(x) for x in velocity],
+                quaternion=[f32(x) for x in attitude])
+
+
 def validate(request):
     if not isinstance(request, dict): raise ValueError('Expected a scenario object')
     index = json.loads((input_directory() / 'launch-profiles/index.json').read_text())
@@ -91,6 +180,12 @@ def validate(request):
     clean['duration'] = number(request.get('duration', 60), 'Duration', .1, 180)
     if math.dist(clean[launch_key]['position'], clean['target']['position']) < 10:
         raise ValueError('Initial launcher/target separation must be at least 10 m')
+    escape = request.get('escape')
+    if escape is not None:
+        if not isinstance(escape, dict): raise ValueError('Escape settings must be an object')
+        if clean['target']['velocity'][1] != 0: raise ValueError('An escaping target must fly level')
+        clean['escape'] = dict(load_g=number(escape.get('load_g'), 'Escape load factor', *ESCAPE_LOAD_G),
+                               delay_s=number(escape.get('delay_s', 0.), 'Escape delay', *ESCAPE_DELAY_S))
     return clean
 
 
@@ -169,9 +264,11 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
     initialization = frame.website_initialization
     session = InteractionSession.from_frame(frame, clock=0., origin=frame.website_release['position'],
                                             enabled=True, guidance_flag=False)
-    target_motion = dict(kind='constant_velocity', position=config['target']['position'],
-                         velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles']))
-    def target(t): return linear_point(target_motion, t)
+    escape = config.get('escape')
+    target_motion = (escape_motion(config['target'], escape, launch['position']) if escape is not None else
+                     dict(kind='constant_velocity', position=config['target']['position'],
+                          velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles'])))
+    def target(t): return target_point(target_motion, t)
     def targets(old, next_time):
         new = target(next_time)
         if frame.flight.family == 'optical': return [dict(position=new['position'], auxiliary=[0.,0.,0.], id=123)]
@@ -254,7 +351,8 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
                            initialization=initialization,
                            radar_support='ideal_recovered_provider' if frame.flight.family=='radar' else None,
                            component_provenance='2.59.0.34 profiles/core with separately recovered 2.59.0.38 shared arithmetic; whole-build equivalence unproven',
-                           target_motion='constant_velocity', geometry='point_target',
+                           target_motion='constant_velocity' if escape is None else dict(escape, kind='level_break_away'),
+                           geometry='point_target',
                            telemetry=dict(force_sampling='Final integration substep; force_time_s records its evaluation time. Thrust is the actual propulsion update held over that step.',
                                aerodynamic_forces='Magnitudes of pre-fin translational drag/lift including body perturbation scaling; Cd is the pre-fin drag coefficient.',
                                aoa='Unsigned local-flow incidence to the aerodynamic forward axis, 0–180 degrees.',

@@ -12,6 +12,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <tuple>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
@@ -38,64 +39,68 @@ public:
  ~Pool(){{std::lock_guard<std::mutex> lock(mutex);stopping=true;}cv.notify_all();for(auto& t:threads)t.join();}
 };
 
-static V evaluation(V config,V layer,V azimuth,V distance){
+static V evaluation(V config,V layer,V azimuth,V distance,V escape){
  import_module("missile_envelope");
  InvocationGuard scope;
- V actors=invoke("missile_envelope","states",{config,layer,azimuth,distance});
+ V actors=invoke("missile_envelope","states",{config,layer,azimuth,distance,escape});
  try{return invoke("missile_envelope","evaluate",{member(config,"missile"),item(actors,0),item(actors,1),member(config,"early_exit")});}
  catch(const PyError& e){return make_dict({{"hit",false},{"outcome","error"},{"error",e.kind+": "+e.what()},{"time_s",V()},{"closest_m",V()}});}
 }
 
-// The Planner (missile_envelope.py) decides which rays exist and seeds them on
+// The Planners (missile_envelope.planners: the straight-flying target, and the
+// escaping one for the no-escape zone) decide which rays exist and seed them on
 // this thread only; searches run on deep copies, so results never depend on timing.
 // Up to two rays per simulation thread are searched at once: a ray mostly waits
 // for its own short batches. Finished rays wake this thread without polling.
 static V envelope(V request){
  auto start=Clock::now();V config=invoke("missile_envelope","validate",{request});
  V limits=invoke("missile_envelope","missile_limits",{member(config,"missile")});
- V planner=call(attr(import_module("missile_envelope"),"Planner"),{config,limits});
+ Args planners=iter(invoke("missile_envelope","planners",{config,limits}));
+ auto total=[&]{int64_t n=0;for(V p:planners)n+=call(attr(p,"total")).as_int();return n;};
+ auto finished_rays=[&]{int64_t n=0;for(V p:planners)n+=attr(p,"done").as_int();return n;};
+ auto complete=[&]{for(V p:planners)if(!truth(call(attr(p,"complete"))))return false;return true;};
  V angles=invoke("missile_envelope","azimuths",{config}),mirrored=invoke("missile_envelope","mirrored",{config});
  int workers=int(invoke("missile_envelope","default_workers").as_int()),capacity=2*workers;
  std::atomic<int64_t> simulations{0},errors{0},early{0};
- std::mutex done_mutex;std::condition_variable done_cv;std::vector<std::pair<V,V>> done;std::exception_ptr failure;
+ std::mutex done_mutex;std::condition_variable done_cv;std::vector<std::tuple<size_t,V,V>> done;std::exception_ptr failure;
  Pool samples(workers),searches(capacity);
- send("plan",make_dict({{"config",config},{"limits",limits},{"rays_total",call(attr(planner,"total"))}}));
+ send("plan",make_dict({{"config",config},{"limits",limits},{"rays_total",total()}}));
  int running=0;
- while(!truth(call(attr(planner,"complete")))){
-  for(V entry:iter(call(attr(planner,"ready"),{V(int64_t(capacity-running))}))){
+ while(!complete()){
+  for(size_t k=0;k<planners.size();++k)for(V entry:iter(call(attr(planners[k],"ready"),{V(int64_t(capacity-running))}))){
    V original=item(entry,0),seed=item(entry,1),ray=deepcopy(original),key=attr(original,"key");
    setattr(ray,"seed_source",truth(seed)?deepcopy(seed):V());
    ++running;
-   searches.submit([&,ray,seed,config,key]{
+   searches.submit([&,ray,seed,config,key,k]{
     try{
     auto began=Clock::now();InvocationGuard scope;
     envelope_yield=[&,ray,config](V ranges){
      Args distances=iter(ranges);simulations+=int64_t(distances.size());
      setattr(ray,"simulations",attr(ray,"simulations").as_int()+int64_t(distances.size()));
      std::vector<std::future<V>> futures;
-     for(V r:distances)futures.push_back(samples.submit([=]{return evaluation(config,attr(ray,"layer"),attr(ray,"azimuth"),r);}));
+     for(V r:distances)futures.push_back(samples.submit([=]{return evaluation(config,attr(ray,"layer"),attr(ray,"azimuth"),r,attr(ray,"escape"));}));
      Args outcomes;for(auto& future:futures){V outcome=future.get();std::string kind=member(outcome,"outcome").as_string();errors+=kind=="error";early+=kind=="unreachable";outcomes.push_back(outcome);}return make_list(outcomes);
     };
     try{call(attr(ray,"search"),{seed});}catch(...){envelope_yield={};throw;}
     envelope_yield={};V result=attr(ray,"result");dict_set(result,"wall_s",seconds(began));
     int count=0;for(V sample:iter(member(result,"samples")))count+=member(sample,"outcome").as_string()=="error";
     dict_set(result,"errors",count);
-    {std::lock_guard<std::mutex> lock(done_mutex);done.emplace_back(key,result);}
+    {std::lock_guard<std::mutex> lock(done_mutex);done.emplace_back(k,key,result);}
     }catch(...){std::lock_guard<std::mutex> lock(done_mutex);if(!failure)failure=std::current_exception();}
     done_cv.notify_one();return V();
    });
   }
   if(!running)throw PyError("RuntimeError","Envelope search plan has no ready direction");
-  std::vector<std::pair<V,V>> finished;
+  std::vector<std::tuple<size_t,V,V>> finished;
   {std::unique_lock<std::mutex> lock(done_mutex);done_cv.wait(lock,[&]{return failure||!done.empty();});
    if(failure)std::rethrow_exception(failure);finished.swap(done);}
-  for(auto& [key,result]:finished){
-   --running;call(attr(planner,"finish"),{key,result});
-   send("ray",result);send("progress",make_dict({{"rays_done",attr(planner,"done")},{"rays_total",call(attr(planner,"total"))},{"simulations",simulations.load()},{"elapsed_s",seconds(start)}}));
+  for(auto& [k,key,result]:finished){
+   --running;call(attr(planners[k],"finish"),{key,result});
+   send("ray",result);send("progress",make_dict({{"rays_done",finished_rays()},{"rays_total",total()},{"simulations",simulations.load()},{"elapsed_s",seconds(start)}}));
   }
  }
  return make_dict({{"format","missile-envelope-v2"},{"config",config},{"limits",limits},{"mirrored",mirrored},
-  {"azimuths_deg",angles},{"rays_total",call(attr(planner,"total"))},{"simulations",simulations.load()},{"sample_errors",errors.load()},
+  {"azimuths_deg",angles},{"rays_total",total()},{"simulations",simulations.load()},{"sample_errors",errors.load()},
   {"early_misses",early.load()},{"elapsed_s",seconds(start)},{"workers",workers}});
 }
 
@@ -126,7 +131,7 @@ int main(int argc,char**argv){
    import_module(mode=="envelope"||mode=="envelope-setup"||mode=="evaluate"?"missile_envelope":mode=="call"?member(request,"module").as_string():"missile_worker");
    InvocationGuard scope;V result;
    if(mode=="envelope")result=envelope(request);
-   else if(mode=="envelope-setup"){V c=invoke("missile_envelope","validate",{request}),a=invoke("missile_envelope","azimuths",{c});result=make_dict({{"config",c},{"azimuths_deg",a},{"mirrored",invoke("missile_envelope","mirrored",{c})},{"rays_total",int(iter(member(c,"layers_m")).size()*iter(a).size())}});}
+   else if(mode=="envelope-setup"){V c=invoke("missile_envelope","validate",{request}),a=invoke("missile_envelope","azimuths",{c});result=make_dict({{"config",c},{"azimuths_deg",a},{"mirrored",invoke("missile_envelope","mirrored",{c})},{"rays_total",int(iter(member(c,"layers_m")).size()*iter(a).size()*(member(c,"escape").is_none()?1:2))}});}
    else if(mode=="evaluate")result=invoke("missile_envelope","evaluate",{member(request,"missile"),member(request,"launcher"),member(request,"target"),dict_get(request,"early_exit",true),dict_get(request,"reach_m")});
    else if(mode=="call"){Kw kwargs;V k=dict_get(request,"kwargs",make_dict());for(auto& p:k.node()->entries)kwargs.emplace_back(p.first.as_string(),p.second);result=call(attr(import_module(member(request,"module").as_string()),member(request,"function").as_string()),iter(dict_get(request,"args",make_list())),kwargs);}
    else if(mode=="simulator")result=invoke("missile_worker","simulate",{request,builtin("progress",[&](const Args&a,const Kw&){if(!batch)send("progress",a.at(0));return V();})});

@@ -3,6 +3,7 @@
 // FastInteractionSession.advance (proximity trace) and missile_envelope.evaluate.
 #pragma once
 #include "typed_guidance.h"
+#include "typed_launch.h"
 
 namespace typed {
 
@@ -21,14 +22,36 @@ struct FlightProps {
     ProximityProps proximity{};
     OpticalProps optical{}; RadarProps radar{};
 };
-struct TargetMotion { d3 position, velocity; d4 quaternion; };
+struct TargetMotion {
+    d3 position, velocity; d4 quaternion;
+    // missile_worker.escape_motion fields (no-escape zone); constant velocity when escape is false.
+    bool escape = false;
+    double start = 0., end = 0., heading = 0., sine = 0., cosine = 0., rate = 0., radius = 0., speed = 0., roll = 0.;
+    d3 turn_point{}, exit_point{}, run{}; d4 run_quaternion{};
+};
 struct TargetPoint { d3 position, velocity; d4 quaternion; };
-// flight_session.linear_point for the constant-velocity target (epoch 0).
+// flight_session.linear_point for the constant-velocity target (epoch 0), or
+// missile_worker.target_point on an escape path.
 inline TargetPoint target_at(const TargetMotion& m, double time) {
-    double delta = time - 0.;
     TargetPoint p;
-    for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.position[i] + m.velocity[i] * delta); p.velocity[i] = f32(m.velocity[i]); }
-    p.quaternion = f32s(m.quaternion);
+    if (!m.escape) {
+        double delta = time - 0.;
+        for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.position[i] + m.velocity[i] * delta); p.velocity[i] = f32(m.velocity[i]); }
+        p.quaternion = f32s(m.quaternion);
+    } else if (time <= m.start) {
+        for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.position[i] + m.velocity[i] * time); p.velocity[i] = f32(m.velocity[i]); }
+        p.quaternion = f32s(m.quaternion);
+    } else if (time < m.end) {
+        double heading = m.heading + m.rate * (time - m.start);
+        p.position = {f32(m.turn_point[0] + m.radius * (std::sin(heading) - m.sine)), f32(m.turn_point[1]),
+                      f32(m.turn_point[2] - m.radius * (std::cos(heading) - m.cosine))};
+        p.velocity = {f32(m.speed * std::cos(heading)), f32(0.), f32(m.speed * std::sin(heading))};
+        p.quaternion = f32s(angles_quaternion({heading * (180.0 / 3.141592653589793238462643383279502884), 0., m.roll}));   // math.degrees
+    } else {
+        double delta = time - m.end;
+        for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.exit_point[i] + m.run[i] * delta); p.velocity[i] = f32(m.run[i]); }
+        p.quaternion = f32s(m.run_quaternion);
+    }
     return p;
 }
 struct Event { d3 position, direction; double time; };
@@ -400,6 +423,7 @@ struct EvaluateSetup {
     bool has_reach = false; double reach_m = 0.; bool early_exit = true;
     int64_t count = 0; double radius = 0., deadline = 0.; std::vector<double> burn_end;
     double best_distance = 0.;
+    double straight_from = 0.;   // the target flies straight from then on (target_velocity_raw)
 };
 struct EvaluateResult {
     bool hit; const char* outcome; double time_s; bool has_event_time; double event_time_s;
@@ -435,7 +459,7 @@ inline EvaluateResult evaluate_loop(const FlightProps& P, Session& S, const Eval
             outcome = expiry.time_expired ? "lifetime" : expiry.distance_expired ? "distance_limit" : "tracking_timeout";
             break;
         }
-        if (E.early_exit && i % 6 == 5) {
+        if (E.early_exit && i % 6 == 5 && (double)S.body.time >= E.straight_from) {
             bool burned = true;   // all() over zip(clocks, burn_end)
             size_t n = E.burn_end.size() < 4 ? E.burn_end.size() : 4;
             for (size_t k = 0; k < n; ++k) if (!((double)S.body.clocks[k] >= E.burn_end[k] + 1e-3)) { burned = false; break; }
