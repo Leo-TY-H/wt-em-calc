@@ -16,7 +16,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div class="workspace" id="em-workspace" role="region" aria-labelledby="em-tab">
 <aside class="sidebar"><form id="scenario">
 <div class="section-heading"><span class="eyebrow">FLIGHT CONDITION</span><button type="button" class="text-button" id="reset">Reset</button></div>
-<fieldset id="aircraft-picker"><legend>Add aircraft <small>Up to eight entries</small></legend>
+<fieldset id="aircraft-picker"><legend class="visually-hidden">Add aircraft</legend>
 <input id="aircraft-search" type="search" placeholder="Search aircraft…" aria-label="Search aircraft">
 <div id="aircraft-list" class="aircraft-list"></div>
 <p id="search-empty" class="hint" hidden>No aircraft match your search.</p>
@@ -64,9 +64,9 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div class="divider"></div>
 <details><summary>Additional settings</summary>
 <div class="ammunition-setting">
-<label class="check-row"><input id="default-ammunition" type="checkbox" checked aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
+<div hidden><label class="check-row"><input id="default-ammunition" type="checkbox" checked aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
 <small id="ammunition-help">Standard gun belts and countermeasures.</small>
-<small id="ammunition-status" role="status" aria-live="polite"></small>
+<small id="ammunition-status" role="status" aria-live="polite"></small></div>
 <label id="ammunition-vehicle-field" class="field" hidden>Armament variant<select id="ammunition-vehicle"></select></label>
 </div>
 <label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="any" value="0"><span>kg</span></div></label>

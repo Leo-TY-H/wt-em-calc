@@ -166,7 +166,7 @@ function refreshEntrySummaries(){
   for(const row of $('selected-aircraft').children){
     const c=state.conditions[row.dataset.entry];
     const entry=state.entries.find(e=>e.id===row.dataset.entry);
-    const loadout=c.loadout?' · '+loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle))+(c.stores_released?' (released)':''):'';
+    const loadout=c.loadout?' · '+loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle))+(c.stores_released?' (released)':''):c.default_ammunition?'':' · Clean';
     row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)}${c.structural_limits===false?' · Flutter off':''}${loadout}`;
   }
 }
@@ -751,8 +751,15 @@ function fetchLoadouts(aircraft,vehicle){
 }
 const cachedLoadouts=(aircraft,vehicle)=>loadoutCache.get(loadoutKey(aircraft,vehicle))?.value;
 const optionOf=(editor,tier,id)=>editor?.tiers.find(t=>t.tier===+tier)?.options.find(o=>o.id===id);
+// Without stores the loadout is either the default ammunition and countermeasures (default) or clean: nothing aboard
+// (Leo, 2026-10-26; this replaces the "Include default ammunition" switch). Stores always come with the ammunition.
+const BARE_LOADOUTS={'':'Ammunition and countermeasures only',__clean:'Clean'};
+function ammunitionText(aircraft,vehicle){
+  const a=ammunitionFor(aircraft,vehicle);
+  return a?.supported?[a.gun_rounds?`${fmt(a.gun_rounds,0)} rounds`:'',a.countermeasures?`${fmt(a.countermeasures,0)} countermeasures`:'',`${fmt(a.mass_kg,0)} kg`].filter(Boolean).join(' · '):'';
+}
 function loadoutText(c,info){
-  if(!c.loadout)return 'Clean · guns only';
+  if(!c.loadout)return BARE_LOADOUTS[c.default_ammunition?'':'__clean'];
   if(typeof c.loadout==='string')return info?.presets.find(p=>p.id===c.loadout)?.label||c.loadout;
   const tiers=Object.entries(c.loadout.tiers||{});
   if(!tiers.length)return 'Custom · all pylons empty';
@@ -773,10 +780,12 @@ async function showLoadout(){
   $('loadout-field').hidden=!entry;
   if(!entry)return;
   const aircraft=state.meta.aircraft[entry.aircraft_id],c=state.conditions[entry.id];
-  const available=!!aircraft.loadouts?.supported;
-  $('loadout-edit').disabled=!available;
+  const available=!!aircraft.loadouts?.supported,ammunition=!!ammunitionFor(aircraft,c.ammunition_vehicle)?.supported;
+  // Without stores the choice is still between ammunition only and clean.
+  $('loadout-edit').disabled=!available&&!ammunition;
   $('loadout-summary').textContent=loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle));
-  $('loadout-detail').textContent=available?(c.loadout?'':'Stores, pylons and drop tanks the aircraft can carry.'):(aircraft.loadouts?.reason||'Loadouts are unavailable for this aircraft.');
+  $('loadout-detail').textContent=c.loadout?'':c.default_ammunition?ammunitionText(aircraft,c.ammunition_vehicle):
+    available||ammunition?'Nothing aboard':(aircraft.loadouts?.reason||'Loadouts are unavailable for this aircraft.');
   if(!available||!c.loadout)return;
   try{
     const info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);
@@ -797,11 +806,13 @@ async function openLoadoutEditor(){
   $('loadout-custom').hidden=true;$('loadout-apply').disabled=true;
   $('loadout-released').checked=!!c.stores_released;
   $('loadout-dialog').showModal();
-  try{d.info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);}
+  const aircraft=state.meta.aircraft[entry.aircraft_id];
+  d.ammunition=ammunitionText(aircraft,c.ammunition_vehicle);
+  try{d.info=aircraft.loadouts?.supported?await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle):{presets:[],editor:null};}
   catch(cause){$('loadout-preset-list').innerHTML=`<p class="hint">${escapeText('Could not load loadouts: '+cause.message)}</p>`;return;}
   if(d.entry!==entry.id)return;
   const loadout=c.loadout;
-  if(!loadout)d.draft={preset:'',tiers:{}};
+  if(!loadout)d.draft={preset:c.default_ammunition?'':'__clean',tiers:{}};
   else if(typeof loadout==='string')d.draft={preset:loadout,tiers:{...(d.info.presets.find(p=>p.id===loadout)?.tiers||{})}};
   else d.draft={preset:null,tiers:{...loadout.tiers}};
   renderLoadoutEditor();
@@ -858,8 +869,10 @@ function choosePylon(tier,id){
 function renderLoadoutEditor(){
   const d=loadoutDialog,info=d.info,editor=info.editor;
   const preset=(id,label,figures,extra='',disabled=false,title='')=>`<button type="button" class="loadout-preset" data-preset="${escapeText(id)}" aria-pressed="${d.draft.preset===id}" ${disabled?'disabled':''} title="${escapeText(title)}"><strong>${escapeText(label)}${extra}</strong><span>${escapeText(figures)}</span></button>`;
-  $('loadout-preset-list').innerHTML=preset('','Clean','Guns and countermeasures only')+
-    info.presets.map(p=>preset(p.id,p.label,p.error?'Unavailable':loadoutFigures({mass:p.mass_kg,drag:p.drag_area_m2}),
+  // The game's own preset with no stores (e.g. "Empty") is the same as ammunition only, so it is not listed twice.
+  $('loadout-preset-list').innerHTML=preset('',BARE_LOADOUTS[''],d.ammunition||'No ammunition data for this aircraft','',!d.ammunition)+
+    preset('__clean',BARE_LOADOUTS.__clean,'Nothing aboard')+
+    info.presets.filter(p=>p.error||p.mass_kg||p.drag_area_m2).map(p=>preset(p.id,p.label,p.error?'Unavailable':loadoutFigures({mass:p.mass_kg,drag:p.drag_area_m2}),
       '',!!p.error,p.error||'')).join('')+
     (editor?`<button type="button" class="loadout-preset" data-preset="__custom" aria-pressed="${d.draft.preset===null}"><strong>Custom</strong><span>${escapeText(d.draft.preset===null?loadoutFigures(loadoutTotals({tiers:d.draft.tiers},info)):'Start from the selected preset')}</span></button>`:'');
   $('loadout-custom').hidden=!editor;
@@ -886,9 +899,10 @@ function renderLoadoutEditor(){
   }
   $('loadout-notes').classList.toggle('problem',problems.length>0);
   $('loadout-notes').textContent=[...problems,...d.notes].join(' ')||(editor?'Limits follow the in-game loadout editor. Drop tanks are carried full.':'Drop tanks are carried full.');
-  const totals=d.draft.preset===''?{mass:0,drag:0}:loadoutTotals(d.draft.preset===null?{tiers:d.draft.tiers}:d.draft.preset,info);
-  $('loadout-total').textContent=d.draft.preset===''?'Clean':loadoutFigures(totals);
-  $('loadout-released').disabled=d.draft.preset==='';
+  const bare=d.draft.preset in BARE_LOADOUTS;
+  $('loadout-total').textContent=d.draft.preset===''?d.ammunition:d.draft.preset==='__clean'?'Nothing aboard':
+    loadoutFigures(loadoutTotals(d.draft.preset===null?{tiers:d.draft.tiers}:d.draft.preset,info));
+  $('loadout-released').disabled=bare;
   $('loadout-apply').disabled=problems.length>0;
 }
 $('loadout-edit').addEventListener('click',openLoadoutEditor);
@@ -909,8 +923,10 @@ $('loadout-options').addEventListener('click',event=>{
 });
 $('loadout-apply').addEventListener('click',()=>{
   const d=loadoutDialog,c=state.conditions[d.entry];if(!c||!d.draft)return;
-  c.loadout=d.draft.preset===''?'':d.draft.preset!==null?d.draft.preset:{tiers:{...d.draft.tiers}};
+  c.loadout=d.draft.preset in BARE_LOADOUTS?'':d.draft.preset!==null?d.draft.preset:{tiers:{...d.draft.tiers}};
+  c.default_ammunition=d.draft.preset!=='__clean'&&!!d.ammunition;
   c.stores_released=!!c.loadout&&$('loadout-released').checked;
+  if(state.editing===d.entry)$('default-ammunition').checked=c.default_ammunition;
   $('loadout-dialog').close();
   if(state.editing===d.entry)showLoadout();
   refreshEntrySummaries();syncLabels();
