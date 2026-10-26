@@ -444,6 +444,10 @@ cdef double target_omega(const EngineT* p, const EngState* s, double nitro) noex
     return p.target_y[p.ntargets-1]
 
 
+DEF SLIDE_WIDE = .08        # overrev follow-up: the shaft-speed range (fraction) of the wide blocking-jump search
+DEF SLIDE_WIDE_STEPS = 64   # overrev follow-up: steps each side of PropModel.locate_blocking's shaft-speed range
+
+
 cdef inline double overrev_torque(const EngineT* p, double omega, double torque) noexcept nogil:
     """piston_model.overrev_torque: the game's torque of an engine over RPMMaxAllowed (the first over-rev step of a fresh
     engine), 1 + 0.01 x (omega - 0.999965 x limit) (rad/s)."""

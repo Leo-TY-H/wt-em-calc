@@ -66,6 +66,7 @@ def s16_on():
 # the chart carries where over-rev starts (overrev_lines) and, on every over-rev row, contour and outline point, the
 # seconds the game gives that engine (overrev.py)
 from overrev import RULE as OVERREV
+CURVE_WIDE_SLIDE = int(os.environ.get('WT_OVERREV_CURVE_SLIDE', '28'))   # MarchEngine.wide_slide bits for the curve engine
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
 COLUMN_SPACING_KMH = 80.
@@ -333,6 +334,9 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     # S5: the curve solver on native trial states where the compiled module covers it.
     curve_engine = N.engine(curve_solver) if engine is not None else None
     if curve_engine is not None:curve_engine.known_caps = engine.ceilings
+    # Over-rev follow-up: the wide sliding search only in the curve solver's own rescues and 1 g solves, not in the level
+    # flight of its level-flight path marches (S16's path rule judges contour states against that path)
+    if curve_engine is not None and OVERREV:curve_engine.wide_slide &= CURVE_WIDE_SLIDE
     if verified and curve_engine is not None:
         native_curves = curve_solver.native_loop.m.NCurves(curve_engine, curves)
         native_curves.check = check
@@ -542,10 +546,26 @@ def low_speed_edge(cfg, envelope, columns, tracer):
     if not clipped and not sweep and below and below[-1].get('boundary_status') == 'no feasible samples':
         if reason == 'stall' and load <= 1.01:kind = 'stall-speed edge'
         elif reason == 'Instructor pitch' and load <= 1.01:kind = 'Instructor pitch minimum-speed edge'
+        elif OVERREV and numerical_level(below[-1]):kind = UNRESOLVED_LEVEL_EDGE
     return dict(speed_kmh=first['speed_kmh'], kind=kind, bracket_kmh=[below[-1]['speed_kmh'], first['speed_kmh']] if below else None,
                 refined=edge is not None, boundary_verified=True, method='alpha-march speed bracket',
                 turn_dps=first['boundary']['turn_dps'], lower_load_g=1.,
                 note='Vertical outline only; Ps exists only where a balanced equilibrium was solved')
+
+
+# Over-rev follow-up: a chart's low-speed end where level flight below it is only numerically unresolved (no solve closes;
+# no physical rejection) is no feasibility limit (Bf 109 F-4 RB at 1,500 m, 100% pitch: 217 km/h at 4,088 rpm)
+UNRESOLVED_LEVEL_EDGE = 'unresolved level-flight edge'
+NUMERICAL_REASONS = frozenset(('trim did not converge', 'propulsion did not settle', 'propulsion cycle unresolved',
+                               'vertical step did not close', 'pitch response unresolved', 'Instructor boundary unresolved'))
+
+
+def numerical_level(column):
+    """The column's level flight was rejected for numerical reasons only (a correction or sub-solve that did not close)."""
+    v = column['speed_kmh']
+    level = next((p for p in column.get('points', []) if abs(p['load_g']-1.) <= 1e-9 and abs(p['speed_kmh']-v) <= 1e-9), None)
+    reasons = set((level or {}).get('reasons') or ())
+    return bool(reasons) and reasons <= NUMERICAL_REASONS
 
 
 # ----- presentation (em_plot dispatches march aircraft here) -----------------------
@@ -1114,18 +1134,28 @@ def on_lines(speed, turn, lines):
 def overrev_lines(envelope, columns):
     """Over-rev (option C): the lines where an engine starts to over-rev (RPM = RPMMaxAllowed) inside the envelope, each
     {'speed_kmh', 'turn_dps', 'rpm_limit', 'engine', 'traced', 'stop_after_s'}: the native trace's iso-lines from level
-    flight (NTracer.overrev_trace; 'traced' True), and where none traced (a line whose trace failed, over-rev that
-    starts above level flight) straight pieces through the verified columns' own crossings (column_crossings; 'traced'
-    False, approximate). 'stop_after_s': [[percent over RPMMaxAllowed, seconds until the game stops the engine]]."""
+    flight (NTracer.overrev_trace; 'traced' True, in pieces where it jumps), and where none traced at all (every trace
+    failed, over-rev that starts above level flight) straight pieces through the verified columns' own crossings
+    (column_crossings; 'traced' False, approximate). 'stop_after_s': [[percent over RPMMaxAllowed, seconds until the game stops the engine]]."""
     from overrev import report_table, rpm_ratio
     table = report_table()
     lines = []
     for rec in envelope.get('overrev_lines') or []:
         if rec.get('status') != 'traced' or len(rec.get('knots') or []) < 2:continue
-        xs, ts = iso_path(rec['knots'])
-        lines.append(dict(speed_kmh=xs, turn_dps=ts, rpm_limit=rec.get('rpm_limit'), engine=rec.get('engine'), traced=True,
-                          stop_after_s=table))
+        # (where the iso-line jumps, the propeller changing state across the limit, it is drawn in pieces)
+        pieces, piece = [], [rec['knots'][0]]
+        for k0, k1 in zip(rec['knots'], rec['knots'][1:]):
+            if any(abs(k0[4]-a) <= 1e-9 and abs(k1[4]-b) <= 1e-9 for a, b in rec.get('jumps_alpha_deg') or []):
+                pieces.append(piece);piece = []
+            piece.append(k1)
+        pieces.append(piece)
+        for piece in pieces:
+            if len(piece) < 2:continue
+            xs, ts = iso_path(piece)
+            lines.append(dict(speed_kmh=xs, turn_dps=ts, rpm_limit=rec.get('rpm_limit'), engine=rec.get('engine'), traced=True,
+                              stop_after_s=table))
     traced = list(lines)
+    if traced:return lines   # (the columns' crossings only where no line traced: they would repeat it around its jumps)
     good = sorted((c for c in columns if ok(c)), key=lambda c: c['speed_kmh'])
     limit = next((float(l) for c in good for p in c.get('points', [])
                   for l in [((p.get('propulsion') or {}).get('engine_rpm_threshold') or [None])[0]] if l), None)

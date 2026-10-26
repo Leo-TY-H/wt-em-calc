@@ -314,6 +314,10 @@ cdef class MarchEngine:
     # Over-rev (Leo 2026-10-26, option C; WT_OVERREV=0 restores S16): an engine over RPMMaxAllowed is no chart limit
     # (Finisher.overrev); the tracer draws the iso-line RPM = RPMMaxAllowed where over-rev starts (NTracer.overrev_trace)
     cdef public bint overrev
+    # overrev follow-up: where the wider blocking-jump search of the sliding state is tried (bits: 1 the column's alpha
+    # march, 2 its level flight, 4 the curve rescue, 8 the curve 1 g solves, 16 the point solver, 32 the tracer's level
+    # probes); all with the over-rev rule, WT_OVERREV_SLIDE=<mask> for diagnostics
+    cdef public int wide_slide
     cdef public list brake_log           # diagnostics (WT_MARCH_BRAKE_LOG=1): every braking search's attempts, else None
     cdef int brake_depth                 # S12: braking search rounds in progress
     cdef bint brake_retry
@@ -388,6 +392,9 @@ cdef class MarchEngine:
         self.s16 = self.s14 and os.environ.get("WT_MARCH_S15", "1") != "0" and os.environ.get("WT_MARCH_S16", "1") != "0"
         if self.fin is not None and self.fin.pm is not None:self.fin.pm.s16 = self.s16
         self.overrev = self.fin is not None and self.fin.overrev
+        self.wide_slide = int(os.environ.get("WT_OVERREV_SLIDE", "63")) if self.overrev else 0
+        if self.fin is not None and self.fin.pm is not None:
+            self.fin.pm.blocking = self.overrev and os.environ.get("WT_OVERREV_BLOCKING", "0") == "1"
         self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
         self.brake_depth = 0
         self.brake_retry = False
@@ -808,7 +815,7 @@ cdef class MarchEngine:
         return hard
 
     cdef int slide_candidate(self, int sid, SlideSpec* out, double alpha=NAN, double bank=NAN, double load=NAN,
-                             bint straddle=True, double speed=NAN, bint transition=False) except -1:
+                             bint straddle=True, double speed=NAN, bint transition=False, double wide=0.) except -1:
         """S8 (the blade-polar jump check): the sliding spec of a regular propeller state whose shafts (on a pitch stop
         or with a fixed pitch) have a blade-polar jump within PropModel.slide_width of their speed that blocks their
         torque balance (net torque of opposite signs either side of it; any jump there without ``straddle``), at the
@@ -817,7 +824,10 @@ cdef class MarchEngine:
         speed is checked where it is solved (a shaft approaching the jump with speed reaches it only there). With
         ``transition``, a sliding state is checked too, its sliding shafts at their jump speed: the shafts whose jump still
         blocks their torque balance at the target keep sliding (with the state's own sliding coordinates), the others are
-        regular there (a turn makes the propellers' conditions differ, so their jumps part)."""
+        regular there (a turn makes the propellers' conditions differ, so their jumps part). Overrev follow-up: with
+        ``wide``, the nearest blocking jump within that fraction of the shaft speed (PropModel.locate_blocking), also from a
+        sliding state (from the shaft speed at its jump); a sliding shaft keeps its own sliding coordinates only where that
+        is its own jump again."""
         cdef TState* t = &self.st[sid]
         cdef PropPrep* prep
         cdef double regular[NMAX]
@@ -825,7 +835,7 @@ cdef class MarchEngine:
         out.n = 0
         if not self.is_prop or self.fin is None or self.fin.pm is None:return 0
         if not t.has_coords or not t.layout_names or not t.req_ok:return 0
-        if t.slide.n > 0 and not (self.s9 and transition):return 0
+        if t.slide.n > 0 and not (self.s9 and transition) and not wide > 0.:return 0
         self.P.speed_kmh = speed if self.s9 and isfinite(speed) else t.speed;self.P.nprep = 0;self.P.prep_next = 0
         prep = self.P.prepared(t.load if not isfinite(load) else load, t.coords[0] if not isfinite(alpha) else alpha,
                                t.coords[1] if not isfinite(bank) else bank)
@@ -835,14 +845,15 @@ cdef class MarchEngine:
                 if t.slide.flag[i]:
                     slot = self.fin.pm.shaft_coordinate(i)
                     if slot >= 0:regular[7+slot] = t.slide.cw[i]+t.slide.lo[i]/300.
-            self.fin.pm.jump_near(prep, &regular[7], t.req, t.nreq, out, straddle)
+            self.fin.pm.jump_near(prep, &regular[7], t.req, t.nreq, out, straddle, wide)
             for i in range(NP):
-                if out.n > 0 and out.flag[i] and t.slide.flag[i]:
+                if out.n > 0 and out.flag[i] and t.slide.flag[i] and not (
+                        wide > 0. and fabs(out.hint[i]-t.slide.hint[i]) > .01*fabs(t.slide.hint[i])):
                     out.c0[i] = t.slide.c0[i];out.cw[i] = t.slide.cw[i];out.frac[i] = t.slide.frac[i]
                     out.hint[i] = t.slide.hint[i];out.theta[i] = t.coords[7+self.fin.pm.shaft_coordinate(i)]-t.slide.c0[i]
             self.stats['s9_transition_checks'] = self.stats.get('s9_transition_checks', 0)+1
         else:
-            self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out, straddle)
+            self.fin.pm.jump_near(prep, &t.coords[7], t.req, t.nreq, out, straddle, wide)
         self.stats['s8_jump_checks'] = self.stats.get('s8_jump_checks', 0)+1
         if out.n:self.stats['s8_jumps_found'] = self.stats.get('s8_jumps_found', 0)+1
         return 0
