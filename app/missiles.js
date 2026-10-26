@@ -2,7 +2,7 @@
   'use strict';
   const el = id => document.getElementById(id);
   const root = el('missile-workspace');
-  const initial = {missile:'us_aim9l_sidewinder',duration:60,
+  const initial = {missile:'us_aim9l_sidewinder',
     launch:{position:[0,5000,0],velocity:[300,0,0],angles:[0,0,0]},
     target:{position:[4000,5000,0],velocity:[200,0,0],angles:[0,0,0]}};
   let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0;
@@ -35,10 +35,6 @@
     </fieldset>
     ${stateFields('launch',2,'Launcher aircraft','Aircraft state at the instant of release (t = 0).')}
     ${stateFields('target',3,'Target aircraft','Flies in a straight line at constant velocity throughout the simulation.')}
-    <fieldset class="missile-step"><legend><span class="missile-step-number">4</span>Simulation time</legend>
-      <label class="field">Stop after<div class="input-unit"><input id="missile-duration" type="number" min="0.1" max="180" step="any" value="60" required><span>s</span></div></label>
-      <p class="hint">The run may end earlier at interception or a modeled limit.</p>
-    </fieldset>
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
     <button id="missile-run" class="primary-button" type="submit" disabled>Simulate engagement <span>↗</span></button>
@@ -114,7 +110,7 @@
     finally{loading=null;}})();return loading;
   }
   function inputs() {
-    const config={missiles:[...selectedMissiles],duration:Number(el('missile-duration').value)};
+    const config={missiles:[...selectedMissiles]};
     for(const role of ['launch','target']) {
       const [speed,heading,climb]=['speed','course','climb'].map(key=>Number(el(`missile-${role}-${key}`).value));
       const horizontal=speed/3.6*Math.cos(radians(climb));
@@ -195,7 +191,7 @@
       if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetX.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
     }
     const invalid=numericFields.find(field=>!field.validity.valid),valid=!invalid;
-    el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:'Add a missile to simulate.'):`${invalid.getAttribute('aria-label')||'Simulation time'}: ${invalid.validationMessage}`;
+    el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:'Add a missile to simulate.'):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
     if(!valid) {
       for(const id of ['missile-separation','missile-altitude-difference','missile-closing'])el(id).textContent='—';
       el('missile-geometry').replaceChildren();
@@ -262,7 +258,7 @@
   root.querySelectorAll('[data-preset]').forEach(button=>button.addEventListener('click',()=>applyPreset(button.dataset.preset)));
   el('missile-reset').addEventListener('click',()=>{
     selectedMissiles=[];renderSelected();busy(false);
-    el('missile-search').value='';filterMissiles();el('missile-duration').value=initial.duration;
+    el('missile-search').value='';filterMissiles();
     applyPreset('chase');if(!meta)load();
   });
   for(const role of ['launch','target'])syncMotion(role);
@@ -277,7 +273,6 @@
     el('missile-launch-position-1').value=String(origin[1]);
     for(let i=0;i<3;i++)el(`missile-target-position-${i}`).value=String(i===1?scenario.target.position[1]:scenario.target.position[i]-origin[i]);
     syncMotion('launch',scenario.launcher.velocity,scenario.launcher.angles);syncMotion('target',scenario.target.velocity,scenario.target.angles);
-    if(scenario.duration)el('missile-duration').value=scenario.duration;
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
     el('missile-preset-note').textContent='Loaded from the launch envelope.';
     changed();busy(false);root.scrollIntoView?.({block:'start'});
@@ -301,7 +296,7 @@
             if(status.status==='complete') {completed.push(status.result);break;}
             if(status.status==='failed')throw new Error(status.error);
             if(status.status==='cancelled'){cancelRequested=true;break;}
-            const p=status.progress;el('missile-status').textContent=`${completed.length}/${missiles.length} complete · ${missileName(id)} · `+(p?`${p.time_s.toFixed(1)} / ${p.duration_s.toFixed(1)} s…`:'Waiting for simulation…');
+            const p=status.progress;el('missile-status').textContent=`${completed.length}/${missiles.length} complete · ${missileName(id)} · `+(p?`${p.time_s.toFixed(1)} s flown…`:'Waiting for simulation…');
             await new Promise(resolve=>setTimeout(resolve,200));
           }
         } catch(error) {
