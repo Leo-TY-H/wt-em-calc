@@ -62,7 +62,7 @@
     </div>
   </form></aside>
   <div class="missile-main">
-    <div class="page-heading"><div><span class="eyebrow">MISSILE KINEMATICS</span><h1>3D launch envelope</h1></div><span class="status-badge">EXPERIMENTAL</span></div>
+    <div class="page-heading"><div><span class="eyebrow">MISSILE KINEMATICS</span><h1>Launch envelope</h1></div><span class="status-badge">EXPERIMENTAL</span></div>
     <p class="missile-model-note">Each point of the envelope is a launcher position at release around the target: 0° is in front of the target (head-on), 180° behind it (tail chase). A launch counts as a hit when the missile's proximity fuze fires, exactly as in the missile simulator, so fuze arming and radius shape the envelope together with the motor, mass, aerodynamics, control limits, guidance and seeker limits.</p>
     <div id="envelope-error" class="error" role="alert" hidden></div>
     <div id="envelope-stale" class="notice" hidden>Settings changed. Calculate again to update the envelope.</div>
@@ -70,7 +70,7 @@
     <section class="chart-card">
       <div class="chart-toolbar"><div class="missile-legend envelope-legend"><span class="envelope-key-max">■ Hit region</span><span class="envelope-key-ref">◆ Target</span></div>
         <div class="missile-view-controls">
-          <label for="envelope-view">Plot view<select id="envelope-view"><option value="3d">3D envelope</option><option value="layer">Layer · top view</option><option value="profile">Side profile</option></select></label>
+          <label for="envelope-view">Plot view<select id="envelope-view"><option value="contours">Altitude contours</option><option value="layer">One altitude</option><option value="profile">Side profile</option></select></label>
           <label id="envelope-layer-label" for="envelope-layer" hidden>Layer<select id="envelope-layer"></select></label>
           <label id="envelope-cut-label" for="envelope-cut" hidden>Cut through<select id="envelope-cut"></select></label>
           <label class="envelope-check"><input id="envelope-show-rays" type="checkbox"> Directions</label>
@@ -326,59 +326,57 @@
   function field() {
     if (cache) return cache;
     const c = submitted, mirror = mirrored(), byLayer = c.layers_m.map(() => []);
-    // Plot window: the hit region and the target, with a margin.
-    const box = [0, 0, 0, 0];
     for (const ray of rays.values()) {
       const iv = ray.intervals.flatMap(i => [LOG(i.start_m), LOG(i.end_m)]);
       const az = wrap(ray.azimuth_deg);
       byLayer[ray.key[0]].push({az, ray, iv});
       if (mirror && az > 0 && az < 180) byLayer[ray.key[0]].push({az: -az, ray, iv});
-      for (const a of mirror ? [az, -az] : [az]) for (const i of ray.intervals) for (const r of [i.start_m, i.end_m]) {
-        const x = r * Math.cos(radians(a)), y = r * Math.sin(radians(a));
-        box[0] = Math.min(box[0], x); box[1] = Math.max(box[1], x); box[2] = Math.min(box[2], y); box[3] = Math.max(box[3], y);
-      }
     }
     const lines = byLayer.map(list => {
       list.sort((a, b) => a.az - b.az);
       return {az: list.map(d => d.az), entries: list};
     });
-    const span = Math.max(1000, box[1] - box[0], box[3] - box[2]), pad = span * .07;
     let radius = 1000;
     for (const ray of rays.values()) if (ray.max_range_m) radius = Math.max(radius, ray.max_range_m);
-    cache = {lines, window: {x: [box[0] - pad, box[1] + pad], y: [box[2] - pad, box[3] + pad]}, radius: radius * 1.07};
+    cache = {lines, radius: radius * 1.07, polar: new Map()};
     return cache;
   }
-  // s at horizontal distance r and bearing az (deg) in one layer.
-  function layerValue(line, r, az) {
-    if (!line.az.length) return EMPTY;
-    const L = LOG(r);
-    if (line.az.length === 1) return signed(line.entries[0].iv, L);
+  // s along one bearing az (deg) of a layer at the log distances Ls.
+  function columnValues(line, az, Ls) {
+    if (!line.az.length) return Ls.map(() => EMPTY);
+    if (line.az.length === 1) return Ls.map(L => signed(line.entries[0].iv, L));
     // PCHIP over the four directions around az; the others do not influence it.
     const n = line.az.length, x = line.az[0] + ((az - line.az[0]) % 360 + 360) % 360;
     let k = n - 1;
     if (x < line.az[n - 1]) { let lo = 0, hi = n - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (line.az[m] <= x) lo = m; else hi = m; } k = lo; }
-    const xs = [], ys = [];
+    const xs = [], ivs = [];
     for (let i = k - 1; i <= k + 2; i++) {
       const j = ((i % n) + n) % n, turns = Math.floor(i / n);
-      xs.push(line.az[j] + turns * 360); ys.push(signed(line.entries[j].iv, L));
+      xs.push(line.az[j] + turns * 360); ivs.push(line.entries[j].iv);
     }
-    return pchip(xs, ys, x);
+    return Ls.map(L => pchip(xs, ivs.map(iv => signed(iv, L)), x));
   }
+  const layerValue = (line, r, az) => columnValues(line, az, [LOG(r)])[0];
   // s at one horizontal point and altitude, interpolated across layers.
   function volumeValue(values, altitude) {
-    const alts = submitted.layers_m;
-    return pchip(alts, values, altitude);
+    return pchip(submitted.layers_m, values, altitude);
   }
-  // Square cells over the plot window, n along its longer side.
-  function axes(win, n) {
-    const h = Math.max(win.x[1] - win.x[0], win.y[1] - win.y[0]) / (n - 1);
-    const steps = ([a, b]) => Array.from({length: Math.max(2, Math.ceil((b - a) / h) + 1)}, (_, i) => a + i * h);
-    return {xs: steps(win.x), ys: steps(win.y)};
+  // s of one layer on a polar grid: bearings -180..180 deg by step, distances
+  // uniform in log(r + 100 m) out to the plot radius. Cached per layer.
+  function polarField(li) {
+    const f = field();
+    if (f.polar.has(li)) return f.polar.get(li);
+    const step = submitted.layers_m.length > 8 ? 1 : .5, thetas = [], Ls = [];
+    for (let i = 0; i <= 360 / step; i++) thetas.push(-180 + i * step);
+    const L0 = LOG(0), L1 = LOG(f.radius), rows = 241;
+    for (let j = 0; j < rows; j++) Ls.push(L0 + (L1 - L0) * j / (rows - 1));
+    const columns = thetas.map(t => columnValues(f.lines[li], t, Ls));
+    const grid = {thetas, Ls, step, columns, z: Ls.map((_, j) => columns.map(col => col[j]))};
+    f.polar.set(li, grid);
+    return grid;
   }
-  function layerGrid(line, win, n) {
-    const {xs, ys} = axes(win, n);
-    return {xs, ys, z: ys.map(y => xs.map(x => layerValue(line, Math.hypot(x, y), Math.atan2(y, x) * 180 / Math.PI)))};
-  }
+  const kmOf = r => r / 1000;
+  const unlogKm = L => L === null ? null : Math.max(0, Math.exp(L) - 100) / 1000;
   // Marching squares: polylines (x, y arrays with null breaks) where z crosses 0.
   function outline(xs, ys, z) {
     const out = {x: [], y: []}, segments = [];
@@ -395,7 +393,7 @@
       else if (cross.length === 4) { segments.push([cross[0], cross[1]]); segments.push([cross[2], cross[3]]); }
     }
     // Join segments that share end points into polylines.
-    const key = p => `${p[0].toFixed(3)},${p[1].toFixed(3)}`, ends = new Map(), used = new Uint8Array(segments.length);
+    const key = p => `${p[0].toFixed(4)},${p[1].toFixed(5)}`, ends = new Map(), used = new Uint8Array(segments.length);
     segments.forEach((s, i) => { for (const p of s) { const k = key(p); if (!ends.has(k)) ends.set(k, []); ends.get(k).push(i); } });
     for (let i = 0; i < segments.length; i++) {
       if (used[i]) continue;
@@ -414,13 +412,33 @@
     }
     return out;
   }
-  // Hoverable searched boundary points of one layer: [x, y, text, [layer, azimuth]].
+  // The layer's outline as polar polylines: theta in degrees, r in km.
+  function polarOutline(li) {
+    const g = polarField(li), o = outline(g.thetas, g.Ls, g.z), r = o.y.map(unlogKm);
+    const text = o.x.map((t, i) => t === null ? null : `${fmt(Math.abs(t), 1)}° from the target's nose · ${fmt(r[i], 2)} km`);
+    return {theta: o.x, r, text};
+  }
+  // Hit intervals along every grid bearing (km), for the filled region.
+  function polarBands(li) {
+    const g = polarField(li), theta = [], base = [], length = [];
+    g.columns.forEach((col, i) => {
+      let start = null;
+      for (let j = 0; j < col.length; j++) {
+        const inside = col[j] > 0;
+        const cross = () => { const a = col[j - 1], b = col[j]; return g.Ls[j - 1] + (g.Ls[j] - g.Ls[j - 1]) * a / (a - b); };
+        if (inside && start === null) start = j === 0 ? g.Ls[0] : cross();
+        if (!inside && start !== null) { const end = cross(); theta.push(g.thetas[i]); base.push(unlogKm(start)); length.push(unlogKm(end) - unlogKm(start)); start = null; }
+      }
+      if (start !== null) { theta.push(g.thetas[i]); base.push(unlogKm(start)); length.push(unlogKm(g.Ls.at(-1)) - unlogKm(start)); }
+    });
+    return {theta, base, length, width: g.step};
+  }
+  // Hoverable searched boundary points of one layer: [r km, bearing, text, [layer, azimuth]].
   function boundaryPoints(line) {
     const pts = [];
     for (const {az, ray} of line.entries) {
-      const a = radians(az), text = rayText(ray, az);
-      for (const i of ray.intervals) for (const r of [i.start_m, i.end_m]) pts.push([r * Math.cos(a), r * Math.sin(a), text, [ray.key[0], az]]);
-      if (!ray.intervals.length) pts.push([0, 0, text, [ray.key[0], az]]);
+      const text = rayText(ray, az);
+      for (const i of ray.intervals) for (const r of [i.start_m, i.end_m]) if (r > 0) pts.push([kmOf(r), az, text, [ray.key[0], az]]);
     }
     return pts;
   }
@@ -432,13 +450,33 @@
     modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
   const grid = 'rgba(240,240,250,.09)', zero = 'rgba(240,240,250,.3)', tick = '#b9b9c4', cyan = '#38c9d7', fill = 'rgba(56,201,215,.22)';
   const axis2d = title => ({title: {text: title}, gridcolor: grid, zerolinecolor: zero, color: tick, tickformat: ',.0f'});
+  // Launcher altitudes are ordered: one cyan ramp, darker low and lighter high
+  // (the darkest step keeps 3.4:1 against the black plot).
+  const layerColor = (li, n) => {
+    if (n <= 1) return cyan;
+    const a = [0x1d, 0x6b, 0x74], b = [0xd6, 0xf7, 0xfa], t = li / (n - 1);
+    return '#' + a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  };
+  // Polar axes: bearing from the target's nose clockwise from the top, range in km.
+  function polarLayout(radius, revision, annotations = []) {
+    const ticks = Array.from({length: 12}, (_, i) => i * 30);
+    const label = a => { const b = a > 180 ? 360 - a : a; return b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`; };
+    return {...theme, margin: {l: 40, r: 40, t: 40, b: 40}, hovermode: 'closest', uirevision: revision, annotations,
+      legend: {font: {color: tick, size: 11}, bgcolor: 'rgba(0,0,0,0)', title: {text: 'Launcher altitude', font: {color: tick, size: 11}}},
+      polar: {bgcolor: '#000000',
+        angularaxis: {rotation: 90, direction: 'clockwise', tickmode: 'array', tickvals: ticks, ticktext: ticks.map(label),
+          gridcolor: grid, linecolor: 'rgba(240,240,250,.2)', color: tick, tickfont: {size: 11}},
+        radialaxis: {range: [0, kmOf(radius)], ticksuffix: ' km', tickformat: ',.0f', angle: 300, tickangle: 0, gridcolor: grid,
+          linecolor: 'rgba(240,240,250,.2)', color: tick, tickfont: {size: 10}}}};
+  }
   function viewControls() {
     const view = el('envelope-view').value;
     el('envelope-layer-label').hidden = view !== 'layer';
     el('envelope-cut-label').hidden = view !== 'profile';
-    el('envelope-view-note').textContent = !submitted ? '' : view === '3d'
-      ? 'Launcher positions around the target (◆), which flies along +X. Hover the layer outlines for ranges; click one to inspect that direction. Altitude may be stretched to keep the layers readable.'
-      : view === 'layer' ? 'Top view of one launcher altitude (X / Z, equal scale). The shaded region is where a launch from there hits; click its outline to inspect a direction.'
+    root.querySelector('.envelope-key-max').hidden = view === 'contours';
+    el('envelope-view-note').textContent = !submitted ? '' : view === 'contours'
+      ? 'One outline per launcher altitude around the target (◆), which flies toward 0°. Bearing is measured from the target\'s nose, distance is horizontal range at release. Hover for values; click a dot to inspect that direction.'
+      : view === 'layer' ? 'One launcher altitude: the shaded region is where a launch from there hits. Bearing from the target\'s nose, horizontal range at release; click a dot on the outline to inspect that direction.'
         : 'Vertical cut through the target: horizontal distance along the chosen bearing (right) and its opposite (left), against launcher altitude.';
   }
   const nearestLayer = c => c.layers_m.reduce((best, alt, i) => Math.abs(alt - c.target.altitude_m) < Math.abs(c.layers_m[best] - c.target.altitude_m) ? i : best, 0);
@@ -461,58 +499,78 @@
       return;
     }
     const view = el('envelope-view').value;
-    if (view === '3d') await render3d(); else if (view === 'layer') await renderLayer(); else await renderProfile();
+    if (view === 'contours') await renderContours(); else if (view === 'layer') await renderLayer(); else await renderProfile();
     if (inspected) renderInspector();
   }
   const targetMarker = (x, y, extra = {}) => ({type: 'scatter', mode: 'markers+text', x: [x], y: [y], text: ['Target'], textposition: 'bottom center',
-    marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'}, textfont: {color: '#ffe0c7', size: 11}, hoverinfo: 'skip', ...extra});
-  function sampleTraces(filterRay, place, is3d) {
-    const hits = {x: [], y: [], z: [], t: []}, misses = {x: [], y: [], z: [], t: []};
+    marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'}, textfont: {color: '#ffe0c7', size: 11}, hoverinfo: 'skip', showlegend: false, ...extra});
+  // The target at the centre and a short arrow along its heading (0°).
+  function polarTarget(radius) {
+    return [{type: 'scatterpolar', mode: 'lines', r: [0, kmOf(radius) * .07], theta: [0, 0], line: {color: '#ffd0ac', width: 2}, hoverinfo: 'skip', showlegend: false},
+      {type: 'scatterpolar', mode: 'markers', r: [kmOf(radius) * .07], theta: [0], marker: {symbol: 'triangle-up', size: 9, color: '#ffd0ac'}, hoverinfo: 'skip', showlegend: false},
+      {type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'},
+        hovertemplate: 'Target<extra></extra>', showlegend: false}];
+  }
+  // Searched samples: place(ray, az, range_m) returns [a, b] (polar r km and theta, or x and y) or null.
+  function sampleTraces(filterRay, place, polar) {
+    const hits = {a: [], b: [], t: []}, misses = {a: [], b: [], t: []};
     for (const ray of rays.values()) {
       if (!filterRay(ray)) continue;
       for (const az of mirrored() && ray.azimuth_deg > 0 && ray.azimuth_deg < 180 ? [ray.azimuth_deg, -ray.azimuth_deg] : [ray.azimuth_deg])
         for (const s of ray.samples) {
           const p = place(ray, az, s.range_m); if (!p) continue;
           const d = s.hit ? hits : misses;
-          d.x.push(p[0]); d.y.push(p[1]); if (is3d) d.z.push(p[2]);
-          d.t.push(`${s.hit ? 'Hit' : 'Miss · ' + escapeHtml(outcomeLabel(s.outcome))} at ${km(s.range_m)}<br>${escapeHtml(bearingName(az))}${Number.isFinite(s.time_s) ? `<br>Ended ${fmt(s.time_s, 1)} s after release` : ''}`);
+          d.a.push(p[0]); d.b.push(p[1]);
+          d.t.push(`${s.hit ? 'Hit' : 'Miss · ' + escapeHtml(outcomeLabel(s.outcome))} at ${km(s.range_m)}<br>Launcher at ${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}${Number.isFinite(s.time_s) ? `<br>Ended ${fmt(s.time_s, 1)} s after release` : ''}`);
         }
     }
-    return [[hits, '#91d477', 'Hit sample', 'circle'], [misses, '#f08070', 'Miss sample', is3d ? 'x' : 'x']].map(([d, color, name, symbol]) => ({
-      type: is3d ? 'scatter3d' : 'scatter', mode: 'markers', name, x: d.x, y: d.y, ...(is3d ? {z: d.z} : {}), text: d.t,
-      hovertemplate: '%{text}<extra></extra>', marker: {size: is3d ? 2.5 : 5, color, symbol, opacity: .9}}));
+    return [[hits, '#91d477', 'Hit sample', 'circle'], [misses, '#f08070', 'Miss sample', 'x']].map(([d, color, name, symbol]) => ({
+      type: polar ? 'scatterpolar' : 'scatter', mode: 'markers', name, ...(polar ? {r: d.a, theta: d.b} : {x: d.a, y: d.b}), text: d.t,
+      hovertemplate: '%{text}<extra></extra>', marker: {size: 5, color, symbol, opacity: .9}, showlegend: false}));
   }
-  function rayTraces(line, place, is3d) {
-    const xs = [], ys = [], zs = [];
-    for (const {az, ray} of line.entries) for (const i of ray.intervals) {
-      const a = place(ray, az, i.start_m), b = place(ray, az, i.end_m);
-      xs.push(a[0], b[0], null); ys.push(a[1], b[1], null); if (is3d) zs.push(a[2], b[2], null);
+  // Searched hit intervals as radial segments along their bearings.
+  function rayTrace(line) {
+    const r = [], theta = [];
+    for (const {az, ray} of line.entries) for (const i of ray.intervals) { r.push(kmOf(i.start_m), kmOf(i.end_m), null); theta.push(az, az, null); }
+    return {type: 'scatterpolar', mode: 'lines', r, theta, hoverinfo: 'skip', line: {color: 'rgba(240,240,250,.35)', width: 1}, showlegend: false};
+  }
+  function markerTrace(points, color, size = 6) {
+    return {type: 'scatterpolar', mode: 'markers', r: points.map(p => p[0]), theta: points.map(p => p[1]), text: points.map(p => p[2]),
+      customdata: points.map(p => p[3]), hovertemplate: '%{text}<extra></extra>', marker: {size, color, opacity: .7}, showlegend: false};
+  }
+  async function renderContours() {
+    const c = submitted, f = field(), n = c.layers_m.length, traces = [];
+    // Highest layer first in the legend.
+    for (let li = n - 1; li >= 0; li--) {
+      if (!f.lines[li].az.length) continue;
+      const o = polarOutline(li), color = layerColor(li, n), name = `${fmt(c.layers_m[li])} m`;
+      traces.push({type: 'scatterpolar', mode: 'lines', name, legendgroup: name, r: o.r, theta: o.theta, text: o.text, connectgaps: false,
+        line: {color, width: 2}, showlegend: n > 1, hovertemplate: `Launcher at ${name}<br>%{text}<extra></extra>`});
+      if (el('envelope-show-rays').checked) traces.push({...rayTrace(f.lines[li]), legendgroup: name});
+      traces.push({...markerTrace(boundaryPoints(f.lines[li]), color, 4), legendgroup: name});
     }
-    return {type: is3d ? 'scatter3d' : 'scatter', mode: 'lines', x: xs, y: ys, ...(is3d ? {z: zs} : {}), hoverinfo: 'skip', line: {color: 'rgba(240,240,250,.35)', width: 1}};
+    if (el('envelope-show-samples').checked) traces.push(...sampleTraces(() => true, (ray, az, r) => [kmOf(r), az], true));
+    traces.push(...polarTarget(f.radius));
+    await draw(traces, polarLayout(f.radius, 'contours:' + JSON.stringify(submitted)));
   }
-  function markerTrace(points, is3d, altitude) {
-    return {type: is3d ? 'scatter3d' : 'scatter', mode: 'markers', x: points.map(p => p[0]), y: points.map(p => p[1]),
-      ...(is3d ? {z: points.map(() => altitude)} : {}), text: points.map(p => p[2]), customdata: points.map(p => p[3]),
-      hovertemplate: '%{text}<extra></extra>', marker: {size: is3d ? 2.5 : 6, color: cyan, opacity: is3d ? .7 : .55}};
-  }
-  // Plotly shades where a constraint fails: '<' 0 shades the hit region s >= 0.
-  const region = (x, y, z) => ({type: 'contour', x, y, z, contours: {type: 'constraint', operation: '<', value: 0},
-    fillcolor: fill, line: {color: cyan, width: 2.2, smoothing: 1}, hoverinfo: 'skip', showscale: false, showlegend: false});
   async function renderLayer() {
-    const c = submitted, li = Number(el('envelope-layer').value), f = field(), line = f.lines[li], win = f.window;
-    const g = layerGrid(line, win, 321);
-    const traces = [region(g.xs, g.ys, g.z)];
-    const place = (ray, az, r) => [r * Math.cos(radians(az)), r * Math.sin(radians(az))];
-    if (el('envelope-show-rays').checked) traces.push(rayTraces(line, place, false));
-    if (el('envelope-show-samples').checked) traces.push(...sampleTraces(ray => ray.key[0] === li, place, false));
-    traces.push(markerTrace(boundaryPoints(line).filter(p => p[0] || p[1]), false));
-    traces.push(targetMarker(0, 0));
-    const arrow = Math.max(win.x[1] - win.x[0], win.y[1] - win.y[0]) * .06;
-    const layout = {...theme, margin: {l: 70, r: 25, t: 36, b: 60}, showlegend: false, hovermode: 'closest', uirevision: 'layer:' + JSON.stringify(submitted),
-      xaxis: {...axis2d('X · m'), range: win.x, constrain: 'domain'},
-      yaxis: {...axis2d('Z · m'), scaleanchor: 'x', scaleratio: 1, range: win.y, constrain: 'domain'},
-      annotations: [{x: arrow, y: 0, ax: 0, ay: 0, xref: 'x', yref: 'y', axref: 'x', ayref: 'y', showarrow: true, arrowhead: 2, arrowsize: 1.2, arrowwidth: 2, arrowcolor: '#ffd0ac', text: ''},
-        {text: `Launcher altitude ${fmt(c.layers_m[li])} m · target at ${fmt(c.target.altitude_m)} m`, xref: 'paper', yref: 'paper', x: 0, y: 1.01, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: {size: 10, color: tick}}]};
+    const c = submitted, li = Number(el('envelope-layer').value), f = field(), line = f.lines[li];
+    const traces = [];
+    if (line.az.length) {
+      const bands = polarBands(li), o = polarOutline(li);
+      traces.push({type: 'barpolar', r: bands.length, base: bands.base, theta: bands.theta, width: bands.width,
+        marker: {color: fill, line: {width: 0}}, hoverinfo: 'skip', showlegend: false});
+      traces.push({type: 'scatterpolar', mode: 'lines', r: o.r, theta: o.theta, text: o.text, connectgaps: false, line: {color: cyan, width: 2.2},
+        hovertemplate: '%{text}<extra></extra>', showlegend: false});
+      if (el('envelope-show-rays').checked) traces.push(rayTrace(line));
+      if (el('envelope-show-samples').checked) traces.push(...sampleTraces(ray => ray.key[0] === li, (ray, az, r) => [kmOf(r), az], true));
+      traces.push(markerTrace(boundaryPoints(line), cyan));
+    }
+    traces.push(...polarTarget(f.radius));
+    const note = {text: `Launcher at ${fmt(c.layers_m[li])} m · target at ${fmt(c.target.altitude_m)} m`, xref: 'paper', yref: 'paper',
+      x: 0, y: 1.02, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: {size: 10, color: tick}};
+    const layout = polarLayout(f.radius, 'layer:' + JSON.stringify(submitted), [note]);
+    layout.polar.bargap = 0; layout.showlegend = false;
     await draw(traces, layout);
   }
   async function renderProfile() {
@@ -525,11 +583,13 @@
     if (c.layers_m.length > 1) {
       const low = c.layers_m[0], high = c.layers_m.at(-1), ny = Math.min(241, 24 * c.layers_m.length + 1);
       const ys = Array.from({length: ny}, (_, j) => low + (high - low) * j / (ny - 1));
-      traces.push(region(xs, ys, ys.map(y => xs.map((_, i) => volumeValue(perLayer.map(v => v[i]), y)))));
+      traces.push({type: 'contour', x: xs, y: ys, z: ys.map(y => xs.map((_, i) => volumeValue(perLayer.map(v => v[i]), y))),
+        contours: {type: 'constraint', operation: '<', value: 0}, fillcolor: fill, line: {color: cyan, width: 2.2, smoothing: 1},
+        hoverinfo: 'skip', showscale: false, showlegend: false});
     } else {
       const segment = {x: [], y: []};
       xs.forEach((x, i) => { segment.x.push(perLayer[0][i] > 0 ? x : null); segment.y.push(c.layers_m[0]); });
-      traces.push({type: 'scatter', mode: 'lines', x: segment.x, y: segment.y, line: {color: cyan, width: 6}, hoverinfo: 'skip'});
+      traces.push({type: 'scatter', mode: 'lines', x: segment.x, y: segment.y, line: {color: cyan, width: 6}, hoverinfo: 'skip', showlegend: false});
     }
     // Searched boundaries on the cut, where a direction lies on it.
     const pts = [];
@@ -545,7 +605,8 @@
       if (Math.abs(wrap(az) - wrap(cut + 180)) < 1e-6) return [-r, ray.layer_m];
       return null;
     }, false));
-    traces.push(markerTrace(pts, false));
+    traces.push({type: 'scatter', mode: 'markers', x: pts.map(p => p[0]), y: pts.map(p => p[1]), text: pts.map(p => p[2]), customdata: pts.map(p => p[3]),
+      hovertemplate: '%{text}<extra></extra>', marker: {size: 6, color: cyan, opacity: .55}, showlegend: false});
     traces.push(targetMarker(0, c.target.altitude_m, {textposition: 'top center'}));
     // Show both sides of the cut only as far as hits reach.
     const reach = [0, 0];
@@ -554,52 +615,6 @@
     const layout = {...theme, margin: {l: 70, r: 25, t: 30, b: 60}, showlegend: false, hovermode: 'closest', uirevision: 'profile:' + JSON.stringify(submitted) + cut,
       xaxis: {...axis2d(`← ${label(wrap(cut + 180))} · horizontal distance (m) · ${label(cut)} →`), range: [reach[0] - margin, reach[1] + margin]},
       yaxis: {...axis2d('Launcher altitude · m'), rangemode: 'tozero'}};
-    await draw(traces, layout);
-  }
-  async function render3d() {
-    const c = submitted, f = field(), win = f.window, alts = c.layers_m;
-    const traces = [];
-    if (alts.length > 1) {
-      const {xs, ys} = axes(win, 61);
-      const perLayer = f.lines.map(line => ys.map(y => xs.map(x => layerValue(line, Math.hypot(x, y), Math.atan2(y, x) * 180 / Math.PI))));
-      const levels = Math.min(41, 4 * (alts.length - 1) + 1), zs = Array.from({length: levels}, (_, k) => alts[0] + (alts.at(-1) - alts[0]) * k / (levels - 1));
-      const X = [], Y = [], Z = [], value = [];
-      for (const z of zs) for (let j = 0; j < ys.length; j++) for (let i = 0; i < xs.length; i++) {
-        X.push(xs[i]); Y.push(ys[j]); Z.push(z); value.push(volumeValue(perLayer.map(g => g[j][i]), z));
-      }
-      traces.push({type: 'isosurface', x: X, y: Y, z: Z, value, isomin: 0, isomax: CLAMP, surface: {count: 1}, opacity: .38,
-        caps: {x: {show: false}, y: {show: false}, z: {show: true, fill: 1}}, colorscale: [[0, cyan], [1, cyan]], showscale: false,
-        lighting: {ambient: .75, diffuse: .5, specular: .1, roughness: .9}, hoverinfo: 'skip'});
-    }
-    // Layer outlines at full resolution, with hoverable searched boundaries.
-    f.lines.forEach((line, li) => {
-      if (!line.az.length) return;
-      const g = layerGrid(line, win, 201), o = outline(g.xs, g.ys, g.z);
-      traces.push({type: 'scatter3d', mode: 'lines', x: o.x, y: o.y, z: o.x.map(v => v === null ? null : alts[li]), hoverinfo: 'skip',
-        line: {color: cyan, width: 4}, connectgaps: false});
-      traces.push(markerTrace(boundaryPoints(line).filter(p => p[0] || p[1]), true, alts[li]));
-      if (el('envelope-show-rays').checked) traces.push(rayTraces(line, (ray, az, r) => [r * Math.cos(radians(az)), r * Math.sin(radians(az)), alts[li]], true));
-    });
-    if (el('envelope-show-samples').checked) traces.push(...sampleTraces(() => true, (ray, az, r) => [r * Math.cos(radians(az)), r * Math.sin(radians(az)), ray.layer_m], true));
-    const wx = win.x[1] - win.x[0], wy = win.y[1] - win.y[0], horizontal = Math.max(wx, wy);
-    const ref = c.target.altitude_m, arrow = horizontal * .06;
-    traces.push({type: 'scatter3d', mode: 'markers+text', x: [0], y: [0], z: [ref], text: ['Target'],
-      textposition: 'top center', textfont: {color: '#ffe0c7', size: 11}, marker: {symbol: 'diamond', size: 6, color: '#ffd0ac'}, hoverinfo: 'skip'});
-    traces.push({type: 'scatter3d', mode: 'lines', x: [0, arrow], y: [0, 0], z: [ref, ref], line: {color: '#ffd0ac', width: 4}, hoverinfo: 'skip'});
-    traces.push({type: 'cone', x: [arrow], y: [0], z: [ref], u: [arrow * .3], v: [0], w: [0], anchor: 'tail', sizemode: 'absolute', sizeref: arrow * .35, showscale: false,
-      colorscale: [[0, '#ffd0ac'], [1, '#ffd0ac']], hoverinfo: 'skip'});
-    const all = [...alts, ref], low = Math.min(...all), high = Math.max(...all);
-    const span = Math.max(high - low, 1000);
-    const zRatio = Math.max(span / horizontal, .3), stretch = zRatio * horizontal / span;
-    const node = el('envelope-chart'), viewport = (node.clientWidth || 800) / (node.clientHeight || 500);
-    const fillRatio = Math.min(1.9, 1.25 * Math.max(.75, Math.min(viewport, 1.6)) / (1 + zRatio * .6));
-    const pad = (high - low) * .08 + 300;
-    const axis = (title, range) => ({title: {text: title, font: {size: 11}}, range, tickformat: ',.0f', gridcolor: grid, zerolinecolor: zero, color: tick, backgroundcolor: '#000000', showspikes: false, tickfont: {size: 10}});
-    const layout = {...theme, margin: {l: 0, r: 0, t: 0, b: 0}, showlegend: false, uirevision: 'envelope3d:' + JSON.stringify(submitted),
-      annotations: [{text: stretch > 1.05 ? `Altitude stretched ×${fmt(stretch, 1)}` : 'Equal scale', xref: 'paper', yref: 'paper', x: .015, y: .985, xanchor: 'left', yanchor: 'top', showarrow: false, font: {size: 10, color: tick}}],
-      scene: {xaxis: axis('X · m', win.x), yaxis: axis('Z · m', win.y), zaxis: axis('Altitude · m', [Math.max(0, low - pad), high + pad]),
-        aspectmode: 'manual', aspectratio: {x: fillRatio * wx / horizontal, y: fillRatio * wy / horizontal, z: zRatio * fillRatio},
-        camera: {eye: {x: -1.15, y: -1.3, z: .8}, up: {x: 0, y: 0, z: 1}, projection: {type: 'orthographic'}}}};
     await draw(traces, layout);
   }
   async function draw(traces, layout) {
