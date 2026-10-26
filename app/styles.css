@@ -217,3 +217,5 @@ body .nav-item[aria-current=page]{color:var(--text);box-shadow:inset 2px 0 0 var
 /* Trajectory page: notes that only carry a message now and then take no space when empty. */
 body #missile-preset-note:empty,body #missile-preview-note:empty{display:none}
 .visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* The sidebar's first row keeps only Reset, at the right. */
+body #em-workspace .sidebar>form>.section-heading:first-child{justify-content:flex-end;margin-bottom:8px}

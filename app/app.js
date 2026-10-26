@@ -156,8 +156,6 @@ function renderEntries(){
     <div class="entry-editor"></div></article>`).join('');
   const active=[...$('selected-aircraft').children].find(e=>e.dataset.entry===state.editing);
   if(active)active.querySelector('.entry-editor').append(editor);
-  $('entries-empty').hidden=!!state.entries.length;
-  $('entry-count').textContent=`${state.entries.length} / 8`;
   $('apply-settings-to-all').disabled=state.entries.length<2;
   $('apply-settings-status').textContent='';
   refreshEntrySummaries();
@@ -177,7 +175,8 @@ function addEntry(name,condition){
   state.entries.push({id,aircraft_id:name});
   state.conditions[id]=structuredClone(aircraftConditions(name,condition||state.meta.defaults));
   updateDefaultContours();
-  showCondition(id);renderEntries();syncLabels();
+  // A new card stays closed; its settings open with Configure (Leo, 2026-10-26).
+  showCondition(state.editing);renderEntries();syncLabels();
 }
 function readConfig() {
   saveCondition();
@@ -292,8 +291,6 @@ function populateAircraft(){
   // The type stays searchable but is not shown (Leo, 2026-10-23).
   const family=a=>({piston:'Piston propeller',turboprop:'Turboprop',mixed:'Propeller + jet',rocket:'Rocket'})[a.propulsion]||(a.has_sweep?'Variable sweep':'Jet');
   $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):' · '+(a.reason||'Model integration pending'))}</small></span><button type="button" data-add="${escapeText(id)}" aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
-  const ready=entries.filter(([,a])=>a.supported).length;
-  $('catalog-status').textContent=`${ready} available aircraft`;
 }
 $('aircraft-search').addEventListener('input',syncAircraftMenu);
 $('aircraft-search').addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault();});
@@ -306,7 +303,7 @@ $('selected-aircraft').addEventListener('click',event=>{
   if(button.dataset.action==='remove'){
     const index=state.entries.findIndex(e=>e.id===id);state.entries.splice(index,1);delete state.conditions[id];
     updateDefaultContours();
-    if(state.editing===id)showCondition(state.entries[Math.min(index,state.entries.length-1)]?.id);
+    if(state.editing===id)showCondition(null);
   }else showCondition(state.editing===id?null:id);
   renderEntries();syncLabels();
 });
