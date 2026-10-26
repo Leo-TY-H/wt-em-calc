@@ -231,4 +231,4 @@ body .entry-dialog-body fieldset{margin:0;min-width:0;width:100%}
 body .entry-actions .entry-icon{display:inline-grid;place-items:center;width:28px;height:26px;padding:0}
 body .entry-actions .entry-icon[data-action=remove]:hover{border-color:#a6533f;color:#f08070}
 body .entry-heading+.entry-actions{margin-top:12px}
-body #calculate.calculating:disabled{opacity:.75;cursor:progress}
+body #calculate.calculating:disabled{opacity:1;cursor:progress;background:linear-gradient(90deg,rgba(240,240,250,.24) var(--progress,0%),transparent var(--progress,0%));transition:background .4s}
