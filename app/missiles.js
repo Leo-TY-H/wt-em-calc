@@ -13,10 +13,20 @@
   const missileLabel=id=>`${missileName(id)} [${id}]`;
   const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   const escapeHtml=text=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const positionFields = role => `<div class="missile-vector"><span>Aircraft position · m</span><div class="${role==='launch'?'missile-altitude-input':'three-inputs'}">${['Along X','Altitude · Y','Along Z'].map((axis,i)=>role==='launch'&&i!==1?'':`<label>${axis}<input id="missile-${role}-position-${i}" aria-label="${role==='launch'?'Launcher':'Target'} ${axis}" type="number" step="any" required value="${initial[role].position[i]}" ${i===1?'min="0.001" max="30000"':'min="-200000" max="200000"'}></label>`).join('')}</div></div>`;
+  // The launcher sits above the origin; the target is placed from it in cylindrical coordinates (Leo, 2026-10-26):
+  // azimuth (0° = +X, 90° = +Z, as headings), horizontal distance in km and altitude.
+  // Rounded below a micrometre so replayed shots read cleanly (not 158.29999999999998°).
+  const cylindrical = offset => [+(Math.atan2(offset[2], offset[0]) * 180 / Math.PI).toFixed(10) + 0, +(Math.hypot(offset[0], offset[2]) / 1000).toFixed(9)];
+  // Position fields in the same style as the motion fields: label above, unit inside the input.
+  const unitField = (id, label, aria, unit, value, min, max) => `<label class="field">${label}<div class="input-unit"><input id="${id}" aria-label="${aria}" type="number" step="any" required value="${value}" min="${min}" max="${max}"><span>${unit}</span></div></label>`;
+  const positionFields = role => {
+    if(role==='launch')return `<div class="missile-motion">${unitField('missile-launch-position-1','Altitude','Launcher altitude','m',initial.launch.position[1],0.001,30000)}</div>`;
+    const [azimuth,distance]=cylindrical(initial.target.position.map((v,i)=>v-initial.launch.position[i]));
+    return `<div class="missile-vector"><span>Position from the launcher</span><div class="missile-motion">${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Distance','Target horizontal distance','km',distance,0,200)}${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}</div></div>`;
+  };
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Travel heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
   const stateFields = (role,number,title,description) => `<fieldset class="missile-step missile-${role}"><legend><span class="missile-step-number">${number}</span>${title}</legend><p class="hint">${description}</p>${positionFields(role)}${motion(role)}
-    ${role==='launch'?'<p class="hint">Travel heading sets movement: 0° = +X, 90° = +Z. Launch and climb angles: positive = climbing, 0° = level.</p>':''}
+    ${role==='launch'?'<p class="hint">Travel heading and target azimuth: 0° = +X, 90° = +Z. Launch and climb angles: positive = climbing, 0° = level.</p>':''}
     </fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
     <div class="section-heading"><span class="eyebrow">ENGAGEMENT SETUP</span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
@@ -109,13 +119,23 @@
     }catch(error){meta=null;busy(false);el('missile-retry').hidden=false;showError('Could not load missile configurations. Check that the simulator server is running, then retry. '+error.message);}
     finally{loading=null;}})();return loading;
   }
+  // The target's position (m) from the cylindrical fields; the launcher is above the origin.
+  function targetPosition() {
+    const azimuth=radians(Number(el('missile-target-azimuth').value)),distance=Number(el('missile-target-distance').value)*1000;
+    return [distance*Math.cos(azimuth),Number(el('missile-target-position-1').value),distance*Math.sin(azimuth)];
+  }
+  // Fills the cylindrical fields from a position relative to the launcher's ground point (x, altitude, z in m).
+  function setTargetPosition(offset) {
+    const [azimuth,distance]=cylindrical(offset);
+    el('missile-target-azimuth').value=String(azimuth);el('missile-target-distance').value=String(distance);el('missile-target-position-1').value=String(offset[1]);
+  }
   function inputs() {
     const config={missiles:[...selectedMissiles]};
     for(const role of ['launch','target']) {
       const [speed,heading,climb]=['speed','course','climb'].map(key=>Number(el(`missile-${role}-${key}`).value));
       const horizontal=speed/3.6*Math.cos(radians(climb));
       config[role==='launch'?'launcher':role]={
-        position:[0,1,2].map(i=>role==='launch'&&i!==1?0:Number(el(`missile-${role}-position-${i}`).value)),
+        position:role==='launch'?[0,Number(el('missile-launch-position-1').value),0]:targetPosition(),
         velocity:[horizontal*Math.cos(radians(heading)),speed/3.6*Math.sin(radians(climb)),horizontal*Math.sin(radians(heading))],
         angles:[heading,climb,0]};
     }
@@ -182,13 +202,13 @@
     updatePreview();
   }
   function updatePreview() {
-    const targetX=el('missile-target-position-0');targetX.setCustomValidity('');
+    const targetDistance=el('missile-target-distance');targetDistance.setCustomValidity('');
     const numericFields=[...el('missile-form').querySelectorAll('input[type=number]')];
     for(const role of ['launch','target'])el(`missile-${role}-speed`).setCustomValidity('');
     if(numericFields.every(field=>field.validity.valid)) {
       const config=inputs();
       for(const role of ['launch','target'])if(config[role==='launch'?'launcher':role].velocity.some(v=>Math.abs(v)>2000))el(`missile-${role}-speed`).setCustomValidity('Reduce speed: each world-axis velocity must be at most 7,200 km/h.');
-      if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetX.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
+      if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetDistance.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
     }
     const invalid=numericFields.find(field=>!field.validity.valid),valid=!invalid;
     el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:'Add a missile to simulate.'):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
@@ -203,7 +223,7 @@
     const distance=Math.hypot(...offset),altitude=offset[1];
     const closing=distance?offset.reduce((sum,v,i)=>sum+v*(launch.velocity[i]-target.velocity[i]),0)/distance:0;
     const format=value=>value.toLocaleString(undefined,{maximumFractionDigits:1});
-    el('missile-separation').textContent=format(distance)+' m';
+    el('missile-separation').textContent=(distance/1000).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' km';
     el('missile-altitude-difference').textContent=altitude===0?'Same altitude':`${format(Math.abs(altitude))} m ${altitude>0?'above':'below'}`;
     el('missile-closing').textContent=distance===0?'Same position':`${format(Math.abs(closing)*3.6)} km/h${closing<0?' · opening':closing>0?' · closing':''}`;
     const width=Math.max(240,el('missile-geometry').clientWidth||640),height=150;
@@ -218,7 +238,7 @@
       return `<g fill="${color}">${horizontal?`<path d="M ${x} ${y} l ${vx} ${vz}" fill="none" stroke="${color}" stroke-width="2" marker-end="url(#missile-arrow-${i})"/>`:''}<circle cx="${x}" cy="${y}" r="5"/><text x="${x}" y="${y+(i?27:-16)}" text-anchor="middle">${name}</text></g>`;
     }).join('');
     el('missile-geometry').innerHTML=`<defs>${['#38c9d7','#ffa66b'].map((color,i)=>`<marker id="missile-arrow-${i}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join('')}<pattern id="missile-grid" width="32" height="25" patternUnits="userSpaceOnUse"><path d="M 32 0 H 0 V 25" fill="none" stroke="#223042" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="url(#missile-grid)"/><path d="M ${points[0].join(' ')} L ${points[1].join(' ')}" stroke="#78879a" stroke-dasharray="5 5"/>${markers}<path d="M 24 42 V 20 M 24 42 H 48" stroke="#8d9aae"/><g fill="#8d9aae" font-size="10"><text x="15" y="14">+Z</text><text x="53" y="46">+X</text></g>`;
-    el('missile-geometry').setAttribute('aria-label',`Top view of aircraft at release. Initial separation ${format(distance)} meters. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
+    el('missile-geometry').setAttribute('aria-label',`Top view of aircraft at release. Initial separation ${(distance/1000).toFixed(2)} kilometres. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
     el('missile-preview-note').textContent='';
   }
   function busy(value) {
@@ -247,7 +267,7 @@
     if(preset==='head-on'){states.target.velocity=[-200,0,0];states.target.angles=[180,0,0];}
     if(preset==='crossing'){states.target.velocity=[0,0,200];states.target.angles=[90,0,0];}
     for(const role of ['launch','target']) {
-      for(let i=0;i<3;i++)if(role!=='launch'||i===1)el(`missile-${role}-position-${i}`).value=states[role].position[i];
+      if(role==='launch')el('missile-launch-position-1').value=states.launch.position[1];else setTargetPosition(states.target.position);
       syncMotion(role,states[role].velocity);
     }
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.preset===preset)));
@@ -271,7 +291,7 @@
     const origin=scenario.launcher.position;
     // Full precision: near an envelope boundary a rounded position can change the outcome.
     el('missile-launch-position-1').value=String(origin[1]);
-    for(let i=0;i<3;i++)el(`missile-target-position-${i}`).value=String(i===1?scenario.target.position[1]:scenario.target.position[i]-origin[i]);
+    setTargetPosition(scenario.target.position.map((v,i)=>i===1?v:v-origin[i]));
     syncMotion('launch',scenario.launcher.velocity,scenario.launcher.angles);syncMotion('target',scenario.target.velocity,scenario.target.angles);
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
     el('missile-preset-note').textContent='Loaded from the launch envelope.';
