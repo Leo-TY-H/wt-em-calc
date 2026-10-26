@@ -29,7 +29,7 @@ main{padding:18px 14px 22px}
 .sidebar{padding:18px 16px}
 .page-heading{margin-bottom:16px}
 .contour-settings{display:block}.contour-levels{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.contour-levels button{border:1px solid var(--line);border-radius:5px;background:var(--panel2);color:var(--text);padding:4px 8px;font-size:12px}.contour-levels button:hover{border-color:var(--cyan)}.contour-add{display:flex;gap:7px}.contour-add input{width:100%;min-width:0;background:var(--panel2);border:1px solid var(--line);border-radius:5px;color:var(--text);padding:7px}.contour-add button{border:0;border-radius:5px;background:var(--cyan);color:#0c111a;padding:7px 12px;font-weight:700}.contour-settings .hint{display:block;min-height:0;margin-top:5px}
-#chart .textpoint text{paint-order:stroke;stroke:#0c111a;stroke-width:4px;stroke-linejoin:round}
+#chart .textpoint text{paint-order:stroke;stroke:#000;stroke-width:4px;stroke-linejoin:round}
 @media(min-width:1600px){.workspace{grid-template-columns:300px minmax(0,1fr)}main{padding-inline:14px}}
 @media(max-width:1150px){.workspace{grid-template-columns:254px minmax(0,1fr)}main{padding-inline:12px}}
 @media(max-width:760px){.workspace{display:flex;flex-direction:column}.topbar{padding-inline:12px}main{padding:14px 8px}.sidebar{padding:14px 10px}}
@@ -157,3 +157,60 @@ body>header.topbar{position:sticky;top:0;z-index:1100}
 .loadout-total{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 @media(max-width:760px){.loadout-body{grid-template-columns:minmax(0,1fr)}.loadout-presets{border-right:0;border-bottom:1px solid var(--line);max-height:34vh}
   .loadout-weights{grid-template-columns:repeat(2,minmax(0,1fr))}.loadout-footer{flex-wrap:wrap}.loadout-footer .check-row{flex-basis:100%}}
+
+/* Look (Leo, 2026-10-25, after spacex.com): black and square. Flat black surfaces separated by thin light lines
+   instead of filled rounded boxes, DIN-style type, uppercase navigation and outlined uppercase buttons, white for
+   interface accents; cyan, orange and the aircraft colours stay for data. Rules start with `body` so they also
+   reach the missile pages' own stylesheets, which load later. */
+:root{--bg:#000;--panel:#000;--panel2:#0c0c0f;--line:#2a2a31;--text:#f0f0fa;--muted:#9a9aa6;--hairline:rgba(240,240,250,.55);
+  --display:"WTSymbols","D-DIN",Bahnschrift,"DIN Alternate","DIN Next","Barlow","Segoe UI",Arial,sans-serif}
+*,*::before,*::after{border-radius:0!important}
+.spinner,.local i,.aircraft-dot,.metric-top i,.switch-row input:before{border-radius:50%!important}
+body{background:#000;font-family:var(--display)}
+body :focus-visible{outline-color:var(--text)}
+body input[type=range],body input[type=checkbox],body input[type=radio]{accent-color:var(--text)}
+body h1{text-transform:uppercase;letter-spacing:.01em;font-weight:600}
+/* Surfaces */
+body>header.topbar,body .sidebar,body .missile-sidebar,body .sidebar-actions,body .missile-run-panel{background:#000}
+body .sidebar-actions,body .missile-run-panel{border-top:1px solid var(--line);box-shadow:none}
+body .missile-preview{background:#000;border-color:var(--line)}
+body .missile-coordinate-guide{background:none;border-left:1px solid var(--hairline)}
+body .progress-panel{background:#000;border-color:var(--line)}
+body #progress-fill,body #envelope-progress-fill{background:var(--text)}
+body .progress-track{background:var(--line)}
+body .loadout-dialog,body .loadout-options{background:#000}
+/* Fields */
+body input[type=number],body select,body #aircraft-search,body #missile-search,body #envelope-search,body .contour-add input{background:var(--panel2);border:1px solid var(--line);color:var(--text)}
+body input[type=number]:focus,body select:focus,body input[type=search]:focus{border-color:var(--hairline)}
+/* Buttons: outlined, uppercase; the run buttons fill white on hover */
+body .primary-button{background:none;color:var(--text);border:1px solid var(--hairline);text-transform:uppercase;letter-spacing:.14em;font-weight:600}
+body .primary-button:hover:not(:disabled){background:var(--text);color:#000}
+body .secondary-button,body .apply-settings button{background:none;border:1px solid var(--line);color:var(--text);text-transform:uppercase;letter-spacing:.1em}
+body .entry-actions button,body .aircraft-option button,body .contour-levels button,body .contour-add button,body .flap-modes button,
+body #envelope-list button,body #envelope-view-reset,body .missile-playback button,body .missile-main .chart-toolbar button,
+body .missile-selected-row>button,body .loadout-preset,body .loadout-pylon,body .missile-presets button{background:none;border:1px solid var(--line);color:var(--text)}
+body .contour-add button{font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+body .entry-actions button:hover,body .aircraft-option button:hover,body .contour-levels button:hover,body .contour-add button:hover,
+body .missile-presets button:hover,body .loadout-preset:hover:not(:disabled),body .loadout-pylon:hover,body #envelope-view-reset:hover{border-color:var(--hairline);color:var(--text)}
+body .flap-modes button[aria-pressed=true],body .missile-presets button[aria-pressed=true],body .loadout-preset[aria-pressed=true],
+body .loadout-pylon[aria-expanded=true]{border-color:var(--text);background:#111116;color:var(--text)}
+body .missile-presets button[aria-pressed=true]>span{color:var(--text)}
+body .mode-switch{background:none;border-color:var(--line)}
+body .mode-switch input:checked+span{background:var(--text);color:#000}
+body .text-button:hover{color:var(--text)}
+/* Lists, cards and badges */
+body #aircraft-list{background:#000;border-color:var(--line)}
+body #aircraft-list .aircraft-option:hover{background:#111116}
+body .aircraft-entry{background:#000}
+body .aircraft-option{background:#000;border-color:var(--line)}
+body .entry-number,body .missile-step-number{background:none;border:1px solid currentColor;width:20px;height:20px;font-size:11px}
+body .point-pill{background:none;border:1px solid var(--line);color:var(--text)}
+body .point-pill.rejected{color:#efa390;border-color:#5a3a35}
+/* Header navigation */
+body .nav-top{text-transform:uppercase;letter-spacing:.1em;font-size:13px}
+body .nav-group.current .nav-top::after{background:var(--text)}
+body .nav-menu{background:#000;border-color:var(--line);box-shadow:0 14px 30px #000c}
+body .nav-item{text-transform:uppercase;letter-spacing:.08em;font-size:13px}
+body .nav-item:hover,body .nav-item:focus-visible{background:#111116;color:var(--text)}
+body .nav-item[aria-current=page]{color:var(--text);box-shadow:inset 2px 0 0 var(--text)}
+@media(max-width:760px){body .nav-top{font-size:11px;letter-spacing:.04em;padding:0 8px;white-space:nowrap}}

@@ -486,7 +486,7 @@ function speedBoundaryAnnotations(a,data){
   return labels.map(p=>({name:a.id,x:p.speed_kmh,y:p.dashed ? .5 : p.turn_dps,xref:'x',yref:p.dashed?'paper':'y',
     text:escapeText(p.text).replace(/\n/g,'<br>'),textangle:-90,showarrow:false,
     xanchor:p.speed_kmh>threshold?'right':'left',yanchor:'middle',xshift:p.speed_kmh>threshold?-7:7,
-    font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(12,17,26,.85)',
+    font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(0,0,0,.85)',
     visible:!state.hiddenVehicles.has(a.id),
     hovertext:`${escapeText(a.name)}<br>${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
 }
@@ -541,7 +541,7 @@ function renderChart(){
   for(const n of [2,4,6,9,12,16]){
     if(n>(data.plot_max_load_g||data.settings.max_load_g))continue;
     traces.push({type:'scatter',mode:'lines',x:guideSpeeds,y:guideSpeeds.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
-      line:{color:'rgba(133,158,185,.16)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
+      line:{color:'rgba(240,240,250,.12)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
   }
   for(const a of displayed){
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
@@ -600,16 +600,16 @@ function renderChart(){
     traces.push(contourLabelTrace(a,data));
   }
   const ymax=envelopeTop(displayed);
-  const layout={paper_bgcolor:'#0c111a',plot_bgcolor:'#0c111a',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#b4c2d3',size:12},
+  const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
     annotations:displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
-    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#202e40',bordercolor:'#40536b',font:{color:'#eff7ff',size:12}},
-    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'#1f2a3a',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
-    yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'#1f2a3a',zeroline:false,dtick:5,tickfont:{size:12}},
+    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#eff7ff',size:12}},
+    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
+    yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:5,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
-    uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
+    uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
   Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
     // Downloads sit in the chart's own toolbar: Plotly's PNG of the current view, then the result's data files.
