@@ -152,21 +152,12 @@ function renderEntries(){
   const editor=$('aircraft-condition');(state.editing?$('entry-dialog-body'):$('condition-home')).append(editor);
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
     <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong><code>${escapeText(nameCode(entryName(e))||e.aircraft_id)}</code></div>
-    <p class="entry-summary"></p><div class="entry-actions">
+    <div class="entry-actions">
     <button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i+1}" title="Edit settings">${EDIT_ICON}</button>
     <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i+1}" title="Duplicate" ${state.entries.length>=8?'disabled':''}>${COPY_ICON}</button>
     <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i+1}" title="Remove">${REMOVE_ICON}</button></div></article>`).join('');
   $('apply-settings-to-all').disabled=state.entries.length<2;
   $('apply-settings-status').textContent='';
-  refreshEntrySummaries();
-}
-function refreshEntrySummaries(){
-  for(const row of $('selected-aircraft').children){
-    const c=state.conditions[row.dataset.entry];
-    const entry=state.entries.find(e=>e.id===row.dataset.entry);
-    const loadout=c.loadout?' · '+loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle))+(c.stores_released?' (released)':''):c.default_ammunition?'':' · Clean';
-    row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)}${c.structural_limits===false?' · Flutter off':''}${loadout}`;
-  }
 }
 function addEntry(name,condition){
   if(state.entries.length>=8)return;
@@ -236,7 +227,7 @@ function syncLabels(){
   $('sweep-field').hidden=!aircraft?.has_sweep;
   syncAircraftMenu();
   // readConfig also stores the open entry's settings. No "settings have changed" notice (Leo, 2026-10-26).
-  readConfig();refreshEntrySummaries();
+  readConfig();
 }
 function flapLimitLabel(profile,percent){
   if(!profile?.available||percent<=0)return '';
@@ -799,7 +790,6 @@ async function showLoadout(){
     if(state.editing!==entry.id)return;
     $('loadout-summary').textContent=loadoutText(c,info);
     $('loadout-detail').textContent=loadoutFigures(loadoutTotals(c.loadout,info))+(c.stores_released?' · stores released, racks stay':'');
-    refreshEntrySummaries();
   }catch(cause){$('loadout-detail').textContent='Could not load loadouts: '+cause.message;}
 }
 const loadoutDialog={entry:null,info:null,draft:null,pylon:null,notes:[]};
@@ -936,7 +926,7 @@ $('loadout-apply').addEventListener('click',()=>{
   if(state.editing===d.entry)$('default-ammunition').checked=c.default_ammunition;
   $('loadout-dialog').close();
   if(state.editing===d.entry)showLoadout();
-  refreshEntrySummaries();syncLabels();
+  syncLabels();
 });
 function formChanged(e){
   if(e.target.id==='aircraft-search')return;
