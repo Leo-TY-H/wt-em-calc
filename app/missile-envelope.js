@@ -10,6 +10,7 @@
     if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
     return body;
   }
+  const REMOVE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   const escapeHtml = text => String(text).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const radians = a => a * Math.PI / 180;
   // Base directions per layer; the search adds directions where the envelope bends, splits or ends.
@@ -24,75 +25,45 @@
   const numberField = (id, label, unit, value, min, max, step = 'any') =>
     `<label class="field">${label}<div class="input-unit"><input id="${id}" type="number" min="${min}" max="${max}" step="${step}" value="${value}" required aria-label="${escapeHtml(label)}"><span>${unit}</span></div></label>`;
 
+  // Laid out like the EM page (Leo, 2026-10-26): picker + card, plain sections, a sticky Calculate button that
+  // fills as progress, the chart unboxed with the same mouse interaction and toolbar downloads, details below on click.
   root.innerHTML = `<aside class="missile-sidebar envelope-sidebar"><form id="envelope-form" novalidate>
-    <div class="section-heading"><span class="eyebrow">ENVELOPE SETUP</span><button id="envelope-reset" class="text-button" type="button">Reset all</button></div>
-    <h2 class="missile-setup-title">Where can it hit?</h2>
-    <p class="hint">Searches the launch distance in every direction around the target, layer by layer, with the same engagement simulation as the missile simulator.</p>
-    <fieldset class="missile-step" id="envelope-picker"><legend><span class="missile-step-number">1</span>Missile</legend>
+    <div class="section-heading"><span></span><button id="envelope-reset" class="text-button" type="button">Reset</button></div>
+    <fieldset id="envelope-picker"><legend class="visually-hidden">Missile</legend>
       <input id="envelope-search" type="search" placeholder="Search missiles…" autocomplete="off" aria-label="Search missiles" aria-controls="envelope-list">
       <div id="envelope-list" class="aircraft-list" aria-label="Available missiles"></div>
       <p id="envelope-search-empty" class="hint" hidden>No missiles match your search.</p>
       <p id="envelope-catalog-note" class="hint" role="status">Loading missiles…</p>
-      <div id="envelope-selected" class="envelope-selected" aria-live="polite"><span class="hint">No missile selected.</span></div>
+      <div id="envelope-selected" class="envelope-selected" aria-live="polite"></div>
       <button id="envelope-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    <fieldset class="missile-step missile-target"><legend><span class="missile-step-number">2</span>Target aircraft</legend>
-      ${numberField('envelope-target-altitude', 'Altitude', 'm', defaults.target.altitude, 50, 25000)}
-      ${numberField('envelope-target-speed', 'Speed', 'km/h', defaults.target.speed, 0, 7200)}
-      <p class="hint">Sits at the centre of the envelope, flying straight and level along +X at constant speed.</p>
-    </fieldset>
-    <fieldset class="missile-step missile-launch"><legend><span class="missile-step-number">3</span>Launcher aircraft</legend>
-      ${numberField('envelope-launcher-speed', 'Speed', 'km/h', defaults.launcher.speed, 0, 7200)}
-      <label class="field">Attitude at launch<select id="envelope-launcher-aim"><option value="nose">Nose pointed at the target</option><option value="level">Level, heading toward the target</option></select></label>
-      <p class="hint">Launches toward the target from every sampled position; its altitude is the layer altitude.</p>
-    </fieldset>
-    <fieldset class="missile-step"><legend><span class="missile-step-number">4</span>Launcher altitudes</legend>
-      <div class="envelope-layer-inputs">${numberField('envelope-layers-from', 'Lowest', 'm', defaults.layers.from, 50, 25000)}${numberField('envelope-layers-to', 'Highest', 'm', defaults.layers.to, 50, 25000)}${numberField('envelope-layers-count', 'Layers', '', defaults.layers.count, 1, 25, 1)}</div>
-      <p id="envelope-layers-list" class="hint"></p>
-    </fieldset>
-    <fieldset class="missile-step"><legend><span class="missile-step-number">5</span>Resolution</legend>
-      <label class="field">Search detail<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
-      <p id="envelope-cost" class="hint"></p>
-    </fieldset>
-    <div class="missile-run-panel">
-      <p id="envelope-ready" class="hint"></p>
+    <span class="eyebrow">TARGET AIRCRAFT</span>
+    <div class="envelope-pair">${numberField('envelope-target-altitude', 'Altitude', 'm', defaults.target.altitude, 50, 25000)}${numberField('envelope-target-speed', 'Speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
+    <span class="eyebrow">LAUNCHER AIRCRAFT</span>
+    ${numberField('envelope-launcher-speed', 'Speed', 'km/h', defaults.launcher.speed, 0, 7200)}
+    <label class="field">Attitude at launch<select id="envelope-launcher-aim"><option value="nose">Nose pointed at the target</option><option value="level">Level, heading toward the target</option></select></label>
+    <div class="envelope-layer-inputs">${numberField('envelope-layers-from', 'Lowest', 'm', defaults.layers.from, 50, 25000)}${numberField('envelope-layers-to', 'Highest', 'm', defaults.layers.to, 50, 25000)}${numberField('envelope-layers-count', 'Altitudes', '', defaults.layers.count, 1, 25, 1)}</div>
+    <span class="eyebrow">SEARCH</span>
+    <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
+    <div class="sidebar-actions">
+      <p id="envelope-ready" class="hint" hidden></p>
       <button id="envelope-run" class="primary-button" type="submit" disabled>Calculate envelope <span>↗</span></button>
-      <button id="envelope-cancel" class="secondary-button" type="button" hidden>Stop · keep finished directions</button>
-      <div id="envelope-status" role="status" aria-live="polite"></div>
+      <button id="envelope-cancel" class="secondary-button" type="button" hidden>Stop</button>
     </div>
   </form></aside>
-  <div class="missile-main">
-    <div class="page-heading"><div><span class="eyebrow">MISSILE KINEMATICS</span><h1>Launch envelope</h1></div><span class="status-badge">EXPERIMENTAL</span></div>
-    <p class="missile-model-note">Each point of the envelope is a launcher position at release around the target: 0° is in front of the target (head-on), 180° behind it (tail chase). A launch counts as a hit when the missile's proximity fuze fires, exactly as in the missile simulator, so fuze arming and radius shape the envelope together with the motor, mass, aerodynamics, control limits, guidance and seeker limits.</p>
+  <div class="missile-main envelope-main">
     <div id="envelope-error" class="error" role="alert" hidden></div>
-    <div id="envelope-stale" class="notice" hidden>Settings changed. Calculate again to update the envelope.</div>
-    <div id="envelope-progress" class="progress-panel" aria-live="polite" hidden><div><span class="spinner"></span><strong id="envelope-progress-label">Starting…</strong><span id="envelope-progress-count"></span></div><div class="progress-track"><div id="envelope-progress-fill"></div></div></div>
-    <section class="chart-card">
-      <div class="chart-toolbar"><div class="missile-legend envelope-legend"><span class="envelope-key-max">■ Hit region</span><span class="envelope-key-ref">◆ Target</span></div>
-        <div class="missile-view-controls">
-          <label for="envelope-view">Plot view<select id="envelope-view"><option value="contours">Altitude contours</option><option value="layer">One altitude</option><option value="profile">Side profile</option></select></label>
-          <label id="envelope-layer-label" for="envelope-layer" hidden>Layer<select id="envelope-layer"></select></label>
-          <label id="envelope-cut-label" for="envelope-cut" hidden>Cut through<select id="envelope-cut"></select></label>
-          <label class="envelope-check"><input id="envelope-show-rays" type="checkbox"> Directions</label>
-          <label class="envelope-check"><input id="envelope-show-samples" type="checkbox"> Samples</label>
-          <button id="envelope-view-reset" type="button">Reset view</button>
-        </div></div>
-      <p id="envelope-view-note" class="hint missile-hover-hint"></p>
-      <div id="envelope-chart" aria-label="Missile launch envelope"><div class="empty"><span class="empty-glyph">◎</span><h2>No envelope yet</h2><p>Choose a missile and the flight conditions,<br>then select <strong>Calculate envelope</strong>.</p></div></div>
-    </section>
-    <div class="missile-metrics envelope-metrics">
-      <div class="missile-metric"><span id="envelope-metric-front-label">Head-on maximum</span><strong id="envelope-metric-front">—</strong></div>
-      <div class="missile-metric"><span id="envelope-metric-rear-label">Tail-chase maximum</span><strong id="envelope-metric-rear">—</strong></div>
-      <div class="missile-metric"><span>Directions · simulations</span><strong id="envelope-metric-sims">—</strong></div>
+    <div class="envelope-view-controls">
+      <select id="envelope-view" aria-label="Plot view"><option value="contours">Altitude contours</option><option value="layer">One altitude</option><option value="profile">Side profile</option></select>
+      <label id="envelope-layer-label" for="envelope-layer" hidden>Launcher altitude<select id="envelope-layer"></select></label>
+      <label id="envelope-cut-label" for="envelope-cut" hidden>Bearing<select id="envelope-cut"></select></label>
+      <div hidden><label><input id="envelope-show-rays" type="checkbox"> Directions</label><label><input id="envelope-show-samples" type="checkbox"> Samples</label></div>
     </div>
-    <section class="inspector envelope-inspector" aria-live="polite"><div class="inspector-heading"><div><span class="eyebrow">DIRECTION</span><h2 id="envelope-inspect-title">Select a point on the envelope</h2></div><button id="envelope-open-simulator" class="secondary-button" type="button" hidden>Fly this shot in the simulator ↗</button></div><div id="envelope-inspect"></div></section>
-    <section class="envelope-table-card"><h2>Ranges by layer</h2><div class="envelope-table-wrap"><table id="envelope-table"><thead></thead><tbody><tr><td class="hint">Calculate an envelope to fill this table.</td></tr></tbody></table></div></section>
-    <div class="exports"><span>EXPORT</span><a id="envelope-download-json" aria-disabled="true">Envelope JSON</a><a id="envelope-download-csv" aria-disabled="true">Directions CSV</a></div>
-    <details class="missile-details"><summary>Method and limitations</summary>
-      <p>The target sits at the centre, flying along +X; each layer places the launcher at one altitude, heading toward the target. Along horizontal directions from the target, the launch distance is searched for the change between hits and misses with complete simulator runs, until each change is bracketed within the selected tolerance. Directions start on a regular grid. Between two finished neighbours another direction is added where one hits and the other does not, where their gaps between hits differ, or where the boundary bends, so the outline follows the envelope's edges closely while open sky costs little. New directions start from the boundaries their neighbours predict and confirm them with simulations.</p>
-      <p>Every simulation uses the missile simulator's model: recovered release processing, motors and changing mass, aerodynamics, control limits, guidance and seeker geometry, with ideal target visibility and radar support, against a target flying straight and level at constant speed. A hit is the native proximity-fuze event, including its arming time and distance. Near a boundary, hits and narrow misses can alternate with very small changes in the launch; each search keeps the changes it brackets, and hits scattered closer than a few percent of the envelope's size do not steer where new directions go. A miss is declared early only once every motor has burned out and even converting all altitude to speed could not bring the missile to the target before its lifetime or distance limit.</p>
-      <p>The drawn region interpolates smoothly between searched directions and between layers; the searched boundaries are exact simulation results (show them with <strong>Directions</strong>). Seeker look-angle and tracking limits apply as in the simulator; the launcher always heads toward the target, so they matter mainly for level launches at large height differences. The setup is mirror-symmetric (left/right), so one side is searched and mirrored. Hardpoint offsets, aircraft damage and countermeasures are not modeled.</p>
-    </details>
+    <div id="envelope-chart" aria-label="Missile launch envelope"><div class="empty"><span class="empty-glyph">◎</span><h2>Add a missile using the panel on the left to get started</h2></div></div>
+    <section id="envelope-inspector" class="inspector envelope-inspector" aria-live="polite" hidden><div class="inspector-heading"><h2 id="envelope-inspect-title"></h2><button id="envelope-open-simulator" class="secondary-button" type="button" hidden>Fly this shot in the simulator ↗</button></div><div id="envelope-inspect"></div></section>
+    <section class="envelope-table-card" hidden><span class="eyebrow">RANGES BY LAUNCHER ALTITUDE</span><div class="envelope-table-wrap"><table id="envelope-table"><thead></thead><tbody></tbody></table></div></section>
+    <div hidden><a id="envelope-download-json" aria-disabled="true">Envelope JSON</a><a id="envelope-download-csv" aria-disabled="true">Directions CSV</a></div>
+    <footer><span></span><span id="envelope-status" role="status" aria-live="polite"></span></footer>
   </div>`;
 
   let meta = null, loading = null, selected = null, job = null, rays = new Map(), submitted = null, summary = null;
@@ -122,9 +93,6 @@
   }
   function updateForm() {
     const list = layers();
-    el('envelope-layers-list').textContent = list.length ? `Layers: ${list.map(v => fmt(v) + ' m').join(', ')}` : '';
-    const q = qualities[el('envelope-quality').value], base = (180 / q.step + 1) * list.length;
-    el('envelope-cost').textContent = `${base} starting directions (left/right mirrored); more are added where the envelope bends, splits or ends. Long-range radar missiles take longest.`;
     const fields = [...el('envelope-form').querySelectorAll('input[type=number]:not(:disabled)')];
     const invalid = fields.find(field => !field.checkValidity());
     let message = '';
@@ -132,10 +100,10 @@
     else if (!selected) message = 'Select a missile.';
     else if (invalid) message = `${invalid.getAttribute('aria-label')}: ${invalid.validationMessage}`;
     else if (value('envelope-layers-to') < value('envelope-layers-from')) message = 'Highest layer must be at or above the lowest.';
-    else message = job ? `Calculating ${missileName(submitted?.missile || selected)} envelope…` : `${missileName(selected)} · ${list.length} layer${list.length > 1 ? 's' : ''} ready.`;
-    el('envelope-ready').textContent = message;
+    // Only problems are shown; the button says the rest.
+    el('envelope-ready').textContent = meta && selected && !job && (invalid || value('envelope-layers-to') < value('envelope-layers-from')) ? message : '';
+    el('envelope-ready').hidden = !el('envelope-ready').textContent;
     el('envelope-run').disabled = !!job || !meta || !selected || !!invalid || value('envelope-layers-to') < value('envelope-layers-from');
-    if (submitted) el('envelope-stale').hidden = JSON.stringify(inputs()) === JSON.stringify(submitted);
   }
   async function load() {
     if (loading) return loading;
@@ -157,13 +125,13 @@
       const row = document.createElement('div'); row.className = 'aircraft-option';
       const family = item.family === 'optical' ? 'Optical / infrared' : 'Radar';
       row.dataset.search = item.id + ' ' + item.name + ' ' + family;
-      const label = document.createElement('span'), name = document.createElement('strong'), detail = document.createElement('small');
-      name.textContent = `${item.name} [${item.id}]`; detail.textContent = family; label.append(name, detail);
+      const label = document.createElement('span'), name = document.createElement('strong'), detail = document.createElement('small'), code = document.createElement('code');
+      name.textContent = item.name; code.textContent = item.id; detail.append(code); label.append(name, detail); label.title = `${item.name} [${item.id}]`;
       const button = document.createElement('button'); button.type = 'button'; button.dataset.pick = item.id;
       button.setAttribute('aria-label', 'Select ' + item.name);
       row.append(label, button); return row;
     }));
-    el('envelope-catalog-note').textContent = `${meta.missiles.length} available missiles`;
+    el('envelope-catalog-note').hidden = true;
     filter(); renderSelected();
   }
   function filter() {
@@ -177,10 +145,16 @@
   }
   function renderSelected() {
     const box = el('envelope-selected');
-    if (!selected) { box.innerHTML = '<span class="hint">No missile selected.</span>'; return; }
+    if (!selected) { box.replaceChildren(); return; }
     const item = meta?.missiles.find(m => m.id === selected);
-    box.innerHTML = `<div class="missile-selected-row"><span style="border-color:var(--cyan)">${escapeHtml(item ? `${item.name} [${item.id}]` : selected)}</span></div>`;
+    box.innerHTML = `<article class="aircraft-entry" style="--entry-color:var(--cyan)"><div class="entry-heading"><span class="entry-number">1</span><strong>${escapeHtml(item?.name || selected)}</strong><code>${escapeHtml(selected)}</code></div>
+      <div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove" aria-label="Remove ${escapeHtml(item?.name || selected)}">${REMOVE}</button></div></article>`;
+    box.querySelector('[data-action=remove]').disabled = !!job;
   }
+  el('envelope-selected').addEventListener('click', event => {
+    if (!event.target.closest('[data-action=remove]') || job) return;
+    selected = null; renderSelected(); filter(); updateForm();
+  });
   el('envelope-list').addEventListener('click', event => {
     const button = event.target.closest('[data-pick]');
     if (!button || button.disabled) return;
@@ -203,16 +177,18 @@
   el('envelope-reset').addEventListener('click', () => { if (!job) reset(); });
 
   // ---- Calculation ----------------------------------------------------------------
+  const RUN_LABEL = el('envelope-run').innerHTML;
   function busy(on) {
     el('envelope-cancel').hidden = !on; el('envelope-reset').disabled = on;
-    el('envelope-progress').hidden = !on;
-    filter(); updateForm();
+    const run = el('envelope-run');
+    run.innerHTML = on ? 'Calculating…' : RUN_LABEL; run.classList.toggle('calculating', on); run.style.setProperty('--progress', '0%');
+    filter(); renderSelected(); updateForm();
   }
   el('envelope-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (job || el('envelope-run').disabled) return;
     showError(''); summary = null; rays = new Map(); inspected = null; jobInfo = null; cache = null;
-    submitted = inputs(); el('envelope-stale').hidden = true;
+    submitted = inputs(); el('envelope-status').textContent = '';
     renderInspector(); setExports(false); render().catch(error => showError(error.message));
     try {
       const created = await request('/api/missiles/envelopes', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(submitted)});
@@ -221,7 +197,7 @@
   });
   el('envelope-cancel').addEventListener('click', async () => {
     if (!job) return;
-    el('envelope-status').textContent = 'Stopping…';
+    el('envelope-cancel').disabled = true;
     try { await request('/api/missiles/envelopes/' + job + '/cancel', {method: 'POST'}); } catch (error) { showError(error.message); }
   });
   async function poll() {
@@ -231,23 +207,19 @@
       while (job) {
         let status;
         try { status = await request(`/api/missiles/envelopes/${job}?since=${rays.size}`); }
-        catch (error) { el('envelope-status').textContent = 'Connection interrupted · retrying…'; await new Promise(r => setTimeout(r, 1500)); continue; }
+        catch (error) { await new Promise(r => setTimeout(r, 1500)); continue; }
         jobInfo = status;
         for (const ray of status.rays) rays.set(ray.key.join(','), ray);
         if (status.rays.length) cache = null;
         const p = status.progress, total = Math.max(p?.rays_total || status.rays_total || 1, rays.size), done = rays.size;
-        const elapsed = (performance.now() - started) / 1000;
-        el('envelope-progress-label').textContent = status.status === 'queued' ? 'Waiting for the previous envelope…' : `Searching ${missileName(submitted.missile)} envelope…`;
-        el('envelope-progress-count').textContent = `${done} / ${total} directions · ${fmt(p?.simulations || 0)} simulations · ${Math.floor(elapsed / 60)}:${String(Math.floor(elapsed % 60)).padStart(2, '0')}`;
-        el('envelope-progress-fill').style.width = `${100 * done / total}%`;
-        el('envelope-status').textContent = `${done} directions finished.`;
+        el('envelope-run').style.setProperty('--progress', `${Math.min(99, 100 * done / total)}%`);
         if (status.rays.length) scheduleRender();
         if (['complete', 'failed', 'cancelled'].includes(status.status)) {
           summary = status.summary || null;
-          if (status.status === 'complete') el('envelope-status').textContent = `Envelope complete · ${fmt(rays.size)} directions, ${fmt(summary?.simulations)} simulations in ${fmt(summary?.elapsed_s, 1)} s.`;
+          if (status.status === 'complete') el('envelope-status').textContent = `Calculated in ${fmt(summary?.elapsed_s, 1)} s · ${fmt(rays.size)} directions, ${fmt(summary?.simulations)} simulations`;
           else if (status.status === 'cancelled') el('envelope-status').textContent = `Stopped · ${rays.size} directions kept.`;
           else { el('envelope-status').textContent = `Envelope did not finish · ${rays.size} directions kept.`; showError(status.error || 'Envelope calculation failed.'); }
-          job = null; busy(false); await render(); setExports(rays.size > 0);
+          job = null; el('envelope-cancel').disabled = false; busy(false); await render(); setExports(rays.size > 0);
           break;
         }
         await new Promise(r => setTimeout(r, 700));
@@ -446,7 +418,7 @@
   // ---- Rendering --------------------------------------------------------------------
   const font = 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif';
   const theme = {paper_bgcolor: '#000000', plot_bgcolor: '#000000', font: {color: '#dce5f0', family: font},
-    hoverlabel: {bgcolor: '#0c0c0f', bordercolor: '#38c9d7', font: {color: '#f0f0fa', size: 12, family: font}},
+    hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#eff7ff', size: 12, family: font}},
     modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
   const grid = 'rgba(240,240,250,.09)', zero = 'rgba(240,240,250,.3)', tick = '#b9b9c4', cyan = '#38c9d7', fill = 'rgba(56,201,215,.22)';
   const axis2d = title => ({title: {text: title}, gridcolor: grid, zerolinecolor: zero, color: tick, tickformat: ',.0f'});
@@ -462,7 +434,7 @@
     const ticks = Array.from({length: 12}, (_, i) => i * 30);
     const label = a => { const b = a > 180 ? 360 - a : a; return b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`; };
     return {...theme, margin: {l: 40, r: 40, t: 40, b: 40}, hovermode: 'closest', uirevision: revision, annotations,
-      legend: {font: {color: tick, size: 11}, bgcolor: 'rgba(0,0,0,0)', title: {text: 'Launcher altitude', font: {color: tick, size: 11}}},
+      legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {color: tick, size: 12}, bgcolor: 'rgba(0,0,0,0)', title: {text: 'Launcher altitude', font: {color: tick, size: 12}}},
       polar: {bgcolor: '#000000',
         angularaxis: {rotation: 90, direction: 'clockwise', tickmode: 'array', tickvals: ticks, ticktext: ticks.map(label),
           gridcolor: grid, linecolor: 'rgba(240,240,250,.2)', color: tick, tickfont: {size: 11}},
@@ -473,11 +445,6 @@
     const view = el('envelope-view').value;
     el('envelope-layer-label').hidden = view !== 'layer';
     el('envelope-cut-label').hidden = view !== 'profile';
-    root.querySelector('.envelope-key-max').hidden = view === 'contours';
-    el('envelope-view-note').textContent = !submitted ? '' : view === 'contours'
-      ? 'One outline per launcher altitude around the target (◆), which flies toward 0°. Bearing is measured from the target\'s nose, distance is horizontal range at release. Hover for values; click a dot to inspect that direction.'
-      : view === 'layer' ? 'One launcher altitude: the shaded region is where a launch from there hits. Bearing from the target\'s nose, horizontal range at release; click a dot on the outline to inspect that direction.'
-        : 'Vertical cut through the target: horizontal distance along the chosen bearing (right) and its opposite (left), against launcher altitude.';
   }
   const nearestLayer = c => c.layers_m.reduce((best, alt, i) => Math.abs(alt - c.target.altitude_m) < Math.abs(c.layers_m[best] - c.target.altitude_m) ? i : best, 0);
   function fillSelectors() {
@@ -492,10 +459,10 @@
   }
   async function render() {
     if (!submitted) return;
-    fillSelectors(); viewControls(); renderTable(); renderMetrics();
+    fillSelectors(); viewControls(); renderTable();
     if (!rays.size) {
       if (el('envelope-chart').data) Plotly.purge(el('envelope-chart'));
-      el('envelope-chart').innerHTML = '<div class="empty"><span class="empty-glyph">◎</span><h2>Searching…</h2><p>Directions appear here as soon as they finish.</p></div>';
+      el('envelope-chart').innerHTML = '<div class="empty"><span class="empty-glyph">◎</span><h2>Searching…</h2></div>';
       return;
     }
     const view = el('envelope-view').value;
@@ -567,9 +534,7 @@
       traces.push(markerTrace(boundaryPoints(line), cyan));
     }
     traces.push(...polarTarget(f.radius));
-    const note = {text: `Launcher at ${fmt(c.layers_m[li])} m · target at ${fmt(c.target.altitude_m)} m`, xref: 'paper', yref: 'paper',
-      x: 0, y: 1.02, xanchor: 'left', yanchor: 'bottom', showarrow: false, font: {size: 10, color: tick}};
-    const layout = polarLayout(f.radius, 'layer:' + JSON.stringify(submitted), [note]);
+    const layout = polarLayout(f.radius, 'layer:' + JSON.stringify(submitted));
     layout.polar.bargap = 0; layout.showlegend = false;
     await draw(traces, layout);
   }
@@ -617,10 +582,58 @@
       yaxis: {...axis2d('Launcher altitude · m'), rangemode: 'tozero'}};
     await draw(traces, layout);
   }
+  // Plotly's polar plots cannot pan or wheel-zoom, so the top views are drawn on equal-scaled km axes with polar
+  // range rings and bearing spokes: same picture, the EM chart's mouse interaction. Bearing 0 (head-on) is up,
+  // positive bearings (+Z side) to the right.
+  function cartesianFromPolar(traces, layout) {
+    const xy = (r, t) => r == null || t == null ? [null, null] : [r * Math.sin(radians(t)), r * Math.cos(radians(t))];
+    const out = [];
+    for (const trace of traces) {
+      if (trace.type === 'scatterpolar') {
+        const {r, theta, ...rest} = trace, x = [], y = [];
+        r.forEach((v, i) => { const [a, b] = xy(v, theta[i]); x.push(a); y.push(b); });
+        out.push({...rest, type: 'scatter', x, y});
+      } else if (trace.type === 'barpolar') {
+        // Each band becomes an annular sector; one filled trace, polygons separated by gaps.
+        const x = [], y = [], half = trace.width / 2;
+        trace.theta.forEach((t, i) => {
+          const r0 = trace.base[i], r1 = r0 + trace.r[i];
+          for (const [r, a] of [[r0, t - half], [r0, t], [r0, t + half], [r1, t + half], [r1, t], [r1, t - half], [r0, t - half]]) { const [u, v] = xy(r, a); x.push(u); y.push(v); }
+          x.push(null); y.push(null);
+        });
+        out.push({type: 'scatter', mode: 'lines', x, y, fill: 'toself', fillcolor: trace.marker.color, line: {width: 0}, hoverinfo: 'skip', showlegend: false});
+      } else out.push(trace);
+    }
+    const R = layout.polar.radialaxis.range[1], nice = [1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 500];
+    const step = nice.find(v => R / v <= 6) || R / 5, shapes = [], annotations = [...(layout.annotations || [])];
+    const line = {color: 'rgba(240,240,250,.09)', width: 1};
+    for (let k = step; k <= R + 1e-9; k += step) shapes.push({type: 'circle', xref: 'x', yref: 'y', x0: -k, x1: k, y0: -k, y1: k, line, layer: 'below'});
+    for (let a = 0; a < 360; a += 30) {
+      const [u, v] = xy(R, a);
+      shapes.push({type: 'line', xref: 'x', yref: 'y', x0: 0, y0: 0, x1: u, y1: v, line, layer: 'below'});
+      const b = a > 180 ? 360 - a : a, [lx, ly] = xy(R * 1.07, a);
+      annotations.push({x: lx, y: ly, xref: 'x', yref: 'y', showarrow: false, text: b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`,
+        font: {size: 11, color: '#b9b9c4'}});
+    }
+    const {polar, ...rest} = layout, span = R * 1.16;
+    const axis = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, color: '#b9b9c4', tickfont: {size: 12}, ticksuffix: ' km', range: [-span, span]};
+    return {traces: out, layout: {...rest, shapes, annotations, margin: {l: 58, r: 22, t: rest.showlegend === false ? 30 : 50, b: 40},
+      xaxis: {...axis, constrain: 'domain'}, yaxis: {...axis, scaleanchor: 'x', scaleratio: 1}}};
+  }
   async function draw(traces, layout) {
+    if (layout.polar) ({traces, layout} = cartesianFromPolar(traces, layout));
     const node = el('envelope-chart');
     if (node.querySelector('.empty')) node.replaceChildren();
-    await Plotly.react(node, traces, layout, {responsive: true, displaylogo: false, toImageButtonOptions: {filename: 'missile-envelope', format: 'png', scale: 2}});
+    // As on the EM chart: drag pans, the wheel zooms, tooltips take their line's colour, downloads sit in Plotly's toolbar.
+    for (const trace of traces) {
+      const color = typeof trace.line?.color === 'string' ? trace.line.color : typeof trace.marker?.color === 'string' ? trace.marker.color : null;
+      if (color) trace.hoverlabel = {...trace.hoverlabel, bordercolor: color};
+    }
+    const icons = typeof DATA_ICONS === 'object' ? DATA_ICONS : null;
+    const downloads = icons ? [{name: 'Download directions (CSV)', icon: icons.csv, click: () => el('envelope-download-csv').click()},
+      {name: 'Download envelope (JSON)', icon: icons.json, click: () => el('envelope-download-json').click()}] : [];
+    await Plotly.react(node, traces, {...layout, dragmode: 'pan'}, {responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+      toImageButtonOptions: {filename: `${submitted.missile}-envelope`, format: 'png', scale: 2}, modeBarButtonsToAdd: downloads});
     node.removeAllListeners?.('plotly_click');
     node.on('plotly_click', event => {
       const point = event.points?.[0]; const cd = point?.customdata;
@@ -635,16 +648,8 @@
     for (const entry of line.entries) { const d = Math.abs(wrap(entry.az - azimuth)); if (!best || d < best.d) best = {d, entry}; }
     return best && best.d < 1e-6 ? best.entry.ray : null;
   }
-  function renderMetrics() {
-    const c = submitted, ref = nearestLayer(c);
-    el('envelope-metric-front-label').textContent = `Head-on maximum · launcher at ${fmt(c.layers_m[ref])} m`;
-    el('envelope-metric-rear-label').textContent = `Tail-chase maximum · launcher at ${fmt(c.layers_m[ref])} m`;
-    const shown = az => { const ray = rays.size ? rayNear(ref, az) : null; return !ray ? '—' : ray.max_range_m === null ? 'No hit' : km(ray.max_range_m); };
-    el('envelope-metric-front').textContent = shown(0); el('envelope-metric-rear').textContent = shown(180);
-    const sims = summary?.simulations ?? jobInfo?.progress?.simulations ?? [...rays.values()].reduce((s, r) => s + r.simulations, 0);
-    el('envelope-metric-sims').textContent = rays.size ? `${fmt(rays.size)} · ${fmt(sims)}` : '—';
-  }
   function renderTable() {
+    root.querySelector('.envelope-table-card').hidden = !rays.size;
     const c = submitted, step = baseStep(), every = Math.ceil(30 / step - 1e-9) * step;
     const columns = Array.from({length: Math.floor(180 / every + 1e-9) + 1}, (_, i) => i * every);
     const name = a => a === 0 ? 'Head-on' : a === 180 ? 'Tail' : a === 90 ? 'Beam' : `${fmt(a)}°`;
@@ -658,14 +663,15 @@
   }
   function renderInspector() {
     const box = el('envelope-inspect'), button = el('envelope-open-simulator');
-    if (!inspected || !submitted) { el('envelope-inspect-title').textContent = 'Select a point on the envelope'; box.innerHTML = '<p class="muted">Click the envelope outline to see that direction\'s searched distances, outcomes and flight times.</p>'; button.hidden = true; return; }
+    el('envelope-inspector').hidden = !inspected || !submitted;
+    if (!inspected || !submitted) { box.replaceChildren(); button.hidden = true; return; }
     const c = submitted, ray = rayNear(inspected.layer, inspected.azimuth);
     el('envelope-inspect-title').textContent = `Launcher at ${fmt(c.layers_m[inspected.layer])} m · ${bearingName(inspected.azimuth)}`;
     if (!ray) { box.innerHTML = '<p class="muted">This direction has not finished yet.</p>'; button.hidden = true; return; }
     const rows = ray.samples.map(s => `<tr><td>${km(s.range_m)}</td><td class="${s.hit ? 'envelope-hit' : 'envelope-miss'}">${s.hit ? 'Hit' : 'Miss'}</td><td>${escapeHtml(outcomeLabel(s.outcome))}</td><td>${Number.isFinite(s.time_s) ? fmt(s.time_s, 2) + ' s' : '—'}</td><td>${Number.isFinite(s.closest_m) ? closestText(s) : '—'}</td></tr>`).join('');
     const summaryText = ray.max_range_m === null ? 'No searched distance produced a hit.' :
       `Hits from ${ray.intervals[0].min_at_search_limit ? 'the closest searched distance, ' : ''}${km(ray.min_range_m)} to ${km(ray.max_range_m)}${ray.intervals.at(-1).max_at_search_limit ? ' (the search limit)' : ''}. Farthest hit flew ${fmt(ray.max_time_s, 1)} s.${ray.intervals.length > 1 ? ` Hits stop and resume ${ray.intervals.length - 1} time(s) in between.` : ''}`;
-    box.innerHTML = `<p class="muted">${summaryText} ${ray.simulations} simulations searched ${km(ray.search[0])} – ${km(ray.search[1])}. A hit is a proximity-fuze event. Near a boundary, hits and narrow misses can alternate with very small changes in the launch.</p>
+    box.innerHTML = `<p class="muted">${summaryText} ${ray.simulations} simulations searched ${km(ray.search[0])} – ${km(ray.search[1])}.</p>
       <div class="envelope-table-wrap"><table class="envelope-samples"><thead><tr><th>Launch distance</th><th>Result</th><th>Ended by</th><th>At</th><th>Closest approach</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     button.hidden = ray.max_range_m === null || typeof window.missileSimulator?.load !== 'function';
   }
@@ -677,7 +683,6 @@
   });
   for (const id of ['envelope-view', 'envelope-layer', 'envelope-cut', 'envelope-show-rays', 'envelope-show-samples'])
     el(id).addEventListener('change', () => render().catch(error => showError(error.message)));
-  el('envelope-view-reset').addEventListener('click', () => { const node = el('envelope-chart'); if (node.data) { Plotly.purge(node); render().catch(error => showError(error.message)); } });
 
   // ---- Export -----------------------------------------------------------------------
   function setExports(enabled) {
