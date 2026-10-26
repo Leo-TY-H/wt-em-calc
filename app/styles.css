@@ -214,3 +214,5 @@ body .nav-item{text-transform:uppercase;letter-spacing:.08em;font-size:13px}
 body .nav-item:hover,body .nav-item:focus-visible{background:#111116;color:var(--text)}
 body .nav-item[aria-current=page]{color:var(--text);box-shadow:inset 2px 0 0 var(--text)}
 @media(max-width:760px){body .nav-top{font-size:11px;letter-spacing:.04em;padding:0 8px;white-space:nowrap}}
+/* Trajectory page: notes that only carry a message now and then take no space when empty. */
+body #missile-preset-note:empty,body #missile-preview-note:empty{display:none}

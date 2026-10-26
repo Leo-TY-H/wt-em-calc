@@ -15,34 +15,32 @@
   const positionFields = role => `<div class="missile-vector"><span>Aircraft position · m</span><div class="${role==='launch'?'missile-altitude-input':'three-inputs'}">${['Along X','Altitude · Y','Along Z'].map((axis,i)=>role==='launch'&&i!==1?'':`<label>${axis}<input id="missile-${role}-position-${i}" aria-label="${role==='launch'?'Launcher':'Target'} ${axis}" type="number" step="any" required value="${initial[role].position[i]}" ${i===1?'min="0.001" max="30000"':'min="-200000" max="200000"'}></label>`).join('')}</div></div>`;
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Travel heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
   const stateFields = (role,number,title,description) => `<fieldset class="missile-step missile-${role}"><legend><span class="missile-step-number">${number}</span>${title}</legend><p class="hint">${description}</p>${positionFields(role)}${motion(role)}
-    <p class="hint">Travel heading sets movement: 0° = +X, 90° = +Z. ${role==='launch'?'Launch angle':'Climb angle'}: positive = climbing, 0° = level.</p>
+    ${role==='launch'?'<p class="hint">Travel heading sets movement: 0° = +X, 90° = +Z. Launch and climb angles: positive = climbing, 0° = level.</p>':''}
     </fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
     <div class="section-heading"><span class="eyebrow">ENGAGEMENT SETUP</span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
-    <h2 class="missile-setup-title">Build your engagement</h2><p class="hint">Start with an example, then adjust the flight conditions.</p>
     <div class="missile-presets" role="group" aria-label="Starter scenarios">
       <button type="button" data-preset="chase" aria-pressed="true"><span aria-hidden="true">⇉</span>Tail chase</button>
       <button type="button" data-preset="head-on" aria-pressed="false"><span aria-hidden="true">⇄</span>Head-on</button>
       <button type="button" data-preset="crossing" aria-pressed="false"><span aria-hidden="true">↱</span>Crossing</button>
-    </div><p id="missile-preset-note" class="hint">Target starts 4 km ahead, flying away at 720 km/h. Examples replace both aircraft states.</p>
-    <fieldset id="missile-picker" class="missile-step"><legend>Add missiles <small>Up to eight entries</small></legend>
+    </div><p id="missile-preset-note" class="hint"></p>
+    <fieldset id="missile-picker" class="missile-step"><legend>Add missiles</legend>
       <input id="missile-search" type="search" placeholder="Search missiles…" autocomplete="off" aria-label="Search missiles" aria-controls="missile-list">
       <div id="missile-list" class="aircraft-list" aria-label="Available missiles"></div>
       <p id="missile-search-empty" class="hint" hidden>No missiles match your search.</p>
       <p id="missile-catalog-note" class="hint" role="status">Loading missiles…</p>
       <div class="section-heading"><span class="eyebrow">ADDED MISSILES</span><span id="missile-entry-count" class="hint">0 / 8</span></div>
-      <p id="missile-entries-empty" class="hint">No missiles added.</p>
       <div id="missile-selected" class="missile-selected" aria-label="Selected missiles"></div>
       <p class="hint">All missiles launch at t = 0 from the same aircraft setup and fly independently toward the same target.</p>
       <details class="missile-timing"><summary id="missile-timing-title">Automatic release &amp; timing</summary><dl id="missile-timing-values"></dl><p class="hint">Times start at release (t = 0). Each motor uses its own clock; later stages may wait for flight conditions. Guidance ramps and seeker search gates remain separate.</p><p class="hint">Seeker warm-up is complete before release. The missile starts at the launcher’s position, aligned with its body. Aircraft-specific hardpoint offsets and ejector impulses are not supplied.</p></details>
       <button id="missile-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
     <div class="missile-coordinate-guide"><strong>One shared world coordinate system</strong><p>The launcher starts at X = 0, Z = 0. +X points right in the top view, +Z points up, and +Y is altitude. Target X and Z locate it relative to the launcher's starting horizontal position; altitude is absolute.</p><p>Aircraft face their travel heading and vertical angle (launcher: launch angle; target: climb angle), with zero roll.</p></div>
-    ${stateFields('launch',2,'Launcher aircraft','Aircraft state at the instant of release (t = 0). Missile release adjustments are applied automatically.')}
+    ${stateFields('launch',2,'Launcher aircraft','Aircraft state at the instant of release (t = 0).')}
     ${stateFields('target',3,'Target aircraft','Flies in a straight line at constant velocity throughout the simulation.')}
     <fieldset class="missile-step"><legend><span class="missile-step-number">4</span>Simulation time</legend>
       <label class="field">Stop after<div class="input-unit"><input id="missile-duration" type="number" min="0.1" max="180" step="any" value="60" required><span>s</span></div></label>
-      <p class="hint">Up to 180 seconds. The run may end earlier at interception or a modeled limit.</p>
+      <p class="hint">The run may end earlier at interception or a modeled limit.</p>
     </fieldset>
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
@@ -52,14 +50,13 @@
   </form></aside>
   <div class="missile-main">
     <div class="page-heading"><div><span class="eyebrow">MISSILE FLIGHT</span><h1>3D engagement simulator</h1></div><span class="status-badge">EXPERIMENTAL</span></div>
-    <p class="missile-model-note">Set the launcher and target aircraft at release. Missile launch processing, ignition delays and guidance timing follow the selected game profile. Ideal target visibility and radar support retain geometric seeker limits.</p>
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
     <section class="missile-preview" aria-labelledby="missile-preview-title">
       <div class="missile-preview-heading"><div><span class="eyebrow">LIVE SETUP PREVIEW</span><h2 id="missile-preview-title">Starting geometry</h2></div><span class="missile-preview-tag">Top view · X / Z</span></div>
       <svg id="missile-geometry" viewBox="0 0 640 200" role="img" aria-label="Starting positions and flight directions"></svg>
       <div class="missile-setup-stats"><div><span>Aircraft separation</span><strong id="missile-separation">—</strong></div><div><span>Target altitude difference</span><strong id="missile-altitude-difference">—</strong></div><div><span>Aircraft closing speed</span><strong id="missile-closing">—</strong></div></div>
-      <p id="missile-preview-note" class="hint">Arrows show flight direction. Preview uses current inputs; it is not a simulated trajectory.</p>
+      <p id="missile-preview-note" class="hint"></p>
     </section>
     <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label><button id="missile-view-reset" type="button">Reset view</button></div></div>
     <p id="missile-slice-note" class="hint missile-hover-hint" hidden>2D slices project the full trajectories onto the selected plane.</p>
@@ -70,7 +67,7 @@
     <label id="missile-result-label" class="field missile-result-choice" hidden>Inspect missile result<select id="missile-result-select"></select></label>
     <div class="missile-metrics"><div class="missile-metric"><span>Outcome</span><strong id="missile-outcome">—</strong></div><div class="missile-metric"><span>Closest approach</span><strong id="missile-closest">—</strong></div><div class="missile-metric"><span>Elapsed time</span><strong id="missile-elapsed">—</strong></div></div>
     <details id="missile-flight-data" class="missile-flight-data" hidden><summary>Propulsion &amp; aerodynamic plots <span id="missile-flight-name"></span></summary>
-      <p class="hint">Compare every missile using the same colors as the 3D view. Hover for values; click a plotted point to inspect that missile and time. In Drag &amp; lift, solid lines show drag and dashed lines show lift.</p>
+      <p class="hint">Click a plotted point to inspect that missile and time. In Drag &amp; lift, solid lines show drag and dashed lines show lift.</p>
       <div class="missile-data-grid">
         <section class="chart-card"><label class="field missile-plot-choice" for="missile-propulsion-metric">Propulsion<select id="missile-propulsion-metric"><option value="thrust">Thrust · kN</option><option value="mass">Missile mass · kg</option><option value="propellant">Propellant consumed · kg</option></select></label><div id="missile-propulsion-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-propulsion-chart" class="missile-data-chart" aria-label="Propulsion over flight time"></div></section>
         <section class="chart-card"><label class="field missile-plot-choice" for="missile-aero-metric">Aerodynamics<select id="missile-aero-metric"><option value="forces">Drag &amp; lift · kN</option><option value="cd">Drag coefficient · Cd</option><option value="aoa">Angle of attack · degrees</option><option value="pressure">Dynamic pressure · kPa</option><option value="acceleration">Net acceleration · m/s²</option></select></label><div id="missile-aero-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-aero-chart" class="missile-data-chart" aria-label="Aerodynamics over flight time"></div></section>
@@ -172,7 +169,6 @@
       row.append(name,remove);return row;
     }));
     el('missile-entry-count').textContent=`${selectedMissiles.length} / 8`;
-    el('missile-entries-empty').hidden=selectedMissiles.length>0;
     updateTiming();updateAddButton();
   }
   el('missile-list').addEventListener('click',event=>{
@@ -245,7 +241,7 @@
     }).join('');
     el('missile-geometry').innerHTML=`<defs>${['#38c9d7','#ffa66b'].map((color,i)=>`<marker id="missile-arrow-${i}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join('')}<pattern id="missile-grid" width="32" height="25" patternUnits="userSpaceOnUse"><path d="M 32 0 H 0 V 25" fill="none" stroke="#223042" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="url(#missile-grid)"/><path d="M ${points[0].join(' ')} L ${points[1].join(' ')}" stroke="#78879a" stroke-dasharray="5 5"/>${markers}<path d="M 24 42 V 20 M 24 42 H 48" stroke="#8d9aae"/><g fill="#8d9aae" font-size="10"><text x="15" y="14">+Z</text><text x="53" y="46">+X</text></g>`;
     el('missile-geometry').setAttribute('aria-label',`Top view of aircraft at release. Initial separation ${format(distance)} meters. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
-    el('missile-preview-note').textContent='Arrows show aircraft travel direction. Positions are scaled to fit; altitude is shown below. Missile release adjustments are applied when you simulate.';
+    el('missile-preview-note').textContent='';
   }
   function busy(value) {
     for(const id of ['missile-run','missile-run-preview'])if(el(id))el(id).disabled=value||!meta||!selectedMissiles.length;
@@ -261,7 +257,7 @@
     if(event.target.id==='missile-search')return;
     if(event.target.id.match(/^missile-(launch|target)-/)) {
       root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
-      el('missile-preset-note').textContent='Custom setup · choosing an example replaces both aircraft states.';
+      el('missile-preset-note').textContent='';
     }
     changed();
   });
@@ -277,7 +273,8 @@
       syncMotion(role,states[role].velocity);
     }
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.preset===preset)));
-    el('missile-preset-note').textContent={chase:'Target starts 4 km ahead, flying away at 720 km/h.','head-on':'Target starts 4 km ahead, flying toward the launcher at 720 km/h.',crossing:'Target starts 4 km ahead, flying across the launcher’s path at 720 km/h.'}[preset]+' Examples replace both aircraft states.';
+    // The setup preview shows the scenario's separation and closing speed; no note repeats them.
+    el('missile-preset-note').textContent='';
     changed();
   }
   root.querySelectorAll('[data-preset]').forEach(button=>button.addEventListener('click',()=>applyPreset(button.dataset.preset)));
@@ -300,7 +297,7 @@
     syncMotion('launch',scenario.launcher.velocity);syncMotion('target',scenario.target.velocity);
     if(scenario.duration)el('missile-duration').value=scenario.duration;
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
-    el('missile-preset-note').textContent='Loaded from the launch envelope · choosing an example replaces both aircraft states.';
+    el('missile-preset-note').textContent='Loaded from the launch envelope.';
     changed();busy(false);root.scrollIntoView?.({block:'start'});
     return true;
   }};
