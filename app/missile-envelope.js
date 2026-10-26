@@ -19,8 +19,8 @@
     standard: {step: 15, edge: .5, label: 'Standard · 15° directions, edges to 0.5°'},
     fine: {step: 10, edge: .25, label: 'Detailed · 10° directions, edges to 0.25°'}};
   const defaults = {missile: null, quality: 'standard',
-    target: {altitude: 6000, speed: 900},
-    launcher: {speed: 900, aim: 'nose'},
+    target: {speed: 900},
+    launcher: {speed: 900},
     layers: {from: 2000, to: 10000, count: 5}};
   const numberField = (id, label, unit, value, min, max, step = 'any') =>
     `<label class="field">${label}<div class="input-unit"><input id="${id}" type="number" min="${min}" max="${max}" step="${step}" value="${value}" required aria-label="${escapeHtml(label)}"><span>${unit}</span></div></label>`;
@@ -37,11 +37,8 @@
       <div id="envelope-selected" class="envelope-selected" aria-live="polite"></div>
       <button id="envelope-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    <span class="eyebrow">TARGET AIRCRAFT</span>
-    <div class="envelope-pair">${numberField('envelope-target-altitude', 'Altitude', 'm', defaults.target.altitude, 50, 25000)}${numberField('envelope-target-speed', 'Speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
-    <span class="eyebrow">LAUNCHER AIRCRAFT</span>
-    ${numberField('envelope-launcher-speed', 'Speed', 'km/h', defaults.launcher.speed, 0, 7200)}
-    <label class="field">Attitude at launch<select id="envelope-launcher-aim"><option value="nose">Nose pointed at the target</option><option value="level">Level, heading toward the target</option></select></label>
+    <span class="eyebrow">AIRCRAFT</span>
+    <div class="envelope-pair">${numberField('envelope-launcher-speed', 'Launcher speed', 'km/h', defaults.launcher.speed, 0, 7200)}${numberField('envelope-target-speed', 'Target speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
     <div class="envelope-layer-inputs">${numberField('envelope-layers-from', 'Lowest', 'm', defaults.layers.from, 50, 25000)}${numberField('envelope-layers-to', 'Highest', 'm', defaults.layers.to, 50, 25000)}${numberField('envelope-layers-count', 'Altitudes', '', defaults.layers.count, 1, 25, 1)}</div>
     <span class="eyebrow">SEARCH</span>
     <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
@@ -55,13 +52,13 @@
     <div id="envelope-error" class="error" role="alert" hidden></div>
     <div class="envelope-view-controls">
       <select id="envelope-view" aria-label="Plot view"><option value="contours">Altitude contours</option><option value="layer">One altitude</option><option value="profile">Side profile</option></select>
-      <label id="envelope-layer-label" for="envelope-layer" hidden>Launcher altitude<select id="envelope-layer"></select></label>
+      <label id="envelope-layer-label" for="envelope-layer" hidden>Altitude<select id="envelope-layer"></select></label>
       <label id="envelope-cut-label" for="envelope-cut" hidden>Bearing<select id="envelope-cut"></select></label>
       <div hidden><label><input id="envelope-show-rays" type="checkbox"> Directions</label><label><input id="envelope-show-samples" type="checkbox"> Samples</label></div>
     </div>
     <div id="envelope-chart" aria-label="Missile launch envelope"><div class="empty"><span class="empty-glyph">◎</span><h2>Add a missile using the panel on the left to get started</h2></div></div>
     <section id="envelope-inspector" class="inspector envelope-inspector" aria-live="polite" hidden><div class="inspector-heading"><h2 id="envelope-inspect-title"></h2><button id="envelope-open-simulator" class="secondary-button" type="button" hidden>Fly this shot in the simulator ↗</button></div><div id="envelope-inspect"></div></section>
-    <section class="envelope-table-card" hidden><span class="eyebrow">RANGES BY LAUNCHER ALTITUDE</span><div class="envelope-table-wrap"><table id="envelope-table"><thead></thead><tbody></tbody></table></div></section>
+    <section class="envelope-table-card" hidden><span class="eyebrow">RANGES BY ALTITUDE</span><div class="envelope-table-wrap"><table id="envelope-table"><thead></thead><tbody></tbody></table></div></section>
     <div hidden><a id="envelope-download-json" aria-disabled="true">Envelope JSON</a><a id="envelope-download-csv" aria-disabled="true">Directions CSV</a></div>
     <footer><span></span><span id="envelope-status" role="status" aria-live="polite"></span></footer>
   </div>`;
@@ -88,8 +85,7 @@
   }
   function inputs() {
     return {missile: selected, quality: el('envelope-quality').value, layers_m: layers(),
-      target: {speed_mps: value('envelope-target-speed') / 3.6, altitude_m: value('envelope-target-altitude')},
-      launcher: {speed_mps: value('envelope-launcher-speed') / 3.6, aim: el('envelope-launcher-aim').value}};
+      target: {speed_mps: value('envelope-target-speed') / 3.6}, launcher: {speed_mps: value('envelope-launcher-speed') / 3.6}};
   }
   function updateForm() {
     const list = layers();
@@ -166,10 +162,9 @@
   el('envelope-form').addEventListener('input', event => { if (event.target.id !== 'envelope-search') updateForm(); });
   el('envelope-form').addEventListener('change', event => { if (event.target.id !== 'envelope-search') updateForm(); });
   function reset() {
-    for (const [id, v] of [['envelope-target-altitude', defaults.target.altitude], ['envelope-target-speed', defaults.target.speed],
+    for (const [id, v] of [['envelope-target-speed', defaults.target.speed],
       ['envelope-launcher-speed', defaults.launcher.speed], ['envelope-layers-from', defaults.layers.from], ['envelope-layers-to', defaults.layers.to],
       ['envelope-layers-count', defaults.layers.count]]) el(id).value = v;
-    el('envelope-launcher-aim').value = defaults.launcher.aim;
     el('envelope-quality').value = defaults.quality; el('envelope-search').value = '';
     if (meta) filter();
     updateForm();
@@ -240,8 +235,7 @@
   function states(c, layer, azimuth, distance) {
     const a = radians(azimuth);
     const direction = (h, p, s) => [s * Math.cos(radians(p)) * Math.cos(radians(h)), s * Math.sin(radians(p)), s * Math.cos(radians(p)) * Math.sin(radians(h))];
-    const altitude = c.target.altitude_m, h = wrap(azimuth + 180);
-    const p = c.launcher.aim === 'nose' ? Math.atan2(altitude - layer, distance) * 180 / Math.PI : 0;
+    const altitude = layer, h = wrap(azimuth + 180), p = 0;
     return {launcher: {position: [0, layer, 0], velocity: direction(h, p, c.launcher.speed_mps), angles: [h, p, 0]},
       target: {position: [-distance * Math.cos(a), altitude, -distance * Math.sin(a)], velocity: direction(0, 0, c.target.speed_mps), angles: [0, 0, 0]}};
   }
@@ -250,7 +244,7 @@
     return `${fmt(a, a % 1 ? 2 : 0)}° from the target's nose${a === 0 ? ' (head-on)' : a === 180 ? ' (tail chase)' : a === 90 ? ' (beam)' + side : side}`;
   };
   function rayText(ray, az) {
-    const lines = [`<b>Launcher at ${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}</b>`];
+    const lines = [`<b>${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}</b>`];
     if (ray.max_range_m === null) lines.push('No hit at any searched distance');
     else {
       lines.push(`Maximum range: ${km(ray.max_range_m)}${ray.intervals.at(-1).max_at_search_limit ? ' (search limit)' : ''} · flight ${fmt(ray.max_time_s, 1)} s`);
@@ -434,7 +428,7 @@
     const ticks = Array.from({length: 12}, (_, i) => i * 30);
     const label = a => { const b = a > 180 ? 360 - a : a; return b === 0 ? '0° head-on' : b === 180 ? '180° tail' : `${b}°`; };
     return {...theme, margin: {l: 40, r: 40, t: 40, b: 40}, hovermode: 'closest', uirevision: revision, annotations,
-      legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {color: tick, size: 12}, bgcolor: 'rgba(0,0,0,0)', title: {text: 'Launcher altitude', font: {color: tick, size: 12}}},
+      legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {color: tick, size: 12}, bgcolor: 'rgba(0,0,0,0)', title: {text: 'Altitude', font: {color: tick, size: 12}}},
       polar: {bgcolor: '#000000',
         angularaxis: {rotation: 90, direction: 'clockwise', tickmode: 'array', tickvals: ticks, ticktext: ticks.map(label),
           gridcolor: grid, linecolor: 'rgba(240,240,250,.2)', color: tick, tickfont: {size: 11}},
@@ -446,7 +440,7 @@
     el('envelope-layer-label').hidden = view !== 'layer';
     el('envelope-cut-label').hidden = view !== 'profile';
   }
-  const nearestLayer = c => c.layers_m.reduce((best, alt, i) => Math.abs(alt - c.target.altitude_m) < Math.abs(c.layers_m[best] - c.target.altitude_m) ? i : best, 0);
+  const nearestLayer = c => Math.floor((c.layers_m.length - 1) / 2);
   function fillSelectors() {
     const c = submitted;
     const layerSelect = el('envelope-layer'), current = layerSelect.value;
@@ -469,8 +463,6 @@
     if (view === 'contours') await renderContours(); else if (view === 'layer') await renderLayer(); else await renderProfile();
     if (inspected) renderInspector();
   }
-  const targetMarker = (x, y, extra = {}) => ({type: 'scatter', mode: 'markers+text', x: [x], y: [y], text: ['Target'], textposition: 'bottom center',
-    marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'}, textfont: {color: '#ffe0c7', size: 11}, hoverinfo: 'skip', showlegend: false, ...extra});
   // The target at the centre and a short arrow along its heading (0°).
   function polarTarget(radius) {
     return [{type: 'scatterpolar', mode: 'lines', r: [0, kmOf(radius) * .07], theta: [0, 0], line: {color: '#ffd0ac', width: 2}, hoverinfo: 'skip', showlegend: false},
@@ -488,7 +480,7 @@
           const p = place(ray, az, s.range_m); if (!p) continue;
           const d = s.hit ? hits : misses;
           d.a.push(p[0]); d.b.push(p[1]);
-          d.t.push(`${s.hit ? 'Hit' : 'Miss · ' + escapeHtml(outcomeLabel(s.outcome))} at ${km(s.range_m)}<br>Launcher at ${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}${Number.isFinite(s.time_s) ? `<br>Ended ${fmt(s.time_s, 1)} s after release` : ''}`);
+          d.t.push(`${s.hit ? 'Hit' : 'Miss · ' + escapeHtml(outcomeLabel(s.outcome))} at ${km(s.range_m)}<br>${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}${Number.isFinite(s.time_s) ? `<br>Ended ${fmt(s.time_s, 1)} s after release` : ''}`);
         }
     }
     return [[hits, '#91d477', 'Hit sample', 'circle'], [misses, '#f08070', 'Miss sample', 'x']].map(([d, color, name, symbol]) => ({
@@ -512,7 +504,7 @@
       if (!f.lines[li].az.length) continue;
       const o = polarOutline(li), color = layerColor(li, n), name = `${fmt(c.layers_m[li])} m`;
       traces.push({type: 'scatterpolar', mode: 'lines', name, legendgroup: name, r: o.r, theta: o.theta, text: o.text, connectgaps: false,
-        line: {color, width: 2}, showlegend: n > 1, hovertemplate: `Launcher at ${name}<br>%{text}<extra></extra>`});
+        line: {color, width: 2}, showlegend: n > 1, hovertemplate: '%{text}<extra></extra>'});
       if (el('envelope-show-rays').checked) traces.push({...rayTrace(f.lines[li]), legendgroup: name});
       traces.push({...markerTrace(boundaryPoints(f.lines[li]), color, 4), legendgroup: name});
     }
@@ -572,14 +564,16 @@
     }, false));
     traces.push({type: 'scatter', mode: 'markers', x: pts.map(p => p[0]), y: pts.map(p => p[1]), text: pts.map(p => p[2]), customdata: pts.map(p => p[3]),
       hovertemplate: '%{text}<extra></extra>', marker: {size: 6, color: cyan, opacity: .55}, showlegend: false});
-    traces.push(targetMarker(0, c.target.altitude_m, {textposition: 'top center'}));
+    // The target is at every altitude: a line through the centre.
+    traces.push({type: 'scatter', mode: 'lines', x: [0, 0], y: [c.layers_m[0], c.layers_m.at(-1)], line: {color: '#ffd0ac', width: 2, dash: 'dot'},
+      hovertemplate: 'Target<extra></extra>', showlegend: false});
     // Show both sides of the cut only as far as hits reach.
     const reach = [0, 0];
     perLayer.forEach(v => v.forEach((s, i) => { if (s > 0) { reach[0] = Math.min(reach[0], xs[i]); reach[1] = Math.max(reach[1], xs[i]); } }));
     const margin = .07 * Math.max(1000, reach[1] - reach[0]);
     const layout = {...theme, margin: {l: 70, r: 25, t: 30, b: 60}, showlegend: false, hovermode: 'closest', uirevision: 'profile:' + JSON.stringify(submitted) + cut,
       xaxis: {...axis2d(`← ${label(wrap(cut + 180))} · horizontal distance (m) · ${label(cut)} →`), range: [reach[0] - margin, reach[1] + margin]},
-      yaxis: {...axis2d('Launcher altitude · m'), rangemode: 'tozero'}};
+      yaxis: {...axis2d('Altitude · m'), rangemode: 'tozero'}};
     await draw(traces, layout);
   }
   // Plotly's polar plots cannot pan or wheel-zoom, so the top views are drawn on equal-scaled km axes with polar
@@ -653,7 +647,7 @@
     const c = submitted, step = baseStep(), every = Math.ceil(30 / step - 1e-9) * step;
     const columns = Array.from({length: Math.floor(180 / every + 1e-9) + 1}, (_, i) => i * every);
     const name = a => a === 0 ? 'Head-on' : a === 180 ? 'Tail' : a === 90 ? 'Beam' : `${fmt(a)}°`;
-    el('envelope-table').tHead.innerHTML = `<tr><th>Launcher altitude</th>${columns.map(a => `<th>${name(a)}<small>min – max</small></th>`).join('')}</tr>`;
+    el('envelope-table').tHead.innerHTML = `<tr><th>Altitude</th>${columns.map(a => `<th>${name(a)}<small>min – max</small></th>`).join('')}</tr>`;
     el('envelope-table').tBodies[0].innerHTML = c.layers_m.map((alt, li) => `<tr><td>${fmt(alt)} m</td>${columns.map(a => {
       const ray = rays.size ? rayNear(li, a) : null;
       if (!ray) return '<td class="hint">…</td>';
@@ -666,7 +660,7 @@
     el('envelope-inspector').hidden = !inspected || !submitted;
     if (!inspected || !submitted) { box.replaceChildren(); button.hidden = true; return; }
     const c = submitted, ray = rayNear(inspected.layer, inspected.azimuth);
-    el('envelope-inspect-title').textContent = `Launcher at ${fmt(c.layers_m[inspected.layer])} m · ${bearingName(inspected.azimuth)}`;
+    el('envelope-inspect-title').textContent = `${fmt(c.layers_m[inspected.layer])} m · ${bearingName(inspected.azimuth)}`;
     if (!ray) { box.innerHTML = '<p class="muted">This direction has not finished yet.</p>'; button.hidden = true; return; }
     const rows = ray.samples.map(s => `<tr><td>${km(s.range_m)}</td><td class="${s.hit ? 'envelope-hit' : 'envelope-miss'}">${s.hit ? 'Hit' : 'Miss'}</td><td>${escapeHtml(outcomeLabel(s.outcome))}</td><td>${Number.isFinite(s.time_s) ? fmt(s.time_s, 2) + ' s' : '—'}</td><td>${Number.isFinite(s.closest_m) ? closestText(s) : '—'}</td></tr>`).join('');
     const summaryText = ray.max_range_m === null ? 'No searched distance produced a hit.' :
@@ -694,7 +688,7 @@
       config: jobInfo?.config || null, mirrored: mirrored(), complete: jobInfo?.status === 'complete', summary, rays: ordered,
       conventions: {frame: 'Target at the origin flying level along +X; each point is a launcher position at release, heading toward the target',
         azimuth: 'Launcher bearing from the target nose; 0 = ahead of the target (head-on), 180 = behind it (tail chase), positive toward +Z',
-        range: 'Horizontal distance in metres from the target at release', layer: 'Launcher altitude (m)',
+        range: 'Horizontal distance in metres from the target at release', layer: 'Altitude of both aircraft (m); the launcher flies level, pointed at the target',
         hit: 'Native proximity-fuze event against the constant-velocity point target'}};
     const csv = [['launcher_altitude_m', 'azimuth_deg', 'refinement_level', 'min_range_m', 'max_range_m', 'min_at_search_limit', 'max_at_search_limit', 'max_range_flight_time_s', 'hit_intervals_m', 'simulations'].join(',')]
       .concat(ordered.map(r => [r.layer_m, r.azimuth_deg, r.level, r.min_range_m ?? '', r.max_range_m ?? '', r.max_range_m === null ? '' : r.intervals[0].min_at_search_limit,
