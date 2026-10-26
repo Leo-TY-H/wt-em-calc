@@ -570,27 +570,52 @@ ProfileSetup& prepared_profile(const V& w, const V& source, bool& hit) {
     profile_setup = std::move(c);  // Publish only after complete validation.
     return *profile_setup;
 }
+// The constructed and launched bodies and the seeker reset (optical_reset /
+// radar_reset) depend only on the launcher state and the profile, which every
+// sample of an envelope shares; seeds are fixed. Each sample receives its own
+// copy of the constructed body; the ready functions copy the reset state.
+struct LaunchSetup {
+    V source; d3 position{}, velocity{}, angles{};
+    V quaternion, body, launched, reset;
+};
+thread_local std::unique_ptr<LaunchSetup> launch_setup;
+bool same_bits(const d3& a, const d3& b) { return std::memcmp(a.data(), b.data(), sizeof(a)) == 0; }
+LaunchSetup& launched_body(const V& w, const V& source, const ProfileSetup& c, const V& launcher) {
+    d3 position = vec_at<3>(launcher, "position"), velocity = vec_at<3>(launcher, "velocity"), angles = vec_at<3>(launcher, "angles");
+    if (launch_setup && launch_setup->source.node() == source.node() && same_bits(launch_setup->position, position)
+        && same_bits(launch_setup->velocity, velocity) && same_bits(launch_setup->angles, angles)) return *launch_setup;
+    auto s = std::make_unique<LaunchSetup>();
+    s->source = source; s->position = position; s->velocity = velocity; s->angles = angles;
+    s->quaternion = call(attr(w, "quaternion"), {item(launcher, "angles")});
+    V record = make_dict({{"position", item(launcher, "position")}, {"velocity", item(launcher, "velocity")},
+        {"quaternion", s->quaternion}, {"omega", make_list({0., 0., 0.})}, {"time", 0.}});
+    s->body = call(attr(w, "construct"), {record});
+    s->launched = call(attr(w, "launch_body"), {c.rocket, deepcopy(s->body), 123, 0x12345678},
+        {{"launch_time", 0.}, {"clock_time", 0.}, {"launch_mode", 2}, {"distance_limit", c.distance_limit}});
+    launch_setup = std::move(s);
+    return *launch_setup;
+}
 void prepare_cached(const V& missile, const V& launcher, const V& target, const V& early_exit, const V& reach_m, Prepared& out) {
     V w = invoke_fn("missile_envelope", "_missile_worker");
     V source = invoke_fn("missile_envelope", "_profile", {missile});
     auto& c = prepared_profile(w, source, out.cache_hit);
     out.props = c.typed_props; out.family = c.family; out.distance_limit = c.distance_limit;
-    V quaternion = call(attr(w, "quaternion"), {item(launcher, "angles")});
-    V record = make_dict({{"position", item(launcher, "position")}, {"velocity", item(launcher, "velocity")},
-        {"quaternion", quaternion}, {"omega", make_list({0., 0., 0.})}, {"time", 0.}});
-    V body = call(attr(w, "construct"), {record});
+    LaunchSetup& ls = launched_body(w, source, c, launcher);
+    V quaternion = ls.quaternion, body = deepcopy(ls.body), launched = ls.launched;
     V target_quaternion = call(attr(w, "quaternion"), {item(target, "angles")});
     V templ = item(c.release, "constructed_guidance"), initialized;
     if (out.props.family == 0) {
-        initialized = call(attr(w, "optical_ready"), {c.rocket, item(c.properties, "guidance"), templ, body, target});
+        if (ls.reset.is_none())
+            ls.reset = invoke_fn("missile_initialization", "optical_reset", {c.rocket, item(c.properties, "guidance"), item(ls.body, "quaternion")});
+        initialized = call(attr(w, "optical_ready"), {c.rocket, item(c.properties, "guidance"), templ, body, target}, {{"reset", ls.reset}});
     } else {
+        if (ls.reset.is_none()) ls.reset = invoke_fn("missile_initialization", "radar_reset", {item(c.profile, "asset"), templ, ls.body});
         V target_body = deepcopy(target);
         dict_set(target_body, "quaternion", target_quaternion);
-        initialized = call(attr(w, "radar_ready"), {item(c.profile, "asset"), item(c.properties, "guidance"), templ, body, target_body});
+        initialized = call(attr(w, "radar_ready"), {item(c.profile, "asset"), item(c.properties, "guidance"), templ, body, target_body},
+                           {{"reset", ls.reset}});
     }
     V guidance = call(attr(w, "launch_guidance"), {c.launch_properties, item(initialized, 0), body, 123});
-    V launched = call(attr(w, "launch_body"), {c.rocket, body, 123, 0x12345678},
-        {{"launch_time", 0.}, {"clock_time", 0.}, {"launch_mode", 2}, {"distance_limit", c.distance_limit}});
     Session& S = out.session;
     load_body(item(launched, "body"), S.body);
     if (out.props.family == 0) load_optical_state(item(guidance, "state"), S.optical);
