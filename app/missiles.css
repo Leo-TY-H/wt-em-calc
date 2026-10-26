@@ -11,7 +11,7 @@
 .missile-view-controls{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
 .missile-view-controls label{font-size:10px;color:var(--muted)}
 .missile-view-controls select{display:block;margin-top:4px;width:auto;max-width:100%;font-size:11px}
-.missile-main{padding:18px 14px 22px;min-width:0}.missile-main .page-heading{align-items:start}
+.missile-main{padding:18px 14px 22px;min-width:0}
 .missile-model-note{color:var(--muted);font-size:12px;line-height:1.7;margin:0 0 18px;max-width:850px}
 #missile-chart{height:clamp(360px,48vh,720px);width:100%}
 .missile-metrics{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin:18px 0}

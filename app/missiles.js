@@ -52,11 +52,10 @@
     <div id="missile-status" role="status" aria-live="polite"></div></div>
   </form></aside>
   <div class="missile-main">
-    <div class="page-heading"><div><span class="eyebrow">MISSILE FLIGHT</span><h1>3D engagement simulator</h1></div><span class="status-badge">EXPERIMENTAL</span></div>
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
     <section class="missile-preview" aria-labelledby="missile-preview-title">
-      <div class="missile-preview-heading"><div><span class="eyebrow">LIVE SETUP PREVIEW</span><h2 id="missile-preview-title">Starting geometry</h2></div><span class="missile-preview-tag">Top view · X / Z</span></div>
+      <div class="missile-preview-heading"><div><h2 id="missile-preview-title">Starting geometry</h2></div><span class="missile-preview-tag">Top view · X / Z</span></div>
       <svg id="missile-geometry" viewBox="0 0 640 200" role="img" aria-label="Starting positions and flight directions"></svg>
       <div class="missile-setup-stats"><div><span>Aircraft separation</span><strong id="missile-separation">—</strong></div><div><span>Target altitude difference</span><strong id="missile-altitude-difference">—</strong></div><div><span>Aircraft closing speed</span><strong id="missile-closing">—</strong></div></div>
       <p id="missile-preview-note" class="hint"></p>
