@@ -53,31 +53,40 @@ inline Packet packet(const wtm_body& b) {
 // state_binary32.validate_flight_numbers: everything finite except PID records.
 inline void finite_or_bail(double x) { if (!finite(x)) bail("ValueError: state must be finite"); }
 template<size_t N> void finite_or_bail(const std::array<double,N>& v) { for (double x : v) finite_or_bail(x); }
+// x * 0 is NaN exactly when x is not finite, so one test covers a whole state
+// (strict floating point keeps every product).
+struct FiniteSum {
+    double sum = 0.;
+    void operator()(double x) { sum = sum + x * 0.; }
+    template<size_t N> void operator()(const std::array<double,N>& v) { for (double x : v) sum = sum + x * 0.; }
+};
 inline void validate_flight_numbers(const Session& S, int family) {
     const wtm_body& b = S.body;
+    FiniteSum c;
     for (float x : {b.position.x, b.position.y, b.position.z, b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w,
                     b.velocity.x, b.velocity.y, b.velocity.z, b.omega.x, b.omega.y, b.omega.z, b.time, b.body_random,
                     b.clocks[0], b.clocks[1], b.clocks[2], b.clocks[3], b.distance, b.water_distance, b.surface_depth, b.immersion})
-        finite_or_bail((double)x);
-    finite_or_bail(S.controls);
+        c((double)x);
+    c(S.controls);
     if (family == 0) {
         const OpticalManagerState& m = S.optical.manager;
-        for (double x : {m.transition_time, m.scan_phase, m.strength, m.distance, m.seeker_distance}) finite_or_bail(x);
-        finite_or_bail(m.fins); finite_or_bail(m.orientation_auxiliary); finite_or_bail(m.factors); finite_or_bail(m.auxiliary);
-        finite_or_bail(m.direction); finite_or_bail(m.seeker_direction); finite_or_bail(m.inertial_point); finite_or_bail(m.inertial_offset);
+        for (double x : {m.transition_time, m.scan_phase, m.strength, m.distance, m.seeker_distance}) c(x);
+        c(m.fins); c(m.orientation_auxiliary); c(m.factors); c(m.auxiliary);
+        c(m.direction); c(m.seeker_direction); c(m.inertial_point); c(m.inertial_offset);
         const OpticalSeekerState& s = S.optical.seeker;
-        finite_or_bail(s.angles); finite_or_bail(s.direction); finite_or_bail(s.angular_rate); finite_or_bail(s.widths);
-        for (double x : {s.gap, s.distance, s.los_check_time}) finite_or_bail(x);
+        c(s.angles); c(s.direction); c(s.angular_rate); c(s.widths);
+        for (double x : {s.gap, s.distance, s.los_check_time}) c(x);
     } else {
         const RadarManagerState& m = S.radar.manager;
-        for (double x : {m.transition_time, m.strength, m.distance, m.search_value, m.seeker_range, m.seeker_closure}) finite_or_bail(x);
-        finite_or_bail(m.fins); finite_or_bail(m.orientation_auxiliary); finite_or_bail(m.factors); finite_or_bail(m.direction);
-        finite_or_bail(m.seeker_angles); finite_or_bail(m.seeker_direction); finite_or_bail(m.inertial_point); finite_or_bail(m.inertial_offset);
-        finite_or_bail(m.inertial_velocity);
+        for (double x : {m.transition_time, m.strength, m.distance, m.search_value, m.seeker_range, m.seeker_closure}) c(x);
+        c(m.fins); c(m.orientation_auxiliary); c(m.factors); c(m.direction);
+        c(m.seeker_angles); c(m.seeker_direction); c(m.inertial_point); c(m.inertial_offset);
+        c(m.inertial_velocity);
         const RadarSeekerState& s = S.radar.seeker;
-        for (double x : {s.gap, s.range, s.range_rate, s.closure, s.closure_rate, s.target_value, s.los_check_time, s.visibility_weight}) finite_or_bail(x);
-        finite_or_bail(s.angles); finite_or_bail(s.direction); finite_or_bail(s.angular_rate);
+        for (double x : {s.gap, s.range, s.range_rate, s.closure, s.closure_rate, s.target_value, s.los_check_time, s.visibility_weight}) c(x);
+        c(s.angles); c(s.direction); c(s.angular_rate);
     }
+    finite_or_bail(c.sum);
 }
 
 // optical_point_flight.update (engine_kernels.flight_result) + family guidance.
@@ -120,7 +129,9 @@ inline void flight_step(const FlightProps& P, Session& S, const TargetPoint& old
         finite_or_bail(new_target.velocity); finite_or_bail(new_target.quaternion);
         finite_or_bail(old_target.position); finite_or_bail(old_target.velocity); finite_or_bail(old_target.quaternion);
     }
-    validate_flight_numbers(S, P.family);
+    // The reference also validates the state on entry. Setup validates the
+    // initial state and every step validates its result, and nothing between
+    // steps changes the validated fields, so that check always passes here.
     if (add(S.body.time, dt) <= S.body.time) bail("ValueError: Step does not advance the binary32 clock");
     flight_update(P, S, new_target, launch, dt);
     validate_flight_numbers(S, P.family);

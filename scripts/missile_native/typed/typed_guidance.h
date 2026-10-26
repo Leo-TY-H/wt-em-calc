@@ -499,7 +499,7 @@ inline int64_t designation_indicator(const RadarManagerProps& p, int64_t source_
 inline void radar_guidance_update(const RadarProps& P, RadarGuidance& g, const Packet& old_in, const Packet& new_in, double elapsed_in,
         const float* clocks, const RadarTarget& target, const LaunchState& launch, double context_value, bool matrix_velocity_frame) {
     const RadarManagerProps& p = P.manager;
-    IdealContext context;
+    static thread_local IdealContext context;   // rebuilt every step; kept only to reuse the record storage
     ideal_context(launch, target, new_in[13], p.designation_mask, context);
     const std::vector<Record>& records = context.records;
     const double lag = context.lag_limit;
@@ -634,6 +634,59 @@ inline void radar_guidance_update(const RadarProps& P, RadarGuidance& g, const P
     s.search_value = mul(add(sv[1], sv[0]), .5);
     if (p.designation_notification == 1) s.designation_indicator = designation_indicator(p, s.inertial_source_tag, records);
     g.manager = s; g.seeker = ss;
+}
+
+// ---------------------------------------------- website optical prelaunch
+// missile_initialization.optical_ready after its cached optical_reset: optical_modes.update
+// in mode 4 with the authored designation source (seeker_designation.allowed/point)
+// and the launcher's measurement callback (geometric_optical_observation.observe).
+struct OpticalAcquired { OpticalSeekerState state; Opaque raw; bool tracking; };
+inline OpticalAcquired optical_prelaunch_acquire(const OpticalProps& P, const OpticalSeekerState& reset, const Opaque& reset_raw,
+                                                 const d4& body_q, const d3& body_position, const d3& target_position) {
+    const OpticalSeekerProps& p = P.seeker;
+    const double old_time = -(double)(float)(1.0 / 48.0), new_time = 0.;   // -frame_session.STEP, 0
+    double dt = sub(new_time, old_time);
+    Opaque raw = reset_raw;
+    d4 q = f32s(body_q);
+    OpticalSeekerState out = reset;
+    out.angles = f32s(reset.angles); out.direction = f32s(reset.direction); out.angular_rate = f32s(reset.angular_rate);
+    out.widths = f32s(reset.widths);
+    out.gap = f32(reset.gap); out.distance = f32(reset.distance); out.los_check_time = f32(reset.los_check_time);
+    if (!(dt >= f32(1e-5))) bail("Optical prelaunch interval");
+    int source = -1;
+    for (int s : {6, 3, 5, 2, 1, 4, 7, 8, 9, 0}) if (p.designation_mask & (1LL << s)) { source = s; break; }
+    // seeker_designation.allowed(4, source, designation_mask, constant_mask)
+    bool designated = source >= 0 && ((((p.designation_mask & 0xffff) | 0) & 0xffffffffLL) & (1LL << (source & 31))) != 0;
+    if (designated) {
+        if (p.surface_as_target) bail("NotImplementedError: Designated surface-target generation is not reconstructed here");
+        d3 delta = {sub(target_position[0], body_position[0]), sub(target_position[1], body_position[1]), sub(target_position[2], body_position[2])};
+        Shared shared = designation_point(p.shared, q, world_to_body(body_q, delta), {0., 0., 0.}, out.angles, true);
+        out.widths = {p.width_max, p.width_max};
+        out.angles = shared.angles; out.direction = shared.direction; out.angular_rate = shared.angular_rate;
+        raw[0] = 0;
+        if (shared.accepted == 1) for (int i = 4; i < 16; ++i) raw[i] = 0;
+    } else {
+        out.angles = p.arret_angles; out.direction = boresight_of(q, p.arret_angles);
+        out.angular_rate = {0., 0., 0.}; out.widths = {p.width_max, p.width_max};
+    }
+    out.los_cache_valid = false;
+    // The launcher's callback packs its result into a copy of the reset bytes,
+    // which then replace the mode's working copy.
+    OpticalObservation observed = geometric_optical_observe(P.observation, out, reset_raw, body_q, body_position, target_position, {0., 0., 0.}, false);
+    if (observed.refresh_los_cache) { out.los_check_time = f32(new_time); out.los_cache_valid = true; }
+    out.distance = f32(observed.distance); raw = observed.opaque;
+    OpticalAcquired result{out, raw, observed.available};
+    if (!observed.available) { result.state.gap = add(out.gap, dt); return result; }
+    d3 measurement = f32s(observed.measurement);
+    Shared shared = reseed(p.shared, q, measurement);
+    shared = shared_update(p.shared, q, &measurement, shared, dt, true, true, false);
+    out.angles = shared.angles; out.direction = shared.direction; out.angular_rate = shared.angular_rate;
+    double inverse_distance = safe_div(1., out.distance);
+    double aux[2] = {f32(observed.auxiliary[2]), f32(observed.auxiliary[1])};
+    for (int i = 0; i < 2; ++i) out.widths[i] = mn(p.width_max, mx(p.width_min, mul(mul(aux[i], inverse_distance), .5)));
+    out.gap = 0.;
+    result.state = out;
+    return result;
 }
 
 }  // namespace typed
