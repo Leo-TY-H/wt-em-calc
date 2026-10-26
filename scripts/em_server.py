@@ -140,6 +140,17 @@ def point_solver(key,entry):
     return solver
 
 
+def pitch_percent(point,solver):
+    """Clicked-point report only: blade angle on the game's pitch-control scale (100% = finest, 0% = coarsest)."""
+    propulsion=point.get('propulsion')
+    propellers=getattr(getattr(solver,'engine',None),'properties',{}).get('propellers') if propulsion else None
+    if not propellers or len(propellers)!=len(propulsion.get('propeller_pitch_deg') or ()):return
+    def percent(deg,limits):
+        low,high=limits['pitch_min'],limits['pitch_max']
+        return (high-math.radians(deg))/(high-low)*100. if high>low else None
+    propulsion['propeller_pitch_percent']=[percent(deg,q['properties']) for deg,q in zip(propulsion['propeller_pitch_deg'],propellers)]
+
+
 def solve_point(key,entry,speed_kmh,load_g):
     """Full-model state at a clicked position of a stored chart, seeded from the nearest admitted sample."""
     for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Load',load_g,1.,64.)):
@@ -162,6 +173,7 @@ def solve_point(key,entry,speed_kmh,load_g):
             # No candidate established: a gap at this state, not an absence proof.
             point=dict(speed_kmh=speed_kmh,load_g=load_g,status='unresolved',valid=False,chart_usable=False,
                        reasons=['stationary search unresolved'],search_unresolved=str(error))
+        pitch_percent(point,solver)
     def public(value):
         if isinstance(value,dict):return {k:public(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
         if isinstance(value,(list,tuple)):return [public(v) for v in value]
