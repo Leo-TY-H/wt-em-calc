@@ -610,7 +610,8 @@ function renderChart(){
       const stop=new Map((line.stop_after_s||[]).map(([over,seconds])=>[over,seconds]));
       const quits=stop.has(0)?`<br>Engine quits after about ${fmt(stop.get(0),0)} s just over${stop.has(5)?`, ${fmt(stop.get(5),0)} s at 5% over`:''}`:'';
       traces.push({type:'scatter',mode:'lines',x:line.speed_kmh,y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-        line:{color:'rgba(246,190,109,.95)',width:2.6,dash:'dot'},showlegend:false,
+        // Approximate kinds (jump links, column crossings: traced false) are drawn fainter than traced lines.
+        line:{color:line.traced===false?'rgba(246,190,109,.5)':'rgba(246,190,109,.95)',width:line.traced===false?2:2.6,dash:'dot'},showlegend:false,
         hovertemplate:`Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
