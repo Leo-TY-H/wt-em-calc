@@ -9,7 +9,8 @@
 .envelope-sidebar .eyebrow{display:block;margin:18px 0 2px}
 .envelope-pair,.envelope-layer-inputs{display:grid;gap:7px}
 .envelope-pair{grid-template-columns:repeat(2,minmax(0,1fr))}.envelope-layer-inputs{grid-template-columns:repeat(3,minmax(0,1fr))}
-.envelope-pair .field,.envelope-layer-inputs .field{font-size:11px;margin:6px 0}
+.envelope-pair .field,.envelope-layer-inputs .field,.envelope-motion .field{font-size:11px;margin:6px 0}
+#envelope-centre-note{margin:8px 0 0}
 .envelope-layer-inputs .input-unit input{padding:8px 24px 8px 7px}.envelope-layer-inputs .input-unit span{right:7px;font-size:10px}
 /* Plot unboxed under a small view picker, as tall as the EM chart. */
 .envelope-view-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin:0 0 4px}
