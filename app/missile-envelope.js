@@ -334,16 +334,6 @@
   };
   const angleText = t => launcherFrame() ? `${fmt(Math.abs(t), 1)}°${Math.abs(t) > 0 && Math.abs(t) < 180 ? (t > 0 ? ' right' : ' left') : ''} off the nose`
     : `${fmt(Math.abs(t), 1)}° from the target's nose`;
-  function rayText(ray, az) {
-    const lines = [`<b>${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}</b>`];
-    if (ray.max_range_m === null) lines.push('No hit at any searched distance');
-    else {
-      lines.push(`Maximum range: ${km(ray.max_range_m)}${ray.intervals.at(-1).max_at_search_limit ? ' (search limit)' : ''} · flight ${fmt(ray.max_time_s, 1)} s`);
-      lines.push(`Minimum range: ${ray.intervals[0].min_at_search_limit ? '≤ ' : ''}${km(ray.min_range_m)}`);
-      if (ray.intervals.length > 1) lines.push(`${ray.intervals.length - 1} gap${ray.intervals.length > 2 ? 's' : ''} between hits`);
-    }
-    return lines.join('<br>');
-  }
 
   // ---- Envelope field ---------------------------------------------------------------
   // The region is where s > 0. Along each searched direction s is the signed distance
@@ -516,47 +506,13 @@
     const text = o.x.map((t, i) => t === null ? null : `${nez ? 'No-escape zone · ' : ''}${angleText(t)} · ${fmt(r[i], 2)} km`);
     return {theta: o.x, r, text};
   }
-  // Hit intervals along every grid bearing (km), for the filled region.
-  function polarBands(li, nez = false) {
-    const g = polarField(li, nez), theta = [], base = [], length = [];
-    g.columns.forEach((col, i) => {
-      let start = null;
-      for (let j = 0; j < col.length; j++) {
-        const inside = col[j] > 0;
-        const cross = () => { const a = col[j - 1], b = col[j]; return g.Ls[j - 1] + (g.Ls[j] - g.Ls[j - 1]) * a / (a - b); };
-        if (inside && start === null) start = j === 0 ? g.Ls[0] : cross();
-        if (!inside && start !== null) { const end = cross(); theta.push(g.thetas[i]); base.push(unlogKm(start)); length.push(unlogKm(end) - unlogKm(start)); start = null; }
-      }
-      if (start !== null) { theta.push(g.thetas[i]); base.push(unlogKm(start)); length.push(unlogKm(g.Ls.at(-1)) - unlogKm(start)); }
-    });
-    return {theta, base, length, width: g.step};
-  }
-  // Hoverable searched boundary points of one layer: [r km, bearing, text, [layer, azimuth]].
-  function boundaryPoints(line) {
-    const pts = [];
-    for (const {az, ray} of line.entries) {
-      const text = rayText(ray, az);
-      for (const i of ray.intervals) for (const r of [i.start_m, i.end_m]) if (r > 0) pts.push([kmOf(r), az, text, [ray.key[0], az]]);
-    }
-    return pts;
-  }
-  // The escaping-target searches' boundaries that bound the no-escape zone (inside the envelope), as boundaryPoints.
-  function nezPoints(li) {
-    const f = field(), pts = [];
-    for (const {az, ray} of f.escape[li].entries) {
-      const text = `<b>${fmt(ray.layer_m)} m · ${escapeHtml(bearingName(az))}</b><br>No-escape zone: ${nezText(nezIntervals(li, az))}`;
-      for (const i of ray.intervals) for (const r of [i.start_m, i.end_m])
-        if (r > 0 && layerValue(f.lines[li], r, az) > 1e-9) pts.push([kmOf(r), az, text, [li, az]]);
-    }
-    return pts;
-  }
 
   // ---- Rendering --------------------------------------------------------------------
   const font = 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif';
   const theme = {paper_bgcolor: '#000000', plot_bgcolor: '#000000', font: {color: '#dce5f0', family: font},
     hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#eff7ff', size: 12, family: font}},
     modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
-  const grid = 'rgba(240,240,250,.09)', zero = 'rgba(240,240,250,.3)', tick = '#b9b9c4', cyan = '#38c9d7', fill = 'rgba(56,201,215,.22)';
+  const grid = 'rgba(240,240,250,.09)', zero = 'rgba(240,240,250,.3)', tick = '#b9b9c4', cyan = '#38c9d7';
   const axis2d = title => ({title: {text: title}, gridcolor: grid, zerolinecolor: zero, color: tick, tickformat: ',.0f'});
   // Launcher altitudes are ordered: one cyan ramp, darker low and lighter high
   // (the darkest step keeps 3.4:1 against the black plot).
@@ -639,15 +595,13 @@
     return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'},
         hovertemplate: 'Target<extra></extra>', showlegend: false}];
   }
-  // Bearings beyond the launching aircraft's gimbal limit are greyed out (Leo, 2026-10-26).
+  // The launching aircraft's gimbal limit as two dashed bearings (Leo, 2026-10-26: no shaded regions).
   function gimbalTrace(radius) {
     const g = runs[0]?.submitted.launcher.gimbal_deg;
     if (!sight().launcher || !g || g >= 180) return [];
-    const R = kmOf(radius) * 1.3, theta = [0], r = [0];
-    for (let a = g; a < 360 - g; a += 1) { theta.push(a); r.push(R); }
-    theta.push(360 - g, 0); r.push(R, 0);
-    return [{type: 'scatterpolar', mode: 'lines', r, theta, fill: 'toself', fillcolor: 'rgba(240,240,250,.07)', line: {width: 0},
-      hoveron: 'fills', name: `Beyond the launcher's gimbal limit (±${fmt(g, g % 1 ? 1 : 0)}°)`, showlegend: false}];
+    const R = kmOf(radius) * 1.3;
+    return [{type: 'scatterpolar', mode: 'lines', r: [0, R, null, 0, R], theta: [g, g, null, 360 - g, 360 - g], line: {color: 'rgba(240,240,250,.35)', width: 1, dash: '4px,4px'},
+      hovertemplate: `Launcher's gimbal limit (±${fmt(g, g % 1 ? 1 : 0)}°)<extra></extra>`, showlegend: false}];
   }
   // Around the launcher, a note in the top-right corner says how the target flies, with an arrow when its heading is fixed.
   function motionNotes() {
@@ -690,25 +644,16 @@
     for (const {az, ray} of line.entries) for (const i of ray.intervals) { r.push(kmOf(i.start_m), kmOf(i.end_m), null); theta.push(az, az, null); }
     return {type: 'scatterpolar', mode: 'lines', r, theta, hoverinfo: 'skip', line: {color: 'rgba(240,240,250,.35)', width: 1}, showlegend: false};
   }
-  // Boundary dots; customdata [layer, azimuth, run, no-escape zone] opens that direction's details.
-  function markerTrace(points, color, run, size = 6, nez = false) {
-    return {type: 'scatterpolar', mode: 'markers', r: points.map(p => p[0]), theta: points.map(p => p[1]), text: points.map(p => p[2]),
-      customdata: points.map(p => [...p[3], run.index, nez ? 1 : 0]), hovertemplate: '%{text}<extra></extra>', marker: {size, color, opacity: .7}, showlegend: false};
-  }
-  // The no-escape zone of one layer: a denser fill of its colour inside the envelope, a thin dashed outline and the searched dots.
-  function nezTraces(li, run, color, group, opacity, size) {
-    const bands = polarBands(li, true), o = polarOutline(li, true);
-    return {fill: {type: 'barpolar', r: bands.length, base: bands.base, theta: bands.theta, width: bands.width, legendgroup: group,
-        marker: {color: color + opacity, line: {width: 0}}, hoverinfo: 'skip', showlegend: false},
-      lines: [{type: 'scatterpolar', mode: 'lines', name: 'No-escape zone', legendgroup: group, r: o.r, theta: o.theta, text: o.text.map(t => t && runName(run) + t),
-        connectgaps: false, line: {color, width: 1.4, dash: '5px,3px'}, hovertemplate: '%{text}<extra></extra>', showlegend: false},
-        {...markerTrace(nezPoints(li).map(p => [p[0], p[1], runName(run) + p[2], p[3]]), color, run, size, true), legendgroup: group}],
-      outline: o};
+  // The no-escape zone of one layer: a thin dashed outline in the layer's colour (no fill or dots: Leo, 2026-10-26).
+  function nezTrace(li, run, color, group) {
+    const o = polarOutline(li, true);
+    return {trace: {type: 'scatterpolar', mode: 'lines', name: 'No-escape zone', legendgroup: group, r: o.r, theta: o.theta, text: o.text.map(t => t && runName(run) + t),
+      connectgaps: false, line: {color, width: 1.4, dash: '5px,3px'}, hovertemplate: '%{text}<extra></extra>', showlegend: false}, outline: o};
   }
   const runName = run => multi() ? escapeHtml(missileName(run.missile)) + ' · ' : '';
   const outlineXY = o => o.r.map((r, i) => plotXY(r, o.theta[i]));
   async function renderContours() {
-    const fills = [], traces = []; let radius = 0; labelLines = []; pickLines = [];
+    const traces = []; let radius = 0; labelLines = []; pickLines = [];
     for (const run of shownRuns()) within(run, () => {
       const c = submitted, f = field(), n = c.layers_m.length; radius = Math.max(radius, f.radius);
       // Highest layer first in the legend; with several missiles the legend lists missiles and their altitudes share a colour ramp.
@@ -724,11 +669,9 @@
         labelLines.push({group, text: alt, color, order: li, x: xy.map(q => q[0]), y: xy.map(q => q[1])});
         pickLines.push({group, run: run.index, layer: li, x: xy.map(q => q[0]), y: xy.map(q => q[1])});
         if (el('envelope-show-rays').checked) traces.push({...rayTrace(f.lines[li]), legendgroup: group});
-        traces.push({...markerTrace(boundaryPoints(f.lines[li]).map(p => [p[0], p[1], runName(run) + p[2], p[3]]), color, run, 4), legendgroup: group});
         if (hasNez(li)) {
-          // Fills go under every outline; overlapping altitudes add up toward the target.
-          const z = nezTraces(li, run, color, group, '2e', 3), zxy = outlineXY(z.outline);
-          fills.push(z.fill); traces.push(...z.lines);
+          const z = nezTrace(li, run, color, group), zxy = outlineXY(z.outline);
+          traces.push(z.trace);
           labelLines.push({group, text: alt + ' NEZ', color, order: li - .5, x: zxy.map(q => q[0]), y: zxy.map(q => q[1])});
         }
       }
@@ -736,33 +679,29 @@
     });
     traces.unshift(...gimbalTrace(radius));
     traces.push(...polarTarget(radius));
-    await draw([...fills, ...traces], polarLayout(radius, revision('contours')));
+    await draw(traces, polarLayout(radius, revision('contours')));
   }
   async function renderLayer() {
     const li = Number(el('envelope-layer').value), traces = []; let radius = 0; labelLines = []; pickLines = [];
     for (const run of shownRuns()) within(run, () => {
       const f = field(), line = f.lines[li]; radius = Math.max(radius, f.radius);
       if (!line?.az.length) return;
-      const bands = polarBands(li), o = polarOutline(li), color = multi() ? run.color : cyan, name = missileName(run.missile), oxy = outlineXY(o);
+      const o = polarOutline(li), color = multi() ? run.color : cyan, name = missileName(run.missile), oxy = outlineXY(o);
       pickLines.push({group: run.missile, run: run.index, layer: li, x: oxy.map(q => q[0]), y: oxy.map(q => q[1])});
-      traces.push({type: 'barpolar', r: bands.length, base: bands.base, theta: bands.theta, width: bands.width, legendgroup: run.missile,
-        marker: {color: multi() ? run.color + '2e' : fill, line: {width: 0}}, hoverinfo: 'skip', showlegend: false});
       traces.push({type: 'scatterpolar', mode: 'lines', name, legendgroup: run.missile, r: o.r, theta: o.theta, text: o.text.map(t => t && runName(run) + t), connectgaps: false,
         line: {color, width: 2.2}, hovertemplate: '%{text}<extra></extra>', showlegend: multi()});
       if (hasNez(li)) {
-        // A denser fill of the same colour over the envelope's.
-        const z = nezTraces(li, run, color, run.missile, '59', 5), zxy = outlineXY(z.outline);
-        traces.push(z.fill, ...z.lines);
+        const z = nezTrace(li, run, color, run.missile), zxy = outlineXY(z.outline);
+        traces.push(z.trace);
         labelLines.push({group: run.missile, text: `${runName(run)}NEZ`, color, order: run.index, x: zxy.map(q => q[0]), y: zxy.map(q => q[1])});
       }
       if (el('envelope-show-rays').checked) traces.push(rayTrace(line));
       if (el('envelope-show-samples').checked) traces.push(...sampleTraces(ray => ray.key[0] === li, (ray, az, r) => [kmOf(r), az], true, run));
-      traces.push({...markerTrace(boundaryPoints(line).map(p => [p[0], p[1], runName(run) + p[2], p[3]]), color, run), legendgroup: run.missile});
     });
     traces.unshift(...gimbalTrace(radius));
     traces.push(...polarTarget(radius));
     const layout = polarLayout(radius, revision('layer'));
-    layout.polar.bargap = 0; layout.showlegend = multi();
+    layout.showlegend = multi();
     await draw(traces, layout);
   }
   async function renderProfile() {
@@ -775,30 +714,22 @@
     for (const run of shownRuns()) within(run, () => {
       const c = submitted, f = field(), color = multi() ? run.color : cyan; layersShown = c.layers_m;
       const perLayer = f.lines.map(line => xs.map(x => { const [r, az] = along(x); return layerValue(line, r, az); }));
-      // The no-escape zone where every layer has it (min of both fields), drawn over the envelope in a denser fill.
+      // The no-escape zone where every layer has it (min of both fields), a dashed outline inside the envelope's.
       const nez = f.escape && c.layers_m.every((_, li) => hasNez(li))
         ? f.escape.map((line, li) => xs.map((x, i) => { const [r, az] = along(x); return Math.min(perLayer[li][i], layerValue(line, r, az)); })) : null;
       if (c.layers_m.length > 1) {
         const low = c.layers_m[0], high = c.layers_m.at(-1), ny = Math.min(241, 24 * c.layers_m.length + 1);
         const ys = Array.from({length: ny}, (_, j) => low + (high - low) * j / (ny - 1));
-        for (const [values, fillcolor, width] of [[perLayer, multi() ? run.color + '2e' : fill, 2.2], ...(nez ? [[nez, color + '59', 1.3]] : [])])
+        for (const [values, width, dash] of [[perLayer, 2.2, 'solid'], ...(nez ? [[nez, 1.4, '5px,3px']] : [])])
           traces.push({type: 'contour', x: xs, y: ys, z: ys.map(y => xs.map((_, i) => volumeValue(values.map(v => v[i]), y))),
-            contours: {type: 'constraint', operation: '<', value: 0}, fillcolor, line: {color, width, smoothing: 1},
-            hoverinfo: 'skip', showscale: false, showlegend: false, name: missileName(run.missile)});
+            contours: {type: 'constraint', operation: '<', value: 0}, fillcolor: 'rgba(0,0,0,0)', line: {color, width, dash, smoothing: 1},
+            hoverinfo: 'skip', showscale: false, showlegend: false, legendgroup: run.missile, name: missileName(run.missile)});
       } else {
-        for (const [values, width] of [[perLayer, 6], ...(nez ? [[nez, 12]] : [])]) {
+        // One altitude: the envelope as a line along it, the no-escape zone as its bold part.
+        for (const [values, width] of [[perLayer, 2.2], ...(nez ? [[nez, 6]] : [])]) {
           const segment = {x: [], y: []};
           xs.forEach((x, i) => { segment.x.push(values[0][i] > 0 ? x : null); segment.y.push(c.layers_m[0]); });
-          traces.push({type: 'scatter', mode: 'lines', x: segment.x, y: segment.y, line: {color, width}, opacity: width > 6 ? .55 : 1, hoverinfo: 'skip', showlegend: false});
-        }
-      }
-      // Searched boundaries on the cut, where a direction lies on it.
-      const pts = [];
-      for (const ray of rays.values()) {
-        for (const [az, sign] of [[cutAz, 1], [wrap(cutAz + 180), -1]]) {
-          const match = Math.abs(wrap(ray.azimuth_deg) - az) < 1e-6 || (mirrored() && Math.abs(Math.abs(wrap(ray.azimuth_deg)) - Math.abs(az)) < 1e-6);
-          if (!match) continue;
-          for (const i of ray.intervals) for (const r of [i.start_m, i.end_m]) pts.push([sign * r, ray.layer_m, runName(run) + rayText(ray, az), [ray.key[0], az, run.index]]);
+          traces.push({type: 'scatter', mode: 'lines', x: segment.x, y: segment.y, line: {color, width}, hoverinfo: 'skip', showlegend: false, legendgroup: run.missile});
         }
       }
       if (el('envelope-show-samples').checked) traces.push(...sampleTraces(() => true, (ray, az, r) => {
@@ -806,8 +737,8 @@
         if (Math.abs(wrap(az) - wrap(cutAz + 180)) < 1e-6) return [-r, ray.layer_m];
         return null;
       }, false, run));
-      traces.push({type: 'scatter', mode: 'markers', x: pts.map(p => p[0]), y: pts.map(p => p[1]), text: pts.map(p => p[2]), customdata: pts.map(p => p[3]),
-        hovertemplate: '%{text}<extra></extra>', marker: {size: 6, color, opacity: .55}, name: missileName(run.missile), showlegend: multi()});
+      // The legend entry of this missile (its outlines are contour traces).
+      traces.push({type: 'scatter', mode: 'lines', x: [null], y: [null], line: {color, width: 2.2}, name: missileName(run.missile), legendgroup: run.missile, showlegend: multi(), hoverinfo: 'skip'});
       perLayer.forEach(v => v.forEach((s, i) => { if (s > 0) { reach[0] = Math.min(reach[0], xs[i]); reach[1] = Math.max(reach[1], xs[i]); } }));
     });
     // The target (or the launcher, around it) is at every altitude: a line through the centre.
@@ -833,29 +764,6 @@
         const {r, theta, ...rest} = trace, x = [], y = [];
         r.forEach((v, i) => { const [a, b] = xy(v, theta[i]); x.push(a); y.push(b); });
         out.push({...rest, type: 'scatter', x, y});
-      } else if (trace.type === 'barpolar') {
-        // Bands of neighbouring bearings that overlap in range join into one strip polygon (inner edge out, outer edge
-        // back), so the fill has no seams between bearings; strips are separated by gaps in one filled trace.
-        const x = [], y = [], half = trace.width / 2, columns = new Map();
-        trace.theta.forEach((t, i) => { if (!columns.has(t)) columns.set(t, []); columns.get(t).push([trace.base[i], trace.base[i] + trace.r[i]]); });
-        const close = strip => {
-          for (const [r, a] of [...strip.inner, ...strip.outer.slice().reverse(), strip.inner[0]]) { const [u, v] = xy(r, a); x.push(u); y.push(v); }
-          x.push(null); y.push(null);
-        };
-        let open = [];
-        for (const t of [...columns.keys()].sort((a, b) => a - b)) {
-          const next = [];
-          for (const [r0, r1] of columns.get(t)) {
-            const k = open.findIndex(strip => strip.last[0] < r1 && r0 < strip.last[1]);
-            const strip = k >= 0 ? open.splice(k, 1)[0] : {inner: [], outer: []};
-            strip.inner.push([r0, t - half], [r0, t + half]); strip.outer.push([r1, t - half], [r1, t + half]); strip.last = [r0, r1];
-            next.push(strip);
-          }
-          open.forEach(close); open = next;
-        }
-        open.forEach(close);
-        out.push({type: 'scatter', mode: 'lines', x, y, fill: 'toself', fillcolor: trace.marker.color, line: {width: 0}, hoverinfo: 'skip', showlegend: false,
-          legendgroup: trace.legendgroup});
       } else out.push(trace);
     }
     const R = layout.polar.radialaxis.range[1], nice = [1, 2, 2.5, 5, 10, 20, 25, 50, 100, 200, 500];
@@ -972,32 +880,27 @@
     // drag to the plot's drag surface, which is the only target taken here (not the legend or the toolbar).
     node.onclick = event => { if (event.target.closest?.('.nsewdrag')) pickShot(event); };
   }
-  // The shot under a click: on a searched sample exactly that shot; on a searched boundary dot that direction's hit
-  // next to it; elsewhere the clicked bearing and distance (0.1°, 10 m) at the altitude of the nearest outline on the
-  // top views, or the clicked altitude on the side profile.
+  // The shot under a click: on a searched sample (when samples are shown) exactly that shot; elsewhere the clicked
+  // bearing and distance (0.1°, 10 m) at the altitude of the nearest outline on the top views, or the clicked altitude
+  // on the side profile.
   function pickShot(event) {
     const node = el('envelope-chart'), L = node._fullLayout, xa = L?.xaxis, ya = L?.yaxis;
     if (!xa || !ya || !shownRuns().length) return;
     const box = node.getBoundingClientRect(), view = el('envelope-view').value;
     const cx = event.clientX - box.left - xa._offset, cy = event.clientY - box.top - ya._offset, x = xa.p2l(cx), y = ya.p2l(cy);
-    // Only a click on the dot itself snaps (tooltips reach 20 px, and the dots are dense).
-    const point = (node._hoverdata || []).find(p => Array.isArray(p.customdata) && Number.isFinite(p.customdata[0]) && runs[p.customdata[2] ?? 0]
+    // Only a click on the sample itself (tooltips reach 20 px).
+    const point = (node._hoverdata || []).find(p => Array.isArray(p.customdata) && Number.isFinite(p.customdata[4]) && runs[p.customdata[2]]
       && Math.hypot(xa.l2p(p.x) - cx, ya.l2p(p.y) - cy) <= 6);
     if (point) {
-      const [li, az, index = 0, nez = 0, sample] = point.customdata, run = runs[index];
-      let range = sample;
-      if (!Number.isFinite(range)) {
-        const r = view === 'profile' ? Math.abs(point.x) : Math.hypot(point.x, point.y) * 1000, ray = within(run, () => rayNear(li, az, nez === 1));
-        range = ray ? nearestHit(ray, r) : Math.round(r / 10) * 10;
-      }
-      inspected = {run: index, layer: li, altitude: run.submitted.layers_m[li], azimuth: az, range, nez: nez === 1};
+      const [li, az, index, , range] = point.customdata, run = runs[index];
+      inspected = {run: index, layer: li, altitude: run.submitted.layers_m[li], azimuth: az, range};
     } else if (view === 'profile') {
       const cutAz = Number(el('envelope-cut').value), az = x >= 0 ? cutAz : wrap(cutAz + 180);
       const range = Math.max(50, Math.round(Math.abs(x) / 10) * 10), altitude = Math.max(10, Math.round(y / 10) * 10);
       // The missile whose boundary is nearest along this bearing.
       const scored = shownRuns().map(run => within(run, () => ({run, s: Math.abs(shotValue(nearestLayerOf(altitude), az, range, altitude) ?? 9)})));
       const run = scored.reduce((a, b) => b.s < a.s ? b : a).run;
-      inspected = {run: run.index, layer: within(run, () => nearestLayerOf(altitude)), altitude, azimuth: az, range, nez: false};
+      inspected = {run: run.index, layer: within(run, () => nearestLayerOf(altitude)), altitude, azimuth: az, range};
     } else {
       const az = Math.round(wrap(Math.atan2(x, y) * 180 / Math.PI - sight().turn) * 10) / 10, range = Math.max(50, Math.round(Math.hypot(x, y) * 100) * 10);
       // The altitude (and missile) of the drawn outline nearest the click on screen.
@@ -1011,16 +914,9 @@
       }
       const run = best ? runs[best.line.run] : shownRuns()[0];
       const li = best ? best.line.layer : view === 'layer' ? Number(el('envelope-layer').value) : nearestLayer(run.submitted);
-      inspected = {run: run.index, layer: li, altitude: run.submitted.layers_m[li], azimuth: az, range, nez: false};
+      inspected = {run: run.index, layer: li, altitude: run.submitted.layers_m[li], azimuth: az, range};
     }
     renderInspector(); markShot();
-  }
-  // The searched hit next to a boundary: an interval's first hit at its near edge, its last hit at its far edge.
-  function nearestHit(ray, r) {
-    let best = null;
-    for (const i of ray.intervals) for (const [edge, hit] of [[i.start_m, i.first_hit_m ?? i.start_m], [i.end_m, i.last_hit_m ?? i.end_m]])
-      if (!best || Math.abs(edge - r) < best.d) best = {d: Math.abs(edge - r), hit};
-    return best ? best.hit : r;
   }
   const nearestLayerOf = altitude => submitted.layers_m.reduce((k, alt, i) => Math.abs(alt - altitude) < Math.abs(submitted.layers_m[k] - altitude) ? i : k, 0);
   // s of the envelope (escape: of the no-escape zone) at a shot: its layer, or across layers off them; null outside the calculated altitudes.
@@ -1109,16 +1005,14 @@
     el('envelope-inspector').hidden = !run;
     if (!run) { box.replaceChildren(); button.hidden = true; return; }
     use(run);
-    const c = submitted, {layer: li, azimuth: az, range, altitude, nez} = inspected, onLayer = Math.abs(altitude - c.layers_m[li]) < 1e-6;
+    const c = submitted, {layer: li, azimuth: az, range, altitude} = inspected, onLayer = Math.abs(altitude - c.layers_m[li]) < 1e-6;
     el('envelope-inspect-title').textContent = `${multi() ? missileName(run.missile) + ' · ' : ''}${fmt(altitude)} m · ${bearingName(az)} · ${fmt(range / 1000, 2)} km`;
     button.hidden = typeof window.missileSimulator?.load !== 'function';
-    const decimals = v => v % 1 ? 1 : 0;
-    const breaking = c.escape ? `the target breaking away at ${fmt(c.escape.load_g, decimals(c.escape.load_g))} g${c.escape.delay_s ? ` after ${fmt(c.escape.delay_s, decimals(c.escape.delay_s))} s` : ''}` : '';
     // This shot: flown by the envelope search, or what the envelope expects between its searched shots.
-    const exact = onLayer ? rayNear(li, az, nez) : null, sample = exact?.samples.find(s => Math.abs(s.range_m - range) < .5);
-    const entry = entryNear(li, az, nez), ray = entry?.ray;
+    const exact = onLayer ? rayNear(li, az) : null, sample = exact?.samples.find(s => Math.abs(s.range_m - range) < .5);
+    const entry = entryNear(li, az), ray = entry?.ray;
     let shot;
-    if (sample) shot = `The envelope search flew this shot${nez ? ` against ${breaking}` : ''}: ${sample.hit ? 'a hit' : `a miss (${outcomeLabel(sample.outcome)})`}.`;
+    if (sample) shot = `The envelope search flew this shot: ${sample.hit ? 'a hit' : `a miss (${outcomeLabel(sample.outcome)})`}.`;
     else if (ray?.blocked) shot = `Outside the launch zone, so the envelope launches nothing here: ${launchZoneText(run)}. The simulator flies it anyway.`;
     else {
       const s = shotValue(li, az, range, altitude), z = s > 0 && c.escape ? shotValue(li, az, range, altitude, true) : null;
@@ -1126,7 +1020,7 @@
         : `Between the searched shots, the envelope expects a ${s > 0 ? 'hit' : 'miss'} here${z > 0 ? ', inside the no-escape zone' : ''}.`;
     }
     // The simulator flies constant-velocity targets only.
-    if (nez || shot.includes('no-escape')) shot += ' The simulator flies the target straight, without the break.';
+    if (shot.includes('no-escape')) shot += ' The simulator flies the target straight, without the break.';
     let details = '';
     if (ray && !ray.blocked) {
       const where = exact ? 'This searched direction' : `Nearest searched direction, ${onLayer ? '' : fmt(c.layers_m[li]) + ' m · '}${bearingName(entry.az)}`;
@@ -1134,20 +1028,17 @@
         `hits from ${ray.intervals[0].min_at_search_limit ? 'the closest searched distance, ' : ''}${km(ray.min_range_m)} to ${km(ray.max_range_m)}${ray.intervals.at(-1).max_at_search_limit ? ' (the search limit)' : ''}. Farthest hit flew ${fmt(ray.max_time_s, 1)} s.${ray.intervals.length > 1 ? ` Hits stop and resume ${ray.intervals.length - 1} time(s) in between.` : ''}`;
       const rows = ray.samples.map(s => `<tr${sample === s ? ' class="envelope-shot"' : ''}><td>${km(s.range_m)}</td><td class="${s.hit ? 'envelope-hit' : 'envelope-miss'}">${s.hit ? 'Hit' : 'Miss'}</td><td>${escapeHtml(outcomeLabel(s.outcome))}</td><td>${Number.isFinite(s.time_s) ? fmt(s.time_s, 2) + ' s' : '—'}</td><td>${Number.isFinite(s.closest_m) ? closestText(s) : '—'}</td></tr>`).join('');
       const zone = c.escape && onLayer ? `<p class="muted">No-escape zone on this bearing, where the missile hits whether the target holds its course or breaks away: ${nezText(nezIntervals(li, az))}.</p>` : '';
-      details = `<p class="muted">${escapeHtml(where)}${nez ? `, against ${breaking}` : ''}: ${found} ${ray.simulations} simulations searched ${km(ray.search[0])} – ${km(ray.search[1])}.</p>${zone}
+      details = `<p class="muted">${escapeHtml(where)}: ${found} ${ray.simulations} simulations searched ${km(ray.search[0])} – ${km(ray.search[1])}.</p>${zone}
       <div class="envelope-table-wrap"><table class="envelope-samples"><thead><tr><th>Launch distance</th><th>Result</th><th>Ended by</th><th>At</th><th>Closest approach</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
     run.cache = cache;
     box.innerHTML = `<p>${escapeHtml(shot)}</p>${details}`;
   }
-  // The simulator flies the inspected shot as it is set up here, with time to finish the longest searched flight nearby.
+  // The simulator flies the inspected shot as it is set up here, until its outcome.
   el('envelope-open-simulator').addEventListener('click', () => {
     const run = inspected && runs[inspected.run]; if (!run) return;
-    use(run);
-    const c = submitted, ray = entryNear(inspected.layer, inspected.azimuth)?.ray, times = (ray?.samples || []).map(s => s.time_s).filter(Number.isFinite);
-    run.cache = cache;
-    const s = states(c, inspected.altitude, inspected.azimuth, inspected.range);
-    window.missileSimulator.load({missile: c.missile, duration: Math.min(180, Math.ceil((times.length ? Math.max(...times) : 60) + 5)), launcher: s.launcher, target: s.target});
+    const c = run.submitted, s = states(c, inspected.altitude, inspected.azimuth, inspected.range);
+    window.missileSimulator.load({missile: c.missile, launcher: s.launcher, target: s.target});
   });
   for (const id of ['envelope-view', 'envelope-layer', 'envelope-cut', 'envelope-show-rays', 'envelope-show-samples'])
     el(id).addEventListener('change', () => render().catch(error => showError(error.message)));

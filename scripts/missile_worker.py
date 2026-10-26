@@ -67,6 +67,9 @@ def quaternion(angles):
 ESCAPE_GRAVITY = 9.81
 ESCAPE_LOAD_G = (1.5, 15.)
 ESCAPE_DELAY_S = (0., 60.)
+# A simulation runs until an outcome (Leo, 2026-10-26): the longest missile lifetime is 180 s and expires just
+# after it, so this default limit is never the one reached.
+RUN_LIMIT_S = 300.
 
 
 def escape_motion(target, escape, origin):
@@ -177,7 +180,7 @@ def validate(request):
             clean[role][name] = [number(v, f'{role} {name}', -bound, bound) for v in values]
         if not 0 < clean[role]['position'][1] <= 30000: raise ValueError(f'{role} altitude must be above 0 and at most 30000 m')
         if not -90 <= clean[role]['angles'][1] <= 90: raise ValueError(f'{role} pitch must be between -90 and 90 degrees')
-    clean['duration'] = number(request.get('duration', 60), 'Duration', .1, 180)
+    clean['duration'] = number(request.get('duration', RUN_LIMIT_S), 'Duration', .1, RUN_LIMIT_S)
     if math.dist(clean[launch_key]['position'], clean['target']['position']) < 10:
         raise ValueError('Initial launcher/target separation must be at least 10 m')
     escape = request.get('escape')
