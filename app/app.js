@@ -521,7 +521,7 @@ async function solveAt(a,position,origin,showRejected){
   const load=Math.hypot(1,(position.speed/3.6)*(position.rate*Math.PI/180)/9.8100004196167);
   const clicked={...origin,speed:position.speed,rate:position.rate};
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${fmt(load,2)} g`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${fmt(position.rate,2)} °/s`;
   $('point-status').innerHTML='<span class="point-pill">Solving the clicked point…</span>';
   $('point-content').innerHTML='';
   let point;
@@ -561,10 +561,10 @@ function renderChart(){
       if(!state.contourLevels.includes(level))continue;
       if(level===0&&a.sustained?.length>1)continue;
       const x=[],y=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);}
-      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · Ps ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
         text:x.map((v,i)=>turnRadius(v,y[i])),
-        hovertemplate:`${a.name}<br>Ps ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
+        hovertemplate:`${a.name}<br>SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
     }
     // SEP jump lines: where SEP jumps along the turn (contours end at them); the hover names the cause
     for(const j of a.sep_jumps||[]){
@@ -593,15 +593,15 @@ function renderChart(){
       const roots=new Map(a.sustained.map((p,i)=>[p.speed_kmh,{p,i}]));
       const curve=sustainedCurve(a,data);
       traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:curve?.x||data.speeds_kmh,y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
-        name:a.name+' Ps = 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
+        name:a.name+' SEP 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
         text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate);}),
-        hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} Ps = 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
+        hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} SEP 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
     }
     const valid=a.points.map((p,i)=>({p,i})).filter(r=>chartUsable(r.p));
     if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>r.p.speed_kmh),y:valid.map(r=>r.p.turn_dps),
       marker:{size:showSamples?5:9,color:showSamples?rgba(a.color,.5):'rgba(0,0,0,0)'},name:a.name,meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${a.name} · ${fmt(r.p.load_g,2)} g<br>Ps ${fmt(r.p.ps_mps,1)} m/s`),
+      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${a.name} · ${fmt(r.p.load_g,2)} g<br>SEP ${fmt(r.p.ps_mps,1)} m/s`),
       hovertemplate:'%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>'});
     if(showRejected){
       const rejected=a.points.map((p,i)=>({p,i})).filter(r=>!chartUsable(r.p));
@@ -675,6 +675,16 @@ function renderChart(){
     if(best)inspect(best.a,best.point);
   });
 }
+const KGF=9.80665,METRIC_HP=735.49875;
+function propellerPower(a,p){
+  // Shaft power per engine (metric hp); propeller efficiency = thrust x airspeed / shaft power, for pure propeller aircraft.
+  const power=p.propulsion.shaft_power_kw;if(!power?.length)return [];
+  const rows=[['Engine power',power.map(kw=>fmt(kw*1000/METRIC_HP,0)).join(' / ')+' hp']];
+  const total=power.reduce((sum,kw)=>sum+kw,0)*1000;
+  if(['piston','turboprop'].includes(state.meta.aircraft[a.aircraft_id||a.id]?.propulsion)&&total>1)
+    rows.push(['Propeller efficiency',fmt(p.engine_force_n[0]*p.speed_kmh/3.6/total*100,1)+'%']);
+  return rows;
+}
 async function inspect(a,p,clicked){
   const sequence=state.inspection=(state.inspection||0)+1;
   if(!p.component_forces&&p.detail_index!=null){
@@ -683,7 +693,7 @@ async function inspect(a,p,clicked){
   }
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.turn_dps,2)} °/s`;
   $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
   const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
   const note=clicked?`<div class="point-note">Clicked ${where}. ${clicked.nearest?'The details are for the nearest solved point; this server cannot solve the clicked point.':'This state is solved there with the full model.'}</div>`:'';
@@ -694,13 +704,14 @@ async function inspect(a,p,clicked){
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
   $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3>${dl([
-    ['Discrete Ps',fmt(p.ps_mps,2)+' m/s'],['Force-projection Ps',fmt(p.ps_continuous_mps,2)+' m/s'],
+    ['SEP',fmt(p.ps_mps,2)+' m/s'],
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
     ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'°'],['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
-    ['Engine force',fmt(p.engine_force_n[0]/1000,2)+' kN'],
+    ['Engine force',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],
     ...(p.propulsion?[
+      ...propellerPower(a,p),
       ['Engine RPM',p.propulsion.engine_rpm.map(v=>fmt(v,0)).join(' / ')],
       ['Propeller pitch',p.propulsion.propeller_pitch_deg.map(v=>fmt(v,2)+'°').join(' / ')],
       ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
@@ -709,7 +720,6 @@ async function inspect(a,p,clicked){
       ['RPM limit',p.propulsion.engine_rpm_threshold.map(v=>fmt(v,0)).join(' / ')],
       ['Over-rev',p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No'],
       ['Landing gear',p.gear_percent===100?'Fixed · deployed':'Retracted']]:[]),
-    ...(state.meta.aircraft[a.aircraft_id||a.id]?.has_flaps?[['Flaps',fmt(p.flaps_percent??0,0)+'%']]:[]),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
@@ -730,7 +740,7 @@ async function inspect(a,p,clicked){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
+    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;
