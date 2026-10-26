@@ -665,7 +665,8 @@
     const {polar, ...rest} = layout, span = R * 1.16;
     const axis = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, color: '#b9b9c4', tickfont: {size: 12}, ticksuffix: ' km', range: [-span, span]};
     return {traces: out, layout: {...rest, shapes, annotations, margin: {l: 58, r: 22, t: rest.showlegend === false ? 30 : 50, b: 40},
-      xaxis: {...axis, constrain: 'domain'}, yaxis: {...axis, scaleanchor: 'x', scaleratio: 1}}};
+      // Equal km scale kept by widening the x range, so the plot fills the width and pans freely.
+      xaxis: {...axis, constrain: 'range'}, yaxis: {...axis, scaleanchor: 'x', scaleratio: 1, constrain: 'range'}}};
   }
   async function draw(traces, layout) {
     if (layout.polar) ({traces, layout} = cartesianFromPolar(traces, layout));
