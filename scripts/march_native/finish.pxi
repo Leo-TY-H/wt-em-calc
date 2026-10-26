@@ -162,6 +162,9 @@ cdef class Finisher:
     # S11 (WT_MARCH_S11=0 restores S10): braking is a choice between states, not a rejection: a braking state is admitted
     # (flagged, Fin.brakes) and the march charts the state of the same speed and load with the most net thrust
     cdef public bint brake_choice
+    # Over-rev (Leo 2026-10-26, option C; WT_OVERREV=0 restores the S16 rule): under the chart rule an engine over
+    # RPMMaxAllowed is no rejection ('engine RPM limit'); the state carries its RPM (overrev.py)
+    cdef public bint overrev
     cdef public bint is_prop, python_admission
     cdef object admission_revision
     cdef PropModel pm
@@ -210,6 +213,8 @@ cdef class Finisher:
         from em_stationary import braking_rule, braking_choice
         self.brake = self.is_prop and braking_rule(solver)
         self.brake_choice = self.brake and braking_choice(solver)
+        from overrev import rule as overrev_rule
+        self.overrev = self.is_prop and overrev_rule(solver)
         self.request_cache = {}
 
     def set_prop(self, PropModel pm, layout):
@@ -497,7 +502,7 @@ cdef class Finisher:
         if not converged:self.add_reason(f, R_TRIM)
         if self.is_prop:
             if not f.prop_converged:self.add_reason(f, R_PROP_SETTLE)
-            if self.constants['governor'] == 'pitch_stops' and nover:self.add_reason(f, R_RPM)
+            if self.constants['governor'] == 'pitch_stops' and nover and not self.overrev:self.add_reason(f, R_RPM)
             if nstop:self.add_reason(f, R_SHAFT)
             if not f.prop_converged:self.add_reason(f, R_CYCLE)
         if not self.instructor_enabled and not e.alloc.reachable:self.add_reason(f, R_CONTROL)

@@ -545,6 +545,21 @@ cdef class NCurves:
         if self.ok_root(p, anchor, target):
             self.eng.stats['s8_curve_budget'] = self.eng.stats.get('s8_curve_budget', 0)+1
             return p
+        if self.eng.wide_slide & 4 and self.eng.sliding and self.eng.is_prop:
+            # overrev follow-up, after every other rescue: the nearest blocking jump within SLIDE_WIDE of the anchor's
+            # shaft speed (a sliding anchor: from the shaft speed at its jump)
+            for i in range(5):sol[i] = attitude[i]
+            self.eng.slide_candidate(anchor, &spec, sol[0], sol[1], load, True, speed, True, SLIDE_WIDE)
+            if spec.n:
+                self.eng.slide_override = spec;self.eng.use_override = True
+                try:
+                    p = self.eng.correct(anchor, sol, load, True, FIX_SEP, target, 0, 0, 0, ROBUST_NFEV, 0, self.allowance,
+                                         speed, NULL, NULL)
+                finally:
+                    self.eng.use_override = False
+                if self.ok_root(p, anchor, target):
+                    self.eng.stats['overrev_curve_slides'] = self.eng.stats.get('overrev_curve_slides', 0)+1
+                    return p
         self.eng.flush_counts()
         return -1
 
@@ -922,6 +937,42 @@ cdef class NCurves:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef int level_slide(self, double speed, int anchor, phase) except -2:
+        """Overrev follow-up: level flight at ``speed`` where the fixed-load solve from ``anchor`` does not close next to
+        a blade-polar jump (the shaft has no regular torque balance: Bf 109 F-4 RB at 65% pitch, 650 km/h, a jump at about
+        4,072 rpm): the sliding state, the jump checked within slide_width of the anchor's shaft speed, then the nearest
+        blocking jump within SLIDE_WIDE (NTracer.slide_probe). The admitted state, or -1."""
+        cdef SlideSpec spec
+        cdef double sol[5]
+        cdef double wide
+        cdef int p = -1, i
+        if not (self.eng.wide_slide & 8 and self.eng.sliding and self.eng.is_prop) or anchor < 0:
+            return -1
+        for wide in (0., SLIDE_WIDE):
+            # (a sliding anchor: its jump checked again at the target, S9's transition, then the wide search)
+            self.eng.slide_candidate(anchor, &spec, self.eng.st[anchor].sol[0], self.eng.st[anchor].sol[1], 1., True, speed,
+                                     self.eng.st[anchor].slide.n > 0, wide)
+            if spec.n == 0:continue
+            for i in range(5):sol[i] = self.eng.st[anchor].sol[i]
+            self.eng.flush_counts()
+            before = self.ledger.snapshot()
+            self.eng.slide_override = spec;self.eng.use_override = True
+            try:
+                p = self.eng.correct(anchor, sol, 1., True, FIX_LOAD, 1., 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed, NULL,
+                                     NULL)
+            finally:
+                self.eng.use_override = False
+            if p >= 0:self.admit_transient(p)
+            self.eng.flush_counts()
+            self.ledger.charge(phase, before, 'admitted' if p >= 0 and self.eng.st[p].valid else 'unresolved',
+                               kind='fixed_load_sliding', speed_kmh=speed, load_g=1.)
+            if p >= 0 and self.eng.st[p].valid:
+                self.eng.stats['overrev_level_slides'] = self.eng.stats.get('overrev_level_slides', 0)+1
+                return p
+        return -1
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     cdef int one_g(self, double speed, phase='seed_discovery', int anchor=-1) except -2:
         return self.fixed(speed, 1., anchor, phase)
 
@@ -967,6 +1018,11 @@ cdef class NCurves:
             mid = lo+(hi-lo)*fa/(fa-fb) if fa != fb else .5*(lo+hi)
             if not (pmin(lo, hi) < mid < pmax(lo, hi)):mid = .5*(lo+hi)
             p = self.fixed(mid, 1., a, phase)
+            if not self.eng.st[p].valid:
+                # overrev follow-up: level flight on a blade-polar jump (the sliding state)
+                q = self.level_slide(mid, a, phase)
+                if q < 0:q = self.level_slide(mid, b, phase)
+                if q >= 0:p = q
             if not self.eng.st[p].valid or not self.eng.compatible(p, a):
                 return None
             self.eng.stats['s9_end_solves'] = self.eng.stats.get('s9_end_solves', 0)+1
@@ -1040,6 +1096,11 @@ cdef class NCurves:
                 guess = lo+(hi-lo)*f_in/(f_in-f_out)
                 if pmin(lo, hi)+.1*fabs(hi-lo) < guess and guess < pmax(lo, hi)-.1*fabs(hi-lo):mid = guess
             p = self.fixed(mid, 1., a_out, 'endpoint')
+            if not self.eng.st[p].valid:
+                # overrev follow-up: level flight on a blade-polar jump (the sliding state)
+                q = self.level_slide(mid, a_out, 'endpoint')
+                if q < 0 and self.eng.st[a_in].load == 1.:q = self.level_slide(mid, a_in, 'endpoint')
+                if q >= 0:p = q
             if not self.eng.st[p].valid:
                 return dict(kind='unresolved', speed_kmh=[lo, hi], reason='1 g sample not admitted',
                             reasons=self.eng.reason_list(p))
@@ -3129,7 +3190,8 @@ cdef class NCurves:
             if self.eng.st[hi].alpha-self.eng.st[lo].alpha > 1e-9:
                 tl = tl+(th-tl)*(am-self.eng.st[lo].alpha)/(self.eng.st[hi].alpha-self.eng.st[lo].alpha)
             out.append(dict(speed=v, lo=lo, hi=hi, gap=gap, cause=cause, alpha=am, turn=tl, load=sqrt(1.+(tl*(v/3.6)/(RAD_TO_DEG*G_TURN))**2),
-                            sep_before=self.eng.st[lo].ps, sep_after=self.eng.st[hi].ps))
+                            sep_before=self.eng.st[lo].ps, sep_after=self.eng.st[hi].ps,
+                            rpm_before=self.knot_rpm(lo), rpm_after=self.knot_rpm(hi)))
         return out
 
     @cython.boundscheck(True)
@@ -3426,7 +3488,11 @@ cdef class NCurves:
             res.append(dict(cause='supercharger' if 'supercharger' in causes else max(set(causes), key=causes.count), speed_kmh=[q['speed'] for q in o], turn_dps=[q['turn'] for q in o],
                             ends=[o[0].get('edge'), o[-1].get('edge')],
                             load_g=[q['load'] for q in o], sep_before_mps=[q['sep_before'] for q in o],
-                            sep_after_mps=[q['sep_after'] for q in o]))
+                            sep_after_mps=[q['sep_after'] for q in o],
+                            # over-rev: the engine RPM against RPMMaxAllowed either side (the line where the propeller
+                            # jumps across the limit is where over-rev starts: em_march_chart.overrev_lines)
+                            **(dict(rpm_ratio_before=[q.get('rpm_before') for q in o],
+                                    rpm_ratio_after=[q.get('rpm_after') for q in o]) if self.eng.overrev else {})))
         self.eng.stats['s16_jump_lines'] = self.eng.stats.get('s16_jump_lines', 0)+len(res)
         for k_, v_ in self.jump_work.items():self.eng.stats['s16_jump_'+k_] = self.eng.stats.get('s16_jump_'+k_, 0)+v_
         return res
@@ -3566,6 +3632,11 @@ cdef class NCurves:
         if isinstance(one, dict):return one.get('ps_mps')
         return self.eng.st[one].ps if isfinite(self.eng.st[one].ps) else None
 
+    cdef object knot_rpm(self, int sid):
+        """Over-rev: a state's highest engine RPM against its RPMMaxAllowed (MarchEngine.rpm_ratio), None without one."""
+        cdef double r = self.eng.rpm_ratio(sid)
+        return r if isfinite(r) else None
+
     @cython.boundscheck(True)
     @cython.wraparound(True)
     cdef dict report(self, dict comp):
@@ -3577,6 +3648,9 @@ cdef class NCurves:
                 else:out[k] = v
             return out
         knots = [self.compact(p) for p in comp['knots']]
+        if self.eng.overrev:
+            # over-rev: each knot's highest engine RPM against its RPMMaxAllowed (the contour's over-rev seconds)
+            for p, k in zip(comp['knots'], knots):k['engine_rpm_ratio'] = self.knot_rpm(p)
         if self.s7:
             for p, k in zip(comp['knots'], knots):
                 l, r = self.knot_slope(p)
@@ -3595,6 +3669,7 @@ cdef class NCurves:
                 for q in sorted(fold['knots'], key=lambda q: self.eng.st[q].load):
                     k = self.compact(q);d = self.fold_dvdw(q)
                     k['fold_dv_dw'] = d if isfinite(d) else None
+                    if self.eng.overrev:k['engine_rpm_ratio'] = self.knot_rpm(q)
                     fk.append(k)
                 out['fold'] = dict(knots=fk, unresolved=bool(fold.get('unresolved')))
         if comp.get('jump_ends'):out['jump_ends'] = comp['jump_ends']

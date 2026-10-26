@@ -201,7 +201,8 @@ def solve_point(key,entry,speed_kmh,load_g):
         if isinstance(value,dict):return {k:public(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
         if isinstance(value,(list,tuple)):return [public(v) for v in value]
         return value
-    return dict(public(point),solved_at_request=True)
+    from overrev import annotate
+    return annotate(dict(public(point),solved_at_request=True))
 
 
 def fingerprint():

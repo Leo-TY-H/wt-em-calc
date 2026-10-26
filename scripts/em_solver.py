@@ -951,9 +951,11 @@ class TrimSolver:
         if self.is_prop:
             propulsion=final['propulsion']
             if not propulsion['converged']:reasons.append('propulsion did not settle')
+            # Over-rev (Leo 2026-10-26, option C): no rejection under the march chart's rule (overrev.py)
+            from overrev import rule as overrev_rule
             if (self.config['trim_solver_mode']=='stationary'
                     and self.config.get('stationary_governor_mode','pitch_stops')=='pitch_stops'
-                    and propulsion['overspeed_engines']):
+                    and propulsion['overspeed_engines'] and not overrev_rule(self)):
                 reasons.append('engine RPM limit')
 
 

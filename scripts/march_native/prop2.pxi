@@ -150,6 +150,10 @@ cdef class PropModel:
     cdef double slide_hint[NP]
     cdef int slide_coord[NP]
     cdef public double slide_width
+    # overrev follow-up: the jump check (straddle) takes the nearest jump within slide_width that blocks the torque
+    # balance, not only the nearest jump (two jumps 1.3% apart: Bf 109 F-4 RB at 65% pitch, 478.5 km/h near 2.7 g, the
+    # nearer at 3,432 rpm does not block, the one at 3,477 rpm does)
+    cdef public bint blocking
     # the last sliding evaluation (for records): theta and the shaft speeds either side of the jump
     cdef double slide_theta[NP]
     cdef double slide_lo[NP]
@@ -178,6 +182,7 @@ cdef class PropModel:
         from prop_quasisteady import prepare_blades
         from polar_model import mach_curve
         from component_assembly import f32
+        from overrev import TORQUE as OVERREV_TORQUE
         engine = solver.engine
         p = engine.properties
         cfg = solver.config
@@ -214,6 +219,7 @@ cdef class PropModel:
             E.max_ata = ep.get('max_ata', 0);E.ram_recovery = ep.get('ram_recovery', 0);E.boost_ata_ratio = ep.get('boost_ata_ratio', 0)
             E.compressor_zero = ep.get('compressor_zero', 0);E.throttle_boost = ep.get('throttle_boost', 0)
             E.afterburner_boost = ep.get('afterburner_boost', 0);E.reservoir_capacity = ep.get('reservoir_capacity', 0)
+            E.overrev_torque = OVERREV_TORQUE and e['family'] in (0, 1)
             for i in range(3):E.amplitude[i] = ep.get('amplitude', (0., 0., 0.))[i]
             for i in range(4):E.consumption[i] = ep.get('consumption', (0., 0., 0., 0.))[i]
             if len(ep.get('stages', ())) > 8:raise PropUnsupported('compressor stages')
@@ -355,7 +361,7 @@ cdef class PropModel:
             self.path_i[k] = path[1];self.path_j[k] = path[2] if len(path) > 2 else 0
             self.scales[k] = scales[k];self.lower[k] = lo[k];self.upper[k] = hi[k];self.initial[k] = ini[k]
         self.samples = 0
-        self.nslide = 0;self.slide_width = .02
+        self.nslide = 0;self.slide_width = .02;self.blocking = False
         for k in range(NP):
             self.slide[k] = False;self.slide_coord[k] = -1
 
@@ -795,11 +801,13 @@ cdef class PropModel:
                 sp.theta[s] = self.slide_theta[s];sp.lo[s] = self.slide_lo[s];sp.hi[s] = self.slide_hi[s]
 
     cdef int jump_near(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest,
-                       SlideSpec* out, bint straddle=True) except -1:
+                       SlideSpec* out, bint straddle=True, double wide=0.) except -1:
         """S8 (the blade-polar jump check): the shafts of a regular state (on a pitch stop or with a fixed pitch) whose
         propellers' blade polar jumps within slide_width of the shaft speed at this flight condition and induced flow
         (and, with ``straddle``, blocks its torque balance there); ``out`` is the sliding spec that starts on the
-        state's side of the jump (theta 0 below it, 1 above)."""
+        state's side of the jump (theta 0 below it, 1 above). With ``wide`` (a fraction of the shaft speed): the nearest
+        jump within that range that blocks the torque balance (locate_blocking), for a correction from a neighbour whose
+        shaft speed lies farther from the jump than slide_width."""
         cdef double q[MAXPATH]
         cdef double assigned[NP]
         cdef double lo, hi, c, omega, frac
@@ -834,8 +842,15 @@ cdef class PropModel:
                     if self.path_kind[k] == 1 and self.path_i[k] == s:q[k] = frac
             else:
                 frac = 0.;omega = c*300.
-            if self.locate(s, prep, q, frac, omega, &lo, &hi):continue
-            if straddle and not self.straddles(prep, coords, request_indices, nrequest, s, j, c-omega/300., lo, hi):continue
+            if wide > 0.:
+                if self.locate_blocking(s, prep, q, frac, omega, wide, coords, request_indices, nrequest, j, c-omega/300.,
+                                        &lo, &hi):continue
+            elif straddle and self.blocking:
+                if self.locate_blocking(s, prep, q, frac, omega, self.slide_width, coords, request_indices, nrequest, j,
+                                        c-omega/300., &lo, &hi):continue
+            else:
+                if self.locate(s, prep, q, frac, omega, &lo, &hi):continue
+                if straddle and not self.straddles(prep, coords, request_indices, nrequest, s, j, c-omega/300., lo, hi):continue
             out.flag[s] = True;out.frac[s] = frac;out.hint[s] = lo
             out.c0[s] = c-(0. if omega <= lo else 1.);out.cw[s] = c-omega/300.
             if self.s9:
@@ -1041,6 +1056,39 @@ cdef class PropModel:
             else:b = m
         lo_out[0] = a;hi_out[0] = b
         return 0
+
+    cdef int locate_blocking(self, int s, const PropPrep* prep, const double* q, double frac, double hint, double wide,
+                             const double* coords, const int* request_indices, int nrequest, int j, double cw,
+                             double* lo_out, double* hi_out) except -1:
+        """The blade-polar jump of shaft ``s`` nearest ``hint`` within ``wide`` x hint of it that blocks its torque balance
+        (straddles): the changes of signature() in SLIDE_WIDE_STEPS steps each side, nearest first, each bracketed to 1e-11
+        relative as locate does; 1 where none blocks."""
+        cdef double step = hint*wide/SLIDE_WIDE_STEPS, a, b, m, prev
+        cdef unsigned long long sp, sm, sa
+        cdef int k, side, it
+        cdef double last[2]
+        cdef unsigned long long sig[2]
+        if not (hint > 0.):return 1
+        sig[0] = sig[1] = self.signature(s, prep, q, frac, hint);last[0] = last[1] = hint
+        for k in range(1, SLIDE_WIDE_STEPS+1):
+            for side in range(2):
+                m = hint+(k*step if side == 0 else -k*step)
+                sm = self.signature(s, prep, q, frac, m)
+                if sm != sig[side]:
+                    a = last[side] if side == 0 else m
+                    b = m if side == 0 else last[side]
+                    sa = self.signature(s, prep, q, frac, a)
+                    for it in range(80):
+                        if b-a <= 1e-11*fabs(hint):break
+                        prev = .5*(a+b)
+                        if self.signature(s, prep, q, frac, prev) == sa:a = prev
+                        else:b = prev
+                    if self.straddles(prep, coords, request_indices, nrequest, s, j, cw, a, b):
+                        lo_out[0] = a;hi_out[0] = b
+                        return 0
+                    sig[side] = sm
+                last[side] = m
+        return 1
 
     cdef int propulsion_slide(self, const PropPrep* prep, const double* coords, PropSample* out, double* q,
                               double* assigned, bint* has_assigned) except -1:
