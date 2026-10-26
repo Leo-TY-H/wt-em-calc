@@ -42,6 +42,17 @@ in Git and survives game-data refreshes. Exclusions also apply to the displayed
 variants and armament choices of aircraft sharing a flight model. Source assets
 remain available because retained aircraft can share them.
 
+Propeller aircraft take their fuel tanks (capacities, priorities and fuel
+systems) from the game's collision model, whose tank parts the game fills from
+the flight model. Most use prebuilt mass assets. A variant without one (such as
+the A6M5 Hei, Ko and Otsu) uses `scripts/fuel_layout.py`, which reproduces the
+game's tank loader from the flight model and the tank parts pinned in
+`references/collision-fuel-tanks.json`. That covers flight models without
+AdvancedMass; AdvancedMass also needs each collision part's mesh mass, so those
+aircraft still need a prebuilt asset. `python scripts/build_fuel_layout.py --game
+"<War Thunder folder>"` rebuilds the table from an installed game after checking
+the rule against every prebuilt asset.
+
 ### Solver and model settings
 
 Browser calculations use the stationary solver, solver-default Mach arithmetic,

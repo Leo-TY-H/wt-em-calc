@@ -47,6 +47,7 @@
 !/requirements.txt
 !/references/
 !/references/aircraft-exclusions.json
+!/references/collision-fuel-tanks.json
 !/scripts/advanced_mass.py
 !/scripts/aero_helpers.py
 !/scripts/air_state.py
@@ -71,6 +72,7 @@
 !/scripts/body_dynamics.py
 !/scripts/bootstrap_runtime.py
 !/scripts/build_em_backend.py
+!/scripts/build_fuel_layout.py
 !/scripts/build_missile_backend.py
 !/scripts/build_missile_native.py
 !/scripts/build_missile_engine.py
@@ -173,6 +175,7 @@
 !/scripts/engine_supply.py
 !/scripts/flap_model.py
 !/scripts/fm_loader.py
+!/scripts/fuel_layout.py
 !/scripts/fuel_loading.py
 !/scripts/game_input_sources.py
 !/scripts/instructor_aoa.py

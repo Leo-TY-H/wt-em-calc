@@ -99,16 +99,18 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "ffe87fb81fa8d50a817b8550cd3266feb63609cf802601d03609feb52755891a",
+ "python_sha256": "07626755e5877dea25031c17db2ee569189d95da07249a3f7a35fb882ace2051",
  "verification": {
-  "date": "2026-10-24",
+  "date": "2026-10-25",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
    "f_16a_block_10:sb",
    "a6m2_zero:sb",
    "ki_61_1a_otsu:rb",
-   "f_14a_early:rb"
+   "f_14a_early:rb",
+   "a6m5hei:rb",
+   "a6m5otsu:sb"
   ],
   "checks": {
    "bi:sb": {
@@ -1229,9 +1231,368 @@
      "worst": {},
      "examples": []
     }
+   },
+   "a6m5hei:rb": {
+    "instructor": {
+     "checked": 1115,
+     "mismatched": 815,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 1.1546319456101628e-14
+     },
+     "examples": [
+      {
+       "speed": 215.83234350585937,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501450066507625",
+         "-1.350145006650761"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858583918272881",
+         "-0.03858583918272867"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 13.88845735268559,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501856045384264",
+         "-1.350185604538427"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858306717509192",
+         "-0.038583067175092196"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761623668801372",
+         "-0.12761623668801353"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 13.88845735268559,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501856045384264",
+         "-1.350185604538427"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858306717509192",
+         "-0.038583067175092196"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761623668801372",
+         "-0.12761623668801353"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501450066507625",
+         "-1.350145006650761"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858583918272881",
+         "-0.03858583918272867"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 11.499601940439035,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501743110611204",
+         "-1.3501743110611195"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858384686900265",
+         "-0.038583846869002014"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761387311823225",
+         "-0.1276138731182324"
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   "a6m5otsu:sb": {
+    "operating_point": {
+     "checked": 407,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    },
+    "event": {
+     "checked": 21,
+     "mismatched": 16,
+     "decision": 0,
+     "worst": {
+      "/solution[]": 7.105427357601002e-15,
+      "/stationary_coordinates[]": 7.105427357601002e-15,
+      "/stationary_candidates[]/solution[]": 7.105427357601002e-15,
+      "/stationary_candidates[]/stationary_coordinates[]": 7.105427357601002e-15,
+      "/chart_candidate/solution[]": 7.105427357601002e-15,
+      "/chart_candidate/stationary_coordinates[]": 7.105427357601002e-15,
+      "/ps_continuous_mps": 1.9895196601282805e-13,
+      "/force_error_g": 4.847906676249368e-15,
+      "/angular_error_rad_s": 3.3306690738754696e-16,
+      "/force_n[]": 7.275957614183426e-12,
+      "/moment_nm[]": 3.637978807091713e-12,
+      "/engine_force_n[]": 9.094947017729282e-12,
+      "/_propulsion_seed/transmissions[]/outputs[]": 9.094947017729282e-12,
+      "/_propulsion_seed/propellers[]/pitch": 1.1102230246251565e-16,
+      "/_propulsion_seed/propellers[]/governor_pitch": 1.1102230246251565e-16,
+      "/_propulsion_seed/propellers[]/flow[]": 7.105427357601002e-15,
+      "/_propulsion_seed/propellers[]/equilibrium_flow[]": 1.4210854715202004e-14,
+      "/_propulsion_seed/propellers[]/outputs[]": 9.094947017729282e-12,
+      "/_propulsion_seed/aggregate_force[]": 9.094947017729282e-12,
+      "/_propulsion_seed/aggregate_moment[]": 3.637978807091713e-12,
+      "/_propulsion_seed/engine_wash[]": 7.105427357601002e-15,
+      "/_propulsion_seed/per_engine_force[][]": 9.094947017729282e-12,
+      "/propulsion/stationarity/residual": 1.41004801811859e-15,
+      "/propulsion/stationarity/shaft_torque_residual_nm[]": 3.637978807091713e-12,
+      "/propulsion/stationarity/induced_flow_residual_mps[][]": 1.4210854715202004e-14,
+      "/propulsion/phase_check/force_error_g": 4.847906676249368e-15,
+      "/propulsion/phase_check/angular_error_rad_s": 3.3306690738754696e-16,
+      "/propulsion/wash_mps[]": 7.105427357601002e-15,
+      "/stationary_residual[]": 4.847906676249368e-15,
+      "/propeller_admission[]/rotors[]/torque": 6.366462912410498e-12,
+      "/propeller_admission[]/rotors[]/power": 1.0477378964424133e-09,
+      "/propeller_admission[]/rotors[]/sections[]/alpha_deg": 6.661338147750939e-15,
+      "/propeller_admission[]/rotors[]/sections[]/stall_margins_deg/lower_deg": 7.105427357601002e-15,
+      "/propeller_admission[]/rotors[]/sections[]/stall_margins_deg/upper_deg": 7.105427357601002e-15,
+      "/stationary_candidates[]/force_error_g": 4.847906676249368e-15,
+      "/stationary_candidates[]/angular_error_rad_s": 3.3306690738754696e-16,
+      "/chart_candidate/force_error_g": 4.847906676249368e-15,
+      "/chart_candidate/angular_error_rad_s": 3.3306690738754696e-16,
+      "/load_g": 3.552713678800501e-15,
+      "/stationary_candidates[]/load_g": 3.552713678800501e-15,
+      "/chart_candidate/load_g": 3.552713678800501e-15,
+      "/turn_dps": 1.4210854715202004e-14,
+      "/stationary_candidates[]/turn_dps": 1.4210854715202004e-14,
+      "/chart_candidate/turn_dps": 1.4210854715202004e-14,
+      "/alpha_deg": 7.105427357601002e-15,
+      "/history_error": 3.552713678800501e-15,
+      "/propulsion/phase_check/history_error": 3.552713678800501e-15,
+      "/stationary_candidates[]/history_error": 3.552713678800501e-15,
+      "/chart_candidate/history_error": 3.552713678800501e-15
+     },
+     "examples": [
+      {
+       "speed": 526.9964366210937,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.016259928721167705",
+         "0.016259928721167712"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.016259928721167705",
+         "0.016259928721167712"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.016259928721167705",
+         "0.016259928721167712"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[2]",
+         "0.016259928721167705",
+         "0.016259928721167712"
+        ],
+        [
+         "/chart_candidate/solution[2]",
+         "0.016259928721167705",
+         "0.016259928721167712"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[2]",
+         "0.016259928721167705",
+         "0.016259928721167712"
+        ]
+       ]
+      },
+      {
+       "speed": 514.4964366210937,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.021516907959322006",
+         "0.021516907959321985"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.021516907959322006",
+         "0.021516907959321985"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.021516907959322006",
+         "0.021516907959321985"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[2]",
+         "0.021516907959322006",
+         "0.021516907959321985"
+        ],
+        [
+         "/chart_candidate/solution[2]",
+         "0.021516907959322006",
+         "0.021516907959321985"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[2]",
+         "0.021516907959322006",
+         "0.021516907959321985"
+        ]
+       ]
+      },
+      {
+       "speed": 501.9964366210937,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.026839285668018645",
+         "0.02683928566801866"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.026839285668018645",
+         "0.02683928566801866"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.026839285668018645",
+         "0.02683928566801866"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[2]",
+         "0.026839285668018645",
+         "0.02683928566801866"
+        ],
+        [
+         "/chart_candidate/solution[2]",
+         "0.026839285668018645",
+         "0.02683928566801866"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[2]",
+         "0.026839285668018645",
+         "0.02683928566801866"
+        ]
+       ]
+      },
+      {
+       "speed": 483.2464366210937,
+       "code": [
+        3,
+        1,
+        1
+       ],
+       "diffs": [
+        [
+         "/stationary_coordinates[7]",
+         "0.4692204782075438",
+         "0.46922047820754376"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[7]",
+         "0.4692204782075438",
+         "0.46922047820754376"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[7]",
+         "0.4692204782075438",
+         "0.46922047820754376"
+        ]
+       ]
+      },
+      {
+       "speed": 455.1214366210937,
+       "code": [
+        1,
+        0,
+        0
+       ],
+       "diffs": [
+        [
+         "/solution[2]",
+         "0.05260467895833179",
+         "0.0526046789583318"
+        ],
+        [
+         "/stationary_coordinates[2]",
+         "0.05260467895833179",
+         "0.0526046789583318"
+        ],
+        [
+         "/stationary_candidates[0]/solution[2]",
+         "0.05260467895833179",
+         "0.0526046789583318"
+        ],
+        [
+         "/stationary_candidates[0]/stationary_coordinates[2]",
+         "0.05260467895833179",
+         "0.0526046789583318"
+        ],
+        [
+         "/chart_candidate/solution[2]",
+         "0.05260467895833179",
+         "0.0526046789583318"
+        ],
+        [
+         "/chart_candidate/stationary_coordinates[2]",
+         "0.05260467895833179",
+         "0.0526046789583318"
+        ]
+       ]
+      }
+     ]
+    }
    }
   },
-  "finish_rows": 4716,
+  "finish_rows": 5936,
   "method": "scripts/verify_march_native.py"
  }
 }
