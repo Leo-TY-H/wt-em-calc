@@ -40,7 +40,7 @@ main{padding:18px 14px 22px}
 
 /* Header: one tab per tool family, its calculators in a dropdown; the family holding the open calculator underlined. */
 body>header.topbar{height:56px;min-height:56px;padding:0 16px;gap:28px;flex-wrap:nowrap;justify-content:flex-start}
-.topbar .brand-icon{width:48px;height:30px}
+.topbar .brand-icon{width:auto;height:28px}
 .site-nav{display:flex;align-self:stretch;gap:2px;margin-right:auto}
 .nav-group{position:relative;display:flex}
 .nav-top{position:relative;display:flex;align-items:center;gap:8px;height:100%;padding:0 14px;border:0;background:none;color:var(--muted);font-size:14px}
