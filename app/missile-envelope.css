@@ -33,6 +33,7 @@ body #envelope-workspace .inspector{background:none;border:0;border-radius:0;pad
 .envelope-table-card td,.envelope-samples td{text-align:right;padding:6px 10px;border-top:1px solid var(--line);white-space:nowrap}
 .envelope-table-card th:first-child,.envelope-table-card td:first-child,.envelope-samples th:first-child,.envelope-samples td:first-child{text-align:left;padding-left:0}
 .envelope-hit{color:#91d477}.envelope-miss{color:#f08070}
+.envelope-samples tr.envelope-shot td{background:rgba(240,240,250,.07)}
 /* No-escape zone: settings under their toggle, and a second line in each table cell. */
 .envelope-sidebar .envelope-nez-toggle{margin:8px 0 2px;font-size:12px;cursor:pointer}
 #envelope-nez-settings .hint{margin:2px 0 0}
