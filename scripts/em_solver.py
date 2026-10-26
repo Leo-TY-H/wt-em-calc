@@ -1054,10 +1054,6 @@ class TrimSolver:
                 mixture=[e.get('mixture') for e in p['state']['engines']],
                 shaft_power_kw=[e.get('torque',0.)*e['omega']/1000. for e in p['state']['engines']],
                 propeller_pitch_deg=[e['pitch']*180/math.pi for e in p['state']['propellers']],
-                # Position on the game's pitch-control scale: 100% = finest (pitch_min), 0% = coarsest.
-                propeller_pitch_percent=[(q['properties']['pitch_max']-e['pitch'])/(q['properties']['pitch_max']-q['properties']['pitch_min'])*100.
-                                         if q['properties']['pitch_max']>q['properties']['pitch_min'] else None
-                                         for e,q in zip(p['state']['propellers'],self.engine.properties['propellers'])],
                 wash_mps=p['wash'],angular_momentum=p['angular_momentum'])
         if self.is_prop and point['propulsion']['engine_control_mode']=='automatic':
             point['propulsion']['optimization']=dict(method='Dynamic propulsion with automatic controls',evaluated=0,
