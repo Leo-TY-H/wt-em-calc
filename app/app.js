@@ -484,7 +484,7 @@ function contourLabels(displayed,data,view){
   }
   const traces=displayed.map(a=>{const r=result.get(a.id);return {type:'scatter',mode:'markers',x:r.x,y:r.y,customdata:r.levels,marker:{size:14,color:'rgba(0,0,0,0)'},
     meta:{id:a.id,kind:'contour-label'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-    hovertemplate:`${a.name}<br>SEP %{customdata} m/s<extra></extra>`};});
+    hovertemplate:`SEP %{customdata} m/s<extra></extra>`};});
   const annotations=displayed.flatMap(a=>{const r=result.get(a.id);return r.x.map((x,i)=>({name:a.id,sepLabel:true,x,y:r.y[i],xref:'x',yref:'y',text:r.labels[i],
     textangle:r.angles[i],showarrow:false,xanchor:'center',yanchor:'middle',bgcolor:'rgba(0,0,0,.88)',borderpad:1,
     font:{color:a.color,size:11,family:'WTSymbols, Segoe UI, sans-serif'},visible:!state.hiddenVehicles.has(a.id)}));});
@@ -529,7 +529,7 @@ function speedBoundaryAnnotations(a,data){
     xanchor:p.speed_kmh>threshold?'right':'left',yanchor:'middle',xshift:p.speed_kmh>threshold?-7:7,
     font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(0,0,0,.85)',
     visible:!state.hiddenVehicles.has(a.id),
-    hovertext:`${escapeText(a.name)}<br>${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
+    hoverlabel:{bordercolor:a.color},hovertext:`${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
 }
 function nearestSolved(a,speed,rate,showRejected){
   // Nearest on screen: distances in pixels of the current view.
@@ -592,7 +592,7 @@ function renderChart(){
       traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
         text:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
-        hovertemplate:`${a.name}<br>SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}%{customdata}<extra></extra>`,showlegend:false});
+        hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}%{customdata}<extra></extra>`,showlegend:false});
     }
     // SEP jump lines: where SEP jumps along the turn (contours end at them); the hover names the cause
     for(const j of a.sep_jumps||[]){
@@ -603,7 +603,7 @@ function renderChart(){
       traces.push({type:'scatter',mode:'lines',x:j.speed_kmh,y:j.turn_dps,name:`${a.name} · SEP jump`,meta:{id:a.id,kind:'sep jump'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,.95),width:2,dash:'12px,4px,2px,4px'},
         customdata:j.speed_kmh.map((v,i)=>[fmt(j.sep_before_mps[i],1),fmt(j.sep_after_mps[i],1)]),
-        hovertemplate:`${a.name}<br>SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
+        hovertemplate:`SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
     }
     for(const line of a.overrev_lines||[]){
       // Where over-rev starts (RPM = RPMMaxAllowed); the higher-speed side over-revs. Amber dots, apart from contours and jumps.
@@ -611,12 +611,12 @@ function renderChart(){
       const quits=stop.has(0)?`<br>Engine quits after about ${fmt(stop.get(0),0)} s just over${stop.has(5)?`, ${fmt(stop.get(5),0)} s at 5% over`:''}`:'';
       traces.push({type:'scatter',mode:'lines',x:line.speed_kmh,y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:'rgba(246,190,109,.95)',width:2.6,dash:'dot'},showlegend:false,
-        hovertemplate:`${a.name}<br>Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
+        hovertemplate:`Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
       name:cleanName(a.name),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
       customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)]),
-      hovertemplate:`${a.name}<br>%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
+      hovertemplate:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
       traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,marker:{size:8,symbol:'x',color:'#f6be6d'},
@@ -635,22 +635,24 @@ function renderChart(){
         name:a.name+' SEP 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
         text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate)+(curve?.overrev?.[i]||'');}),
-        hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} SEP 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
+        hovertemplate:`${data.preview?'Preview · ':''}SEP 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
     }
     const valid=a.points.map((p,i)=>({p,i})).filter(r=>chartUsable(r.p));
     if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>r.p.speed_kmh),y:valid.map(r=>r.p.turn_dps),
       marker:{size:showSamples?5:9,color:showSamples?rgba(a.color,.5):'rgba(0,0,0,0)'},name:a.name,meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${a.name} · ${fmt(r.p.load_g,2)} g<br>SEP ${fmt(r.p.ps_mps,1)} m/s`),
+      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${fmt(r.p.load_g,2)} g<br>SEP ${fmt(r.p.ps_mps,1)} m/s`),
       hovertemplate:'%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>'});
     if(showRejected){
       const rejected=a.points.map((p,i)=>({p,i})).filter(r=>!chartUsable(r.p));
       traces.push({type:'scatter',mode:'markers',x:rejected.map(r=>r.p.speed_kmh),y:rejected.map(r=>r.p.turn_dps),
         marker:{size:5,symbol:'x',color:rgba(a.color,.33)},name:a.name+((data.stationary_full_chart||data.stationary_baseline_chart)?' unresolved':' rejected'),meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         customdata:rejected.map(r=>[a.id,'grid',r.i]),text:rejected.map(r=>((data.stationary_full_chart||data.stationary_baseline_chart)?[r.p.chart_status,...r.p.reasons]:r.p.reasons).filter(Boolean).join(', ')),
-        hovertemplate:`${a.name} · ${(data.stationary_full_chart||data.stationary_baseline_chart)?'unresolved':'rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
+        hovertemplate:`${(data.stationary_full_chart||data.stationary_baseline_chart)?'Unresolved':'Rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
   }
   const sepLabels=contourLabels(displayed,data);traces.push(...sepLabels.traces);
+  // Tooltips carry no aircraft name (Leo, 2026-10-26); the border takes the aircraft's colour instead.
+  for(const trace of traces){const owner=displayed.find(a=>a.id===trace.legendgroup);if(owner)trace.hoverlabel={...trace.hoverlabel,bordercolor:owner.color};}
   const ymax=envelopeTop(displayed);
   const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
     annotations:[...displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),...sepLabels.annotations],
