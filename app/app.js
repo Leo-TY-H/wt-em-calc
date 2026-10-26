@@ -425,12 +425,14 @@ function envelopeTop(aircraft){
   const peak=Math.max(0,...aircraft.flatMap(a=>[...(a.boundary||[]),...(a.points||[]).filter(chartUsable)].map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
   return Math.max(10,Math.ceil(peak*1.05+1));
 }
-function contourLabelTraces(displayed,data){
+function contourLabels(displayed,data,view){
   // One label per aircraft and SEP level, placed together in screen space (Leo, 2026-10-26): a label never
-  // overlaps another, and avoids the envelopes and every other contour where its own line leaves room.
-  const chart=$('chart'),width=Math.max(300,(chart.clientWidth||1000)-80),height=Math.max(200,(chart.clientHeight||700)-54-Math.max(40,displayed.length*22));
-  const x0=data.settings.speed_min_kmh,x1=envelopeEnd(displayed,data),ymax=envelopeTop(displayed),cell=6;
-  const px=(x,y)=>[(x-x0)/(x1-x0)*width,(1-y/ymax)*height];
+  // overlaps another, avoids the envelopes and every other line where its own line leaves room, and is
+  // slanted along its contour. Text is an annotation (rotatable); an invisible marker keeps hover and click.
+  const chart=$('chart'),size=chart._fullLayout?._size;
+  const width=size?.w||Math.max(300,(chart.clientWidth||1000)-80),height=size?.h||Math.max(200,(chart.clientHeight||700)-54-Math.max(40,displayed.length*22));
+  const [x0,x1]=view?.x||[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],[y0,y1]=view?.y||[0,envelopeTop(displayed)],cell=6;
+  const px=(x,y)=>[(x-x0)/(x1-x0)*width,(y1-y)/(y1-y0)*height];
   const lines=new Map(),shown=displayed.filter(a=>!state.hiddenVehicles.has(a.id));
   const mark=(key,xs,ys)=>{
     for(let i=1;i<xs.length;i++){
@@ -451,7 +453,7 @@ function contourLabelTraces(displayed,data){
     for(let cx=Math.floor(box[0]/cell);cx<=Math.floor(box[2]/cell);cx++)for(let cy=Math.floor(box[1]/cell);cy<=Math.floor(box[3]/cell);cy++){
       const keys=lines.get(cx+','+cy);if(keys)for(const key of keys)if(key!==own){n++;break;}
     }return n;};
-  const result=new Map(displayed.map(a=>[a.id,{x:[],y:[],labels:[],levels:[]}]));
+  const result=new Map(displayed.map(a=>[a.id,{x:[],y:[],labels:[],levels:[],angles:[]}]));
   // Levels in turn across aircraft, so every aircraft gets its labels before crowding sets in.
   for(const level of state.contourLevels)for(const [index,a] of shown.entries()){
     const text=`SEP ${level>0?'+':''}${level}`,w=text.length*6.6+6,h=15,own=a.id+'|'+level;
@@ -463,23 +465,41 @@ function contourLabelTraces(displayed,data){
       for(let f=.08;f<=.92;f+=.02){
         const target=total*f,i=along.findIndex(v=>v>=target);if(i<1||!pts[i]||!pts[i-1])continue;
         const t=(target-along[i-1])/((along[i]-along[i-1])||1),cx=pts[i-1][0]+t*(pts[i][0]-pts[i-1][0]),cy=pts[i-1][1]+t*(pts[i][1]-pts[i-1][1]);
-        const box=[cx-w/2,cy-h/2,cx+w/2,cy+h/2];
+        // Direction over a label length, so small wiggles do not tilt the text; kept upright (-90..90°).
+        const ahead=pts[Math.min(pts.length-1,along.findIndex(v=>v>=target+w/2)>=0?along.findIndex(v=>v>=target+w/2):pts.length-1)],behind=pts[Math.max(0,along.findLastIndex(v=>v<=target-w/2))];
+        let angle=ahead&&behind?Math.atan2(ahead[1]-behind[1],ahead[0]-behind[0])*180/Math.PI:0;if(angle>90)angle-=180;if(angle<-90)angle+=180;
+        const c=Math.abs(Math.cos(angle*Math.PI/180)),s=Math.abs(Math.sin(angle*Math.PI/180)),bw=w*c+h*s,bh=w*s+h*c;
+        const box=[cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2];
         if(!inside(box[0],box[1])||!inside(box[2],box[3]))continue;
         if(placed.some(q=>box[0]<q[2]+4&&q[0]<box[2]+4&&box[1]<q[3]+3&&q[1]<box[3]+3))continue;
         const near=placed.reduce((m,q)=>Math.min(m,Math.hypot((q[0]+q[2])/2-cx,(q[1]+q[3])/2-cy)),Infinity);
         // Fewest crossed lines first, then away from other labels, then near this aircraft's usual spot.
         const score=crossings(box,own)*10+Math.max(0,60-near)/6+Math.abs(f-(index%2?.62:.42))*8;
-        if(!best||score<best.score)best={score,cx,cy};
+        if(!best||score<best.score)best={score,cx,cy,box,angle};
       }
     }
     if(!best)continue;
-    placed.push([best.cx-w/2,best.cy-h/2,best.cx+w/2,best.cy+h/2]);
-    const r=result.get(a.id);r.x.push(x0+best.cx/width*(x1-x0));r.y.push((1-best.cy/height)*ymax);r.labels.push(text);r.levels.push(level);
+    placed.push(best.box);
+    const r=result.get(a.id);r.x.push(x0+best.cx/width*(x1-x0));r.y.push(y1-best.cy/height*(y1-y0));r.labels.push(text);r.levels.push(level);r.angles.push(best.angle);
   }
-  return displayed.map(a=>{const r=result.get(a.id);return {type:'scatter',mode:'markers+text',x:r.x,y:r.y,text:r.labels,customdata:r.levels,textposition:'middle center',
-    textfont:{color:a.color,size:11,family:'WTSymbols, Segoe UI, sans-serif',shadow:'0 0 2px #000, 0 0 3px #000, 0 0 5px #000, 0 0 7px #000'},marker:{size:12,color:'rgba(0,0,0,0)'},
+  const traces=displayed.map(a=>{const r=result.get(a.id);return {type:'scatter',mode:'markers',x:r.x,y:r.y,customdata:r.levels,marker:{size:14,color:'rgba(0,0,0,0)'},
     meta:{id:a.id,kind:'contour-label'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
     hovertemplate:`${a.name}<br>SEP %{customdata} m/s<extra></extra>`};});
+  const annotations=displayed.flatMap(a=>{const r=result.get(a.id);return r.x.map((x,i)=>({name:a.id,sepLabel:true,x,y:r.y[i],xref:'x',yref:'y',text:r.labels[i],
+    textangle:r.angles[i],showarrow:false,xanchor:'center',yanchor:'middle',bgcolor:'rgba(0,0,0,.88)',borderpad:1,
+    font:{color:a.color,size:11,family:'WTSymbols, Segoe UI, sans-serif'},visible:!state.hiddenVehicles.has(a.id)}));});
+  return {traces,annotations};
+}
+function relabelContours(){
+  // Lay the SEP labels out again for the current view (zoom, pan, shown aircraft).
+  const chart=$('chart'),data=state.data;if(!data||!chart._fullLayout)return;
+  const indices=chart.data.flatMap((trace,i)=>trace.meta?.kind==='contour-label'?[i]:[]);
+  const shown=data.aircraft.filter(a=>indices.some(i=>chart.data[i].meta.id===a.id));
+  const labels=contourLabels(shown,data,{x:chart._fullLayout.xaxis.range,y:chart._fullLayout.yaxis.range});
+  const byId=new Map(labels.traces.map(t=>[t.meta.id,t])),fresh=indices.map(i=>byId.get(chart.data[i].meta.id));
+  state.relabeling=true;
+  Plotly.restyle(chart,{x:fresh.map(t=>t.x),y:fresh.map(t=>t.y),customdata:fresh.map(t=>t.customdata)},indices);
+  Plotly.relayout(chart,{annotations:[...(chart.layout.annotations||[]).filter(item=>!item.sepLabel),...labels.annotations]}).finally(()=>{state.relabeling=false;});
 }
 function projectedContourPoint(event,a,level){
   return projectedPoint(event,a.contours.filter(path=>path.level===level));
@@ -630,10 +650,10 @@ function renderChart(){
         hovertemplate:`${a.name} · ${(data.stationary_full_chart||data.stationary_baseline_chart)?'unresolved':'rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
   }
-  traces.push(...contourLabelTraces(displayed,data));
+  const sepLabels=contourLabels(displayed,data);traces.push(...sepLabels.traces);
   const ymax=envelopeTop(displayed);
   const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
-    annotations:displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),
+    annotations:[...displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),...sepLabels.annotations],
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
@@ -661,12 +681,12 @@ function renderChart(){
     });
     if(Object.keys(visibility).length)Plotly.relayout('chart',visibility);
     // Labels are placed against the shown aircraft only, so lay them out again.
-    const labelIndices=event.data.flatMap((trace,i)=>trace.meta?.kind==='contour-label'?[i]:[]);
-    const shownAircraft=state.data.aircraft.filter(a=>labelIndices.some(i=>event.data[i].meta.id===a.id));
-    const placedLabels=new Map(contourLabelTraces(shownAircraft,state.data).map(t=>[t.meta.id,t]));
-    const fresh=labelIndices.map(i=>placedLabels.get(event.data[i].meta.id));
-    Plotly.restyle('chart',{x:fresh.map(t=>t.x),y:fresh.map(t=>t.y),text:fresh.map(t=>t.text),customdata:fresh.map(t=>t.customdata)},labelIndices);
+    relabelContours();
     return false;
+  });
+  $('chart').removeAllListeners?.('plotly_relayout');
+  $('chart').on('plotly_relayout',event=>{
+    if(!state.relabeling&&Object.keys(event).some(key=>key.startsWith('xaxis')||key.startsWith('yaxis')||key==='autosize'))relabelContours();
   });
   $('chart').removeAllListeners?.('plotly_click');
   $('chart').on('plotly_click', event=>{
