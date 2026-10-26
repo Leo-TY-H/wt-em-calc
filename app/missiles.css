@@ -7,10 +7,7 @@
 .missile-sidebar h2{font-size:14px;margin:22px 0 10px;font-weight:600}
 .missile-sidebar .field{margin:12px 0}.missile-vector{margin:12px 0}
 .missile-vector>span{display:block;font-size:11px;color:#bccbda;margin-bottom:5px}
-.missile-vector .three-inputs{font-size:10px;color:var(--muted)}
 .missile-vector input{font-variant-numeric:tabular-nums}
-.missile-altitude-input{font-size:10px;color:var(--muted)}
-.missile-altitude-input input{display:block;width:100%;margin-top:5px}
 .missile-view-controls{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
 .missile-view-controls label{font-size:10px;color:var(--muted)}
 .missile-view-controls select{display:block;margin-top:4px;width:auto;max-width:100%;font-size:11px}
