@@ -446,7 +446,7 @@ function contourLabels(displayed,data,view){
     const edge=(a.boundary||[]).filter(q=>Number.isFinite(q.speed_kmh)&&Number.isFinite(q.turn_dps));
     mark(a.id+'|envelope',edge.map(q=>q.speed_kmh),edge.map(q=>q.turn_dps));
     for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,path.x,path.y);
-    for(const line of [...(a.sep_jumps||[]),...(a.overrev_lines||[])])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
+    for(const line of a.overrev_lines||[])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
   }
   const placed=[],inside=(x,y)=>x>=4&&y>=4&&x<=width-4&&y<=height-4;
   const crossings=(box,own)=>{let n=0;
@@ -594,17 +594,7 @@ function renderChart(){
         text:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
         hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}%{customdata}<extra></extra>`,showlegend:false});
     }
-    // SEP jump lines: where SEP jumps along the turn (contours end at them); the hover names the cause
-    for(const j of a.sep_jumps||[]){
-      const why={supercharger:'Supercharger has no valid stage',propeller:'Propeller changes state'}[j.cause]||'SEP is discontinuous here';
-      // A faint band under a dash-dot line, so jumps never read as contours (dashed) or the envelope (solid).
-      traces.push({type:'scatter',mode:'lines',x:j.speed_kmh,y:j.turn_dps,meta:{id:a.id,kind:'sep jump band'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-        line:{color:rgba(a.color,.22),width:11},hoverinfo:'skip',showlegend:false});
-      traces.push({type:'scatter',mode:'lines',x:j.speed_kmh,y:j.turn_dps,name:`${a.name} · SEP jump`,meta:{id:a.id,kind:'sep jump'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-        line:{color:rgba(a.color,.95),width:2,dash:'12px,4px,2px,4px'},
-        customdata:j.speed_kmh.map((v,i)=>[fmt(j.sep_before_mps[i],1),fmt(j.sep_after_mps[i],1)]),
-        hovertemplate:`SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
-    }
+    // SEP jump lines are not drawn (Leo, 2026-10-26); contours still end where SEP jumps (a.sep_jumps stays in the data).
     for(const line of a.overrev_lines||[]){
       // Where over-rev starts (RPM = RPMMaxAllowed); the higher-speed side over-revs. Amber dots, apart from contours and jumps.
       const stop=new Map((line.stop_after_s||[]).map(([over,seconds])=>[over,seconds]));
