@@ -7,11 +7,13 @@ the simulator tab, so fuze arming and radius shape the envelope together with
 the motor, mass, drag, lift, control limits, guidance and seeker limits.
 
 The envelope is drawn around the target, which flies straight and level along
-+X. Layers are altitudes shared by both aircraft: the launcher is always at the
-target's altitude, flying level and pointed at it, so the missile leaves heading
-straight at the target and lofts only by its own guidance (Leo, 2026-10-26).
-Azimuth is the launcher's bearing from the target's nose (0 = head-on,
-180 = tail chase).
++X. Air-to-air: layers are altitudes shared by both aircraft; the launcher is
+always at the target's altitude, flying level and pointed at it, so the missile
+leaves heading straight at the target and lofts only by its own guidance.
+Surface-to-air: the launcher stands still on the ground (GROUND_LAUNCH_M) with
+the missile pointed at the target, and layers are target altitudes
+(Leo, 2026-10-26). Azimuth is the launcher's bearing from the target's nose
+(0 = head-on, 180 = tail chase).
 
 Each layer is sampled along horizontal rays from the target. Along a ray the
 launch distance is searched for its hit/miss transitions; the nearest and
@@ -37,6 +39,8 @@ import time
 STEP_GRAVITY = 9.81
 SLANT_MINIMUM_M = 150.
 HORIZONTAL_MINIMUM_M = 50.
+PLATFORMS = ('air', 'ground')
+GROUND_LAUNCH_M = 2.                # surface-to-air launch height above flat ground
 RANGE_CAP_M = 195000.
 COARSE_RATIO = 1.6
 INTERIOR = 4.
@@ -84,8 +88,11 @@ def validate(request):
     if request.get('frame', 'target') != 'target': raise ValueError('Envelopes are drawn around the target; reload the page')
     launcher = request.get('launcher') or {}; target = request.get('target') or {}
     if not isinstance(launcher, dict) or not isinstance(target, dict): raise ValueError('Launcher and target settings are required')
+    platform = launcher.get('platform', 'air')
+    if platform not in PLATFORMS: raise ValueError("Launcher platform must be 'air' or 'ground'")
     clean = dict(missile=missile, frame='target',
-                 launcher=dict(speed_mps=number(launcher.get('speed_mps'), 'Launcher speed', 0., 2000.)),
+                 launcher=dict(platform=platform,
+                               speed_mps=0. if platform == 'ground' else number(launcher.get('speed_mps'), 'Launcher speed', 0., 2000.)),
                  target=dict(speed_mps=number(target.get('speed_mps'), 'Target speed', 0., 2000.)))
     layers = request.get('layers_m')
     if not isinstance(layers, list) or not 1 <= len(layers) <= MAX_LAYERS:
@@ -144,17 +151,24 @@ def states(config, layer, azimuth, distance):
     a shared placement lets the simulator tab replay any envelope sample exactly.
     """
     a = math.radians(azimuth)
-    # Both aircraft at the layer altitude; the launcher flies level, pointed at the target.
     target = dict(position=[-distance * math.cos(a), layer, -distance * math.sin(a)],
                   velocity=_direction(0., 0., config['target']['speed_mps']), angles=[0., 0., 0.])
     heading = _wrap(azimuth + 180.)
-    launcher = dict(position=[0., layer, 0.], velocity=_direction(heading, 0., config['launcher']['speed_mps']),
-                    angles=[heading, 0., 0.])
+    if config['launcher']['platform'] == 'ground':
+        # Stationary on the ground, the missile pointed at the target.
+        pitch = math.degrees(math.atan2(layer - GROUND_LAUNCH_M, distance))
+        launcher = dict(position=[0., GROUND_LAUNCH_M, 0.], velocity=[0., 0., 0.], angles=[heading, pitch, 0.])
+    else:
+        # Both aircraft at the layer altitude; the launcher flies level, pointed at the target.
+        launcher = dict(position=[0., layer, 0.], velocity=_direction(heading, 0., config['launcher']['speed_mps']),
+                        angles=[heading, 0., 0.])
     return launcher, target
 
 
 def vertical_offset(config, layer):
-    """Altitude of the launcher above the target: always zero (co-altitude launches)."""
+    """Altitude of the launcher above the target: zero air-to-air, below it surface-to-air."""
+    if config['launcher']['platform'] == 'ground':
+        return GROUND_LAUNCH_M - layer
     return 0.
 
 

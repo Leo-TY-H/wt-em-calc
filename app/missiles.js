@@ -173,10 +173,11 @@
   });
   const radians = angle => angle*Math.PI/180;
   const degrees = angle => angle*180/Math.PI;
-  function syncMotion(role,velocity=initial[role].velocity) {
+  // A stationary aircraft (a surface-to-air launcher) keeps the heading and climb of its angles.
+  function syncMotion(role,velocity=initial[role].velocity,angles=null) {
     const [x,y,z]=velocity.map(v=>v*3.6);
     const speed=Math.hypot(x,y,z);
-    for(const [key,value] of Object.entries({speed,course:speed?degrees(Math.atan2(z,x)):0,climb:speed?degrees(Math.atan2(y,Math.hypot(x,z))):0})) {
+    for(const [key,value] of Object.entries({speed,course:speed?degrees(Math.atan2(z,x)):angles?.[0]??0,climb:speed?degrees(Math.atan2(y,Math.hypot(x,z))):angles?.[1]??0})) {
       el(`missile-${role}-${key}`).value=Number(value.toFixed(10));
     }
   }
@@ -275,7 +276,7 @@
     // Full precision: near an envelope boundary a rounded position can change the outcome.
     el('missile-launch-position-1').value=String(origin[1]);
     for(let i=0;i<3;i++)el(`missile-target-position-${i}`).value=String(i===1?scenario.target.position[1]:scenario.target.position[i]-origin[i]);
-    syncMotion('launch',scenario.launcher.velocity);syncMotion('target',scenario.target.velocity);
+    syncMotion('launch',scenario.launcher.velocity,scenario.launcher.angles);syncMotion('target',scenario.target.velocity,scenario.target.angles);
     if(scenario.duration)el('missile-duration').value=scenario.duration;
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
     el('missile-preset-note').textContent='Loaded from the launch envelope.';
