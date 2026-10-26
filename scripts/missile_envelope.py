@@ -37,10 +37,18 @@ the detail step. Boundary changes are judged against the envelope's own size, so
 outline is resolved where it bends or ends while directions without hits, and
 scattered hits close to the target, cost little.
 
+No-escape zone (Leo, 2026-10-26): with config['escape'] a second, independent
+search runs against a target that breaks away at launch (missile_worker.
+escape_motion: after the reaction delay a level, constant-speed turn at the escape
+load factor until the launch point lies dead astern, then straight on), in either
+frame. Its rays carry motion='escape'. The no-escape zone is where both searches
+hit: the target cannot escape by holding its course or by breaking away.
+
 Only presentation work is removed from the flight loop. A miss may be declared
-early once every motor has burned out and an energy bound proves that the missile
-cannot reach the target's future path before its lifetime or distance limit;
-`early_exit=False` runs every flight to its modeled terminal condition.
+early once every motor has burned out, the target flies straight, and an energy
+bound proves that the missile cannot reach the target's future path before its
+lifetime or distance limit; `early_exit=False` runs every flight to its modeled
+terminal condition.
 """
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import json
@@ -61,6 +69,7 @@ INTERIOR = 4.
 SHAPE = 5.
 MATCH = 2.5
 MAX_LAYERS = 25
+ESCAPE_DEFAULT_G = 9.               # default escape load factor (Leo, 2026-10-26)
 QUALITY = dict(quick=dict(azimuth_step_deg=30., detail_step_deg=3.75, edge_step_deg=1., tolerance=.03, tolerance_m=50.),
                standard=dict(azimuth_step_deg=15., detail_step_deg=1.875, edge_step_deg=.5, tolerance=.015, tolerance_m=30.),
                fine=dict(azimuth_step_deg=10., detail_step_deg=1.25, edge_step_deg=.25, tolerance=.0075, tolerance_m=15.))
@@ -135,6 +144,11 @@ def validate(request):
     clean['tolerance_m'] = number(request.get('tolerance_m', quality['tolerance_m']), 'Absolute tolerance', 5., 1000.)
     clean['max_range_m'] = number(request.get('max_range_m', RANGE_CAP_M), 'Maximum range', 1000., RANGE_CAP_M)
     clean['early_exit'] = bool(request.get('early_exit', True))
+    escape = request.get('escape')
+    if escape is not None and not isinstance(escape, dict): raise ValueError('Escape settings must be an object')
+    clean['escape'] = None if escape is None else dict(
+        load_g=number(escape.get('load_g', ESCAPE_DEFAULT_G), 'Escape load factor', 1.5, 15.),
+        delay_s=number(escape.get('delay_s', 0.), 'Escape reaction delay', 0., 60.))
     return clean
 
 
@@ -171,13 +185,14 @@ def _wrap(angle):
     return angle
 
 
-def states(config, layer, azimuth, distance):
+def states(config, layer, azimuth, distance, escape=False):
     """Launcher and target states at release for one envelope sample (SI, degrees).
 
     The launcher is always released above the world origin, as in the missile
     simulator tab. The model computes in binary32 world coordinates, so near a
     boundary the outcome can depend on where the same geometry is placed;
     a shared placement lets the simulator tab replay any envelope sample exactly.
+    With escape the target dict also carries the escape settings for evaluate().
     """
     a = math.radians(azimuth)
     if config['frame'] == 'launcher':
@@ -187,9 +202,11 @@ def states(config, layer, azimuth, distance):
         heading = _wrap(dict(hot=azimuth + 180., cold=azimuth, same=0., opposite=180.)[rule] if isinstance(rule, str) else rule)
         target = dict(position=[distance * math.cos(a), layer, distance * math.sin(a)],
                       velocity=_direction(heading, 0., config['target']['speed_mps']), angles=[heading, 0., 0.])
+        if escape: target['escape'] = dict(config['escape'])
         return launcher, target
     target = dict(position=[-distance * math.cos(a), layer, -distance * math.sin(a)],
                   velocity=_direction(0., 0., config['target']['speed_mps']), angles=[0., 0., 0.])
+    if escape: target['escape'] = dict(config['escape'])
     heading = _wrap(azimuth + 180.)
     if config['launcher']['platform'] == 'ground':
         # Stationary on the ground, the missile pointed at the target.
@@ -269,17 +286,28 @@ def evaluate(missile, launcher, target, early_exit=True, reach_m=None):
     disabled (it only consumes collision candidates; flight dynamics are
     unchanged) and the flight ends 'reached' once the missile passes within
     reach_m of the target.
+
+    A target with 'escape' settings breaks away at launch (missile_worker.
+    escape_motion); release and seeker setup see its state at release.
     """
     w = _missile_worker()
     from frame_session import STEP
     from kernels import add
     profile = _profile(missile)
+    escape = target.get('escape')
+    if escape is not None: target = dict(position=target['position'], velocity=target['velocity'], angles=target['angles'])
     frame = w.initial_frame(profile, launcher, target, launcher_aircraft=True)
     session = w.InteractionSession.from_frame(frame, clock=0., origin=frame.website_release['position'],
                                               enabled=reach_m is None, guidance_flag=False)
-    motion = dict(kind='constant_velocity', position=target['position'], velocity=target['velocity'],
-                  quaternion=w.quaternion(target['angles']))
-    def target_at(t): return w.linear_point(motion, t)
+    if escape is None:
+        motion = dict(kind='constant_velocity', position=target['position'], velocity=target['velocity'],
+                      quaternion=w.quaternion(target['angles']))
+        straight, straight_velocity = 0., target['velocity']
+    else:
+        # The energy bound needs straight-line target motion: after the turn only.
+        motion = w.escape_motion(target, escape, launcher['position'])
+        straight, straight_velocity = motion['end'], motion['run']
+    def target_at(t): return w.target_point(motion, t)
     optical = frame.flight.family == 'optical'
     def targets(old, next_time):
         new = target_at(next_time)
@@ -320,9 +348,9 @@ def evaluate(missile, launcher, target, early_exit=True, reach_m=None):
             expiry = result['frame']['expiry']
             outcome = 'lifetime' if expiry['time_expired'] else 'distance_limit' if expiry['distance_expired'] else 'tracking_timeout'
             break
-        if early_exit and i % 6 == 5 and all(c >= e + 1e-3 for c, e in zip(body['clocks'], burn_end)):
+        if early_exit and i % 6 == 5 and body['time'] >= straight and all(c >= e + 1e-3 for c, e in zip(body['clocks'], burn_end)):
             speed = math.sqrt(sum(v * v for v in body['velocity']))
-            if unreachable(body['position'], speed, target_at(body['time'])['position'], target['velocity'],
+            if unreachable(body['position'], speed, target_at(body['time'])['position'], straight_velocity,
                            deadline - body['time'] + 2 * STEP, radius, limits['origin'], limits['distance_limit']):
                 outcome = 'unreachable'; break
     return dict(hit=outcome in ('proximity_event', 'reached'), outcome=outcome, time_s=end_time if event_time is None else event_time,
@@ -392,11 +420,12 @@ def _middle(a, b):
 class Ray:
     """Search one horizontal ray for its hit intervals; a generator of range batches."""
 
-    def __init__(self, key, layer, azimuth, low, high, tolerance, tolerance_m, level=0):
+    def __init__(self, key, layer, azimuth, low, high, tolerance, tolerance_m, level=0, escape=False):
         self.key, self.layer, self.azimuth = key, layer, azimuth
         self.low, self.high = low, high
         self.tolerance, self.tolerance_m = tolerance, tolerance_m
         self.level = level
+        self.escape = escape   # searched against the escaping target (no-escape zone)
         self.cell = None
         self.samples = {}
         self.generator = None
@@ -518,7 +547,8 @@ class Ray:
             item['open_low'] = item['first'] == rs[0]
             item['open_high'] = j + 1 == len(rs)
         samples = [dict(range_m=r, **{k: self.samples[r][k] for k in ('hit', 'outcome', 'time_s', 'closest_m')}) for r in rs]
-        self.result = dict(key=list(self.key), layer_m=self.layer, azimuth_deg=self.azimuth, level=self.level, search=[self.low, self.high],
+        self.result = dict(key=list(self.key), motion='escape' if self.escape else 'straight',
+                           layer_m=self.layer, azimuth_deg=self.azimuth, level=self.level, search=[self.low, self.high],
                            intervals=[dict(start_m=i['start'], end_m=i['end'], first_hit_m=i['first'], last_hit_m=i['last'],
                                            min_at_search_limit=i['open_low'], max_at_search_limit=i['open_high']) for i in intervals],
                            samples=samples, simulations=self.simulations, seed=self.seed_source)
@@ -537,7 +567,7 @@ class Ray:
 MAX_RAYS = 1200
 
 
-def plan(config, limits):
+def plan(config, limits, escape=False):
     """Base ray grid with horizontal search bounds for every layer and azimuth.
 
     The missile cannot fly farther than its distance limit from the launch
@@ -557,7 +587,8 @@ def plan(config, limits):
         low = max(HORIZONTAL_MINIMUM_M, math.sqrt(max(SLANT_MINIMUM_M ** 2 - dh * dh, 0.)))
         high = min(config['max_range_m'], math.sqrt(max(slant * slant - dh * dh, 0.)))
         for ai, azimuth in enumerate(azimuths(config)):
-            ray = Ray((li, round(azimuth / unit)), layer, azimuth, low, max(high, low), config['tolerance'], config['tolerance_m'])
+            ray = Ray((li, round(azimuth / unit)), layer, azimuth, low, max(high, low), config['tolerance'], config['tolerance_m'],
+                      escape=escape)
             ray.cell = (li, ai)
             ray.blocked = outside(yaw_limit, azimuth)
             rays.append(ray)
@@ -685,17 +716,19 @@ class Planner:
     from their results alone whether a ray halfway between them is needed, and
     between() seeds it from those two rays only. Rays are only ever inserted
     between finished neighbours, so the rays searched, and therefore the
-    envelope, do not depend on worker timing or start order.
+    envelope, do not depend on worker timing or start order. With escape every
+    ray is searched against the escaping target (an independent schedule).
     """
 
-    def __init__(self, config, limits):
+    def __init__(self, config, limits, escape=False):
         self.config = config
+        self.escape = escape
         self.unit = finest_step(config)
         self.yaw_limit = launch_yaw_limit(config, limits)
         self.circular = not mirrored(config)
         self.period = round(360. / self.unit)
         angles = azimuths(config)
-        base = plan(config, limits)
+        base = plan(config, limits, escape)
         self.rays = {ray.key: ray for ray in base}
         self.cells = {ray.cell: ray for ray in base}
         self.grid = Grid(self.cells, len(angles), self.circular, angles)
@@ -776,7 +809,7 @@ class Planner:
         layer = left.key[0]
         key = (layer, position)
         ray = Ray(key, left.layer, position * self.unit, left.low, left.high, left.tolerance, left.tolerance_m,
-                  level=max(left.level, right.level) + 1)
+                  level=max(left.level, right.level) + 1, escape=self.escape)
         ray.blocked = outside(self.yaw_limit, ray.azimuth)
         line = self.lines[layer]
         index = 0
@@ -860,72 +893,80 @@ def _safe_evaluate(missile, launcher, target, early_exit):
         return dict(hit=False, outcome='error', error=f'{type(error).__name__}: {error}', time_s=None, closest_m=None)
 
 
+def planners(config, limits):
+    """The envelope's schedules: the straight-flying target, and the escaping one when requested."""
+    return [Planner(config, limits)] + ([Planner(config, limits, True)] if config['escape'] is not None else [])
+
+
 def search(config, *, workers=None, emit=lambda kind, data: None, cancelled=lambda: False, executor=None):
     """Run the full envelope search; emit('ray', result) as each ray completes.
 
-    Rays start as soon as Planner releases them; the result is the same for any
-    number of workers.
+    Rays start as soon as a Planner releases them; both schedules share the
+    workers, and the result is the same for any number of workers.
     """
     started = time.perf_counter()
     limits = missile_limits(config['missile'])
-    planner = Planner(config, limits)
-    emit('plan', dict(config=config, limits=limits, rays_total=planner.total()))
+    schedules = planners(config, limits)
+    total = lambda: sum(p.total() for p in schedules)
+    emit('plan', dict(config=config, limits=limits, rays_total=total()))
     workers = workers or default_workers()
     own = executor is None
     pool = executor or ProcessPoolExecutor(max_workers=workers, initializer=_missile_worker)
     capacity = workers + 2
-    pending = {}   # future -> (ray, index)
-    batches = {}   # ray key -> outcomes being collected
+    pending = {}   # future -> (planner, ray, index)
+    batches = {}   # (escape, ray key) -> outcomes being collected
     counters = dict(simulations=0, errors=0, early=0)
     active = set()
 
-    def submit(ray, values):
-        batches[ray.key] = [None] * len(values)
+    def submit(ray, planner, values):
+        batches[ray.escape, ray.key] = [None] * len(values)
         for i, r in enumerate(values):
-            launcher, target = states(config, ray.layer, ray.azimuth, r)
-            pending[pool.submit(_safe_evaluate, config['missile'], launcher, target, config['early_exit'])] = (ray, i)
+            launcher, target = states(config, ray.layer, ray.azimuth, r, ray.escape)
+            pending[pool.submit(_safe_evaluate, config['missile'], launcher, target, config['early_exit'])] = (planner, ray, i)
         ray.simulations += len(values); counters['simulations'] += len(values)
 
-    def advance(ray, outcomes):
+    def advance(ray, planner, outcomes):
         try:
             values = next(ray.generator) if outcomes is None else ray.generator.send(outcomes)
         except StopIteration:
             ray.finished = time.perf_counter()
             result = dict(ray.result, wall_s=ray.finished - ray.started,
                           errors=sum(s['outcome'] == 'error' for s in ray.result['samples']))
-            active.discard(ray.key)
+            active.discard((ray.escape, ray.key))
             planner.finish(ray.key, result)
             emit('ray', result)
-            emit('progress', dict(rays_done=planner.done, rays_total=planner.total(),
+            emit('progress', dict(rays_done=sum(p.done for p in schedules), rays_total=total(),
                                   simulations=counters['simulations'], elapsed_s=time.perf_counter() - started))
             return
-        submit(ray, values)
+        submit(ray, planner, values)
 
     try:
-        while not planner.complete():
+        while not all(p.complete() for p in schedules):
             if cancelled(): raise InterruptedError('Envelope calculation cancelled')
-            for ray, seed in planner.ready(capacity - len(active)):
-                active.add(ray.key)
-                ray.seed_source = seed and dict(seed)
-                ray.generator = ray.search(seed)
-                ray.started = time.perf_counter()
-                advance(ray, None)
+            for planner in schedules:
+                for ray, seed in planner.ready(capacity - len(active)):
+                    active.add((ray.escape, ray.key))
+                    ray.seed_source = seed and dict(seed)
+                    ray.generator = ray.search(seed)
+                    ray.started = time.perf_counter()
+                    advance(ray, planner, None)
             if not pending:
-                if not planner.complete(): raise RuntimeError('Envelope search plan has no ready direction')
+                if not all(p.complete() for p in schedules): raise RuntimeError('Envelope search plan has no ready direction')
                 continue
             done, _ = wait(list(pending), timeout=.5, return_when=FIRST_COMPLETED)
             for future in done:
-                ray, index = pending.pop(future)
+                planner, ray, index = pending.pop(future)
                 outcome = future.result()
                 counters['errors'] += outcome['outcome'] == 'error'
                 counters['early'] += outcome['outcome'] == 'unreachable'
-                batches[ray.key][index] = outcome
-                if all(o is not None for o in batches[ray.key]):
-                    advance(ray, batches.pop(ray.key))
+                batch = batches[ray.escape, ray.key]
+                batch[index] = outcome
+                if all(o is not None for o in batch):
+                    advance(ray, planner, batches.pop((ray.escape, ray.key)))
     finally:
         if own: pool.shutdown(wait=False, cancel_futures=True)
     return dict(format='missile-envelope-v2', config=config, limits=limits, mirrored=mirrored(config),
-                azimuths_deg=azimuths(config), rays=[planner.rays[key].result for key in sorted(planner.rays)],
+                azimuths_deg=azimuths(config), rays=[p.rays[key].result for p in schedules for key in sorted(p.rays)],
                 simulations=counters['simulations'], sample_errors=counters['errors'], early_misses=counters['early'],
                 elapsed_s=time.perf_counter() - started, workers=workers)
 
