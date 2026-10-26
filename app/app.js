@@ -145,17 +145,14 @@ function configEntries(c){
   return entries;
 }
 function renderEntries(){
-  // Move the single settings editor into the active card; never clone form IDs.
-  const editor=$('aircraft-condition');$('condition-home').append(editor);
+  // The single settings editor lives in the settings popup while an entry is open (Leo, 2026-10-26); never clone form IDs.
+  const editor=$('aircraft-condition');(state.editing?$('entry-dialog-body'):$('condition-home')).append(editor);
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
     <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong><code>${escapeText(nameCode(entryName(e))||e.aircraft_id)}</code></div>
     <p class="entry-summary"></p><div class="entry-actions">
-    <button type="button" data-action="configure" aria-expanded="${e.id===state.editing}" aria-label="${e.id===state.editing?'Done configuring':'Configure'} entry ${i+1}">${e.id===state.editing?'Done':'Configure'}</button>
+    <button type="button" data-action="configure" aria-haspopup="dialog" aria-label="Configure entry ${i+1}">Configure</button>
     <button type="button" data-action="duplicate" aria-label="Duplicate entry ${i+1}" ${state.entries.length>=8?'disabled':''}>Duplicate</button>
-    <button type="button" data-action="remove" aria-label="Remove entry ${i+1}">Remove</button></div>
-    <div class="entry-editor"></div></article>`).join('');
-  const active=[...$('selected-aircraft').children].find(e=>e.dataset.entry===state.editing);
-  if(active)active.querySelector('.entry-editor').append(editor);
+    <button type="button" data-action="remove" aria-label="Remove entry ${i+1}">Remove</button></div></article>`).join('');
   $('apply-settings-to-all').disabled=state.entries.length<2;
   $('apply-settings-status').textContent='';
   refreshEntrySummaries();
@@ -304,9 +301,19 @@ $('selected-aircraft').addEventListener('click',event=>{
     const index=state.entries.findIndex(e=>e.id===id);state.entries.splice(index,1);delete state.conditions[id];
     updateDefaultContours();
     if(state.editing===id)showCondition(null);
-  }else showCondition(state.editing===id?null:id);
+  }else{
+    showCondition(id);renderEntries();syncLabels();
+    const index=state.entries.findIndex(e=>e.id===id);
+    $('entry-dialog-title').textContent=`${index+1} · ${cleanName(entryName(entry))}`;
+    $('entry-dialog').style.setProperty('--entry-color',entryColors[index]);
+    $('entry-dialog').showModal();return;
+  }
   renderEntries();syncLabels();
 });
+// Settings apply as they change; closing the popup (✕, Escape or a click outside) just puts them away.
+$('entry-dialog-close').addEventListener('click',()=>$('entry-dialog').close());
+$('entry-dialog').addEventListener('click',event=>{if(event.target===$('entry-dialog'))$('entry-dialog').close();});
+$('entry-dialog').addEventListener('close',()=>{saveCondition();showCondition(null);renderEntries();syncLabels();});
 $('apply-settings-to-all').addEventListener('click',()=>{
   if(!state.editing||state.entries.length<2)return;
   saveCondition();

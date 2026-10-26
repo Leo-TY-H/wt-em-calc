@@ -23,6 +23,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 </fieldset>
 <div id="selected-aircraft" aria-label="Added aircraft"></div>
 
+<dialog id="entry-dialog" class="entry-dialog" aria-labelledby="entry-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="entry-dialog-title"></h2></div><button type="button" id="entry-dialog-close" class="text-button" aria-label="Close settings">✕</button></header><div id="entry-dialog-body" class="entry-dialog-body"></div></dialog>
 <div id="condition-home" hidden><fieldset id="aircraft-condition" disabled>
 <div id="sweep-field" hidden><label class="field">Wing sweep <output id="sweep-label">0%</output><input id="sweep" type="range" min="0" max="100" step="1" value="0"></label></div>
 <label class="field">Altitude <div class="input-unit"><input id="altitude" type="number" min="0" max="18000" step="1" value="0" required><span>m</span></div></label>
