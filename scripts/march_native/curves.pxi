@@ -56,6 +56,12 @@ DEF S16_JUMP_BUDGET = 60                 # S16: jump lookups between columns per
 DEF S16_JUMP_LINE_BUDGET = 16            # S16: ... per line
 DEF CURVE_STEP_SCALE = 3.                # S16: x the turn tolerance, the contour step a jump line marks (em_march_chart.CURVE_SCALE)
 DEF S16_PATH_SEP = 5.                     # S16: x the SEP allowance, a curve state's SEP apart from the path state's at its load
+DEF S17_PATH_NEAR = .02                   # S17: a propulsion coordinate (of its size, at least 1) this far from the path's is
+                                          # another branch (S9_PROP_JUMP's 0.05 is wider than the gap between two governed
+                                          # states of a windmilling propeller: Bf 109 F-4 RB at idle, 0.035 at 300-306 km/h)
+DEF S17_PATH_TRIM = .1                    # S17: an elevator command (of its [-1, 1] travel) this far from the columns' path at
+                                          # the state's load is decided on the path itself (a trim branch past a fold)
+DEF S17_SAME_TRIM = .02                   # S17: ... and on the path, apart by this much from the path state at its own load
 
 
 cdef inline bint numerical_code(int r) noexcept nogil:
@@ -152,6 +158,12 @@ cdef class NCurves:
     cdef public list rpm_feet             # S16: the speeds where level flight first over-revs (the 'rpm edge' events)
     cdef public bint s16_jumps            # S16: SEP jump lines (WT_MARCH_S16_JUMPS=0: none)
     cdef public bint s16b                 # S16 follow-up (2026-10-24): WT_MARCH_S16B=0 restores the deployed 2026.10.24.1
+    # S17 (Leo 2026-10-26, "still glitches in the sep contours"; WT_MARCH_S17=0 restores 2026.10.25.1): the level-flight path
+    # check decides on the path itself wherever a curve state is not clearly on the columns' path, also for jets (trim
+    # branches): a state that passes its own admission but lies past a fold of the path (a pitch-response reversal: Hunter
+    # FGA.9 SB -200 m/s at 1,109-1,121 km/h, under the outline's dip) or on a propeller state no pull from level flight
+    # reaches (Bf 109 F-4 RB at idle, -20 m/s at 296-307 km/h: the middle of three windmilling states) is no contour knot
+    cdef public bint s17
     cdef public dict jump_work            # S16: their work (triggers, corrections, lookups)
     cdef public list jump_log             # S16 diagnostics: every jump lookup between columns (speed, result)
     cdef public list jump_lines           # S16: the jump lines' points (dicts with the side states lo/hi and SEP either side)
@@ -278,6 +290,7 @@ cdef class NCurves:
         self.s16 = self.s15 and self.eng.s16
         self.s16_jumps = self.s16 and os.environ.get('WT_MARCH_S16_JUMPS', '1') != '0'
         self.s16b = self.s16 and os.environ.get('WT_MARCH_S16B', '1') != '0'
+        self.s17 = self.s16b and os.environ.get('WT_MARCH_S17', '1') != '0'
         self.jump_work = {};self.jump_log = [];self.jump_lines = [];self.jump_min = .5*float(py.config['sep_tolerance_mps'])
         self.edge_knots = None;self.rpm_feet = []
         self.gov_idx = [j for j, name in enumerate(self.eng.layout_names) if str(name).startswith('governor:')]
@@ -2461,9 +2474,9 @@ cdef class NCurves:
     @cython.wraparound(True)
     cdef int path_coords(self, int k, double n, double* out) except -1:
         """S16: the propulsion coordinates (after the seven attitude and wing-history ones) of column k's level-flight
-        alpha path at load ``n``: linear in load between its samples, held beyond them; out[0] its SEP there (linear in
-        load). 0 where the layouts differ, 2 where the two samples either side of n lie on different branches (the path
-        switches between them: no reference), else 1."""
+        alpha path at load ``n``: linear in load between its samples, held beyond them; out[0] its SEP there and out[3] its
+        elevator command (S17), linear in load. 0 where the layouts differ, 2 where the two samples either side of n lie on
+        different branches (the path switches between them: no reference), else 1."""
         cdef int j, a, b, nx
         cdef double f = 0.
         pts = self.pcol[k]
@@ -2481,6 +2494,7 @@ cdef class NCurves:
         if self.eng.st[a].nx != nx or self.eng.st[b].nx != nx:return 0
         for j in range(7, nx):out[j] = self.eng.st[a].coords[j]*(1.-f)+self.eng.st[b].coords[j]*f
         out[0] = self.eng.st[a].ps*(1.-f)+self.eng.st[b].ps*f
+        out[3] = self.eng.st[a].coords[3]*(1.-f)+self.eng.st[b].coords[3]*f
         return 2 if a != b and self.branch_apart(self.eng.st[a].coords, self.eng.st[b].coords, nx) else 1
 
     cdef bint branch_apart(self, const double* x, const double* y, int nx) noexcept:
@@ -2499,7 +2513,9 @@ cdef class NCurves:
         path at its speed and load, 0 on it, -1 unknown. Decided on the path itself (path_bracket: its coordinates, and
         its SEP at p's load) where p jumped from its anchor's branch (prop_jump) or where the neighbouring verified
         columns' paths lie on different branches at p's load (the path switches between them); else by the columns'
-        samples, linear in speed."""
+        samples, linear in speed. S17: also for jets (the path's trim branch: its elevator command), on the path itself
+        wherever p is not clearly on the columns' path (S17_PATH_NEAR, S17_PATH_TRIM), and there p is the path's state
+        only where it is that state (S17_PATH_NEAR, S17_SAME_TRIM; SEP as S16)."""
         import bisect
         cdef double ra[NMAX]
         cdef double rb[NMAX]
@@ -2509,7 +2525,7 @@ cdef class NCurves:
         cdef TState* t
         if not self.pcol_v or p < 0:return -1
         t = &self.eng.st[p]
-        if not t.has_coords or t.nx <= 7 or t.slide.n > 0:return -1
+        if not t.has_coords or t.nx < 7 or (t.nx == 7 and not self.s17) or t.slide.n > 0:return -1
         v = t.speed;n = t.load;nx = t.nx
         i = bisect.bisect_left(self.pcol_v, v)
         # the columns' path at p's load: at a column its own samples; past the first or last column that one; between two
@@ -2537,16 +2553,23 @@ cdef class NCurves:
             else:
                 f = (v-self.pcol_v[i-1])/(self.pcol_v[i]-self.pcol_v[i-1])
                 for j in range(7, nx):ra[j] = ra[j]*(1.-f)+rb[j]*f
+                if self.s17:ra[3] = ra[3]*(1.-f)+rb[3]*f
         cheap = -1
         if not exact:
             # (where the path march below does not decide, a state clearly off the columns' path is off it)
-            if self.branch_apart(ra, t.coords, nx):cheap = 1
+            if self.branch_apart(ra, t.coords, nx) or (self.s17 and fabs(ra[3]-t.coords[3]) > S17_PATH_TRIM):cheap = 1
             # the columns' path accepts a state on it (within S9_PROP_JUMP); one off it is decided on the path itself: two
             # branches can lie close in their coordinates and part smoothly (Ki-21-I hei SB at 65% pitch: from 155.9 km/h
             # on, +10 m/s follows a branch whose governor drifts to 0.44 against the path's 0.36 at 161.5, SEP 0.6 m/s
             # apart at the same load), and two columns on different branches can look alike to that test (Ki-21-I ko RB at
             # 3,000 m: governors 0.33 and 0.25 at 164 and 189 km/h, level flight switching at 181)
-            if not self.near_apart(ra, t.coords, nx):return 0
+            # S17: within S17_PATH_NEAR (contour knots on their path lie within 0.011 of the columns' path on every
+            # representative chart measured, its own branches 0.035 apart on Bf 109 F-4 RB at idle), and within S17_PATH_TRIM
+            # in elevator (on their path within 0.07; a trim branch past a pitch-response fold 0.18-0.23 off on Hunter FGA.9
+            # SB; SEP linear in speed between columns misses by several m/s, so it is no test here)
+            if self.s17:
+                if not (self.apart_by(ra, t.coords, nx, S17_PATH_NEAR) or fabs(ra[3]-t.coords[3]) > S17_PATH_TRIM):return 0
+            elif not self.near_apart(ra, t.coords, nx):return 0
             self.eng.stats['s16_path_near_trigger'] = self.eng.stats.get('s16_path_near_trigger', 0)+1
         if i == 0 or i == len(self.pcol_v):k = min(i, len(self.pcol_v)-1)
         else:k = i-1 if v-self.pcol_v[i-1] <= self.pcol_v[i]-v else i
@@ -2560,12 +2583,20 @@ cdef class NCurves:
         if hi != lo:
             q = self.fixed(v, n, lo, 'path_check')
             if q >= 0 and self.eng.st[q].converged and not self.prop_jump(lo, q):
+                # S17: at p's own speed and load the path's state and p are one state only where they agree (a state on
+                # the path's branch is that state: S16's twice S9_PROP_JUMP let a pitch-stop state 0.085 off pass)
+                if self.s17:
+                    return 1 if (self.apart_by(self.eng.st[q].coords, t.coords, nx, S17_PATH_NEAR)
+                                 or fabs(self.eng.st[q].coords[3]-t.coords[3]) > S17_SAME_TRIM
+                                 or fabs(self.eng.st[q].ps-t.ps) > S16_PATH_SEP*self.allowance) else 0
                 return 1 if (self.branch_apart(self.eng.st[q].coords, t.coords, nx)
                              or fabs(self.eng.st[q].ps-t.ps) > S16_PATH_SEP*self.allowance) else 0
         f = 0. if hi == lo else (n-self.eng.st[lo].load)/(self.eng.st[hi].load-self.eng.st[lo].load)
         q = lo if f <= .5 else hi
         return 1 if (self.branch_apart(self.eng.st[q].coords, t.coords, nx)
-                     or fabs(self.eng.st[lo].ps+f*(self.eng.st[hi].ps-self.eng.st[lo].ps)-t.ps) > S16_PATH_SEP*self.allowance) else 0
+                     or fabs(self.eng.st[lo].ps+f*(self.eng.st[hi].ps-self.eng.st[lo].ps)-t.ps) > S16_PATH_SEP*self.allowance
+                     or (self.s17 and fabs(self.eng.st[lo].coords[3]+f*(self.eng.st[hi].coords[3]-self.eng.st[lo].coords[3])
+                                           -t.coords[3]) > S17_PATH_TRIM)) else 0
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
@@ -2586,16 +2617,19 @@ cdef class NCurves:
         each apart by more than twice S9_PROP_JUMP of its size from the other continued linearly through its own outer
         neighbouring column (i-1, j+1; held where there is none), so that a drift with speed is no switch (a switch one
         side's continuation happens to meet passes as one: Ki-21-I ko RB at 3,000 m, level flight's governor 0.33 at 164
-        km/h and 0.25 at 189, switching at 181; telling those apart costs a path march per state there)."""
+        km/h and 0.25 at 189, switching at 181; telling those apart costs a path march per state there). S17: twice
+        S17_PATH_NEAR (Bf 109 F-4 RB at idle: the pitch-stop path continued from 251 and 276 km/h met the governed one at
+        301 within 0.099)."""
         cdef double rp[NMAX]
         cdef double rn[NMAX]
         cdef double vi = self.pcol_v[i], vj = self.pcol_v[j], ca, cb, tol
+        cdef double jump = S17_PATH_NEAR if self.s17 else S9_PROP_JUMP
         cdef bint hp = False, hn = False
         cdef int k
         if i > 0 and self.eng.st[self.pcol[i-1][0]].nx == nx:hp = self.path_coords(i-1, n, rp) == 1
         if j+1 < len(self.pcol_v) and self.eng.st[self.pcol[j+1][0]].nx == nx:hn = self.path_coords(j+1, n, rn) == 1
         for k in range(7, nx):
-            tol = 2.*S9_PROP_JUMP*pmax(1., pmax(fabs(ra[k]), fabs(rb[k])))
+            tol = 2.*jump*pmax(1., pmax(fabs(ra[k]), fabs(rb[k])))
             ca = ra[k]
             if hp and vi > self.pcol_v[i-1]:ca += (ra[k]-rp[k])*(vj-vi)/(vi-self.pcol_v[i-1])
             cb = rb[k]
@@ -2608,6 +2642,13 @@ cdef class NCurves:
         cdef int j
         for j in range(7, nx):
             if fabs(x[j]-y[j]) > S9_PROP_JUMP*pmax(1., pmax(fabs(x[j]), fabs(y[j]))):return True
+        return False
+
+    cdef bint apart_by(self, const double* x, const double* y, int nx, double jump) noexcept:
+        """S17: some propulsion coordinate apart by more than ``jump`` of its size (at least 1)."""
+        cdef int j
+        for j in range(7, nx):
+            if fabs(x[j]-y[j]) > jump*pmax(1., pmax(fabs(x[j]), fabs(y[j]))):return True
         return False
 
     cdef bint prop_jump(self, int a, int b) noexcept:
@@ -3333,12 +3374,13 @@ cdef class NCurves:
             # S16: every envelope column's level flight (also the columns the curve solver does not start from), sorted
             for v_, row_ in sorted(self.lf_rows, key=lambda q: q[0]):
                 self.lf_v.append(float(v_));self.lf_s.append(self.state(row_))
-        if self.s16 and self.eng.is_prop:
-            # S16: the level-flight alpha paths of the verified columns (path_check)
+        if self.s16 and (self.eng.is_prop or self.s17):
+            # S16: the level-flight alpha paths of the verified columns (path_check); S17: also without a propeller model
+            # (the trim branch)
             for c in columns:
                 if not c.get('boundary'):continue
                 pts, _ = self.column_samples(c)
-                if pts and self.eng.st[pts[0]].nx > 7:
+                if pts and (self.eng.st[pts[0]].nx > 7 or (self.s17 and self.eng.st[pts[0]].nx == 7)):
                     self.pcol_v.append(float(c['speed_kmh']));self.pcol.append(pts)
         components, seeds_report, unresolved_targets, excluded = [], [], [], []
         status = 'completed';junctions = [];jumps = []
