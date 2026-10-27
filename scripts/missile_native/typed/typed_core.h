@@ -21,6 +21,18 @@ namespace typed {
 struct Bail { const char* reason; };
 [[noreturn]] inline void bail(const char* reason) { throw Bail{reason}; }
 
+// Seeker observations of one simulator step, for missile_tracking.describe:
+// how many the guidance made, whether any was accepted/available, and the last
+// loss_reason. Recorded only while the typed simulator sets the log.
+enum LossReason { LOSS_NONE, LOSS_NO_TARGET, LOSS_BEHIND, LOSS_MINIMUM_DISTANCE, LOSS_HORIZON, LOSS_FIELD_OF_VIEW,
+                  LOSS_OBSERVATION_CONE, LOSS_SENSOR_GEOMETRY };
+struct ObservationLog { int64_t count = 0; bool any = false; int last = LOSS_NONE; };
+inline thread_local ObservationLog* observation_log = nullptr;
+inline void log_observation(bool accepted, int reason) {
+    if (!observation_log) return;
+    ++observation_log->count; observation_log->any = observation_log->any || accepted; observation_log->last = reason;
+}
+
 using d2 = std::array<double,2>;
 using d3 = std::array<double,3>;
 using d4 = std::array<double,4>;

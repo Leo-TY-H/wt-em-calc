@@ -340,6 +340,9 @@ inline OpticalObservation geometric_optical_observe(const OpticalObservationProp
         distance = -1.; out_target_id = -1;
     }
     r.available = accepted;
+    log_observation(accepted, accepted ? LOSS_NONE : !geometry.admitted
+        ? (geometry.reason == REASON_BEHIND ? LOSS_BEHIND : geometry.reason == REASON_MINIMUM ? LOSS_MINIMUM_DISTANCE : LOSS_HORIZON)
+        : LOSS_FIELD_OF_VIEW);
     r.distance = distance;
     r.strength = accepted ? 2. : 0.;
     r.flag = false;
