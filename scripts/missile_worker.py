@@ -51,6 +51,7 @@ from missile_backend import activate
 BACKEND = activate()
 if BACKEND != 'reference':
     InteractionSession = FastInteractionSession
+missile_telemetry.record_controls()
 
 
 def quaternion(angles):
@@ -330,6 +331,7 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
         old = sample(); now = add(old['time_s'], STEP)
         before = deepcopy(session.frame.flight.state['body'])
         controls = session.frame.flight.state['controls'][:]
+        missile_telemetry.begin_step()
         result = session.advance(now, STEP, targets, collision_time=now, point_history=history,
                                  flight_step=radar_step)
         previous_tracking_status = tracking_status
@@ -371,8 +373,9 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
         elif tracking_status != previous_tracking_status:
             seeker_transitions.append(dict(time_s=new['time_s'],**tracking_status))
         if i % 3 == 2 or terminal or i == count-1:
-            new['telemetry'] = missile_telemetry.completed(session.frame.flight.properties,
+            new['telemetry'] = (missile_telemetry.completed(session.frame.flight.properties,
                 before, controls, result['frame']['updates'][-1], STEP)
+                | missile_telemetry.controls(session.frame.flight.properties, controls, session.frame.flight.state['body']))
             if event:
                 new['traveled_distance_m'] = old['traveled_distance_m'] + math.dist(old['missile'],new['missile'])
             if event and rows[-1]['time_s']==endpoint['time_s']: rows[-1]=endpoint
@@ -403,7 +406,8 @@ def simulation_document(config, setup, rows, transitions, seeker_transitions, be
                                aoa='Unsigned local-flow incidence to the aerodynamic forward axis, 0–180 degrees.',
                                acceleration='Magnitude of integrated net acceleration, including gravity; not aerodynamic load factor.',
                                missing='No integrated forces at release; no dynamics inferred at an intermediate proximity event.',
-                               distance='Sum of 48 Hz missile position segments, truncated to the event position when present.'),
+                               distance='Sum of 48 Hz missile position segments, truncated to the event position when present.',
+                               controls='The step\'s last acceleration-control call: fin commands (-1 to 1), commanded lateral acceleration after the AoA limit and measured lateral acceleration (m/s2, horizontal and vertical axes of its control frame), and PID terms. Thrust-vector angles of the fins flown during the step while a vectoring motor burns; the cruise-speed PID\'s motor factor. Null where they do not apply.'),
                            trajectory_endpoint='Recovered proximity-event position/time when present; completed body sample retained separately.',
                            early_miss_termination='After motor burnout and any target turn, stop if the conservative energy/lifetime/distance bound excludes every future hit. Closest approach covers the simulated portion. Disable with early_exit=false.',
                            limitations=['Whole engagements are not yet validated against live-game flights.',

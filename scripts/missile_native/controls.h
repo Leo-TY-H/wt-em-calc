@@ -423,7 +423,7 @@ static inline int pid_coefficients(const wtm_acceleration_props *p, float time, 
 /* Output of acceleration_update; everything after has_fins is the reference's
  * diagnostics, valid only when has_fins. */
 typedef struct {
-    q4 frame; int has_fins; float fins[2], errors[2], limited[2];
+    q4 frame; int has_fins; float fins[2], errors[2], limited[2], actual[2];
     int has_aoa_limit; float aoa_limit, scale, scale_squared, coefficients[4];
 } wtm_acceleration_out;
 
@@ -484,7 +484,7 @@ static inline int acceleration_update(const wtm_acceleration_props *p, const wtm
         memcpy(previous, next, sizeof next);
     }
     o->has_fins = 1; o->scale = scale; o->scale_squared = scale_squared;
-    for (int k = 0; k < 2; k++) { o->errors[k] = errors[k]; o->limited[k] = wanted[k]; }
+    for (int k = 0; k < 2; k++) { o->errors[k] = errors[k]; o->limited[k] = wanted[k]; o->actual[k] = actual[k]; }
     for (int k = 0; k < 4; k++) o->coefficients[k] = coefficients[k];
     return 1;
 }
