@@ -27,7 +27,7 @@
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
   const stateFields = (role,title) => `<fieldset class="missile-step missile-${role}"><legend>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
-    <div class="section-heading"><span class="eyebrow">ENGAGEMENT SETUP</span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
+    <div class="section-heading"><span></span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
     <div class="missile-presets" role="group" aria-label="Starter scenarios">
       <button type="button" data-preset="chase" aria-pressed="true"><span aria-hidden="true">⇉</span>Tail chase</button>
       <button type="button" data-preset="head-on" aria-pressed="false"><span aria-hidden="true">⇄</span>Head-on</button>
@@ -52,17 +52,15 @@
   <div class="missile-main">
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
-    <section class="missile-preview" aria-labelledby="missile-preview-title">
-      <div class="missile-preview-heading"><div><h2 id="missile-preview-title">Starting geometry</h2></div></div>
-      <div class="missile-geometry-wrap"><div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div><svg id="missile-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true"></svg></div>
-      <p id="missile-preview-note" class="hint"></p>
-    </section>
-    <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label></div></div>
-    <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p>
-    <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories"><div class="empty"><span class="empty-glyph">↗</span><h2>Add a missile and press Calculate</h2></div></div>
-    <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select></div></section>
-    <p id="missile-frame" class="missile-frame-readout"></p>
-    <label id="missile-result-label" class="field missile-result-choice" hidden>Inspect missile result<select id="missile-result-select"></select></label>
+    <section class="chart-card missile-plot-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"></div>
+      <div class="mode-switch missile-views" role="radiogroup" aria-label="Plot view"><label><input type="radio" name="missile-plot-view" value="setup" checked><span>Setup</span></label><label><input type="radio" name="missile-plot-view" value="3d" disabled><span>3D</span></label><label><input type="radio" name="missile-plot-view" value="xz" disabled><span>Top</span></label><label><input type="radio" name="missile-plot-view" value="xy" disabled><span>Side</span></label><label><input type="radio" name="missile-plot-view" value="zy" disabled><span>Front</span></label></div>
+      <select id="missile-view" hidden aria-hidden="true"><option value="3d">3D</option><option value="xz">Top</option><option value="xy">Side</option><option value="zy">Front</option></select></div>
+    <div class="missile-plot">
+      <div id="missile-setup-pane" class="missile-geometry-wrap"><div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div><svg id="missile-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true"></svg><p id="missile-preview-note" class="missile-plot-message"></p></div>
+      <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories" hidden></div>
+    </div>
+    <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
+    <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p></section>
     <details id="missile-flight-data" class="missile-flight-data" hidden><summary>Propulsion &amp; aerodynamic plots <span id="missile-flight-name"></span></summary>
       <p class="hint">Click a plotted point to inspect that missile and time. In Drag &amp; lift, solid lines show drag and dashed lines show lift.</p>
       <div class="missile-data-grid">
@@ -193,8 +191,25 @@
   }
   function changed() {
     if(result)el('missile-stale').hidden=false;
-    updatePreview();
+    // One plot (Leo, 2026-10-27): a changed setup is shown as its starting geometry until the next run.
+    if(plotView!=='setup')showView('setup');else updatePreview();
   }
+  // The plot shows the setup's starting geometry or the calculated flight in one of four views.
+  let plotView='setup',flightView='3d';
+  function showPanes(view) {
+    plotView=view;const setup=view==='setup';
+    for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.checked=input.value===view;
+    el('missile-setup-pane').hidden=!setup;el('missile-chart').hidden=setup;
+    el('missile-slice-note').hidden=setup||view==='3d';
+  }
+  function showView(view) {
+    showPanes(view);
+    if(view==='setup'){updatePreview();return;}
+    flightView=view;
+    if(el('missile-view').value!==view){el('missile-view').value=view;el('missile-view').dispatchEvent(new Event('change'));}
+    else if(el('missile-chart').data)Plotly.Plots.resize(el('missile-chart'));
+  }
+  for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.addEventListener('change',()=>{if(input.checked)showView(input.value);});
   function updatePreview() {
     const targetDistance=el('missile-target-distance');targetDistance.setCustomValidity('');
     const numericFields=[...el('missile-form').querySelectorAll('input[type=number]')];
@@ -205,7 +220,7 @@
       if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetDistance.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
     }
     const invalid=numericFields.find(field=>!field.validity.valid),valid=!invalid;
-    el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:''):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
+    el('missile-ready').textContent=valid?'':`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
     if(!valid) {
       if(el('missile-geometry').data)Plotly.purge(el('missile-geometry'));
       el('missile-axes').innerHTML='';
@@ -441,7 +456,7 @@
         comparison={requested_missiles:missiles,shared_conditions:shared,complete:completed.length===missiles.length,cancelled:cancelRequested,errors:failed};
         flights=completed;resultColors=flights.map(f=>flightColors[missiles.indexOf(f.scenario.missile)]);focusIndex=0;result=flights[0];await render();
       }
-      el('missile-status').textContent=cancelRequested?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'Simulation complete.';
+      el('missile-status').textContent=cancelRequested?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'';
       if(failed.length)showError(failed.join(' · '));
       el('missile-stale').hidden=completed.length===submitted.missiles.length&&JSON.stringify(inputs())===JSON.stringify(submitted);
       el('missile-stale').textContent=!completed.length?(flights.length?'No new flights completed. Previous results are still displayed.':'No flights completed. Run again to compare the selected missiles.'):completed.length<submitted.missiles.length?'Comparison incomplete. Only completed flights are shown; run again to compare all selected missiles.':'Inputs changed. Run again to update the trajectories.';
@@ -509,10 +524,10 @@
     return low;
   }
   function inspectFlight(index) {
-    focusIndex=index;result=flights[index];el('missile-result-select').value=index;
+    focusIndex=index;result=flights[index];
+    el('missile-legend').querySelectorAll('button').forEach((button,i)=>button.setAttribute('aria-pressed',String(i===index)));
     el('missile-model-details').replaceChildren(...result.model.limitations.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
   }
-  el('missile-result-select').addEventListener('change',()=>{inspectFlight(Number(el('missile-result-select').value));updateFrame(Number(el('missile-time').value));});
   async function renderDataPlots() {
     if(!result||!el('missile-flight-data').open)return;
     await Promise.all(['propulsion','aero'].map(async kind=>{
@@ -569,6 +584,8 @@
   async function render() {
     flightRevision++;
     timeline=[...new Set(flights.flatMap(f=>f.trajectory.map(r=>r.time_s)))].sort((a,b)=>a-b);
+    for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.disabled=false;
+    showPanes(flightView);el('missile-view').value=flightView;
     el('missile-view').disabled=true;
     try{await renderTrajectory();}finally{el('missile-view').disabled=false;}
     el('missile-legend').replaceChildren(...flights.map((flight,i)=>{
@@ -577,8 +594,7 @@
     }));
     const targetLegend=document.createElement('span');targetLegend.textContent='┄ Target';targetLegend.style.color='#ffa66b';targetLegend.style.opacity='.45';el('missile-legend').append(targetLegend);
     el('missile-time').max=timeline.length-1;el('missile-time').value=0;el('missile-time').disabled=false;el('missile-play').disabled=false;
-    el('missile-result-select').replaceChildren(...flights.map((f,i)=>{const option=document.createElement('option');option.value=i;option.textContent=`${i+1} · ${missileLabel(f.scenario.missile)} · ${f.elapsed_s.toFixed(2)} s`;return option;}));
-    el('missile-result-label').hidden=false;inspectFlight(focusIndex);
+    inspectFlight(focusIndex);
     const single=comparison.requested_missiles.length===1;
     const exported=single?flights[0]:{format:'missile-comparison-v1',...comparison,flights};
     if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=URL.createObjectURL(new Blob([JSON.stringify(exported,null,2)],{type:'application/json'}));
@@ -603,7 +619,7 @@
     Plotly.restyle(el('missile-chart'),{...projected,text:[...rows.map((r,i)=>[flightHover(r,'missile',flights[i])+(time>flights[i].elapsed_s?'<br>Flight ended · marker remains at the final position':'')]),[]]},positions.map((_,i)=>flights.length+1+i));
     if(el('missile-flight-data').open)for(const kind of ['propulsion','aero'])if(el(`missile-${kind}-chart`).data)Plotly.relayout(el(`missile-${kind}-chart`),{shapes:timeCursor()});
   }
-  el('missile-time').addEventListener('input',()=>{pause();updateFrame(Number(el('missile-time').value));});
+  el('missile-time').addEventListener('input',()=>{pause();if(plotView==='setup')showView(flightView);updateFrame(Number(el('missile-time').value));});
   el('missile-view').addEventListener('change',async()=>{
     if(!result)return;
     pause();const index=Number(el('missile-time').value);el('missile-view').disabled=true;
@@ -611,6 +627,7 @@
   });
   el('missile-play').addEventListener('click',()=>{
     if(playing){pause();return;}if(!result)return;
+    if(plotView==='setup')showView(flightView);
     if(Number(el('missile-time').value)>=timeline.length-1)updateFrame(0);
     playing=true;lastFrame=performance.now();el('missile-play').textContent='Pause';requestAnimationFrame(animate);
   });
