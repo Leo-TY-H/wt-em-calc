@@ -1,10 +1,10 @@
 """Regression checks for disconnected hit intervals in envelope range searches."""
 import unittest
 
-from missile_envelope import Ray, unreachable
+from missile_envelope import Ray, gaps, structure, unreachable
 
 
-def search(intervals, seed=None, blocked=False):
+def search(intervals, seed=None, blocked=False, time=lambda r: 1.):
     ray = Ray((0, 0), 1000., 45., 150., 152000., .0075, 15.)
     ray.blocked = blocked
     work = ray.search(seed)
@@ -14,7 +14,7 @@ def search(intervals, seed=None, blocked=False):
         while True:
             count += len(batch)
             outcomes = [dict(hit=any(a <= r <= b for a, b in intervals),
-                             outcome='fixture', time_s=1., closest_m=0.) for r in batch]
+                             outcome='fixture', time_s=time(r), closest_m=0.) for r in batch]
             batch = work.send(outcomes)
     except StopIteration:
         pass
@@ -52,6 +52,25 @@ class DisconnectedIntervals(unittest.TestCase):
         self.assertEqual(count, 0)
         self.assertTrue(ray.result['blocked'])
         self.assertEqual(ray.result['intervals'], [])
+
+
+class CloseRangeMissBands(unittest.TestCase):
+    def test_flight_time_drop_between_hits_finds_the_misses_between_them(self):
+        # Late turn-back hits up to 1.3 km, direct hits from 1.5 km: the misses
+        # between them fall between the coarse grid's 1,229 m and 1,966 m.
+        ray, _ = search([(150., 1300.), (1500., 26000.)], time=lambda r: 12. if r < 1400. else 1. + r / 1000.)
+        self.assertEqual(len(ray.result['intervals']), 2)
+        self.assertFalse(any(i['start_m'] <= 1400. <= i['end_m'] for i in ray.result['intervals']))
+
+    def test_miss_band_beyond_the_minimum_range_is_found_without_a_time_change(self):
+        ray, _ = search([(2000., 2250.), (2400., 14000.)], time=lambda r: 6.)
+        self.assertEqual(len(ray.result['intervals']), 2)
+        self.assertFalse(any(i['start_m'] <= 2325. <= i['end_m'] for i in ray.result['intervals']))
+
+    def test_close_range_band_survives_at_its_own_range_scale(self):
+        ray, _ = search([(150., 900.), (1100., 70000.)], seeded([1000.]))
+        self.assertEqual(len(structure(ray.result, 5 * .0075 * ray.result['max_range_m'])), 1)
+        self.assertEqual(len(gaps(ray.result, .0075, 15.)), 1)
 
 
 class ConservativeReachability(unittest.TestCase):
