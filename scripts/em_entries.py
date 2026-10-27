@@ -2,7 +2,7 @@ from em_data import clone
 import re
 import time
 
-COLORS=('#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296')
+COLORS=('#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296')
 ENTRY_ID=re.compile(r'entry_[A-Za-z0-9_-]{1,48}\Z')
 
 

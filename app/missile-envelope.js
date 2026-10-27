@@ -32,7 +32,7 @@
     same: {label: 'Same way as me', text: 'Target flying your heading'}, opposite: {label: 'Opposite way', text: 'Target flying the opposite heading'},
     crossing: {label: 'At a heading…', text: 'Target heading'}};
   // One colour per added missile, as on the trajectory page.
-  const COLORS = ['#38c9d7', '#b79aff', '#91d477', '#ee8eb6', '#f0d367', '#79a7fa', '#cfb296', '#f08070'], MAX_MISSILES = 8;
+  const COLORS = ['#38c9d7', '#b79aff', '#91d477', '#ee8eb6', '#f0d367', '#e0b0ff', '#cfb296', '#f08070'], MAX_MISSILES = 8;
   const numberField = (id, label, unit, value, min, max, step = 'any') =>
     `<label class="field">${label}<div class="input-unit"><input id="${id}" type="number" min="${min}" max="${max}" step="${step}" value="${value}" required aria-label="${escapeHtml(label)}"><span>${unit}</span></div></label>`;
 
@@ -489,8 +489,8 @@
 
   // ---- Rendering --------------------------------------------------------------------
   const font = 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif';
-  const theme = {paper_bgcolor: '#000000', plot_bgcolor: '#000000', font: {color: '#dce5f0', family: font},
-    hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#eff7ff', size: 12, family: font}},
+  const theme = {paper_bgcolor: '#000000', plot_bgcolor: '#000000', font: {color: '#e2e2ea', family: font},
+    hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12, family: font}},
     modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
   const grid = 'rgba(240,240,250,.09)', tick = '#b9b9c4', cyan = '#38c9d7';
   // Polar axes: bearing from the target's nose clockwise from the top, range in km.
@@ -538,7 +538,7 @@
     // No heading arrow (Leo, 2026-10-26): the 0° head-on label already gives the target's direction.
     if (sight().centre === 'launcher') {
       const air = sight().launcher;
-      return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: air ? 'triangle-up' : 'square', size: 11, color: '#eff7ff'},
+      return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: air ? 'triangle-up' : 'square', size: 11, color: '#f4f4fc'},
         hovertemplate: (air ? 'Launcher, flying up the plot' : 'Launcher on the ground') + '<extra></extra>', showlegend: false}];
     }
     return [{type: 'scatterpolar', mode: 'markers', r: [0], theta: [0], marker: {symbol: 'diamond', size: 11, color: '#ffd0ac'},

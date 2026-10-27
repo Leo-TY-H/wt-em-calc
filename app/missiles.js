@@ -8,7 +8,7 @@
   let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0;
   const activeJobs=new Set();
   let selectedMissiles=[], flights=[], resultColors=[], timeline=[], comparison=null, batchRunning=false, cancelRequested=false, focusIndex=0;
-  const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296','#f08070'];
+  const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296','#f08070'];
   const missileName=id=>meta?.missiles.find(m=>m.id===id)?.name||id;
   const missileLabel=id=>`${missileName(id)} [${id}]`;
   const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
@@ -243,7 +243,7 @@
   // its point, of eight, whose box covers the least, and they are placed again when the view is turned.
   function drawPreview(launch,target) {
     const node=el('missile-geometry');if(!node.clientWidth)return;   // hidden tab: drawn once it is shown (ResizeObserver)
-    const light='#dce5f0',grey='#8d9aae',cyan='#38c9d7',orange='#ffa66b';
+    const light='#e2e2ea',grey='#97979f',cyan='#38c9d7',orange='#ffa66b';
     const scene=p=>[p[0],-p[2],p[1]],L=scene(launch.position),T=scene(target.position),G=[T[0],T[1],L[2]];
     const horizontal=Math.hypot(T[0]-L[0],T[1]-L[1]),rise=T[2]-L[2],size=Math.max(horizontal,Math.abs(rise),300);
     const azimuth=Math.atan2(T[1]-L[1],T[0]-L[0]),deg=v=>`${+v.toFixed(1)}°`,turned=Math.abs(azimuth)>1e-3;
@@ -296,7 +296,7 @@
     const frame={W,H,domain,scale:H*(domain.y[1]-domain.y[0])/2,reserved:[W-AXES_SIZE-8,W,H-AXES_SIZE-8,H]};
     const place=camera=>placeLabels(labels,segments,bounds,fitted,camera.eye,frame);
     Plotly.react(node,traces,{paper_bgcolor:'#000000',margin:{l:0,r:0,t:0,b:0},showlegend:false,
-      hoverlabel:{bgcolor:'#0c0c0f',font:{color:'#e3edf7',size:12}},
+      hoverlabel:{bgcolor:'#0c0c0f',font:{color:'#eaeaf2',size:12}},
       scene:{domain,xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera:previewCamera||fitted.camera,annotations:place(previewCamera||fitted.camera)}},
       {displayModeBar:false,responsive:true,scrollZoom:false});
     drawAxes((previewCamera||fitted.camera).eye);
@@ -317,13 +317,14 @@
     const right=[-eye.y/horizontal,eye.x/horizontal,0],up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
     const toward=[eye.x/length,eye.y/length,eye.z/length],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
     // World X, Y (altitude) and Z are the scene's x, z and -y, a right-handed triad; the axis nearest the viewer is drawn last.
-    const axes=[['X',[1,0,0],'#ef7d7a'],['Y',[0,0,1],'#86d38a'],['Z',[0,-1,0],'#76a9f5']].map(([name,v,color])=>({name,color,x:dot(v,right),y:dot(v,up),depth:dot(v,toward)}))
-      .sort((a,b)=>a.depth-b.depth);
+    // Greys, the axis nearest the viewer brightest (Leo, 2026-10-27: no blue on the site).
+    const axes=[['X',[1,0,0]],['Y',[0,0,1]],['Z',[0,-1,0]]].map(([name,v])=>({name,x:dot(v,right),y:dot(v,up),depth:dot(v,toward)}))
+      .sort((a,b)=>a.depth-b.depth);axes.forEach((a,i)=>{a.color=['#7d7d88','#b9b9c4','#f0f0fa'][i];});
     // Letters just beyond the tips, pushed apart where two foreshortened axes point the same way.
     for(const a of axes){const n=Math.max(Math.hypot(a.x,a.y),.35);a.lx=c+(arm+9)*a.x/n;a.ly=c-(arm+9)*a.y/n;}
     for(let pass=0;pass<4;pass++)for(const a of axes)for(const b of axes){if(a===b)continue;const dx=a.lx-b.lx,dy=a.ly-b.ly,d=Math.hypot(dx,dy);
       if(d<11){const push=(11-d)/2,ux=d>1e-6?dx/d:1,uy=d>1e-6?dy/d:0;a.lx+=ux*push;a.ly+=uy*push;b.lx-=ux*push;b.ly-=uy*push;}}
-    el(id).innerHTML=`<circle cx="${c}" cy="${c}" r="2" fill="#8d9aae"/>`+axes.map(a=>{
+    el(id).innerHTML=`<circle cx="${c}" cy="${c}" r="2" fill="#97979f"/>`+axes.map(a=>{
       const x=c+arm*a.x,y=c-arm*a.y,lx=a.lx,ly=a.ly;
       return `<line x1="${c}" y1="${c}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${a.color}" stroke-width="2" stroke-linecap="round"/>`+
         `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${a.color}" font-size="11" text-anchor="middle" dominant-baseline="central">${a.name}</text>`;
@@ -573,7 +574,7 @@
     controlCache.set(flight,out);return out;
   }
   function timeCursor() {
-    return [{type:'line',xref:'x',yref:'paper',x0:playbackTime,x1:playbackTime,y0:0,y1:1,line:{color:'#b8cada',width:1,dash:'dot'}}];
+    return [{type:'line',xref:'x',yref:'paper',x0:playbackTime,x1:playbackTime,y0:0,y1:1,line:{color:'#c5c5cd',width:1,dash:'dot'}}];
   }
   function resizeDataPlots() {
     if(el('missile-flight-data').open&&el('missile-telemetry-chart').data)Plotly.Plots.resize(el('missile-telemetry-chart'));
@@ -607,7 +608,7 @@
     // One lane per quantity, stacked on one time axis.
     const node=el('missile-telemetry-chart'),lanes=telemetryPicks.length,gap=lanes>1?.06:0,grid='rgba(240,240,250,.09)';
     const height=lanes?120+150*lanes:160;node.style.height=height+'px';
-    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0',size:11},height,
+    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#e2e2ea',size:11},height,
       margin:{l:70,r:18,t:16,b:50},xaxis:{title:'Time after release · s',gridcolor:grid,range:[0,totalTime()],anchor:lanes?'y'+(lanes>1?lanes:''):'y'},
       showlegend:false,hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+telemetryPicks.join(','),dragmode:'pan',
       modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},annotations:[]};
@@ -651,12 +652,12 @@
       return [Math.min(...values),Math.max(...values)];
     });
     flightBounds=bounds;const fitted=sceneFit(bounds);camera=fitted.camera;
-    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:index===1?[center+span/2,center-span/2]:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#000000'};};
-    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',tickformat:',.0f',automargin:true});
+    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:index===1?[center+span/2,center-span/2]:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',color:'#b4b4bc',backgroundcolor:'#000000'};};
+    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',tickformat:',.0f',automargin:true});
     // Mouse logic as on the EM chart (Leo, 2026-10-27): drag pans (turns the 3D view), the wheel zooms, the toolbar resets.
-    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#e3edf7',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
+    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#e2e2ea'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#eaeaf2',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
       dragmode:is3d?'turntable':'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},
-      ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#a9b8ca'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
+      ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#b4b4bc'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
         {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1,...(view==='xz'?{autorange:'reversed'}:{})},hovermode:'closest'})};
     el('missile-slice-note').hidden=is3d;
     el('missile-chart').setAttribute('aria-label',is3d?'Interactive 3D missile and target trajectories':`Interactive 2D missile and target trajectories: ${axisNames[viewAxes[view][0]]} / ${axisNames[viewAxes[view][1]]}`);
