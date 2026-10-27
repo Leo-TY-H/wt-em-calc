@@ -62,12 +62,10 @@
     <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
     <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p></section>
     <details id="missile-flight-data" class="missile-flight-data" open hidden><summary>Telemetry <span id="missile-flight-name"></span></summary>
-      <p class="hint">Add any quantity; each gets its own lane on one time axis. Click a plotted point to inspect that missile and time.</p>
       <div class="missile-telemetry-picks"><div id="missile-telemetry-chips" class="contour-levels" aria-label="Plotted quantities"></div>
         <select id="missile-telemetry-add" aria-label="Add a quantity to the telemetry plot"></select></div>
       <div id="missile-telemetry-legend" class="missile-plot-legend" aria-label="Missile colors"></div>
       <div id="missile-telemetry-chart" class="missile-telemetry-chart" aria-label="Telemetry over flight time"></div>
-      <p class="hint">Load, look angle, line-of-sight and turn rate come from the saved motion: the load is the acceleration across the flight path without gravity, the look angle is between the missile's nose and the target. Forces come from the final integration substep before each saved position; lift and drag are magnitudes, angle of attack is unsigned. Values missing at release or at the exact proximity event are left blank.</p>
     </details>
     <div class="exports"><span>EXPORT</span><a id="missile-download" aria-disabled="true">Flight data JSON</a></div>
     <details class="missile-details" hidden><summary>Model and current limitations</summary><p>Recovered profile baseline: War Thunder 2.59.0.34. Seekers begin with warm-up complete, respecting designation and angle limits. Radar missiles retain their lock-before-launch or lock-after-launch behavior. Ideal radar support moves from the launch position at the entered launch velocity; recovered inertial guidance remains active where configured. Target geometry is a point, so a proximity event does not assert aircraft damage. Full engagements and native collision timing are still being validated.</p><ul id="missile-model-details"></ul></details>
@@ -517,39 +515,40 @@
   }
   // Telemetry quantities (Leo, 2026-10-27: one plot, add whatever you want). field: a key of each sample's telemetry
   // (listed only when a flight records it, e.g. the autopilot values); value: from the sample itself; derived: controlSeries.
-  const QUANTITIES={
-    thrust:{label:'Thrust',unit:'kN',field:'thrust_n',scale:.001},mass:{label:'Missile mass',unit:'kg',field:'mass_kg'},
-    propellant:{label:'Propellant consumed',unit:'kg',field:'propellant_used_kg'},
-    drag:{label:'Drag',unit:'kN',field:'drag_n',scale:.001},lift:{label:'Lift',unit:'kN',field:'lift_n',scale:.001},
-    cd:{label:'Drag coefficient',unit:'',field:'drag_coefficient'},aoa:{label:'Angle of attack',unit:'°',field:'aoa_deg'},
-    pressure:{label:'Dynamic pressure',unit:'kPa',field:'dynamic_pressure_pa',scale:.001},
-    acceleration:{label:'Net acceleration',unit:'m/s²',field:'acceleration_mps2'},
-    speed:{label:'Speed',unit:'km/h',value:r=>Number.isFinite(r.speed_mps)?r.speed_mps*3.6:null},mach:{label:'Mach',unit:'',value:r=>r.mach},
-    altitude:{label:'Altitude',unit:'m',value:r=>r.missile?.[1]},
-    range:{label:'Range to target',unit:'km',value:r=>r.missile&&r.target?Math.hypot(...r.missile.map((v,i)=>v-r.target[i]))/1000:null},
-    load:{label:'Manoeuvre load',unit:'g',derived:'load_g'},look:{label:'Seeker look angle',unit:'°',derived:'look_deg'},
-    los:{label:'Line-of-sight rate',unit:'°/s',derived:'los_rate_dps'},turn:{label:'Turn rate',unit:'°/s',derived:'turn_rate_dps'},
-    fin_h:{label:'Fin command · horizontal',unit:'',field:'fin_h'},fin_v:{label:'Fin command · vertical',unit:'',field:'fin_v'},
-    accel_cmd_h:{label:'Commanded acceleration · horizontal',unit:'m/s²',field:'accel_cmd_h_mps2'},
-    accel_cmd_v:{label:'Commanded acceleration · vertical',unit:'m/s²',field:'accel_cmd_v_mps2'},
-    accel_h:{label:'Achieved acceleration · horizontal',unit:'m/s²',field:'accel_h_mps2'},
-    accel_v:{label:'Achieved acceleration · vertical',unit:'m/s²',field:'accel_v_mps2'},
-    pid_p_h:{label:'PID P · horizontal',unit:'',field:'pid_p_h'},pid_i_h:{label:'PID I · horizontal',unit:'',field:'pid_i_h'},
-    pid_d_h:{label:'PID D · horizontal',unit:'',field:'pid_d_h'},pid_p_v:{label:'PID P · vertical',unit:'',field:'pid_p_v'},
-    pid_i_v:{label:'PID I · vertical',unit:'',field:'pid_i_v'},pid_d_v:{label:'PID D · vertical',unit:'',field:'pid_d_v'},
-    tvc_h:{label:'Thrust vector · horizontal',unit:'°',field:'tvc_h_deg'},tvc_v:{label:'Thrust vector · vertical',unit:'°',field:'tvc_v_deg'},
-    cruise_pid:{label:'Cruise-speed PID',unit:'',field:'cruise_pid'}};
+  // Grouped and in this order in the list and on the plot. A pair (fields) is one lane: horizontal solid, vertical dashed,
+  // in the missile's own control axes.
+  const QUANTITY_GROUPS=[
+    ['Flight',{speed:{label:'Speed',unit:'km/h',value:r=>Number.isFinite(r.speed_mps)?r.speed_mps*3.6:null},mach:{label:'Mach',unit:'',value:r=>r.mach},
+      altitude:{label:'Altitude',unit:'m',value:r=>r.missile?.[1]},
+      range:{label:'Range to target',unit:'km',value:r=>r.missile&&r.target?Math.hypot(...r.missile.map((v,i)=>v-r.target[i]))/1000:null}}],
+    ['Propulsion',{thrust:{label:'Thrust',unit:'kN',field:'thrust_n',scale:.001},mass:{label:'Missile mass',unit:'kg',field:'mass_kg'},
+      propellant:{label:'Propellant consumed',unit:'kg',field:'propellant_used_kg'}}],
+    ['Aerodynamics',{drag:{label:'Drag',unit:'kN',field:'drag_n',scale:.001},lift:{label:'Lift',unit:'kN',field:'lift_n',scale:.001},
+      cd:{label:'Drag coefficient',unit:'',field:'drag_coefficient'},aoa:{label:'Angle of attack',unit:'°',field:'aoa_deg'},
+      pressure:{label:'Dynamic pressure',unit:'kPa',field:'dynamic_pressure_pa',scale:.001},
+      acceleration:{label:'Net acceleration',unit:'m/s²',field:'acceleration_mps2'}}],
+    ['Guidance',{load:{label:'Manoeuvre load',unit:'g',derived:'load_g'},turn:{label:'Turn rate',unit:'°/s',derived:'turn_rate_dps'},
+      look:{label:'Seeker look angle',unit:'°',derived:'look_deg'},los:{label:'Line-of-sight rate',unit:'°/s',derived:'los_rate_dps'}}],
+    ['Autopilot',{accel_cmd:{label:'Commanded acceleration',unit:'m/s²',fields:['accel_cmd_h_mps2','accel_cmd_v_mps2']},
+      accel:{label:'Achieved acceleration',unit:'m/s²',fields:['accel_h_mps2','accel_v_mps2']},
+      fins:{label:'Fin command',unit:'',fields:['fin_h','fin_v']},tvc:{label:'Thrust vector',unit:'°',fields:['tvc_h_deg','tvc_v_deg']}}],
+    ['PID',{pid_p:{label:'PID P term',unit:'',fields:['pid_p_h','pid_p_v']},pid_i:{label:'PID I term',unit:'',fields:['pid_i_h','pid_i_v']},
+      pid_d:{label:'PID D term',unit:'',fields:['pid_d_h','pid_d_v']},cruise_pid:{label:'Cruise-speed PID',unit:'',field:'cruise_pid'}}]];
+  const QUANTITIES=Object.assign({},...QUANTITY_GROUPS.map(([,group])=>group)),QUANTITY_ORDER=Object.keys(QUANTITIES);
   const TELEMETRY_KEY='missile-telemetry-quantities',DEFAULT_QUANTITIES=['thrust','speed','load'];
   let telemetryPicks=(()=>{try{const saved=JSON.parse(localStorage.getItem(TELEMETRY_KEY));
     return Array.isArray(saved)&&saved.every(k=>QUANTITIES[k])?saved:[...DEFAULT_QUANTITIES];}catch{return [...DEFAULT_QUANTITIES];}})();
   const quantityName=q=>q.unit?`${q.label} · ${q.unit}`:q.label;
-  function quantityValues(flight,key) {
+  // One series per quantity, or [horizontal, vertical] for a pair.
+  function quantitySeries(flight,key) {
     const q=QUANTITIES[key],scale=q.scale||1,finite=v=>Number.isFinite(v)?v*scale:null;
-    if(q.derived)return controlSeries(flight)[q.derived].map(finite);
-    return flight.trajectory.map(r=>finite(q.value?q.value(r):r.telemetry?.[q.field]));
+    if(q.derived)return [controlSeries(flight)[q.derived].map(finite)];
+    if(q.fields)return q.fields.map(field=>flight.trajectory.map(r=>finite(r.telemetry?.[field])));
+    return [flight.trajectory.map(r=>finite(q.value?q.value(r):r.telemetry?.[q.field]))];
   }
   // Recorded quantities a flight does not carry (all blank) stay out of the list.
-  const quantityAvailable=key=>{const q=QUANTITIES[key];return !q.field||flights.some(f=>f.trajectory.some(r=>Number.isFinite(r.telemetry?.[q.field])));};
+  const quantityAvailable=key=>{const fields=QUANTITIES[key].fields||(QUANTITIES[key].field?[QUANTITIES[key].field]:null);
+    return !fields||flights.some(f=>f.trajectory.some(r=>fields.some(field=>Number.isFinite(r.telemetry?.[field]))));};
   // Control quantities derived from each saved sample's motion (Leo, 2026-10-27).
   const controlCache=new WeakMap();
   function controlSeries(flight) {
@@ -591,11 +590,13 @@
     el('missile-model-details').replaceChildren(...result.model.limitations.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
   }
   function renderTelemetryPicks() {
-    telemetryPicks=telemetryPicks.filter(k=>QUANTITIES[k]&&(!flights.length||quantityAvailable(k)));
+    telemetryPicks=telemetryPicks.filter(k=>QUANTITIES[k]&&(!flights.length||quantityAvailable(k)))
+      .sort((a,b)=>QUANTITY_ORDER.indexOf(a)-QUANTITY_ORDER.indexOf(b));
     el('missile-telemetry-chips').innerHTML=telemetryPicks.map(k=>`<button type="button" data-quantity="${k}" aria-label="Remove ${escapeHtml(QUANTITIES[k].label)}">${escapeHtml(quantityName(QUANTITIES[k]))} ×</button>`).join('');
-    const rest=Object.keys(QUANTITIES).filter(k=>!telemetryPicks.includes(k)&&quantityAvailable(k));
-    el('missile-telemetry-add').innerHTML=`<option value="">Add a quantity…</option>`+rest.map(k=>`<option value="${k}">${escapeHtml(quantityName(QUANTITIES[k]))}</option>`).join('');
-    el('missile-telemetry-add').disabled=!rest.length;
+    const groups=QUANTITY_GROUPS.map(([name,group])=>[name,Object.keys(group).filter(k=>!telemetryPicks.includes(k)&&quantityAvailable(k))]).filter(([,keys])=>keys.length);
+    el('missile-telemetry-add').innerHTML=`<option value="">Add a quantity…</option>`+groups.map(([name,keys])=>
+      `<optgroup label="${name}">${keys.map(k=>`<option value="${k}">${escapeHtml(quantityName(QUANTITIES[k]))}</option>`).join('')}</optgroup>`).join('');
+    el('missile-telemetry-add').disabled=!groups.length;
     try{localStorage.setItem(TELEMETRY_KEY,JSON.stringify(telemetryPicks));}catch{}
   }
   async function renderDataPlots() {
@@ -618,10 +619,12 @@
       const top=1-lane/lanes,bottom=1-(lane+1)/lanes,domain=[bottom+(lane<lanes-1?gap/2:0),top-(lane?gap/2:0)];
       // The lane's name above it (long names overlap as vertical axis titles); the axis keeps the unit.
       layout[axis]={title:{text:q.unit,font:{size:10}},gridcolor:grid,domain,anchor:'x',zeroline:false};
-      layout.annotations.push({xref:'paper',yref:'paper',x:0,y:domain[1],xanchor:'left',yanchor:'bottom',showarrow:false,text:escapeHtml(q.label),font:{size:11,color:'#f0f0fa'}});
-      flights.forEach((flight,i)=>traces.push({type:'scatter',mode:'lines',xaxis:'x',yaxis:ref,name:`${i+1} · ${missileName(flight.scenario.missile)}`,
-        x:flight.trajectory.map(r=>r.time_s),y:quantityValues(flight,key),customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,
-        line:{color:resultColors[i],width:2},hovertemplate:`${escapeHtml(q.label)}: %{y:.3f}${q.unit?' '+q.unit:''}<extra>${i+1}</extra>`}));
+      layout.annotations.push({xref:'paper',yref:'paper',x:0,y:domain[1],xanchor:'left',yanchor:'bottom',showarrow:false,
+        text:escapeHtml(q.label)+(q.fields?' <span style="color:#9a9aa6">· solid horizontal, dashed vertical</span>':''),font:{size:11,color:'#f0f0fa'}});
+      flights.forEach((flight,i)=>quantitySeries(flight,key).forEach((y,s)=>traces.push({type:'scatter',mode:'lines',xaxis:'x',yaxis:ref,
+        name:`${i+1} · ${missileName(flight.scenario.missile)}`,x:flight.trajectory.map(r=>r.time_s),y,customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,
+        line:{color:resultColors[i],width:2,dash:s?'dash':'solid'},
+        hovertemplate:`${escapeHtml(q.label)}${q.fields?(s?' · vertical':' · horizontal'):''}: %{y:.3f}${q.unit?' '+q.unit:''}<extra>${i+1}</extra>`})));
     });
     await Plotly.react(node,traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
       toImageButtonOptions:{filename:'missile-telemetry',format:'png',scale:2}});
