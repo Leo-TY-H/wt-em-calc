@@ -731,6 +731,15 @@ function liftDrag(p){
   const lift=f[0]*Math.sin(a)+f[1]*Math.cos(a),drag=-(f[0]*Math.cos(a)*Math.cos(b)-f[1]*Math.sin(a)*Math.cos(b)+f[2]*Math.sin(b));
   return [['Lift',fmt(lift/KGF,0)+' kgf'],['Drag',fmt(drag/KGF,0)+' kgf'],['L/D',drag>0?fmt(lift/drag,2):'—']];
 }
+// Thrust and its offset from the fuselage axis (Leo, 2026-10-27): the whole engine force, signed by its forward part
+// (a braking propeller reads negative); the offset is the force line's angle up or down and left or right of body x.
+function thrustRows(p){
+  const [x,y,z]=p.engine_force_n,s=x<0?-1:1,size=Math.hypot(x,y,z);
+  const deg=v=>Math.atan2(v*s,Math.abs(x))*180/Math.PI,up=deg(y),right=deg(-z);
+  const part=(v,plus,minus)=>Math.abs(v)<.005?null:`${fmt(Math.abs(v),2)}° ${v>0?plus:minus}`;
+  const offset=size<1?'—':[part(up,'up','down'),part(right,'right','left')].filter(Boolean).join(' · ')||'0°';
+  return [['Thrust',fmt(s*size/KGF,0)+' kgf'],['Thrust offset',offset]];
+}
 // Sideslip: + means the flight path leans toward the left wing (body z), so the nose points right of the path.
 const sideslip=p=>{const b=p.sideslip_deg??0;return Math.abs(b)<5e-4?'0°':`${fmt(Math.abs(b),3)}° nose ${b>0?'right':'left'}`;};
 function controlDeflections(p){
@@ -761,7 +770,7 @@ async function inspect(a,p,clicked){
   // Grouped (Leo, 2026-10-27): Flight (with lift and drag), Attitude & controls, Engine (with thrust) side by side;
   // component forces hidden.
   const section=(title,rows)=>rows.length?`<section><h3>${title}</h3>${dl(rows)}</section>`:'';
-  const engine=[['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],...(p.propulsion?[
+  const engine=[...thrustRows(p),...(p.propulsion?[
     ...propellerPower(a,p),
     ['Engine RPM',p.propulsion.engine_rpm.map(v=>fmt(v,0)).join(' / ')],
     ['RPM limit',p.propulsion.engine_rpm_threshold.map(v=>fmt(v,0)).join(' / ')],
