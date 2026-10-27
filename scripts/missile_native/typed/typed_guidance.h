@@ -22,6 +22,14 @@ struct PropulsionCtl { int64_t stages[4]; float pid[8]; };
 struct Controllers { OrientationCtl orientation; GuidanceCtl guidance; PropulsionCtl propulsion; };
 
 struct OrientationResult { bool override_; d2 fins, auxiliary; };
+
+// The simulator step's last acceleration- and propulsion-control results, for
+// missile_telemetry.controls. Recorded only while the typed simulator sets it.
+struct ControlCapture {
+    bool accel = false; float fins[2]{}, limited[2]{}, actual[2]{}, pid[16]{};
+    bool cruise = false; double cruise_factor = 0.;
+};
+inline thread_local ControlCapture* control_capture = nullptr;
 // optical_manager_controls.orientation through engine_kernels' verified adapter.
 inline OrientationResult orientation_service(const ControlProps& p, OrientationCtl& s, double time, double range_squared,
         const d4& q, const d3& omega, const d2& angles, double context_value, double dt) {
@@ -60,19 +68,32 @@ inline d2 guidance_service(const ControlProps& p, GuidanceCtl& gs, const float* 
     ::acceleration_update(&p.acceleration, &p.aero, motor, pid, command.acceleration, fv(feedback), fq(q), fv(velocity),
                           (float)position[1], (float)time, (float)dt, matrix_velocity_frame ? 1 : 0, &out);
     check_kernel();
+    if (control_capture) {
+        ControlCapture& c = *control_capture;
+        c.accel = out.has_fins != 0;
+        if (c.accel) {
+            for (int k = 0; k < 2; ++k) { c.fins[k] = out.fins[k]; c.limited[k] = out.limited[k]; c.actual[k] = out.actual[k]; }
+            std::memcpy(c.pid, pid, sizeof pid);
+        }
+    }
     if (!out.has_fins) return fins_in;
     for (int i = 0; i < 2; ++i) for (int j = 0; j < 8; ++j) gs.pid[i][j] = pid[i * 8 + j];
     return {out.fins[0], out.fins[1]};
 }
 inline d4 propulsion_service(const ControlProps& p, PropulsionCtl& s, double time, const d3& position, const d3& velocity,
                              double time_to_hit, double closure, double dt) {
+    if (control_capture) control_capture->cruise = false;
     if (!p.propulsion.count) return {1., 1., 1., 1.};
     wtm_propulsion_control_state st{}; bool cruising = false;
     for (int i = 0; i < 4; ++i) { st.stages[i] = (int)s.stages[i]; if (i < p.propulsion.count && st.stages[i] == 2) cruising = true; }
     std::memcpy(st.pid, s.pid, sizeof st.pid);
     float factors[4];
+    int before[4]; std::memcpy(before, st.stages, sizeof before);
     ::propulsion_control_update(&p.propulsion, &st, (float)time, fv(position), fv(velocity), (float)time_to_hit, (float)closure, (float)dt, factors);
     check_kernel();
+    if (control_capture)   // the factor set by the cruise-speed PID (a stage that entered in mode 2)
+        for (int i = 0; i < p.propulsion.count; ++i)
+            if (before[i] == 2) { control_capture->cruise = true; control_capture->cruise_factor = factors[i]; break; }
     if (cruising) std::memcpy(s.pid, st.pid, sizeof st.pid);
     for (int i = 0; i < 4; ++i) s.stages[i] = st.stages[i];
     return {factors[0], factors[1], factors[2], factors[3]};
