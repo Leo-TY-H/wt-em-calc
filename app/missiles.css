@@ -17,10 +17,10 @@
 .missile-flight-data{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .missile-flight-data[hidden]{display:none}.missile-flight-data>summary{cursor:pointer;font-size:14px;color:var(--text)}
 #missile-flight-name{display:inline-block;font-size:11px;color:var(--cyan);margin-left:10px}
-.missile-data-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px}
+.missile-data-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:16px}
 .missile-data-grid>.chart-card{min-width:0;margin:0}.missile-plot-choice{padding:14px 14px 0;margin:0}
 .missile-plot-choice select{display:block;width:100%;margin-top:8px}.missile-data-chart{height:300px;width:100%}
-@media(max-width:1250px){.missile-data-grid{grid-template-columns:1fr}}
+
 @media(max-width:760px){.missile-flight-data{padding:10px}.missile-data-chart{height:280px}#missile-flight-name{display:block;margin:8px 0 0}}
 .missile-details{font-size:12px;color:var(--muted);line-height:1.8;margin-top:20px}
 .missile-details summary{color:var(--text)}.missile-details ul{padding-left:20px}

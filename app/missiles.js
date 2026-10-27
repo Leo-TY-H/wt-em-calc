@@ -61,15 +61,16 @@
     </div>
     <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
     <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p></section>
-    <details id="missile-flight-data" class="missile-flight-data" hidden><summary>Propulsion &amp; aerodynamic plots <span id="missile-flight-name"></span></summary>
+    <details id="missile-flight-data" class="missile-flight-data" open hidden><summary>Propulsion, aerodynamics &amp; control <span id="missile-flight-name"></span></summary>
       <p class="hint">Click a plotted point to inspect that missile and time. In Drag &amp; lift, solid lines show drag and dashed lines show lift.</p>
       <div class="missile-data-grid">
         <section class="chart-card"><label class="field missile-plot-choice" for="missile-propulsion-metric">Propulsion<select id="missile-propulsion-metric"><option value="thrust">Thrust · kN</option><option value="mass">Missile mass · kg</option><option value="propellant">Propellant consumed · kg</option></select></label><div id="missile-propulsion-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-propulsion-chart" class="missile-data-chart" aria-label="Propulsion over flight time"></div></section>
         <section class="chart-card"><label class="field missile-plot-choice" for="missile-aero-metric">Aerodynamics<select id="missile-aero-metric"><option value="forces">Drag &amp; lift · kN</option><option value="cd">Drag coefficient · Cd</option><option value="aoa">Angle of attack · degrees</option><option value="pressure">Dynamic pressure · kPa</option><option value="acceleration">Net acceleration · m/s²</option></select></label><div id="missile-aero-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-aero-chart" class="missile-data-chart" aria-label="Aerodynamics over flight time"></div></section>
-      </div><p class="hint">Forces come from the final integration substep before each saved position. Lift and drag are force magnitudes; angle of attack is unsigned local-flow incidence. Net acceleration includes gravity. Missing values at release or the exact proximity event are left blank.</p>
+        <section class="chart-card"><label class="field missile-plot-choice" for="missile-control-metric">Control<select id="missile-control-metric"><option value="load">Manoeuvre load · g</option><option value="look">Seeker look angle · degrees</option><option value="los">Line-of-sight rate · °/s</option><option value="turn">Turn rate · °/s</option></select></label><div id="missile-control-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-control-chart" class="missile-data-chart" aria-label="Control over flight time"></div></section>
+      </div><p class="hint">Control values come from the saved motion: manoeuvre load is the acceleration across the flight path without gravity, the look angle is between the missile's nose and the target. Forces come from the final integration substep before each saved position. Lift and drag are force magnitudes; angle of attack is unsigned local-flow incidence. Net acceleration includes gravity. Missing values at release or the exact proximity event are left blank.</p>
     </details>
     <div class="exports"><span>EXPORT</span><a id="missile-download" aria-disabled="true">Flight data JSON</a></div>
-    <details class="missile-details"><summary>Model and current limitations</summary><p>Recovered profile baseline: War Thunder 2.59.0.34. Seekers begin with warm-up complete, respecting designation and angle limits. Radar missiles retain their lock-before-launch or lock-after-launch behavior. Ideal radar support moves from the launch position at the entered launch velocity; recovered inertial guidance remains active where configured. Target geometry is a point, so a proximity event does not assert aircraft damage. Full engagements and native collision timing are still being validated.</p><ul id="missile-model-details"></ul></details>
+    <details class="missile-details" hidden><summary>Model and current limitations</summary><p>Recovered profile baseline: War Thunder 2.59.0.34. Seekers begin with warm-up complete, respecting designation and angle limits. Radar missiles retain their lock-before-launch or lock-after-launch behavior. Ideal radar support moves from the launch position at the entered launch velocity; recovered inertial guidance remains active where configured. Target geometry is a point, so a proximity event does not assert aircraft damage. Full engagements and native collision timing are still being validated.</p><ul id="missile-model-details"></ul></details>
   </div>`;
   const apiBase=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   async function request(path, options={}) {
@@ -514,11 +515,36 @@
   }
   const propulsionMetrics={thrust:{unit:'kN',series:[['thrust_n','Thrust',.001,'#38c9d7']]},mass:{unit:'kg',series:[['mass_kg','Missile mass',1,'#38c9d7']]},propellant:{unit:'kg',series:[['propellant_used_kg','Propellant consumed',1,'#38c9d7']]}};
   const aeroMetrics={forces:{unit:'kN',series:[['drag_n','Drag',.001,'#ffa66b'],['lift_n','Lift',.001,'#a7a0ff']]},cd:{unit:'Cd',series:[['drag_coefficient','Drag coefficient',1,'#ffa66b']]},aoa:{unit:'degrees',series:[['aoa_deg','Angle of attack',1,'#ffa66b']]},pressure:{unit:'kPa',series:[['dynamic_pressure_pa','Dynamic pressure',.001,'#ffa66b']]},acceleration:{unit:'m/s²',series:[['acceleration_mps2','Net acceleration',1,'#ffa66b']]}};
+  const controlMetrics={load:{unit:'g',series:[['load_g','Manoeuvre load',1,'#91d477']]},look:{unit:'degrees',series:[['look_deg','Seeker look angle',1,'#91d477']]},los:{unit:'°/s',series:[['los_rate_dps','Line-of-sight rate',1,'#91d477']]},turn:{unit:'°/s',series:[['turn_rate_dps','Turn rate',1,'#91d477']]}};
+  const DATA_KINDS=['propulsion','aero','control'],dataMetrics={propulsion:propulsionMetrics,aero:aeroMetrics,control:controlMetrics};
+  // Control quantities from each saved sample's motion (Leo, 2026-10-27); the engine records no fin or command outputs.
+  const controlCache=new WeakMap();
+  function controlSeries(flight) {
+    if(controlCache.has(flight))return controlCache.get(flight);
+    const rows=flight.trajectory,n=rows.length,G=9.80665,deg=180/Math.PI,out={load_g:[],look_deg:[],los_rate_dps:[],turn_rate_dps:[]};
+    const sub=(a,b)=>a.map((v,i)=>v-b[i]),dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>Math.hypot(...a);
+    const angle=(a,b)=>Math.acos(Math.max(-1,Math.min(1,dot(a,b)/(norm(a)*norm(b)||1))));
+    rows.forEach((r,i)=>{
+      // The nose from the attitude quaternion [x, y, z, w] (missile_model/control_frame.frame); the look angle is to the target.
+      const q=r.quaternion,los=sub(r.target,r.missile);
+      const nose=q?[2*(q[0]*q[0]+q[3]*q[3])-1,2*(q[3]*q[2]+q[1]*q[0]),2*(q[2]*q[0]-q[3]*q[1])]:null;
+      out.look_deg.push(nose&&norm(los)>0?angle(nose,los)*deg:null);
+      // Central differences: acceleration across the velocity (turn rate), less gravity (load), and the sight line's turn.
+      const a=rows[Math.max(0,i-1)],b=rows[Math.min(n-1,i+1)],dt=b.time_s-a.time_s,v=r.velocity;
+      if(!(dt>1e-6)||!a.velocity||!b.velocity||!v){out.load_g.push(null);out.turn_rate_dps.push(null);out.los_rate_dps.push(null);return;}
+      const speed=norm(v),across=c=>{const k=dot(c,v)/(speed*speed||1);return c.map((x,j)=>x-k*v[j]);};
+      const acceleration=sub(b.velocity,a.velocity).map(c=>c/dt);
+      out.turn_rate_dps.push(speed?norm(across(acceleration))/speed*deg:null);
+      out.load_g.push(norm(across(acceleration.map((c,j)=>j===1?c+G:c)))/G);
+      out.los_rate_dps.push(angle(sub(b.target,b.missile),sub(a.target,a.missile))/dt*deg);
+    });
+    controlCache.set(flight,out);return out;
+  }
   function timeCursor() {
     return [{type:'line',xref:'x',yref:'paper',x0:playbackTime,x1:playbackTime,y0:0,y1:1,line:{color:'#b8cada',width:1,dash:'dot'}}];
   }
   function resizeDataPlots() {
-    if(el('missile-flight-data').open)for(const kind of ['propulsion','aero'])if(el(`missile-${kind}-chart`).data)Plotly.Plots.resize(el(`missile-${kind}-chart`));
+    if(el('missile-flight-data').open)for(const kind of DATA_KINDS)if(el(`missile-${kind}-chart`).data)Plotly.Plots.resize(el(`missile-${kind}-chart`));
   }
   const totalTime=()=>Math.max(...flights.map(f=>f.elapsed_s));
   function indexAt(rows,time,key='time_s') {
@@ -533,16 +559,16 @@
   }
   async function renderDataPlots() {
     if(!result||!el('missile-flight-data').open)return;
-    await Promise.all(['propulsion','aero'].map(async kind=>{
+    await Promise.all(DATA_KINDS.map(async kind=>{
       const node=el(`missile-${kind}-chart`),key=el(`missile-${kind}-metric`).value;
-      const metric=(kind==='propulsion'?propulsionMetrics:aeroMetrics)[key];
+      const metric=dataMetrics[kind][key];
       el(`missile-${kind}-legend`).replaceChildren(...flights.map((flight,i)=>{
         const label=document.createElement('span');label.textContent=`━ ${i+1} · ${missileName(flight.scenario.missile)}`;
         label.style.color=resultColors[i];label.title=missileLabel(flight.scenario.missile);return label;
       }));
       const traces=flights.flatMap((flight,i)=>metric.series.map(([field,name,scale],s)=>({type:'scatter',mode:'lines',name:`${i+1} · ${missileName(flight.scenario.missile)}`,
         legendgroup:String(i),showlegend:s===0,
-        x:flight.trajectory.map(r=>r.time_s),y:flight.trajectory.map(r=>Number.isFinite(r.telemetry?.[field])?r.telemetry[field]*scale:null),
+        x:flight.trajectory.map(r=>r.time_s),y:kind==='control'?controlSeries(flight)[field].map(v=>Number.isFinite(v)?v*scale:null):flight.trajectory.map(r=>Number.isFinite(r.telemetry?.[field])?r.telemetry[field]*scale:null),
         customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,line:{color:resultColors[i],width:2,dash:s?'dash':'solid'},
         hovertemplate:`${escapeHtml(missileLabel(flight.scenario.missile))}<br>%{x:.3f} s<br>${name}: %{y:.3f} ${metric.unit}<extra></extra>`})));
       await Plotly.react(node,traces,{paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0',size:11},
@@ -555,7 +581,7 @@
     }));
   }
   el('missile-flight-data').addEventListener('toggle',()=>{if(el('missile-flight-data').open)renderDataPlots().catch(error=>showError(error.message));});
-  for(const kind of ['propulsion','aero'])el(`missile-${kind}-metric`).addEventListener('change',()=>renderDataPlots().catch(error=>showError(error.message)));
+  for(const kind of DATA_KINDS)el(`missile-${kind}-metric`).addEventListener('change',()=>renderDataPlots().catch(error=>showError(error.message)));
   const viewAxes={ '3d':[0,2,1],xz:[0,2],xy:[0,1],zy:[2,1] };
   const axisNames=['X · m','Altitude · Y · m','Z · m'];
   function projectedPositions(positions,view=el('missile-view').value) {
@@ -620,7 +646,7 @@
     const trailUpdate=Object.fromEntries(Object.keys(trailPositions[0]).map(axis=>[axis,trailPositions.map(p=>p[axis])]));
     Plotly.restyle(el('missile-chart'),{...trailUpdate,text:trails.map((path,i)=>path.map(r=>flightHover(r,'missile',flights[i])))},flights.map((_,i)=>i));
     Plotly.restyle(el('missile-chart'),{...projected,text:[...rows.map((r,i)=>[flightHover(r,'missile',flights[i])+(time>flights[i].elapsed_s?'<br>Flight ended · marker remains at the final position':'')]),[]]},positions.map((_,i)=>flights.length+1+i));
-    if(el('missile-flight-data').open)for(const kind of ['propulsion','aero'])if(el(`missile-${kind}-chart`).data)Plotly.relayout(el(`missile-${kind}-chart`),{shapes:timeCursor()});
+    if(el('missile-flight-data').open)for(const kind of DATA_KINDS)if(el(`missile-${kind}-chart`).data)Plotly.relayout(el(`missile-${kind}-chart`),{shapes:timeCursor()});
   }
   el('missile-time').addEventListener('input',()=>{pause();if(plotView==='setup')showView(flightView);updateFrame(Number(el('missile-time').value));});
   el('missile-view').addEventListener('change',async()=>{
