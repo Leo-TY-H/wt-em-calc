@@ -114,7 +114,7 @@ cdef class PropModel:
     cdef EngState seed_engines[NP]
     cdef PropState seed_props[NP]
     cdef double seed_omega[NP]
-    cdef double altitude, nitro, dt
+    cdef double altitude, nitro, dt, turn
     cdef double cg[3]
     cdef bint torque_gyro, governor_saturation
     cdef int npaths
@@ -192,6 +192,7 @@ cdef class PropModel:
         self.altitude = cfg['altitude_m'];self.nitro = solver.mass['nitro_mass'];self.dt = engine.dt
         for i in range(3):self.cg[i] = solver.mass['cog'][i]
         self.torque_gyro = bool(cfg['torque_gyro'])
+        self.turn = -1. if cfg.get('turn_direction', 'left') == 'right' else 1.
         self.governor_saturation = cfg.get('stationary_governor_mode', 'pitch_stops') == 'pitch_stops'
         controls = engine.fixed_controls or engine.automatic_controls
         self.py_controls = controls
@@ -498,10 +499,10 @@ cdef class PropModel:
         cdef EngState states[NP]
         cdef double v, tmp
         cdef bint ok, dup
-        turn_quaternion(alpha, bank, quat)
+        turn_quaternion(alpha, self.turn*bank, quat)
         world_to_body_air(quat, speed, out.velocity)
         air_cache(out.velocity, self.altitude, &air)
-        turn_geometry(alpha, bank, speed, load, self.dt_aircraft, air.ias_u, G, &geom)
+        turn_geometry(alpha, bank, speed, load, self.dt_aircraft, air.ias_u, G, self.turn, &geom)
         for i in range(3):
             out.velocity[i] = F(out.velocity[i]); out.rates[i] = F(geom.omega[i])
         self.turbine_seeds(out)

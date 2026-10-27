@@ -42,7 +42,7 @@ AIRCRAFT = LazyCatalog()
 SOFT_REASONS = frozenset(('engine RPM limit', 'IAS limit', 'flap automatic retraction', 'flap IAS limit'))
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
-                afterburner=True, torque_gyro=False, engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
+                afterburner=True, torque_gyro=False, turn_direction='left', engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
                 extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', loadout='', stores_released=False, speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=False,aircraft_search_region=True,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
@@ -73,7 +73,7 @@ AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburn
     'manual_engine_controls','propeller_pitch_auto','propeller_pitch_percent','oil_radiator_percent','radiator_percent',
     'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','structural_limits','turn_response_mode',
     'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode',
-    'experimental_instantaneous_aero','experimental_lateral_trim','stationary_governor_mode'))
+    'experimental_instantaneous_aero','experimental_lateral_trim','stationary_governor_mode','turn_direction'))
 
 
 def contour_levels(values):
@@ -149,6 +149,7 @@ def settings(values=None):
     if result['instructor_authority_mode']!='direct':raise ValueError('Instructor authority mode is unavailable')
     if result['trim_solver_mode'] not in ('stationary','nested','off'):raise ValueError('Trim solver mode is unavailable')
     if result['stationary_governor_mode'] not in ('pitch_stops','exact_rpm'):raise ValueError('Unknown stationary governor mode')
+    if result['turn_direction'] not in ('left','right'):raise ValueError('Turn direction must be left or right')
     if result['stationary_execution'] not in ('baseline','columns','serial_cells'):
         raise ValueError('Unknown stationary chart execution mode')
     if result['chart_solver'] not in ('march','baseline'):raise ValueError('Unknown chart solver')
@@ -214,8 +215,16 @@ def upright_bank_margin(bank_deg):
     return 90. - abs(float(bank_deg)) if math.isfinite(bank_deg) else -math.inf
 
 
-def turn_geometry(alpha_deg, bank_deg, speed, load, dt, ias_u, sideslip_deg=0.):
-    alpha,bank=map(math.radians,(alpha_deg,bank_deg))
+def turn_direction(config):
+    """+1 for a left turn, -1 for a right turn (body z points left)."""
+    return -1. if config.get('turn_direction','left')=='right' else 1.
+
+
+def turn_geometry(alpha_deg, bank_deg, speed, load, dt, ias_u, sideslip_deg=0., turn=1.):
+    # bank_deg is the bank into the turn. A left turn (turn=1) lowers the left (+z) wing, turns toward +z and rotates
+    # about -up; a right turn (turn=-1) is its mirror: right wing down, toward -z, about +up. turn=1 is bit-identical
+    # to the left-only geometry.
+    alpha,bank=map(math.radians,(alpha_deg,turn*bank_deg))
     sa,ca,sb,cb=math.sin(alpha),math.cos(alpha),math.sin(bank),math.cos(bank)
     forward=np.array([ca,-sa,0.]); normal=np.array([sa,ca,0.])
     side=np.array([0.,0.,1.])
@@ -223,10 +232,10 @@ def turn_geometry(alpha_deg, bank_deg, speed, load, dt, ias_u, sideslip_deg=0.):
         beta=math.radians(sideslip_deg);ss,cs=math.sin(beta),math.cos(beta)
         forward=np.array([ca*cs,-sa*cs,ss]);side=np.array([-ca*ss,sa*ss,cs])
     up=cb*normal-sb*side
-    lateral=sb*normal+cb*side
+    lateral=turn*(sb*normal+cb*side)
     turn_rate=float(G)*math.sqrt(max(0.,load*load-1.))/speed
 
-    x,y,z=-up*math.sin(turn_rate*dt*.5); w=math.cos(turn_rate*dt*.5)
+    x,y,z=-turn*up*math.sin(turn_rate*dt*.5); w=math.cos(turn_rate*dt*.5)
     r00=1-2*(y*y+z*z); r10=2*(x*y+w*z); r20=2*(x*z-w*y)
     r11=1-2*(x*x+z*z); r12=2*(y*z-w*x)
     yaw=math.atan2(-r20,r00); pitch=math.asin(max(-1.,min(1.,r10))); roll=math.atan2(-r12,r11)
@@ -235,7 +244,7 @@ def turn_geometry(alpha_deg, bank_deg, speed, load, dt, ias_u, sideslip_deg=0.):
     stored=midpoint*(2./(1.+damping))
 
     from em_numeric_core import turn_quaternion
-    quaternion=turn_quaternion(alpha_deg,bank_deg,sideslip_deg)
+    quaternion=turn_quaternion(alpha_deg,turn*bank_deg,sideslip_deg)
     return dict(forward=forward, normal=normal, side=side, up=up, lateral=lateral,
                 omega=stored, quaternion=quaternion, turn_rate=turn_rate)
 
