@@ -756,22 +756,25 @@ async function inspect(a,p,clicked){
   if(!chartUsable(p)&&p.status==='unresolved'&&!p.component_forces){$('point-content').innerHTML=dl([['Calculation',escapeText(p.search_unresolved||p.chart_status||'No numerical candidate established')]])+note;return;}
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
-  $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3>${dl([
+  // Grouped (Leo, 2026-10-27): flight, then attitude and controls; forces, then engine; component forces last.
+  const section=(title,rows)=>rows.length?`<section><h3>${title}</h3>${dl(rows)}</section>`:'';
+  const engine=p.propulsion?[
+    ...propellerPower(a,p),
+    ['Engine RPM',p.propulsion.engine_rpm.map(v=>fmt(v,0)).join(' / ')],
+    ['RPM limit',p.propulsion.engine_rpm_threshold.map(v=>fmt(v,0)).join(' / ')],
+    ['Over-rev',p.overrev?`+${fmt(p.overrev.percent_over,1)}% over ${fmt(p.overrev.rpm_limit,0)} rpm${Number.isFinite(p.overrev.seconds_to_stop)?` · engine quits after ${fmt(p.overrev.seconds_to_stop,1)} s`:''}`:p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No'],
+    ['Propeller pitch',p.propulsion.propeller_pitch_deg.map((v,i)=>fmt(v,2)+'°'+(Number.isFinite(p.propulsion.propeller_pitch_percent?.[i])?' / '+fmt(p.propulsion.propeller_pitch_percent[i],0)+'%':'')).join(' · ')],
+    ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
+    ['Compressor stage',(p.propulsion.compressor_stages??p.propulsion.controls.gears).map(v=>v+1).join(' / ')]]:[];
+  $('point-content').innerHTML=`<div class="point-grid"><div>${section('FLIGHT',[
     ['SEP',fmt(p.ps_mps,2)+' m/s'],
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
-    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
-    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],...liftDrag(p),
-    ...(p.propulsion?[
-      ...propellerPower(a,p),
-      ['Engine RPM',p.propulsion.engine_rpm.map(v=>fmt(v,0)).join(' / ')],
-      ['Propeller pitch',p.propulsion.propeller_pitch_deg.map((v,i)=>fmt(v,2)+'°'+(Number.isFinite(p.propulsion.propeller_pitch_percent?.[i])?' / '+fmt(p.propulsion.propeller_pitch_percent[i],0)+'%':'')).join(' · ')],
-      ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
-      ['Compressor stage',(p.propulsion.compressor_stages??p.propulsion.controls.gears).map(v=>v+1).join(' / ')],
-      ['RPM limit',p.propulsion.engine_rpm_threshold.map(v=>fmt(v,0)).join(' / ')],
-      ['Over-rev',p.overrev?`+${fmt(p.overrev.percent_over,1)}% over ${fmt(p.overrev.rpm_limit,0)} rpm${Number.isFinite(p.overrev.seconds_to_stop)?` · engine quits after ${fmt(p.overrev.seconds_to_stop,1)} s`:''}`:p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No']]:[]),
-    ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
+    ['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)]])}${section('ATTITUDE & CONTROLS',[
+    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),
+    ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div>${section('FORCES',[
+    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],...liftDrag(p)])}${section('ENGINE',engine)}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
     ...(p.symmetry_projection?[['Roll/yaw balance','Assumed ideal support; physical control authority not established']]:[]),
