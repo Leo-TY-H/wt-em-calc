@@ -39,7 +39,6 @@
   // Laid out like the EM page (Leo, 2026-10-26): picker + card, plain sections, a sticky Calculate button that
   // fills as progress, the chart unboxed with the same mouse interaction and toolbar downloads, details below on click.
   root.innerHTML = `<aside class="missile-sidebar envelope-sidebar"><form id="envelope-form" novalidate>
-    <div class="section-heading"><span></span><button id="envelope-reset" class="text-button" type="button">Reset</button></div>
     <fieldset id="envelope-picker"><legend class="visually-hidden">Add missiles</legend>
       <input id="envelope-search" type="search" placeholder="Search missiles…" autocomplete="off" aria-label="Search missiles" aria-controls="envelope-list">
       <div id="envelope-list" class="aircraft-list" aria-label="Available missiles"></div>
@@ -63,7 +62,7 @@
     <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="sidebar-actions">
       <p id="envelope-ready" class="hint" hidden></p>
-      <button id="envelope-run" class="primary-button" type="submit" disabled>Calculate</button>
+      <div class="action-row"><button id="envelope-run" class="primary-button" type="submit" disabled>Calculate</button><button id="envelope-reset" class="secondary-button reset-button" type="button">Reset</button></div>
       <button id="envelope-cancel" class="secondary-button" type="button" hidden>Stop</button>
     </div>
   </form></aside>

@@ -70,6 +70,9 @@ body>header.topbar{position:sticky;top:0;z-index:1100}
 .sidebar-actions{position:sticky;bottom:0;z-index:2;margin:18px -16px 0;padding:12px 16px 14px;background:#101c29;border-top:1px solid #365064;box-shadow:0 -8px 24px #080d1460}
 .sidebar-actions .primary-button{margin-top:0;min-height:44px}
 .sidebar-actions .secondary-button{margin-top:8px}
+/* Reset sits beside Calculate in each tool's action bar (Leo, 2026-10-27) */
+.action-row{display:flex;gap:8px;align-items:stretch}.action-row>.primary-button{flex:1;min-width:0;margin-top:0}
+body .action-row>.reset-button{flex:0 0 auto;width:auto;margin-top:0;min-height:44px;padding:0 16px}
 /* Every chart control lives in the chart's own toolbar; the page toolbar row (all hidden controls) takes no space. */
 #em-workspace .chart-toolbar{display:none}
 @media(min-width:761px){#chart{height:max(520px,calc(100vh - var(--header) - 36px))}}

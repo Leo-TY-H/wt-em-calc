@@ -27,7 +27,6 @@
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
   const stateFields = (role,title) => `<fieldset class="missile-step missile-${role}"><legend>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
-    <div class="section-heading"><span></span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
     <div class="missile-presets" role="group" aria-label="Starter scenarios">
       <button type="button" data-preset="chase" aria-pressed="true"><span aria-hidden="true">⇉</span>Tail chase</button>
       <button type="button" data-preset="head-on" aria-pressed="false"><span aria-hidden="true">⇄</span>Head-on</button>
@@ -45,7 +44,7 @@
     ${stateFields('target','Target aircraft')}
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
-    <button id="missile-run" class="primary-button" type="submit" disabled>Calculate</button>
+    <div class="action-row"><button id="missile-run" class="primary-button" type="submit" disabled>Calculate</button><button id="missile-reset" class="secondary-button reset-button" type="button">Reset</button></div>
     <button id="missile-cancel" class="secondary-button" type="button" hidden>Cancel simulation</button>
     <div id="missile-status" role="status" aria-live="polite"></div></div>
   </form></aside>

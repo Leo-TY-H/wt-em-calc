@@ -53,6 +53,7 @@
 .missile-timing summary{color:#b9cadc}.missile-timing dl{margin:12px 0}.missile-timing dt{color:var(--muted);margin-top:10px}.missile-timing dd{margin:3px 0;color:var(--text)}
 .missile-run-panel{position:sticky;bottom:0;margin:14px -16px 0;padding:10px 16px 12px;background:#101c29;border-top:1px solid #365064;box-shadow:0 -8px 24px #080d1460;z-index:2}
 .missile-run-panel .primary-button{margin-top:8px;min-height:44px}.missile-run-panel .hint{margin:0}
+.missile-run-panel .action-row{margin-top:8px}.missile-run-panel .action-row>.primary-button{margin-top:0}
 #missile-status:empty{display:none}
 /* One plot (Leo, 2026-10-27): the starting geometry or the flight, filling the window under the toolbar like the EM chart */
 .missile-plot{height:max(420px,calc(100vh - var(--header) - 186px))}@media(max-width:760px){.missile-plot{height:420px}}
