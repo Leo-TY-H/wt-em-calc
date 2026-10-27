@@ -177,12 +177,13 @@ def pitch_percent(point,solver):
 def control_percent(point,inverted):
     """Point report only: each surface's deflection (% of full travel) in the pilot's sense, elevator + nose up,
     ailerons + roll right, rudder + nose right. The solver's commands (aileron, elevator, rudder) are + roll right,
-    + nose left, and + nose up unless the aircraft's elevator is inverted (the canard aircraft)."""
+    + nose right (body z points left: the rudder's force goes to +z), and + nose up unless the aircraft's elevator
+    is inverted (the canard aircraft). Propeller torque confirms it: Merlin aircraft need + aileron and + rudder."""
     commands=point.get('commands')
     if not commands or len(commands)!=3:return point
     aileron,elevator,rudder=commands
     return dict(point,control_deflection_percent=dict(elevator=(-elevator if inverted else elevator)*100.,
-                                                      ailerons=aileron*100.,rudder=-rudder*100.))
+                                                      ailerons=aileron*100.,rudder=rudder*100.))
 
 
 @lru_cache(maxsize=64)
