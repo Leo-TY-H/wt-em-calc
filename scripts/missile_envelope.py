@@ -39,9 +39,9 @@ scattered hits close to the target, cost little. Close-range miss bands (gaps())
 are judged at their own range instead: a band on one neighbour only, or one that
 moves, also adds a ray, and new rays probe inside their neighbours' bands. Along
 a ray, sharp flight-time drops between hits and dense sampling near the inner
-boundaries find bands that no coarse sample touches (Ray.search). A ragged far
-edge, where hits and misses alternate beyond the solid region, is reported as
-the ray's fringe (Ray.fringe); the maximum range is then the solid edge.
+boundaries find bands that no coarse sample touches (Ray.search). Where hits
+and misses alternate beyond the range up to which every launch hits (a ragged
+far edge, Ray.fringe), the envelope ends at that range (Leo, 2026-10-27).
 
 No-escape zone (Leo, 2026-10-26): with config['escape'] a second, independent
 search runs against a target that breaks away at launch (missile_worker.
@@ -92,8 +92,8 @@ ZONE = 1.4
 # tolerances apart: a fraction FRINGE_RUN of the range inside the innermost miss
 # (within a factor FRINGE_SPAN of the farthest hit) and FRINGE_REACH beyond the
 # farthest hit. Once a miss lies inside the farthest hit, that band is sampled
-# half a tolerance apart. The hit intervals end at the innermost miss; the band
-# from there to the farthest hit is the fringe.
+# half a tolerance apart. The hit intervals end at the band's innermost miss:
+# scattered hits beyond it are unlikely and not part of the envelope.
 FRINGE_FUZE = 15.
 FRINGE_RUN = .04
 FRINGE_REACH = .05
@@ -490,7 +490,7 @@ class Ray:
                 outcomes = yield values
                 self.samples.update(zip(values, outcomes))
         if self.blocked: return self.finish()
-        self.hint = bool(seed and seed.get('fringe'))
+        self.hint = bool(seed and seed.get('ragged'))
         hits = lambda: sorted(r for r, o in self.samples.items() if o['hit'])
         out = inward = down = up = .1
         descend = ascend = bottom = None   # inner probes of the predicted maximum and minimum
@@ -642,7 +642,7 @@ class Ray:
     def finish(self):
         rs = sorted(self.samples)
         ragged = self.fringe(rs)
-        # A band needs a run of hits inside it and a hit beyond its first miss.
+        # A ragged edge needs a run of hits inside it and a hit beyond its first miss.
         band = ragged if ragged and ragged[4] and ragged[2] < ragged[3] else None
         intervals = []
         for i, r in enumerate(rs):
@@ -670,14 +670,8 @@ class Ray:
                                max_time_s=self.samples[last['last']]['time_s'], min_time_s=self.samples[first['first']]['time_s'])
         else:
             self.result.update(min_range_m=None, max_range_m=None)
-        fringe = None
-        if band and intervals:
-            inner, last = band[2], band[3]
-            inside = rs[inner:last + 1]
-            fringe = dict(start_m=self.result['max_range_m'], end_m=(rs[last] + rs[last + 1]) / 2 if last + 1 < len(rs) else rs[last],
-                          first_hit_m=min(r for r in inside if self.samples[r]['hit']), last_hit_m=rs[last],
-                          hits=sum(1 for r in inside if self.samples[r]['hit']), samples=len(inside))
-        self.result['fringe'] = fringe
+        # Hits and misses alternate beyond max_range_m (scattered hits not in the intervals).
+        self.result['ragged_edge'] = bool(band and intervals)
         if self.blocked: self.result['blocked'] = True
         return self.result
 
@@ -830,9 +824,9 @@ class Grid:
         spread = max(base, (highs[-1] - highs[0]) / 2 + .02)
         spread_low = max(base + .04, (lows[-1] - lows[0]) / 2 + .04)
         limits = sum(e[2] for e in estimates)
-        fringe = any(self.rays[cell].result.get('fringe') for cell in self.parents[key].values() if cell is not None)
+        ragged = any(self.rays[cell].result.get('ragged_edge') for cell in self.parents[key].values() if cell is not None)
         return dict(low=_unlog(median(lows)), high=_unlog(median(highs)), at_limit=limits * 2 > len(estimates),
-                    spread=min(spread, .3), spread_low=min(spread_low, .5), extra=extra, fringe=fringe, source='neighbours', parents=parents)
+                    spread=min(spread, .3), spread_low=min(spread_low, .5), extra=extra, ragged=ragged, source='neighbours', parents=parents)
 
 
 class Planner:
@@ -975,7 +969,7 @@ class Planner:
         u, v = self.bands(a), self.bands(b)
         if len(u) != len(v): return True
         # A ragged far edge on one side only (the other may have sampled none of it).
-        if bool(a.get('fringe')) != bool(b.get('fringe')): return True
+        if bool(a.get('ragged_edge')) != bool(b.get('ragged_edge')): return True
         if smooth is not None: return not smooth
         limit = SHAPE * c['tolerance'] * scale
         return (any(abs(p[0] - q[0]) > limit or abs(p[1] - q[1]) > limit for p, q in zip(x, y))
@@ -990,7 +984,7 @@ class Planner:
         limited = [s[0][0] <= _log(left.low) * (1 + 1e-12) for s in live]
         parents = [list(left.key), list(right.key)]
         bands = [_middle(a, b) for ray in (left, right) for a, b in gaps(ray.result, ray.tolerance, ray.tolerance_m)]
-        fringe = bool(left.result.get('fringe') or right.result.get('fringe'))
+        ragged = bool(left.result.get('ragged_edge') or right.result.get('ragged_edge'))
         if len(live) == 2 and len(x) == len(y):
             # Interpolate; the probes bracket the prediction by a quarter of the neighbours' difference.
             spread = min(.3, max(.45 * tolerance, abs(x[-1][1] - y[-1][1]) / 4))
@@ -998,12 +992,12 @@ class Planner:
             inner = [_unlog((p[1] + q[1] + p2[0] + q2[0]) / 4) for p, p2, q, q2 in zip(x, x[1:], y, y[1:])]
             return dict(low=_unlog((x[0][0] + y[0][0]) / 2), high=_unlog((x[-1][1] + y[-1][1]) / 2), at_limit=all(limited),
                         spread=spread, spread_low=spread_low, step=max(2 * spread, 2 * tolerance),
-                        step_low=max(2 * spread_low, 2 * tolerance), extra=inner + bands, fringe=fringe, source='between', parents=parents)
+                        step_low=max(2 * spread_low, 2 * tolerance), extra=inner + bands, ragged=ragged, source='between', parents=parents)
         # An edge (one side has no hit) or a change in the gaps: start from the live
         # neighbours' outer bounds and probe inside each of their gaps.
         inner = [_unlog((p[1] + q[0]) / 2) for s in live for p, q in zip(s, s[1:])]
         return dict(low=_unlog(min(s[0][0] for s in live)), high=_unlog(max(s[-1][1] for s in live)), at_limit=any(limited),
-                    spread=.06, spread_low=.1, edge=len(live) == 1, extra=inner + bands, fringe=fringe, source='edge' if len(live) == 1 else 'gaps',
+                    spread=.06, spread_low=.1, edge=len(live) == 1, extra=inner + bands, ragged=ragged, source='edge' if len(live) == 1 else 'gaps',
                     parents=parents)
 
 

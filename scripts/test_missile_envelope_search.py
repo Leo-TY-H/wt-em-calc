@@ -86,19 +86,17 @@ class RaggedFarEdge(unittest.TestCase):
     def band_closest(r):
         return 20. if r < 96000. else 200. + (r - 96000.) * .5
 
-    def test_band_beyond_the_solid_edge_is_reported_as_a_fringe(self):
+    def test_envelope_ends_where_hits_stop_being_certain(self):
         ray, _ = search([], hit=self.band_hit, closest=self.band_closest, fuze_m=12.)
-        fringe = ray.result['fringe']
-        self.assertIsNotNone(fringe)
+        self.assertTrue(ray.result['ragged_edge'])
         self.assertLessEqual(ray.result['max_range_m'], 93000.)
         self.assertGreaterEqual(ray.result['max_range_m'], 89000.)
-        self.assertEqual(fringe['start_m'], ray.result['max_range_m'])
-        self.assertGreater(fringe['end_m'], 93000.)
-        self.assertTrue(all(self.band_hit(s) for s in ray.samples if s < 90000.))
+        self.assertEqual(len(ray.result['intervals']), 1)
+        self.assertTrue(any(o['hit'] for r, o in ray.samples.items() if r > 93000.))   # scattered hits beyond
 
-    def test_sharp_far_edge_has_no_fringe(self):
+    def test_sharp_far_edge_is_not_ragged(self):
         ray, _ = search([(150., 90000.)], closest=lambda r: 0. if r <= 90000. else (r - 90000.) * .9, fuze_m=12.)
-        self.assertIsNone(ray.result['fringe'])
+        self.assertFalse(ray.result['ragged_edge'])
         self.assertAlmostEqual(ray.result['max_range_m'], 90000., delta=ray.width(90000.))
 
 
