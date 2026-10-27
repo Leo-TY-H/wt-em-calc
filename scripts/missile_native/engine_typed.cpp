@@ -1126,17 +1126,53 @@ Telemetry completed_telemetry(const FlightProps& P, const StepCapture& k, const 
             std::acos(cosine) * (180.0 / 3.141592653589793238462643383279502884), (double)f.pressure,
             runtime_hypot(k.acceleration, 3)};
 }
-V telemetry_value(const Telemetry& t) {
+// missile_telemetry.controls from the step's ControlCapture, the fins flown during
+// the step (controls before it) and the motor state after it.
+struct ControlTelemetry {
+    bool accel = false; double fin[2]{}, cmd[2]{}, actual[2]{}, p[2]{}, i[2]{}, d[2]{};
+    bool tvc = false; double tvc_deg[2]{};
+    bool cruise = false; double cruise_factor = 0.;
+};
+ControlTelemetry control_telemetry(const FlightProps& P, const ControlCapture& c, const std::array<double,8>& applied, const Session& S) {
+    ControlTelemetry t;
+    if (c.accel) {
+        t.accel = true;
+        for (int k = 0; k < 2; ++k) {
+            const float* s = c.pid + 8 * k;
+            t.fin[k] = c.fins[k]; t.cmd[k] = c.limited[k]; t.actual[k] = c.actual[k];
+            t.p[k] = mul(s[0], s[6]); t.i[k] = s[3]; t.d[k] = mul(s[7], s[4]);
+        }
+    }
+    const wtm_motors& motors = P.family == 0 ? P.optical.controls.motors : P.radar.controls.motors;
+    wtm_motor_scalar scalar = ::motor_scalar(&motors, S.body.clocks);
+    check_kernel();
+    if (scalar.thrust > 0 && scalar.vectoring != 0) {
+        t.tvc = true;
+        for (int k = 0; k < 2; ++k)   // math.degrees(math.asin(max(-1., min(1., mul(fin, vectoring)))))
+            t.tvc_deg[k] = std::asin(mx(-1., mn(1., mul(applied[k], scalar.vectoring)))) * (180.0 / 3.141592653589793238462643383279502884);
+    }
+    t.cruise = c.cruise; t.cruise_factor = c.cruise_factor;
+    return t;
+}
+V telemetry_value(const Telemetry& t, const ControlTelemetry& c) {
+    auto value = [](bool present, double x) { return present ? V(x) : V(); };
     return make_dict({{"force_time_s", V(t.force_time)}, {"thrust_n", V(t.thrust)}, {"mass_kg", V(t.mass)},
                       {"propellant_used_kg", V(t.propellant)}, {"drag_n", V(t.drag)}, {"lift_n", V(t.lift)},
                       {"drag_coefficient", V(t.cd)}, {"aoa_deg", V(t.aoa)}, {"dynamic_pressure_pa", V(t.pressure)},
-                      {"acceleration_mps2", V(t.acceleration)}});
+                      {"acceleration_mps2", V(t.acceleration)},
+                      {"fin_h", value(c.accel, c.fin[0])}, {"fin_v", value(c.accel, c.fin[1])},
+                      {"accel_cmd_h_mps2", value(c.accel, c.cmd[0])}, {"accel_cmd_v_mps2", value(c.accel, c.cmd[1])},
+                      {"accel_h_mps2", value(c.accel, c.actual[0])}, {"accel_v_mps2", value(c.accel, c.actual[1])},
+                      {"pid_p_h", value(c.accel, c.p[0])}, {"pid_i_h", value(c.accel, c.i[0])}, {"pid_d_h", value(c.accel, c.d[0])},
+                      {"pid_p_v", value(c.accel, c.p[1])}, {"pid_i_v", value(c.accel, c.i[1])}, {"pid_d_v", value(c.accel, c.d[1])},
+                      {"tvc_h_deg", value(c.tvc, c.tvc_deg[0])}, {"tvc_v_deg", value(c.tvc, c.tvc_deg[1])},
+                      {"cruise_pid", value(c.cruise, c.cruise_factor)}});
 }
 
 // missile_worker.simulate's sample()
 struct Sample {
     double time = 0.; d3 missile{}, target{}, velocity{}; double speed = 0.; d4 quaternion{}; double mach = 0., traveled = 0.;
-    TrackingStatus tracking; bool has_telemetry = false; Telemetry telemetry{};
+    TrackingStatus tracking; bool has_telemetry = false; Telemetry telemetry{}; ControlTelemetry control{};
 };
 Sample take_sample(const Session& S, const TargetMotion& motion, double traveled, const TrackingStatus& tracking) {
     Sample s; const wtm_body& b = S.body;
@@ -1156,7 +1192,7 @@ V sample_value(const Sample& s, const V* telemetry = nullptr) {
           {"speed_mps", V(s.speed)}, {"quaternion", list4(s.quaternion)}, {"mach", V(s.mach)}, {"traveled_distance_m", V(s.traveled)}};
     put_tracking(kw, s.tracking);
     if (telemetry) kw.emplace_back("telemetry", *telemetry);
-    else if (s.has_telemetry) kw.emplace_back("telemetry", telemetry_value(s.telemetry));
+    else if (s.has_telemetry) kw.emplace_back("telemetry", telemetry_value(s.telemetry, s.control));
     return make_dict(kw);
 }
 // missile_worker.proximity_endpoint
@@ -1233,12 +1269,12 @@ V simulate_loop(const V& request, const V& progress) {
         Sample old = take_sample(S, motion, traveled, tracking);
         double now = add(old.time, STEP);
         std::array<double,8> controls = S.controls;
-        ObservationLog log; StepCapture capture;
-        observation_log = &log; step_capture = &capture;
+        ObservationLog log; StepCapture capture; ControlCapture controlled;
+        observation_log = &log; step_capture = &capture; control_capture = &controlled;
         Expiry expiry;
         try { expiry = interaction_advance(P, S, motion, launch, now, STEP, now); }
-        catch (...) { observation_log = nullptr; step_capture = nullptr; throw; }
-        observation_log = nullptr; step_capture = nullptr;
+        catch (...) { observation_log = nullptr; step_capture = nullptr; control_capture = nullptr; throw; }
+        observation_log = nullptr; step_capture = nullptr; control_capture = nullptr;
         if (capture.updates != 1) bail("Simulator step made other than one flight update");
         TrackingStatus previous = tracking;
         tracking = describe_step(P.family, S, inertial_enabled, log);
@@ -1282,6 +1318,7 @@ V simulate_loop(const V& request, const V& progress) {
         } else if (!(tracking == previous)) seeker_transitions.push_back(seeker_entry(now_sample.time, tracking));
         if (i % 3 == 2 || terminal || i == count - 1) {
             now_sample.telemetry = completed_telemetry(P, capture, controls); now_sample.has_telemetry = true;
+            now_sample.control = control_telemetry(P, controlled, controls, S);
             if (event) {
                 now_sample.traveled = old.traveled + reference_dist(old.missile, now_sample.missile);
                 V last = rows.back();
