@@ -233,4 +233,16 @@ body .entry-dialog-body fieldset{margin:0;min-width:0;width:100%}
 body .entry-actions .entry-icon{display:inline-grid;place-items:center;width:28px;height:26px;padding:0}
 body .entry-actions .entry-icon[data-action=remove]:hover{border-color:#a6533f;color:#f08070}
 body .entry-heading+.entry-actions{margin-top:12px}
+/* Missile cards (Leo, 2026-10-27): one row, the remove icon beside the name */
+body .missile-entry{display:flex;align-items:center;gap:10px;padding:10px 12px}body .missile-entry .entry-heading{flex:1;min-width:0}
+body .missile-entry .entry-heading+.entry-actions{margin-top:0}
+/* Square checkboxes (Leo, 2026-10-27) */
+body input[type=checkbox]{appearance:none;-webkit-appearance:none;width:14px;height:14px;margin:0;border:1px solid var(--hairline);background:#000;
+  display:inline-grid;place-content:center;flex-shrink:0;cursor:pointer}
+body input[type=checkbox]::before{content:'';width:8px;height:8px;background:var(--text);transform:scale(0)}
+body input[type=checkbox]:checked::before{transform:scale(1)}
+body input[type=checkbox]:disabled{opacity:.4;cursor:default}
+body input[type=checkbox]:focus-visible{outline:1px solid var(--text);outline-offset:2px}
+body input[type=checkbox][hidden],body input[type=checkbox].visually-hidden{display:none}
+body .play-button{display:inline-grid;place-items:center;width:40px;padding:0}
 body .primary-button.calculating:disabled{opacity:1;cursor:progress;background:linear-gradient(90deg,rgba(240,240,250,.24) var(--progress,0%),transparent var(--progress,0%));transition:background .4s}

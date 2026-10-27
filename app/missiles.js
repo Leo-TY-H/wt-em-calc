@@ -3,14 +3,17 @@
   const el = id => document.getElementById(id);
   const root = el('missile-workspace');
   const initial = {missile:'us_aim9l_sidewinder',
-    launch:{position:[0,5000,0],velocity:[300,0,0],angles:[0,0,0]},
-    target:{position:[4000,5000,0],velocity:[200,0,0],angles:[0,0,0]}};
+    // Both aircraft at 1,200 km/h by default (Leo, 2026-10-27).
+    launch:{position:[0,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]},
+    target:{position:[4000,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]}};
   let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0;
   const activeJobs=new Set();
   let selectedMissiles=[], flights=[], resultColors=[], timeline=[], comparison=null, batchRunning=false, cancelRequested=false, focusIndex=0;
   const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296','#f08070'];
   const missileName=id=>meta?.missiles.find(m=>m.id===id)?.name||id;
   const missileLabel=id=>`${missileName(id)} [${id}]`;
+  const PLAY_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M4.5 2.5v11l9-5.5z"/></svg>';
+  const PAUSE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>';
   const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   const escapeHtml=text=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // The launcher sits above the origin; the target is placed from it in cylindrical coordinates (Leo, 2026-10-26):
@@ -59,7 +62,7 @@
       <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories" hidden></div>
       <svg id="missile-flight-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true" hidden></svg>
     </div>
-    <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
+    <div class="missile-playback"><button id="missile-play" class="play-button" type="button" aria-label="Play" title="Play" disabled>${PLAY_ICON}</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
     <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p></section>
     <details id="missile-flight-data" class="missile-flight-data" open hidden><summary>Telemetry <span id="missile-flight-name"></span></summary>
       <div class="missile-telemetry-picks"><div id="missile-telemetry-chips" class="contour-levels" aria-label="Plotted quantities"></div>
@@ -78,7 +81,8 @@
     return body;
   }
   const showError = text => {el('missile-error').textContent=text;el('missile-error').hidden=!text;};
-  const pause = () => {playing=false;el('missile-play').textContent='Play';};
+  const playButton=(icon,label)=>{const button=el('missile-play');button.innerHTML=icon;button.setAttribute('aria-label',label);button.title=label;};
+  const pause = () => {playing=false;playButton(PLAY_ICON,'Play');};
   const toolTabs=[['em','em-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';
@@ -165,7 +169,7 @@
   }
   function renderSelected() {
     el('missile-selected').replaceChildren(...selectedMissiles.map((id,i)=>{
-      const card=document.createElement('article');card.className='aircraft-entry';card.style.setProperty('--entry-color',flightColors[i]);
+      const card=document.createElement('article');card.className='aircraft-entry missile-entry';card.style.setProperty('--entry-color',flightColors[i]);
       card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong><code>${escapeHtml(id)}</code></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
       const remove=card.querySelector('button');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+missileLabel(id));
       remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);renderSelected();filterMissiles();changed();busy(false);});
@@ -388,8 +392,8 @@
   },true);
   function applyPreset(preset) {
     const states=JSON.parse(JSON.stringify(initial));previewCamera=null;
-    if(preset==='head-on'){states.target.velocity=[-200,0,0];states.target.angles=[180,0,0];}
-    if(preset==='crossing'){states.target.velocity=[0,0,200];states.target.angles=[90,0,0];}
+    if(preset==='head-on'){states.target.velocity=[-1200/3.6,0,0];states.target.angles=[180,0,0];}
+    if(preset==='crossing'){states.target.velocity=[0,0,1200/3.6];states.target.angles=[90,0,0];}
     for(const role of ['launch','target']) {
       if(role==='launch')el('missile-launch-position-1').value=states.launch.position[1];else setTargetPosition(states.target.position);
       syncMotion(role,states[role].velocity);
@@ -723,7 +727,7 @@
     if(playing){pause();return;}if(!result)return;
     if(plotView==='setup')showView(flightView);
     if(Number(el('missile-time').value)>=timeline.length-1)updateFrame(0);
-    playing=true;lastFrame=performance.now();el('missile-play').textContent='Pause';requestAnimationFrame(animate);
+    playing=true;lastFrame=performance.now();playButton(PAUSE_ICON,'Pause');requestAnimationFrame(animate);
   });
   function animate(now) {
     if(!playing)return;const wanted=playbackTime+(now-lastFrame)/1000*Number(el('missile-play-speed').value);lastFrame=now;

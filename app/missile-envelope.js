@@ -20,8 +20,8 @@
     standard: {step: 15, edge: .5, label: 'Standard · 15° directions, edges to 0.5°'},
     fine: {step: 10, edge: .25, label: 'Detailed · 10° directions, edges to 0.25°'}};
   const defaults = {missile: null, quality: 'standard',
-    target: {speed: 900},
-    launcher: {speed: 900},
+    target: {speed: 1200},
+    launcher: {speed: 1200},
     // No-escape zone (Leo, 2026-10-26): the target breaks away at 9 g the moment the missile is fired.
     escape: {on: false, load: 9, delay: 0},
     // One launcher (surface-to-air: target) altitude per calculation (Leo, 2026-10-27: one altitude at a time).
@@ -49,7 +49,7 @@
     </fieldset>
     <span class="eyebrow">SCENARIO</span>
     <div class="mode-switch" role="radiogroup" aria-label="Launch platform" hidden><label><input id="envelope-platform-air" type="radio" name="envelope-platform" value="air" checked><span>Air-to-air</span></label><label><input id="envelope-platform-ground" type="radio" name="envelope-platform" value="ground"><span>Surface-to-air</span></label></div>
-    <div class="mode-switch" role="radiogroup" aria-label="Plot centre"><label><input id="envelope-centre-target" type="radio" name="envelope-centre" value="target" checked><span>Target perspective</span></label><label><input id="envelope-centre-launcher" type="radio" name="envelope-centre" value="launcher"><span>Launcher perspective</span></label></div>
+    <div class="mode-switch" role="radiogroup" aria-label="Plot centre"><label><input id="envelope-centre-target" type="radio" name="envelope-centre" value="target" checked><span>Target POV</span></label><label><input id="envelope-centre-launcher" type="radio" name="envelope-centre" value="launcher"><span>Launcher POV</span></label></div>
     <div id="envelope-motion" class="envelope-motion" hidden><label class="field">Target flies<select id="envelope-target-heading">${Object.entries(motions).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('')}</select></label>${numberField('envelope-crossing', 'Target heading', '°', 90, -180, 180)}<label class="field">Launcher gimbal limit<div class="input-unit"><input id="envelope-gimbal" type="number" min="1" max="180" step="any" placeholder="None" aria-label="Launcher gimbal limit"><span>±°</span></div></label></div>
     <p id="envelope-centre-note" class="hint" hidden>A ground launcher turns toward the target, so this is the target-centred envelope drawn around the launcher, with the target flying up the plot.</p>
     <div class="envelope-pair">${numberField('envelope-launcher-speed', 'Launcher speed', 'km/h', defaults.launcher.speed, 0, 7200)}${numberField('envelope-target-speed', 'Target speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
@@ -57,7 +57,7 @@
     <span class="eyebrow">NO-ESCAPE ZONE</span>
     <label class="check-row envelope-nez-toggle"><input id="envelope-nez" type="checkbox"><span>Show the no-escape zone</span></label>
     <div id="envelope-nez-settings"><div class="envelope-pair">${numberField('envelope-escape-load', 'Escape load', 'g', defaults.escape.load, 1.5, 15)}${numberField('envelope-escape-delay', 'Reaction delay', 's', defaults.escape.delay, 0, 60)}</div>
-      <p class="hint">At launch the target turns away from the launcher, level at constant speed, then flies straight on. The zone is where the missile hits whether or not the target breaks away.</p></div>
+</div>
     <span class="eyebrow">SEARCH</span>
     <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="sidebar-actions">
@@ -179,7 +179,7 @@
   function renderSelected() {
     el('envelope-selected').replaceChildren(...selected.map((id, i) => {
       const item = meta?.missiles.find(m => m.id === id), name = item?.name || id;
-      const card = document.createElement('article'); card.className = 'aircraft-entry'; card.style.setProperty('--entry-color', COLORS[i]);
+      const card = document.createElement('article'); card.className = 'aircraft-entry missile-entry'; card.style.setProperty('--entry-color', COLORS[i]);
       card.innerHTML = `<div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeHtml(name)}</strong><code>${escapeHtml(id)}</code></div>
         <div class="entry-actions"><button type="button" class="entry-icon" data-remove="${escapeHtml(id)}" title="Remove" aria-label="Remove ${escapeHtml(name)}">${REMOVE}</button></div>`;
       card.querySelector('button').disabled = !!job;
