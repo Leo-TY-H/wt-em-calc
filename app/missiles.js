@@ -22,7 +22,7 @@
   const positionFields = role => {
     if(role==='launch')return `<div class="missile-motion">${unitField('missile-launch-position-1','Altitude','Launcher altitude','m',initial.launch.position[1],0.001,30000)}</div>`;
     const [azimuth,distance]=cylindrical(initial.target.position.map((v,i)=>v-initial.launch.position[i]));
-    return `<div class="missile-motion">${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Distance','Target horizontal distance','km',distance,0,200)}</div>`;
+    return `<div class="missile-motion">${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Horizontal distance','Target horizontal distance','km',distance,0,200)}</div>`;
   };
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
   const stateFields = (role,title) => `<fieldset class="missile-step missile-${role}"><legend>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
@@ -260,7 +260,7 @@
       label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],deg(azimuth*180/Math.PI),light);
     }
     // Horizontal distance, then the altitude difference and the line of sight.
-    if(horizontal>0){line([L,G],light,3);label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
+    if(horizontal>0){line([L,G],light,2.5,'dash');label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
     if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey);line([L,T],grey,1.5,'dash');}
     // Each aircraft with its heading (and climb) as an arrow of one size for both.
     for(const [state,p,color,name,climbName] of [[launch,L,cyan,'Launcher','launch angle'],[target,T,orange,'Target','climb']]) {

@@ -43,7 +43,7 @@
 #missile-picker>.section-heading{margin-top:18px;margin-bottom:8px}
 #missile-list .aircraft-option{min-width:0}
 #missile-search::placeholder{color:#8d9aae}
-.missile-motion{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.missile-motion{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;align-items:end}
 .missile-sidebar .missile-motion .field{font-size:11px;margin:4px 0}
 .missile-motion .input-unit input{padding:8px 27px 8px 7px}.missile-motion .input-unit span{right:7px;font-size:10px}
 .missile-motion .field:first-child input{padding-right:35px}
