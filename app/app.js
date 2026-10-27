@@ -738,7 +738,8 @@ function thrustRows(p){
   const deg=v=>Math.atan2(v*s,Math.abs(x))*180/Math.PI,up=deg(y),right=deg(-z);
   const part=(v,plus,minus)=>Math.abs(v)<.005?null:`${fmt(Math.abs(v),2)}° ${v>0?plus:minus}`;
   const offset=size<1?'—':[part(up,'up','down'),part(right,'right','left')].filter(Boolean).join(' · ')||'0°';
-  return [['Thrust',fmt(s*size/KGF,0)+' kgf'],['Thrust offset',offset]];
+  // The offset row is hidden on the page (Leo, 2026-10-27); it stays in the markup.
+  return [['Thrust',fmt(s*size/KGF,0)+' kgf'],['Thrust offset',offset,true]];
 }
 // Sideslip: + means the flight path leans toward the left wing (body z), so the nose points right of the path.
 const sideslip=p=>{const b=p.sideslip_deg??0;return Math.abs(b)<5e-4?'0°':`${fmt(Math.abs(b),3)}° nose ${b>0?'right':'left'}`;};
