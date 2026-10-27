@@ -731,6 +731,8 @@ function liftDrag(p){
   const lift=f[0]*Math.sin(a)+f[1]*Math.cos(a),drag=-(f[0]*Math.cos(a)*Math.cos(b)-f[1]*Math.sin(a)*Math.cos(b)+f[2]*Math.sin(b));
   return [['Lift',fmt(lift/KGF,0)+' kgf'],['Drag',fmt(drag/KGF,0)+' kgf'],['L/D',drag>0?fmt(lift/drag,2):'—']];
 }
+// Sideslip: + means the flight path leans toward the left wing (body z), so the nose points right of the path.
+const sideslip=p=>{const b=p.sideslip_deg??0;return Math.abs(b)<5e-4?'0°':`${fmt(Math.abs(b),3)}° nose ${b>0?'right':'left'}`;};
 function controlDeflections(p){
   // Surface deflection, % of full travel; the server reports + as nose up, roll right and nose right.
   const d=p.control_deflection_percent;if(!d)return [];
@@ -756,7 +758,7 @@ async function inspect(a,p,clicked){
   if(!chartUsable(p)&&p.status==='unresolved'&&!p.component_forces){$('point-content').innerHTML=dl([['Calculation',escapeText(p.search_unresolved||p.chart_status||'No numerical candidate established')]])+note;return;}
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
-  // Grouped (Leo, 2026-10-27): flight, then attitude and controls; forces, then engine; component forces last.
+  // Grouped (Leo, 2026-10-27): Flight, Attitude & controls, Forces and Engine side by side; component forces hidden.
   const section=(title,rows)=>rows.length?`<section><h3>${title}</h3>${dl(rows)}</section>`:'';
   const engine=p.propulsion?[
     ...propellerPower(a,p),
@@ -766,15 +768,15 @@ async function inspect(a,p,clicked){
     ['Propeller pitch',p.propulsion.propeller_pitch_deg.map((v,i)=>fmt(v,2)+'°'+(Number.isFinite(p.propulsion.propeller_pitch_percent?.[i])?' / '+fmt(p.propulsion.propeller_pitch_percent[i],0)+'%':'')).join(' · ')],
     ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
     ['Compressor stage',(p.propulsion.compressor_stages??p.propulsion.controls.gears).map(v=>v+1).join(' / ')]]:[];
-  $('point-content').innerHTML=`<div class="point-grid"><div>${section('FLIGHT',[
+  $('point-content').innerHTML=`<div class="point-grid">${section('FLIGHT',[
     ['SEP',fmt(p.ps_mps,2)+' m/s'],
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
     ['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)]])}${section('ATTITUDE & CONTROLS',[
-    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),
-    ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div>${section('FORCES',[
-    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],...liftDrag(p)])}${section('ENGINE',engine)}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
+    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Angle of sideslip',sideslip(p)],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),
+    ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}${section('FORCES',[
+    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],...liftDrag(p)])}${section('ENGINE',engine)}<div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
     ...(p.symmetry_projection?[['Roll/yaw balance','Assumed ideal support; physical control authority not established']]:[]),
@@ -794,7 +796,7 @@ async function inspect(a,p,clicked){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
+    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div hidden><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;
