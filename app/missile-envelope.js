@@ -70,7 +70,7 @@
   <div class="missile-main envelope-main">
     <div id="envelope-error" class="error" role="alert" hidden></div>
     <div class="envelope-view-controls" hidden><label><input id="envelope-show-rays" type="checkbox"> Directions</label><label><input id="envelope-show-samples" type="checkbox"> Samples</label></div>
-    <div id="envelope-chart" aria-label="Missile launch envelope"><div class="empty"><span class="empty-glyph">◎</span><h2>Add a missile using the panel on the left to get started</h2></div></div>
+    <div id="envelope-chart" aria-label="Missile launch envelope"><div class="empty"><span class="empty-glyph">◎</span><h2>Add a missile and press Calculate</h2></div></div>
     <section id="envelope-inspector" class="inspector envelope-inspector" aria-live="polite" hidden><div class="inspector-heading"><h2 id="envelope-inspect-title"></h2><button id="envelope-open-simulator" class="secondary-button" type="button" hidden>Fly this shot in the simulator ↗</button></div><div id="envelope-inspect"></div></section>
     <section class="envelope-table-card" hidden><span class="eyebrow">RANGES BY ALTITUDE</span><div class="envelope-table-wrap"><table id="envelope-table"><thead></thead><tbody></tbody></table></div></section>
     <div hidden><a id="envelope-download-json" aria-disabled="true">Envelope JSON</a><a id="envelope-download-csv" aria-disabled="true">Directions CSV</a></div>
@@ -904,7 +904,7 @@
     el('envelope-status').textContent = runs === runSets[centre] ? statusText[centre] : statusText.target;
     if (!runs.length) {
       if (el('envelope-chart').data) Plotly.purge(el('envelope-chart'));
-      el('envelope-chart').innerHTML = `<div class="empty"><span class="empty-glyph">◎</span><h2>${selected.length ? 'Calculate to see the envelope around the ' + centre : 'Add a missile using the panel on the left to get started'}</h2></div>`;
+      el('envelope-chart').innerHTML = `<div class="empty"><span class="empty-glyph">◎</span><h2>Add a missile and press Calculate</h2></div>`;
       root.querySelector('.envelope-table-card').hidden = true; setExports(false); return;
     }
     render().then(() => setExports(shownRuns().length > 0)).catch(error => showError(error.message));
