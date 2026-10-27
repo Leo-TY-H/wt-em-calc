@@ -558,3 +558,10 @@
 !/scripts/wing_model.py
 !/scripts/wing_stages.py
 !/scripts/wing_sweep.py
+
+# Projectile property generation and independent native regression inputs.
+!/scripts/missile_profile_loading.py
+!/scripts/regenerate_missile_profiles.py
+!/scripts/test_missile_profile_loading.py
+!/scripts/test_missile_envelope_search.py
+!/references/missile-profile-native-259087.json

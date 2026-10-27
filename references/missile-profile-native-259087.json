@@ -1,0 +1,1786 @@
+{
+  "format": "wt-profile-native-expectations-v1",
+  "native_build": "2.59.0.87",
+  "native_binary_sha256": "b56178905baedba7717f97202976ff8df2afa4c7819d4a6a2815cd8010598402",
+  "native_archive_sha256": "36ea1c9579e8fa4c5d3960f6f942ecf06c3a8f36e5d81b5c89a4d07e58d87d1f",
+  "evidence": {
+    "native87_outer_fin.json.gz": "c2db9a8a9c747b332e65a025de55bc795d9adbe9dfb068a3d887c9fd3529d858",
+    "native87_curve.json.gz": "d5dcc231569ff2a402e6c9e1419b5e240d41aa9fc2ac8315144300d4511a85bc"
+  },
+  "native75_evidence_sha256": "c49b61945e0724dbf0760bb5d42e39c7f91a9b0b90717018e50d13fd980e59a2",
+  "code_hashes": {
+    "outer_rocket_fin_correction": "090ee2aa0b3a395bdf5a7c0d003f3ff01776ad12c38e9109510c92adb6d2519d",
+    "precision_load": "bd85956d93545f1a94f0396c85277cb8a1a184e871191dbf4b229a4e4700063d",
+    "aero_fin_load": "0d2055007419b4e06309f34e513bf41c2ca0f8fb325e2afee152526ecc028815",
+    "cy_curve_load": "f8b64194fb223691f615f53ae6373f178e83940e4aa63128bcdad7b7d0e76f45",
+    "generic_curve": "a17696e04ee9be96e5a0fe9c96e040414ebc19d895eac85b87f8da2d9b5bf75d"
+  },
+  "scope": "Original .87 outer fin correction executed on all227 native-loaded motor layouts; original .87 curve lookup executed on current rocket blocks, with nested-child positive controls. Precision default1 from current common loader static slice; no catalog authored precision override. No derived implementation output used as expectation.",
+  "profiles": {
+    "atam_mistral.blkx": {
+      "mass_kg": 18.700000762939453,
+      "fin_pressure_limit_pa": 97247.4296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c3d6103886114ffd8a61fd0057714cdfdc1bea98bae2a05c4f484e45528257a8"
+    },
+    "atam_mistral_a129.blkx": {
+      "mass_kg": 18.700000762939453,
+      "fin_pressure_limit_pa": 97247.4296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3fe280cae8133ea25af89163c51733c9c9d3bc4f4f46c1a0f818645e56fc09df"
+    },
+    "br_maa_1.blkx": {
+      "mass_kg": 90,
+      "fin_pressure_limit_pa": 67093.1328125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "22cb0f6090203723e63ebef49b0057a36383f0c079e9be073b1db4bec543dd2b"
+    },
+    "br_maa_1_default.blkx": {
+      "mass_kg": 90,
+      "fin_pressure_limit_pa": 67093.1328125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "22cb0f6090203723e63ebef49b0057a36383f0c079e9be073b1db4bec543dd2b"
+    },
+    "cn_pl8b.blkx": {
+      "mass_kg": 121,
+      "fin_pressure_limit_pa": 56813.95703125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "183bfb881a84d867b257c62e0ad164921242ec3ebd120182e2c154f66ab1a9e2"
+    },
+    "cn_pl8b_default.blkx": {
+      "mass_kg": 121,
+      "fin_pressure_limit_pa": 56813.95703125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "183bfb881a84d867b257c62e0ad164921242ec3ebd120182e2c154f66ab1a9e2"
+    },
+    "cn_ty_90.blkx": {
+      "mass_kg": 24,
+      "fin_pressure_limit_pa": 98304.484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6b28621ecf56b58d0c0a266683cdd24c1655f26844f7a39350d7470fc2f89eae"
+    },
+    "fr_r_530_matra_ir.blkx": {
+      "mass_kg": 193.5,
+      "fin_pressure_limit_pa": 28233.24609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1b71e06c9f998c22d770f7a491d349845d31489b336a5a712d65d91662f6762d"
+    },
+    "fr_r_550_magic.blkx": {
+      "mass_kg": 89,
+      "fin_pressure_limit_pa": 42895.34765625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "88f9cd70bdde942ef3ff602bf8071b1498caffbb048942dbfc29d500572e4478"
+    },
+    "fr_r_550_magic_2.blkx": {
+      "mass_kg": 89,
+      "fin_pressure_limit_pa": 42472.890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6dd0d78b236589ce68972a0f95e1217307c15c398fcbfbc4a59a1c4ff6331c58"
+    },
+    "fr_r_550_magic_2_default.blkx": {
+      "mass_kg": 89,
+      "fin_pressure_limit_pa": 42472.890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6dd0d78b236589ce68972a0f95e1217307c15c398fcbfbc4a59a1c4ff6331c58"
+    },
+    "il_pyton_3.blkx": {
+      "mass_kg": 121,
+      "fin_pressure_limit_pa": 56813.95703125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8f2a862308f5eade3ba60f8fb959ea188757c3d0a51a31d683f07f076dc0fbfb"
+    },
+    "il_pyton_3_default.blkx": {
+      "mass_kg": 121,
+      "fin_pressure_limit_pa": 56813.95703125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8f2a862308f5eade3ba60f8fb959ea188757c3d0a51a31d683f07f076dc0fbfb"
+    },
+    "il_pyton_4.blkx": {
+      "mass_kg": 105,
+      "fin_pressure_limit_pa": 80724.9296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f37d78a96487c9f2b02b5c643bd996746f02b1b9dc404e1e98ae6dff30502a1e"
+    },
+    "il_shafrir_1.blkx": {
+      "mass_kg": 65,
+      "fin_pressure_limit_pa": 15015.3046875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "110acb96169351544a61a3a6c92a69b3418228245036934de1a486cb03c0b47d"
+    },
+    "il_shafrir_2.blkx": {
+      "mass_kg": 90,
+      "fin_pressure_limit_pa": 29461.84765625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "da7e6e70a4a244c8d3b28f8485dc3295302e58232b1a51ee120daef6c7885a15"
+    },
+    "il_shafrir_2_default.blkx": {
+      "mass_kg": 90,
+      "fin_pressure_limit_pa": 29461.84765625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "da7e6e70a4a244c8d3b28f8485dc3295302e58232b1a51ee120daef6c7885a15"
+    },
+    "jp_aam3.blkx": {
+      "mass_kg": 91,
+      "fin_pressure_limit_pa": 70527.4453125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ef6d6695a7833f5b5799068ae009059230edfbd74c5d67b6c611900963dd2bd5"
+    },
+    "jp_aam3_default.blkx": {
+      "mass_kg": 91,
+      "fin_pressure_limit_pa": 70527.4453125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ef6d6695a7833f5b5799068ae009059230edfbd74c5d67b6c611900963dd2bd5"
+    },
+    "ro_a91.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17272.1015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1146e262c2e2454ba8b61af5eeb96bef1031b2a836076c001bd9a3453333d15d"
+    },
+    "ro_a91_default.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17272.1015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1146e262c2e2454ba8b61af5eeb96bef1031b2a836076c001bd9a3453333d15d"
+    },
+    "su_9m336.blkx": {
+      "mass_kg": 11.699999809265137,
+      "fin_pressure_limit_pa": 14246.1416015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "23e53cdf4549742fdb9c087e96ba40cc5f875660688f512536b619d92e7ba31b"
+    },
+    "su_9m342.blkx": {
+      "mass_kg": 11.699999809265137,
+      "fin_pressure_limit_pa": 14246.1416015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ab52a3ded4861923c8aff545c4af767f6b4b52756ed06e94edc0183fefc1e504"
+    },
+    "su_9m39.blkx": {
+      "mass_kg": 10.600000381469727,
+      "fin_pressure_limit_pa": 9237.7109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7c165f24fc586a6a70e4713da57132a14ade82a662327f54f6c5a958bef7738f"
+    },
+    "su_pl2.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17272.1015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3ca559341c978a7038e41ce74627df108201f757a499ecdb3a6c5b8f51a3867b"
+    },
+    "su_pl2_default.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17272.1015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3ca559341c978a7038e41ce74627df108201f757a499ecdb3a6c5b8f51a3867b"
+    },
+    "su_pl5b.blkx": {
+      "mass_kg": 84.5,
+      "fin_pressure_limit_pa": 53497.1953125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a34f94c7caf8e41f1f05b228fa8f274fcbce73de47af50b73181057a71e24bb2"
+    },
+    "su_pl5b_default.blkx": {
+      "mass_kg": 84.5,
+      "fin_pressure_limit_pa": 53497.1953125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a34f94c7caf8e41f1f05b228fa8f274fcbce73de47af50b73181057a71e24bb2"
+    },
+    "su_pl5c.blkx": {
+      "mass_kg": 84.5,
+      "fin_pressure_limit_pa": 53497.1953125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8c7d1978051114586b7e4d76aea9f4539000d2373d9e8afe54174746123c4cc0"
+    },
+    "su_pl5c_default.blkx": {
+      "mass_kg": 84.5,
+      "fin_pressure_limit_pa": 53497.1953125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8c7d1978051114586b7e4d76aea9f4539000d2373d9e8afe54174746123c4cc0"
+    },
+    "su_pl5e2.blkx": {
+      "mass_kg": 83,
+      "fin_pressure_limit_pa": 52153.046875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "11f923e528559311f7683d7eaa12d435386441d2c3414f66c34b9caa16dedd76"
+    },
+    "su_pl5e2_default.blkx": {
+      "mass_kg": 83,
+      "fin_pressure_limit_pa": 52153.046875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "11f923e528559311f7683d7eaa12d435386441d2c3414f66c34b9caa16dedd76"
+    },
+    "su_pl7.blkx": {
+      "mass_kg": 89,
+      "fin_pressure_limit_pa": 42895.34765625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f9da0f3a71bcb6c9a825c2b90a9baced41cbc9992af40440437066c0761409cb"
+    },
+    "su_pl8.blkx": {
+      "mass_kg": 121,
+      "fin_pressure_limit_pa": 56813.95703125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "2484857b34c9cf020cd9c0d600f0cce8e0f330d3eee252f0328bb302d2e7e86f"
+    },
+    "su_pl8_default.blkx": {
+      "mass_kg": 121,
+      "fin_pressure_limit_pa": 56813.95703125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "2484857b34c9cf020cd9c0d600f0cce8e0f330d3eee252f0328bb302d2e7e86f"
+    },
+    "su_pl9.blkx": {
+      "mass_kg": 115,
+      "fin_pressure_limit_pa": 62898.60546875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6b8ac17f1f61941c38311bbb9592441e78eea5327a1be34233dc5262a1bda9bb"
+    },
+    "su_r_13m.blkx": {
+      "mass_kg": 87.69999694824219,
+      "fin_pressure_limit_pa": 177238.515625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6922a8c354028daf605ca3521b6a8e0bfae2d068d97db1be117d3d9238249ae1"
+    },
+    "su_r_13m1.blkx": {
+      "mass_kg": 90.5999984741211,
+      "fin_pressure_limit_pa": 32613.490234375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "10e9f0def549d850c034a777b4103f551c58c8323118650aef6bb53b4549c6dd"
+    },
+    "su_r_13m1_default.blkx": {
+      "mass_kg": 90.5999984741211,
+      "fin_pressure_limit_pa": 32613.490234375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "10e9f0def549d850c034a777b4103f551c58c8323118650aef6bb53b4549c6dd"
+    },
+    "su_r_23t.blkx": {
+      "mass_kg": 215,
+      "fin_pressure_limit_pa": 38294.50390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d5c881770e54cdcf9596e3b90b383920403a7eed5718be69df47a3b561551709"
+    },
+    "su_r_24t.blkx": {
+      "mass_kg": 237,
+      "fin_pressure_limit_pa": 46568.47265625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3deed7b76d37a682d97c7709a8963ef196d12eff81c01a26ea340045c35e465a"
+    },
+    "su_r_27et.blkx": {
+      "mass_kg": 343,
+      "fin_pressure_limit_pa": 68586.1484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "0de7a878dbd7a3aa5bb848e892a9dbbfef2c9793186f3a3dd67a580e5f809264"
+    },
+    "su_r_27et1.blkx": {
+      "mass_kg": 343,
+      "fin_pressure_limit_pa": 68586.1484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3fa7477a39816f76fe22dda82ba15107de7e969fc774a7407ad0963d49a2298e"
+    },
+    "su_r_27t.blkx": {
+      "mass_kg": 245.5,
+      "fin_pressure_limit_pa": 82307.15625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "4906ee9bb2186eae100a77c7c15c1e6627665b1f5a01aacca6bfa9512f9c0009"
+    },
+    "su_r_27t1.blkx": {
+      "mass_kg": 245.5,
+      "fin_pressure_limit_pa": 82307.15625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7611c92690d44b872933fe620d07096f14e387f180d895dd9cb3e5be58f67cf7"
+    },
+    "su_r_3s.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17272.1015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1146e262c2e2454ba8b61af5eeb96bef1031b2a836076c001bd9a3453333d15d"
+    },
+    "su_r_3s_default.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17272.1015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1146e262c2e2454ba8b61af5eeb96bef1031b2a836076c001bd9a3453333d15d"
+    },
+    "su_r_40td.blkx": {
+      "mass_kg": 465,
+      "fin_pressure_limit_pa": 179988.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3d6040e1a093b0a59c83eda71b1cc9d39f4282b08c2dc2bbc241454f5fb7fa43"
+    },
+    "su_r_40td_default.blkx": {
+      "mass_kg": 465,
+      "fin_pressure_limit_pa": 179988.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3d6040e1a093b0a59c83eda71b1cc9d39f4282b08c2dc2bbc241454f5fb7fa43"
+    },
+    "su_r_60.blkx": {
+      "mass_kg": 43.5,
+      "fin_pressure_limit_pa": 46109.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "81033f69d3f4c827b1f2692c759bcb7c168e8bab86ffe8abf1b95b3df9a7bc22"
+    },
+    "su_r_60_default.blkx": {
+      "mass_kg": 43.5,
+      "fin_pressure_limit_pa": 46109.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "81033f69d3f4c827b1f2692c759bcb7c168e8bab86ffe8abf1b95b3df9a7bc22"
+    },
+    "su_r_60m.blkx": {
+      "mass_kg": 44,
+      "fin_pressure_limit_pa": 46797.3984375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "99277763febbd40ee3acf6ad50ca44cd58d1d1cd0e7dc002d19226d1116e3356"
+    },
+    "su_r_60m_default.blkx": {
+      "mass_kg": 44,
+      "fin_pressure_limit_pa": 46797.3984375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "99277763febbd40ee3acf6ad50ca44cd58d1d1cd0e7dc002d19226d1116e3356"
+    },
+    "su_r_60mk.blkx": {
+      "mass_kg": 44,
+      "fin_pressure_limit_pa": 46797.3984375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3f6d0d167b81004e56f650ecf0db5c88a4e800be9f74defd16e6d77c81c579e9"
+    },
+    "su_r_60mk_default.blkx": {
+      "mass_kg": 44,
+      "fin_pressure_limit_pa": 46797.3984375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3f6d0d167b81004e56f650ecf0db5c88a4e800be9f74defd16e6d77c81c579e9"
+    },
+    "su_r_73.blkx": {
+      "mass_kg": 105,
+      "fin_pressure_limit_pa": 68805.1484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fa9078bd65d2fba3e3f41c0b5fa2f19ee8c6f51c3ac49c70807327eb16bc96a7"
+    },
+    "su_r_73_default.blkx": {
+      "mass_kg": 105,
+      "fin_pressure_limit_pa": 68805.1484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fa9078bd65d2fba3e3f41c0b5fa2f19ee8c6f51c3ac49c70807327eb16bc96a7"
+    },
+    "su_r_73e.blkx": {
+      "mass_kg": 105,
+      "fin_pressure_limit_pa": 68805.1484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7dc702215d0310d2e9de60f09468fe75c12db98c07ebd3d7ac0763effc1fb425"
+    },
+    "su_r_73e_default.blkx": {
+      "mass_kg": 105,
+      "fin_pressure_limit_pa": 68805.1484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7dc702215d0310d2e9de60f09468fe75c12db98c07ebd3d7ac0763effc1fb425"
+    },
+    "swd_rb24.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a43d54eb7e7e1556160d367f36b9ad6371c803033436d5ad7725c68457204284"
+    },
+    "swd_rb24_default.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a43d54eb7e7e1556160d367f36b9ad6371c803033436d5ad7725c68457204284"
+    },
+    "swd_rb24j.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "891219811df3554959df231a8feac9abedf7a161b839a9df1bd1f5f639690743"
+    },
+    "swd_rb24j_default.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "891219811df3554959df231a8feac9abedf7a161b839a9df1bd1f5f639690743"
+    },
+    "swd_rb28.blkx": {
+      "mass_kg": 59.87419128417969,
+      "fin_pressure_limit_pa": 19856.248046875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f217ed6c632d333437fcc7d83973e7abf291df557cdbdbe614af2177493c7aa8"
+    },
+    "swd_rb74.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fef3a3908dee185454c9ee677e3329466acf6c092217be3d2568abcbe38cf79e"
+    },
+    "swd_rb74_bol_pod.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fef3a3908dee185454c9ee677e3329466acf6c092217be3d2568abcbe38cf79e"
+    },
+    "swd_rb74_default.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fef3a3908dee185454c9ee677e3329466acf6c092217be3d2568abcbe38cf79e"
+    },
+    "swd_rb74m.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b3f801c62083a7c348af34b3fdb6a5123c74474c8296094af30296dda1125bfc"
+    },
+    "swd_rb74m_bol_pod.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b3f801c62083a7c348af34b3fdb6a5123c74474c8296094af30296dda1125bfc"
+    },
+    "swd_rb74m_default.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b3f801c62083a7c348af34b3fdb6a5123c74474c8296094af30296dda1125bfc"
+    },
+    "sws_flz_lwf_63.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9c7843015e4e23b6e17261c7564ef70120b32da5b5ed1e30dcf2d49839e84ea5"
+    },
+    "sws_flz_lwf_63_75.blkx": {
+      "mass_kg": 76.43000030517578,
+      "fin_pressure_limit_pa": 17081.701171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e721e4b93348f35f582038d75a95c421e46215bedaaa53213bee42862c2c3b03"
+    },
+    "sws_flz_lwf_63_80.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fdd002f9de845835feadc2557609c4f285e232d425266e3ac9282853bd66a1e4"
+    },
+    "uk_firestreak.blkx": {
+      "mass_kg": 136,
+      "fin_pressure_limit_pa": 16947.25390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6b843cea1df4276f3e31b17b354041d39ada4f07a5bdc2f7c2e4a50cf52695b6"
+    },
+    "uk_firestreak_default.blkx": {
+      "mass_kg": 136,
+      "fin_pressure_limit_pa": 16947.25390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6b843cea1df4276f3e31b17b354041d39ada4f07a5bdc2f7c2e4a50cf52695b6"
+    },
+    "uk_firestreak_javelin.blkx": {
+      "mass_kg": 136,
+      "fin_pressure_limit_pa": 16947.25390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6b843cea1df4276f3e31b17b354041d39ada4f07a5bdc2f7c2e4a50cf52695b6"
+    },
+    "uk_redtop.blkx": {
+      "mass_kg": 167.82919311523438,
+      "fin_pressure_limit_pa": 20314.810546875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c09af0590d543e655012a59c70b7374073c301cb98a8cf5d7ecc72ed378eb8fe"
+    },
+    "uk_sraam.blkx": {
+      "mass_kg": 70,
+      "fin_pressure_limit_pa": 122483.90625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "352d9777f4e0306f7ca63b94fa34522952cc84be33fce22108d79b1145c7a7ac"
+    },
+    "uk_sraam_default.blkx": {
+      "mass_kg": 70,
+      "fin_pressure_limit_pa": 122483.90625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "352d9777f4e0306f7ca63b94fa34522952cc84be33fce22108d79b1145c7a7ac"
+    },
+    "us_aim4d_falcon.blkx": {
+      "mass_kg": 59.87419128417969,
+      "fin_pressure_limit_pa": 19856.248046875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d77d39b1e63540f5aa099d69fb954385e80f0e7e95c986abd777dbe83f08c9ef"
+    },
+    "us_aim4g_falcon.blkx": {
+      "mass_kg": 66.2244873046875,
+      "fin_pressure_limit_pa": 31840.607421875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c8d624d83f536a672425825ebae96663e43ccba67a024a51a1873c4091c9ec7d"
+    },
+    "us_aim4g_falcon_default.blkx": {
+      "mass_kg": 66.2244873046875,
+      "fin_pressure_limit_pa": 31840.607421875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c8d624d83f536a672425825ebae96663e43ccba67a024a51a1873c4091c9ec7d"
+    },
+    "us_aim92_stinger.blkx": {
+      "mass_kg": 10.100000381469727,
+      "fin_pressure_limit_pa": 73174.0078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6749d035ce5e5fe6d46b78d9af9c9cec1ebc5461077e7d529f3b8cc05bc0c0ac"
+    },
+    "us_aim92_stinger_atas_tiger.blkx": {
+      "mass_kg": 10.100000381469727,
+      "fin_pressure_limit_pa": 73174.0078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a20d5c075dd6bf29b8ca8efaa15c82d8e10aec81f97ce0ee06c8061388a4443b"
+    },
+    "us_aim92_stinger_left.blkx": {
+      "mass_kg": 10.100000381469727,
+      "fin_pressure_limit_pa": 73174.0078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "57e9264d61107b5121d82eedaf8ae2556f414aa8cde296bdbc8a85b15e2d9d9e"
+    },
+    "us_aim92_stinger_right.blkx": {
+      "mass_kg": 10.100000381469727,
+      "fin_pressure_limit_pa": 73174.0078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "647c3c5f19a842244df49c3b95ae4658d41caa6ce4db89ee07c5f723e1d7b874"
+    },
+    "us_aim9b_fgw_2_sidewinder.blkx": {
+      "mass_kg": 77.55000305175781,
+      "fin_pressure_limit_pa": 18661.658203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "18748d7c48eba66ae2776178ae8d8480510ccc26092401784a94c942dba87fc8"
+    },
+    "us_aim9b_sidewinder.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1c7c3753439cfd44cd47d5fe9c9245f0756c1595614104777e8e84b03f241985"
+    },
+    "us_aim9b_sidewinder_cwp.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1c7c3753439cfd44cd47d5fe9c9245f0756c1595614104777e8e84b03f241985"
+    },
+    "us_aim9b_sidewinder_default.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1c7c3753439cfd44cd47d5fe9c9245f0756c1595614104777e8e84b03f241985"
+    },
+    "us_aim9b_sidewinder_default_group.blkx": {
+      "mass_kg": 74.38915252685547,
+      "fin_pressure_limit_pa": 17127.30078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1c7c3753439cfd44cd47d5fe9c9245f0756c1595614104777e8e84b03f241985"
+    },
+    "us_aim9d_sidewinder.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "229094500ad5f81eddbeea57b58b931b5d5d527112bab777dc33528a64ff1d83"
+    },
+    "us_aim9d_sidewinder_cwp.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "229094500ad5f81eddbeea57b58b931b5d5d527112bab777dc33528a64ff1d83"
+    },
+    "us_aim9d_sidewinder_default.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "229094500ad5f81eddbeea57b58b931b5d5d527112bab777dc33528a64ff1d83"
+    },
+    "us_aim9d_sidewinder_default_group.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "229094500ad5f81eddbeea57b58b931b5d5d527112bab777dc33528a64ff1d83"
+    },
+    "us_aim9e_sidewinder.blkx": {
+      "mass_kg": 76.43000030517578,
+      "fin_pressure_limit_pa": 17081.701171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e5a752463ee68828571c1dc0f837b294e7d3687d084b0c764ab809b038673112"
+    },
+    "us_aim9e_sidewinder_default.blkx": {
+      "mass_kg": 76.43000030517578,
+      "fin_pressure_limit_pa": 17081.701171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e5a752463ee68828571c1dc0f837b294e7d3687d084b0c764ab809b038673112"
+    },
+    "us_aim9g_sidewinder.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "50d0a785db813a20542f2b210436b7bee4603027e77a58c31d4291790043b857"
+    },
+    "us_aim9g_sidewinder_default.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "50d0a785db813a20542f2b210436b7bee4603027e77a58c31d4291790043b857"
+    },
+    "us_aim9h_sidewinder.blkx": {
+      "mass_kg": 88.44999694824219,
+      "fin_pressure_limit_pa": 30787.2890625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "63d59cbe1552195020e858abe71f16abce5f538ae71411bd4110ade326ea0664"
+    },
+    "us_aim9j_sidewinder.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ea3a8c3088059d7b84e88c0534e5efef9f9ed93d4d6a9990de72fffbf11fae57"
+    },
+    "us_aim9j_sidewinder_default.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ea3a8c3088059d7b84e88c0534e5efef9f9ed93d4d6a9990de72fffbf11fae57"
+    },
+    "us_aim9l_i_1_sidewinder.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f1d0280ffe9899dae1d5600aed265a2ee578a40ba9cfd77900a0de8e86a0cfcb"
+    },
+    "us_aim9l_i_1_sidewinder_default.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f1d0280ffe9899dae1d5600aed265a2ee578a40ba9cfd77900a0de8e86a0cfcb"
+    },
+    "us_aim9l_i_sidewinder.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "192b17207a758538fac373032c8386ac6a11ee31f882971678b8911042fb5911"
+    },
+    "us_aim9l_i_sidewinder_default.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "192b17207a758538fac373032c8386ac6a11ee31f882971678b8911042fb5911"
+    },
+    "us_aim9l_sidewinder.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8e2ce9d7f98295b7039ab5d463afd0e445a1965e24dd8b6988ca563d856d2dbf"
+    },
+    "us_aim9l_sidewinder_bol_pod.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8e2ce9d7f98295b7039ab5d463afd0e445a1965e24dd8b6988ca563d856d2dbf"
+    },
+    "us_aim9l_sidewinder_default.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8e2ce9d7f98295b7039ab5d463afd0e445a1965e24dd8b6988ca563d856d2dbf"
+    },
+    "us_aim9l_sidewinder_default_bol_pod.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8e2ce9d7f98295b7039ab5d463afd0e445a1965e24dd8b6988ca563d856d2dbf"
+    },
+    "us_aim9m_sidewinder.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "09acdf76e9d19fd8c2a65e47a1443807c4d5dc24d265932401962eaec048ee49"
+    },
+    "us_aim9m_sidewinder_bol_pod.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "09acdf76e9d19fd8c2a65e47a1443807c4d5dc24d265932401962eaec048ee49"
+    },
+    "us_aim9m_sidewinder_default.blkx": {
+      "mass_kg": 84.45999908447266,
+      "fin_pressure_limit_pa": 62764.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "09acdf76e9d19fd8c2a65e47a1443807c4d5dc24d265932401962eaec048ee49"
+    },
+    "us_aim9n_sidewinder.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "365b4d89fac335b8aedf812df77894192639e2b1e49a169485f493e008bda34d"
+    },
+    "us_aim9p4_sidewinder.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6a665340e3d3c17b4afc2c6a4e4fc36fc549f15a2f8ed4aa268e946b42299d70"
+    },
+    "us_aim9p4_sidewinder_default.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6a665340e3d3c17b4afc2c6a4e4fc36fc549f15a2f8ed4aa268e946b42299d70"
+    },
+    "us_aim9p_sidewinder.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8c02ca4a179952d52ed0fb1137fc07d77983f5320440b1cda49529f0f04a1712"
+    },
+    "us_aim9p_sidewinder_default.blkx": {
+      "mass_kg": 76.93000030517578,
+      "fin_pressure_limit_pa": 27979.125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8c02ca4a179952d52ed0fb1137fc07d77983f5320440b1cda49529f0f04a1712"
+    },
+    "us_fim-92b.blkx": {
+      "mass_kg": 10.100000381469727,
+      "fin_pressure_limit_pa": 73174.0078125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a968e7e0e6fd821696bd531d0ec7b939b4a0c8a132a25e928691f18fb48b6900"
+    },
+    "cn_pf10.blkx": {
+      "mass_kg": 230,
+      "fin_pressure_limit_pa": 16537.01171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "1629e310e7daa2a604689adbbacf4391b0675e7f17afbf9ad5af71a08a42afac"
+    },
+    "cn_pl11.blkx": {
+      "mass_kg": 230,
+      "fin_pressure_limit_pa": 16537.01171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "acd80e3cf4bc202c0180b33c2a0ba431863d476344371ab467c721e8ab526f87"
+    },
+    "cn_pl12.blkx": {
+      "mass_kg": 198,
+      "fin_pressure_limit_pa": 51865.63671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d8ffe74a7c2d577e8c1e44ddf8b8d7908d3d9eb39c3519526687f8da59eeb7f7"
+    },
+    "cn_pl12_default.blkx": {
+      "mass_kg": 198,
+      "fin_pressure_limit_pa": 51865.63671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d8ffe74a7c2d577e8c1e44ddf8b8d7908d3d9eb39c3519526687f8da59eeb7f7"
+    },
+    "cn_pl12a.blkx": {
+      "mass_kg": 214,
+      "fin_pressure_limit_pa": 54694.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f74b3cca0f636ee1c160a5b33989e07a0262ff647bedeb43d2a50ac735bd157a"
+    },
+    "cn_pl12a_default.blkx": {
+      "mass_kg": 214,
+      "fin_pressure_limit_pa": 54694.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f74b3cca0f636ee1c160a5b33989e07a0262ff647bedeb43d2a50ac735bd157a"
+    },
+    "cn_pl15.blkx": {
+      "mass_kg": 198,
+      "fin_pressure_limit_pa": 76037.109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a4918df26333ddb81eabd499e316e16a8a0e90ea4a33091d04b274b1fea90a84"
+    },
+    "cn_pl15_default.blkx": {
+      "mass_kg": 198,
+      "fin_pressure_limit_pa": 76037.109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "a4918df26333ddb81eabd499e316e16a8a0e90ea4a33091d04b274b1fea90a84"
+    },
+    "cn_sd10a.blkx": {
+      "mass_kg": 198,
+      "fin_pressure_limit_pa": 51865.63671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b9336d23f4ad7c2ba26d22742fd0dfa14d86c533f0a56f5b0194740f18c70f08"
+    },
+    "cn_sd10a_default.blkx": {
+      "mass_kg": 198,
+      "fin_pressure_limit_pa": 51865.63671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b9336d23f4ad7c2ba26d22742fd0dfa14d86c533f0a56f5b0194740f18c70f08"
+    },
+    "fr_matra_super_530d.blkx": {
+      "mass_kg": 270,
+      "fin_pressure_limit_pa": 67045.484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b59fbcac218ea8ff4219c43c4f26613cfc7b5767e42e9e78797a4cda0df2e5aa"
+    },
+    "fr_matra_super_530d_default.blkx": {
+      "mass_kg": 270,
+      "fin_pressure_limit_pa": 67045.484375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b59fbcac218ea8ff4219c43c4f26613cfc7b5767e42e9e78797a4cda0df2e5aa"
+    },
+    "fr_matra_super_530f.blkx": {
+      "mass_kg": 245,
+      "fin_pressure_limit_pa": 39513.109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce881d4be3b9b3f3e75b0da70717637091c9c07d223b46fbb037d74c0f634d8b"
+    },
+    "fr_matra_super_530f_default.blkx": {
+      "mass_kg": 245,
+      "fin_pressure_limit_pa": 39513.109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce881d4be3b9b3f3e75b0da70717637091c9c07d223b46fbb037d74c0f634d8b"
+    },
+    "fr_matra_super_530f_mirage_2000.blkx": {
+      "mass_kg": 245,
+      "fin_pressure_limit_pa": 39513.109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "45028b69e24b581cc3a4d2895206355a81b23dc76d9e9888ab7956228e1531d4"
+    },
+    "fr_matra_super_530f_mirage_2000_default.blkx": {
+      "mass_kg": 245,
+      "fin_pressure_limit_pa": 39513.109375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "45028b69e24b581cc3a4d2895206355a81b23dc76d9e9888ab7956228e1531d4"
+    },
+    "fr_mica_em.blkx": {
+      "mass_kg": 112,
+      "fin_pressure_limit_pa": 80856.4296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c019383b9c3c659813353b4df444513d1d80ba530914749c1691fb0e7379eda5"
+    },
+    "fr_mica_em_default.blkx": {
+      "mass_kg": 112,
+      "fin_pressure_limit_pa": 80856.4296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c019383b9c3c659813353b4df444513d1d80ba530914749c1691fb0e7379eda5"
+    },
+    "fr_r_511_matra.blkx": {
+      "mass_kg": 172.5,
+      "fin_pressure_limit_pa": 168365.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "25da7408435814d2535fd87322d0cfafcb3e149ec0d0062e2c8e2a32d5ba750b"
+    },
+    "fr_r_530_matra_radar.blkx": {
+      "mass_kg": 193.5,
+      "fin_pressure_limit_pa": 28233.24609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c3d30d00c55e55227cdc35de07e30d15275c848b5f80058939f15b958ad86fa5"
+    },
+    "il_derby.blkx": {
+      "mass_kg": 118,
+      "fin_pressure_limit_pa": 68550.6015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "172af44a2ea11a708ac5d5c42daddbff49e8d7c4a1b2533eb8ffba61d0bce8de"
+    },
+    "il_derby_default.blkx": {
+      "mass_kg": 118,
+      "fin_pressure_limit_pa": 68550.6015625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "172af44a2ea11a708ac5d5c42daddbff49e8d7c4a1b2533eb8ffba61d0bce8de"
+    },
+    "ir_fakour_90.blkx": {
+      "mass_kg": 637.2973022460938,
+      "fin_pressure_limit_pa": 67642.9609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9e8c65b61a1f0845a9ca6d0ee8db790e12c9400c833a4fcb329ffee657801d44"
+    },
+    "ir_sedjil.blkx": {
+      "mass_kg": 625,
+      "fin_pressure_limit_pa": 51588.40234375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "711157503bc6aaa25d5b90d341e5b2857f495ccc13a83bc716acd0220fb6600a"
+    },
+    "it_aspide_1a.blkx": {
+      "mass_kg": 230,
+      "fin_pressure_limit_pa": 16537.01171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "984e7a1bf4ae0dd3831f6ef0903fd6be1d451ba08176c097f98c7d36f140e553"
+    },
+    "jp_aam4.blkx": {
+      "mass_kg": 222,
+      "fin_pressure_limit_pa": 60022.74609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c16170091e16b8f9bca0a175c74322836ab6ea7a65ce1fc259773ccc0ccc5382"
+    },
+    "jp_aam4_default.blkx": {
+      "mass_kg": 222,
+      "fin_pressure_limit_pa": 60022.74609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c16170091e16b8f9bca0a175c74322836ab6ea7a65ce1fc259773ccc0ccc5382"
+    },
+    "r_darter.blkx": {
+      "mass_kg": 120,
+      "fin_pressure_limit_pa": 70264.3671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fea23409577f5a3af8d4b2bd98ca3d82e2b6d6be0840d6e06bc4be7cd4726b9c"
+    },
+    "r_darter_default.blkx": {
+      "mass_kg": 120,
+      "fin_pressure_limit_pa": 70264.3671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "fea23409577f5a3af8d4b2bd98ca3d82e2b6d6be0840d6e06bc4be7cd4726b9c"
+    },
+    "su_r_23r.blkx": {
+      "mass_kg": 223,
+      "fin_pressure_limit_pa": 37288.6875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e774e76dfc6fb4a8ca2953c74366320c08ce1073d730f13e201fa776ebabb919"
+    },
+    "su_r_24r.blkx": {
+      "mass_kg": 244,
+      "fin_pressure_limit_pa": 45408.3828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "0982c113fb0ebb962bb2709277ec9d12941e8138bf3576c8272614b156769840"
+    },
+    "su_r_27er.blkx": {
+      "mass_kg": 350,
+      "fin_pressure_limit_pa": 67915.390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9284a61e9d20fe6582a5a1acad9a7da5d5fe6fb04d067734e4d6bc9da161a654"
+    },
+    "su_r_27er1.blkx": {
+      "mass_kg": 350,
+      "fin_pressure_limit_pa": 67915.390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "4efc679c4f2018a108f1a79b4defed69106056413e61b41f71917b4dfda447d4"
+    },
+    "su_r_27er_default.blkx": {
+      "mass_kg": 350,
+      "fin_pressure_limit_pa": 67915.390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9284a61e9d20fe6582a5a1acad9a7da5d5fe6fb04d067734e4d6bc9da161a654"
+    },
+    "su_r_27r.blkx": {
+      "mass_kg": 253,
+      "fin_pressure_limit_pa": 79333.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "66975731f36da23735f9196c2c5997eb4260e7df15308a82a4899ff03f768635"
+    },
+    "su_r_27r1.blkx": {
+      "mass_kg": 253,
+      "fin_pressure_limit_pa": 79333.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ee1160194f6155eb8b24c5c4e0f2da83d870b09c4641961b875e81939d8e1026"
+    },
+    "su_r_27r1_default.blkx": {
+      "mass_kg": 253,
+      "fin_pressure_limit_pa": 79333.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ee1160194f6155eb8b24c5c4e0f2da83d870b09c4641961b875e81939d8e1026"
+    },
+    "su_r_27r_default.blkx": {
+      "mass_kg": 253,
+      "fin_pressure_limit_pa": 79333.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "66975731f36da23735f9196c2c5997eb4260e7df15308a82a4899ff03f768635"
+    },
+    "su_r_3r.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17320.9296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8644751a7711b9a2eafa7e70fcc0cc81c452d83281a1c15b5c366e6a5d3c85ca"
+    },
+    "su_r_3r_default.blkx": {
+      "mass_kg": 75.30000305175781,
+      "fin_pressure_limit_pa": 17320.9296875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8644751a7711b9a2eafa7e70fcc0cc81c452d83281a1c15b5c366e6a5d3c85ca"
+    },
+    "su_r_40rd.blkx": {
+      "mass_kg": 465,
+      "fin_pressure_limit_pa": 172738.28125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "998dbe3e0a91143980d02618f6052a339e4e96df83fd5294aced6f11c28d3b41"
+    },
+    "su_r_40rd_default.blkx": {
+      "mass_kg": 465,
+      "fin_pressure_limit_pa": 172738.28125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "998dbe3e0a91143980d02618f6052a339e4e96df83fd5294aced6f11c28d3b41"
+    },
+    "su_r_77.blkx": {
+      "mass_kg": 175,
+      "fin_pressure_limit_pa": 87048.6171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "edb7b294bf65fd910d45967c775289586964ab2c11a184b9e6e48be1e04e6851"
+    },
+    "su_r_77_1.blkx": {
+      "mass_kg": 190,
+      "fin_pressure_limit_pa": 87405.65625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f7c8d2a25234a917b6242d665261e6d79a4c87f13827e911ce55b233a19ef3f7"
+    },
+    "su_r_77_1_default.blkx": {
+      "mass_kg": 190,
+      "fin_pressure_limit_pa": 87405.65625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f7c8d2a25234a917b6242d665261e6d79a4c87f13827e911ce55b233a19ef3f7"
+    },
+    "su_r_77_default.blkx": {
+      "mass_kg": 175,
+      "fin_pressure_limit_pa": 87048.6171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "edb7b294bf65fd910d45967c775289586964ab2c11a184b9e6e48be1e04e6851"
+    },
+    "su_rvv_ae.blkx": {
+      "mass_kg": 175,
+      "fin_pressure_limit_pa": 87048.6171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce669503348f77915e3dca137e11213f0eefb5cce417463f3e9e5b2f3e42ce81"
+    },
+    "su_rvv_ae_default.blkx": {
+      "mass_kg": 175,
+      "fin_pressure_limit_pa": 87048.6171875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce669503348f77915e3dca137e11213f0eefb5cce417463f3e9e5b2f3e42ce81"
+    },
+    "su_rvv_sd.blkx": {
+      "mass_kg": 190,
+      "fin_pressure_limit_pa": 87405.65625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f7c8d2a25234a917b6242d665261e6d79a4c87f13827e911ce55b233a19ef3f7"
+    },
+    "su_rvv_sd_default.blkx": {
+      "mass_kg": 190,
+      "fin_pressure_limit_pa": 87405.65625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f7c8d2a25234a917b6242d665261e6d79a4c87f13827e911ce55b233a19ef3f7"
+    },
+    "swd_rb27.blkx": {
+      "mass_kg": 117.30809783935547,
+      "fin_pressure_limit_pa": 32230.357421875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6c18b96210335687aa708ed829b81c463f163ded4858303a3679a80015d0ebf2"
+    },
+    "swd_rb71.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "5409d8db5f9ecdb7b1419fe14e5b95a9103933de3bb391756a9683495ce106a1"
+    },
+    "swd_rb71_default.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "5409d8db5f9ecdb7b1419fe14e5b95a9103933de3bb391756a9683495ce106a1"
+    },
+    "swd_rb99.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e6225d2f00ee1f89565fed24761fa541135673a5dd73c3ece1ad25df644057aa"
+    },
+    "swd_rb99_default.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e6225d2f00ee1f89565fed24761fa541135673a5dd73c3ece1ad25df644057aa"
+    },
+    "sws_flz_lwf_ll_64.blkx": {
+      "mass_kg": 117.30809783935547,
+      "fin_pressure_limit_pa": 32230.357421875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6c18b96210335687aa708ed829b81c463f163ded4858303a3679a80015d0ebf2"
+    },
+    "uk_skyflash_aim_7.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d4858e661ad6eb01dff56671a277ddb17ade737a2bfb4d74986ad46704cb2219"
+    },
+    "uk_skyflash_aim_7_dogfight.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8d3e982c8305a6a892153e12d4e815ab07550abadbc040ac85c7794fa7d1c999"
+    },
+    "uk_skyflash_aim_7_dogfight_default.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8d3e982c8305a6a892153e12d4e815ab07550abadbc040ac85c7794fa7d1c999"
+    },
+    "uk_skyflash_aim_7_dogfight_tornado.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "2e2db18c8ff5a58da37c3310baef09ac48e4b77e0dadb9f10b1a5e75c13c1223"
+    },
+    "uk_skyflash_aim_7_dogfight_tornado_default.blkx": {
+      "mass_kg": 195.0399932861328,
+      "fin_pressure_limit_pa": 14801.673828125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "2e2db18c8ff5a58da37c3310baef09ac48e4b77e0dadb9f10b1a5e75c13c1223"
+    },
+    "uk_skyflash_temp.blkx": {
+      "mass_kg": 208.1999969482422,
+      "fin_pressure_limit_pa": 15815.1953125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6c72985eefbc38b984d540fbfad2d21053738d6111cd45aacf596be50cc7f164"
+    },
+    "us_aim4f_falcon.blkx": {
+      "mass_kg": 68.9188232421875,
+      "fin_pressure_limit_pa": 31946.689453125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "4181bf616008788f97193069fd5f2e66e58bc6856bb03182fb7b01c088731b78"
+    },
+    "us_aim4f_falcon_default.blkx": {
+      "mass_kg": 68.9188232421875,
+      "fin_pressure_limit_pa": 31946.689453125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "4181bf616008788f97193069fd5f2e66e58bc6856bb03182fb7b01c088731b78"
+    },
+    "us_aim7c_sparrow.blkx": {
+      "mass_kg": 176.44740295410156,
+      "fin_pressure_limit_pa": 8345.93359375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "097fea208c533034d3853c18c30216178b02de7098bf687acf65a6f9b36084d2"
+    },
+    "us_aim7d_sparrow.blkx": {
+      "mass_kg": 182.33999633789062,
+      "fin_pressure_limit_pa": 8331.908203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "83dee15f29c8991af7e12a3e194e83fc4b46b07236d16555837caf60db28ff52"
+    },
+    "us_aim7e2_dogfight_sparrow.blkx": {
+      "mass_kg": 193.6999969482422,
+      "fin_pressure_limit_pa": 14889.69921875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "cd2eac886231a61b5f0dc9c99e21b2cc6aad2cc37e2b3c570926d9cff5f64e8b"
+    },
+    "us_aim7e_sparrow.blkx": {
+      "mass_kg": 195.951904296875,
+      "fin_pressure_limit_pa": 14889.6982421875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ef396e2fdc56555b4cc6accc1d9f0dae272cb18ec36451b6612285779768581f"
+    },
+    "us_aim7f_sparrow.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f681543854e03c79f7f5158a791a8ceb411d6a124d84d8767d267d96f71cba58"
+    },
+    "us_aim7f_sparrow_default.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "f681543854e03c79f7f5158a791a8ceb411d6a124d84d8767d267d96f71cba58"
+    },
+    "us_aim7f_sparrow_f_14.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7b481508a98862760976d3290eb35d06ee2aaac45a90388f154d8bab42f3edde"
+    },
+    "us_aim7f_sparrow_fa_18.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "5602cc474bf9f3cc6abffabed6a7084dbe06cd98c25f6e24a1cf83a20d424f9f"
+    },
+    "us_aim7m_sparrow.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "5a9b1bc8828fe6f65ddfb5e3f0dc5b042a72caec4840f31f01e80a1ebbe75882"
+    },
+    "us_aim7m_sparrow_default.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "5a9b1bc8828fe6f65ddfb5e3f0dc5b042a72caec4840f31f01e80a1ebbe75882"
+    },
+    "us_aim7m_sparrow_f_14.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e28e116c3bdbb14f7a7192f4881d8112d77a565ef8f74bcc77d325789c1db28a"
+    },
+    "us_aim7m_sparrow_f_15.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "52c96464692d5a6f5ae861f027bd18630a112b7f5a08c9394414905556599065"
+    },
+    "us_aim7m_sparrow_f_15_default.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "52c96464692d5a6f5ae861f027bd18630a112b7f5a08c9394414905556599065"
+    },
+    "us_aim7m_sparrow_f_16.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c191682ac0a685a9a78f7bdd14f2fe23527881b20fb2810807a2c68a7a5d0993"
+    },
+    "us_aim7m_sparrow_f_16_default.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "c191682ac0a685a9a78f7bdd14f2fe23527881b20fb2810807a2c68a7a5d0993"
+    },
+    "us_aim7m_sparrow_fa_18.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8e6555d24a91b9908129544d1eaab3da2f91315bec62ff3198277343279256d5"
+    },
+    "us_aim7p_sparrow_fa_18.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8b097fe51ed028e85ea5fb9f7414c5dfc34a052416f6976820cabfa95ba0cc27"
+    },
+    "us_aim7p_sparrow_fa_18_default.blkx": {
+      "mass_kg": 231.3321075439453,
+      "fin_pressure_limit_pa": 19027.671875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "8b097fe51ed028e85ea5fb9f7414c5dfc34a052416f6976820cabfa95ba0cc27"
+    },
+    "us_aim9c_sidewinder.blkx": {
+      "mass_kg": 95.25440216064453,
+      "fin_pressure_limit_pa": 37155.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce166d260127a42278d4087c8df8e0be8a0d12306a2e1109f2dd6a0a95417524"
+    },
+    "us_aim9c_sidewinder_default.blkx": {
+      "mass_kg": 95.25440216064453,
+      "fin_pressure_limit_pa": 37155.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce166d260127a42278d4087c8df8e0be8a0d12306a2e1109f2dd6a0a95417524"
+    },
+    "us_aim9c_sidewinder_default_group.blkx": {
+      "mass_kg": 95.25440216064453,
+      "fin_pressure_limit_pa": 37155.0390625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "ce166d260127a42278d4087c8df8e0be8a0d12306a2e1109f2dd6a0a95417524"
+    },
+    "us_aim_120a.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e24aee63463fc1a336f1a8aace7efdfaa49fb0b5a4e0abf90a614b2795247d93"
+    },
+    "us_aim_120a_default.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e24aee63463fc1a336f1a8aace7efdfaa49fb0b5a4e0abf90a614b2795247d93"
+    },
+    "us_aim_120b.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9da9a452510a7dc717e3522132c6a9bab06544c31e8b17554077fb4ca84d6acf"
+    },
+    "us_aim_120b_bol_pod.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9da9a452510a7dc717e3522132c6a9bab06544c31e8b17554077fb4ca84d6acf"
+    },
+    "us_aim_120b_default.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9da9a452510a7dc717e3522132c6a9bab06544c31e8b17554077fb4ca84d6acf"
+    },
+    "us_aim_120b_default_switzerland.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9da9a452510a7dc717e3522132c6a9bab06544c31e8b17554077fb4ca84d6acf"
+    },
+    "us_aim_120b_switzerland.blkx": {
+      "mass_kg": 156.48939514160156,
+      "fin_pressure_limit_pa": 50288.203125,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "9da9a452510a7dc717e3522132c6a9bab06544c31e8b17554077fb4ca84d6acf"
+    },
+    "us_aim_120c_5.blkx": {
+      "mass_kg": 161.47889709472656,
+      "fin_pressure_limit_pa": 51832.6640625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d6582d5096b3f9ccfc8dc35ec46a0bb231ae1ce2e8701eb4a80b2713c1c99592"
+    },
+    "us_aim_120c_5_default.blkx": {
+      "mass_kg": 161.47889709472656,
+      "fin_pressure_limit_pa": 51832.6640625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d6582d5096b3f9ccfc8dc35ec46a0bb231ae1ce2e8701eb4a80b2713c1c99592"
+    },
+    "us_aim_120c_5_default_switzerland.blkx": {
+      "mass_kg": 161.47889709472656,
+      "fin_pressure_limit_pa": 51832.6640625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d6582d5096b3f9ccfc8dc35ec46a0bb231ae1ce2e8701eb4a80b2713c1c99592"
+    },
+    "us_aim_120c_5_switzerland.blkx": {
+      "mass_kg": 161.47889709472656,
+      "fin_pressure_limit_pa": 51832.6640625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "d6582d5096b3f9ccfc8dc35ec46a0bb231ae1ce2e8701eb4a80b2713c1c99592"
+    },
+    "us_aim_120c_7.blkx": {
+      "mass_kg": 161.47889709472656,
+      "fin_pressure_limit_pa": 51832.6640625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7f2beedc9e9c4b04ffbafab968d30d8388b93703f5b2e903ad7c3f4cbe72b81b"
+    },
+    "us_aim_120c_7_default.blkx": {
+      "mass_kg": 161.47889709472656,
+      "fin_pressure_limit_pa": 51832.6640625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "7f2beedc9e9c4b04ffbafab968d30d8388b93703f5b2e903ad7c3f4cbe72b81b"
+    },
+    "us_aim_120d.blkx": {
+      "mass_kg": 162.38609313964844,
+      "fin_pressure_limit_pa": 52259.27734375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3b300dbad06b1505a1716ed2944a6bd8def063bae74b7cecea7a6447007b4ef0"
+    },
+    "us_aim_120d_default.blkx": {
+      "mass_kg": 162.38609313964844,
+      "fin_pressure_limit_pa": 52259.27734375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "3b300dbad06b1505a1716ed2944a6bd8def063bae74b7cecea7a6447007b4ef0"
+    },
+    "us_aim_26b.blkx": {
+      "mass_kg": 117.30809783935547,
+      "fin_pressure_limit_pa": 32230.357421875,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "6c18b96210335687aa708ed829b81c463f163ded4858303a3679a80015d0ebf2"
+    },
+    "us_aim_54a.blkx": {
+      "mass_kg": 446.56201171875,
+      "fin_pressure_limit_pa": 51161.74609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e4a531695019e8860dd2268c39f9346b6c8012294328d331413c43aa16abf0d0"
+    },
+    "us_aim_54a_default.blkx": {
+      "mass_kg": 446.56201171875,
+      "fin_pressure_limit_pa": 51161.74609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "e4a531695019e8860dd2268c39f9346b6c8012294328d331413c43aa16abf0d0"
+    },
+    "us_aim_54b.blkx": {
+      "mass_kg": 446.56201171875,
+      "fin_pressure_limit_pa": 51161.74609375,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "187d6625a085119019d1ade537c184b1a65ee4870cf3dc0c3e7882b6099f012c"
+    },
+    "us_aim_54c.blkx": {
+      "mass_kg": 446.7879943847656,
+      "fin_pressure_limit_pa": 51202.5625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b569dae18291e14339401ef92b067481d82cc49db495f76cc37a37cd6241764f"
+    },
+    "us_aim_54c_default.blkx": {
+      "mass_kg": 446.7879943847656,
+      "fin_pressure_limit_pa": 51202.5625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "b569dae18291e14339401ef92b067481d82cc49db495f76cc37a37cd6241764f"
+    },
+    "us_aim_54c_plus.blkx": {
+      "mass_kg": 446.7879943847656,
+      "fin_pressure_limit_pa": 51202.5625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "43304d63f707ab6ac648d8a7474842b06bcd7ebd760c023267838082a00ce2a4"
+    },
+    "us_aim_54c_plus_default.blkx": {
+      "mass_kg": 446.7879943847656,
+      "fin_pressure_limit_pa": 51202.5625,
+      "precision": 1,
+      "cy_table": [],
+      "rocket_sha256": "43304d63f707ab6ac648d8a7474842b06bcd7ebd760c023267838082a00ce2a4"
+    }
+  },
+  "nested_curve_assets": [
+    "cn_pf10.blkx",
+    "cn_pl11.blkx",
+    "it_aspide_1a.blkx",
+    "swd_rb71.blkx",
+    "swd_rb71_default.blkx",
+    "uk_skyflash_aim_7.blkx",
+    "uk_skyflash_aim_7_dogfight.blkx",
+    "uk_skyflash_aim_7_dogfight_default.blkx",
+    "uk_skyflash_aim_7_dogfight_tornado.blkx",
+    "uk_skyflash_aim_7_dogfight_tornado_default.blkx",
+    "uk_skyflash_temp.blkx",
+    "us_aim7c_sparrow.blkx",
+    "us_aim7d_sparrow.blkx",
+    "us_aim7e2_dogfight_sparrow.blkx",
+    "us_aim7e_sparrow.blkx",
+    "us_aim7f_sparrow.blkx",
+    "us_aim7f_sparrow_default.blkx",
+    "us_aim7f_sparrow_f_14.blkx",
+    "us_aim7f_sparrow_fa_18.blkx",
+    "us_aim7m_sparrow.blkx",
+    "us_aim7m_sparrow_default.blkx",
+    "us_aim7m_sparrow_f_14.blkx",
+    "us_aim7m_sparrow_f_15.blkx",
+    "us_aim7m_sparrow_f_15_default.blkx",
+    "us_aim7m_sparrow_f_16.blkx",
+    "us_aim7m_sparrow_f_16_default.blkx",
+    "us_aim7m_sparrow_fa_18.blkx",
+    "us_aim7p_sparrow_fa_18.blkx",
+    "us_aim7p_sparrow_fa_18_default.blkx"
+  ],
+  "nested_positive_control": [
+    [
+      0.800000011920929,
+      5.000000476837158,
+      0.8149999976158142
+    ],
+    [
+      1,
+      4.999999046325684,
+      1
+    ],
+    [
+      1.2000000476837158,
+      2.500000238418579,
+      1
+    ],
+    [
+      1.600000023841858,
+      2.500000238418579,
+      0.8740000128746033
+    ],
+    [
+      2,
+      2.499999523162842,
+      0.6980000138282776
+    ],
+    [
+      2.4000000953674316,
+      2.5000009536743164,
+      0.6290000081062317
+    ],
+    [
+      2.799999952316284,
+      0.8333333134651184,
+      0.5619999766349792
+    ],
+    [
+      4,
+      0,
+      0.4359999895095825
+    ]
+  ],
+  "flat_controls": [
+    {
+      "config": {
+        "CyMachMult0": [
+          0,
+          0.2
+        ],
+        "CyMachMult1": [
+          1,
+          1
+        ],
+        "CyMachMult2": [
+          0.5,
+          0.4
+        ],
+        "CyMachMult3": [
+          2,
+          0.8
+        ]
+      },
+      "expected": [
+        [
+          0,
+          1,
+          0.20000000298023224
+        ],
+        [
+          1,
+          1,
+          1
+        ],
+        [
+          2,
+          0,
+          0.800000011920929
+        ]
+      ]
+    },
+    {
+      "config": {
+        "CyMachMult": [
+          0.4,
+          0.25,
+          2,
+          1.5
+        ]
+      },
+      "expected": [
+        [
+          0.4000000059604645,
+          0.625,
+          0.25
+        ],
+        [
+          2,
+          0,
+          1.5
+        ]
+      ]
+    },
+    {
+      "config": {
+        "CyMachMult": [
+          2,
+          1.5,
+          0.4,
+          0.25
+        ]
+      },
+      "expected": [
+        [
+          2,
+          0,
+          1.5
+        ]
+      ]
+    },
+    {
+      "config": {
+        "CyMachMult": 0.75
+      },
+      "expected": [
+        [
+          0,
+          0,
+          0.75
+        ]
+      ]
+    }
+  ],
+  "axis_control": {
+    "angles": [
+      31,
+      -72,
+      123
+    ],
+    "expected": [
+      0.61016845703125,
+      0.39460691809654236,
+      0.46026700735092163,
+      0.5100333094596863
+    ]
+  }
+}
