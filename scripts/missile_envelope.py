@@ -65,7 +65,6 @@ HEADINGS = ('hot', 'cold', 'same', 'opposite')
 GROUND_LAUNCH_M = 2.                # surface-to-air launch height above flat ground
 RANGE_CAP_M = 195000.
 COARSE_RATIO = 1.6
-INTERIOR = 4.
 SHAPE = 5.
 MATCH = 2.5
 MAX_LAYERS = 25
@@ -461,9 +460,8 @@ class Ray:
         hits = lambda: sorted(r for r, o in self.samples.items() if o['hit'])
         out = inward = down = up = .1
         descend = ascend = bottom = None   # inner probes of the predicted maximum and minimum
-        # Inside a region without hits (Grid seed 'empty') the range grid is sparser.
-        empty = seed is not None and seed.get('source') == 'empty'
-        if empty: seed = None
+        # An empty neighbour provides no boundary prediction for this ray.
+        if seed is not None and seed.get('source') == 'empty': seed = None
         if seed is not None:
             # Bracket both predicted boundaries; probe the middle when the prediction is loose.
             low = max(seed['low'], self.low); high = max(seed['high'], low); spread = seed['spread']
@@ -483,10 +481,13 @@ class Ray:
             yield from run(probes + seed.get('extra', []))
             if not hits() and high > low * 1.5:
                 yield from run([_middle(low, high)] + [low * (high / low) ** f for f in (.25, .75)])
-        # A ray next to an empty neighbour that finds no hit near its live neighbour's
-        # interval is empty: the empty neighbour already searched its whole range.
-        if not hits() and not (seed is not None and seed.get('edge')):
-            yield from run(self.coarse(COARSE_RATIO ** 2 if empty else COARSE_RATIO))
+        # Neighbour predictions accelerate boundary bracketing, but do not prove
+        # that the interior is connected. A close-range turn-back hit and a far
+        # hit can surround a broad miss interval. Probe the normal range grid on
+        # every unblocked ray, including rays beside an empty neighbour.
+        # This remains a finite sampling search, not proof that narrower islands
+        # or gaps cannot exist between same-outcome coarse samples.
+        yield from run(self.coarse())
         if not hits(): return self.finish()
         while True:
             # Expand from the hits until both boundaries are bracketed. When both
@@ -515,19 +516,14 @@ class Ray:
             batch = self.fresh(batch)
             if not batch: break
             yield from run(batch)
-        # Near a boundary, narrow misses and hits can alternate; the bisection keeps
-        # the transitions it brackets. The minimum and maximum ranges and the start
-        # of the farthest interval are bisected to the tolerance (but not below a
-        # quarter of the maximum range's), the edges of other gaps between hits to
-        # INTERIOR times the tolerance of the maximum range.
+        # Resolve every detected transition at its own range tolerance. Using the
+        # farthest hit's tolerance can leave short-range gap edges hundreds of
+        # metres wide even when the requested local tolerance is only 15 metres.
         while True:
-            rs = sorted(self.samples); h = hits()
-            inner = max([r for r in rs if r < h[-1] and not self.samples[r]['hit']], default=None)
-            floor = self.width(h[-1]) / 4
+            rs = sorted(self.samples)
             batch = [_middle(a, b) for a, b in zip(rs, rs[1:])
                      if self.samples[a]['hit'] != self.samples[b]['hit']
-                     and b - a > (max(self.width((a + b) / 2), floor) if b == h[0] or a == h[-1] or a == inner
-                                  else INTERIOR * self.width(h[-1]))]
+                     and b - a > self.width((a + b) / 2)]
             if not batch: break
             yield from run(batch)
         return self.finish()

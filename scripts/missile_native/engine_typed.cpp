@@ -880,6 +880,89 @@ void load_escape(const V& m, EvaluateSetup& E) {
     E.target_velocity_raw = t.run; E.straight_from = t.end;
 }
 
+// missile_worker.escape_motion itself: the same expressions in the same order,
+// with the runtime's math functions (std::fmod, atan2, sin, cos, sqrt, acos;
+// degrees as x * (180 / pi)). Input it does not accept bails, and the
+// translated function then raises its error.
+void escape_setup(const V& target, const V& escape, const V& origin_value, EvaluateSetup& E) {
+    constexpr double PI = 3.141592653589793238462643383279502884, DEGREES = 180.0 / PI;
+    V worker = import_module("missile_worker");
+    double gravity = num(field(worker, "ESCAPE_GRAVITY"));
+    auto load_range = vec<2>(field(worker, "ESCAPE_LOAD_G")), delay_range = vec<2>(field(worker, "ESCAPE_DELAY_S"));
+    d3 position = vec_at<3>(target, "position"), velocity = vec_at<3>(target, "velocity"), origin = vec<3>(origin_value);
+    d3 angles = vec_at<3>(target, "angles");
+    double delay = num_at(escape, "delay_s"), load = num_at(escape, "load_g");
+    finite_or_bail(position); finite_or_bail(velocity); finite_or_bail(origin); finite_or_bail(angles);
+    if (velocity[1] != 0) bail("typed escape: target not level");
+    if (!(delay_range[0] <= delay && delay <= delay_range[1]) || !(load_range[0] <= load && load <= load_range[1]))
+        bail("typed escape: load or delay out of range");
+    auto wrapped = [&](double angle) {   // (-pi, pi]
+        angle = std::fmod(angle, 2 * PI);
+        if (std::isnan(angle)) bail("typed escape: math domain");
+        if (angle > PI) angle -= 2 * PI;
+        if (angle <= -PI) angle += 2 * PI;
+        return angle;
+    };
+    double speed = std::sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2]);
+    d3 turn_point;
+    for (int i = 0; i < 3; ++i) turn_point[i] = position[i] + velocity[i] * delay;
+    double heading = std::atan2(velocity[2], velocity[0]);
+    double turn = wrapped(std::atan2(turn_point[2] - origin[2], turn_point[0] - origin[0]) - heading);
+    double sine = std::sin(heading), cosine = std::cos(heading);
+    double rate = 0., radius = 0., end = delay, exit_heading = heading;
+    d3 exit_point = turn_point, run = velocity;
+    if (speed > 0 && turn != 0) {
+        rate = std::copysign(gravity * std::sqrt(load * load - 1.) / speed, turn);
+        radius = speed / rate;
+        double sign = std::copysign(1., turn);
+        auto ahead = [&](double tau) {
+            double h = heading + rate * tau;
+            double x = turn_point[0] + radius * (std::sin(h) - sine), z = turn_point[2] - radius * (std::cos(h) - cosine);
+            return sign * wrapped(std::atan2(z - origin[2], x - origin[0]) - h);
+        };
+        double step = PI / 180. / std::fabs(rate);
+        double duration = turn / rate, previous = ahead(0.);
+        for (int k = 1; k < 361; ++k) {
+            double value = ahead(k * step);
+            if (value <= 0. && previous < PI / 2) {
+                double low = (k - 1) * step, high = k * step;
+                for (int i = 0; i < 60; ++i) {
+                    double middle = (low + high) / 2;
+                    if (ahead(middle) > 0.) low = middle; else high = middle;
+                }
+                duration = high;
+                break;
+            }
+            previous = value;
+        }
+        end = delay + duration;
+        exit_heading = heading + rate * (end - delay);
+        exit_point = {turn_point[0] + radius * (std::sin(exit_heading) - sine), turn_point[1],
+                      turn_point[2] - radius * (std::cos(exit_heading) - cosine)};
+        run = {speed * std::cos(exit_heading), 0., speed * std::sin(exit_heading)};
+    }
+    TargetMotion& t = E.motion;
+    t = TargetMotion{};
+    t.position = position; t.velocity = velocity; t.quaternion = angles_quaternion(angles);
+    t.escape = true;
+    t.start = delay; t.end = end; t.heading = heading; t.sine = sine; t.cosine = cosine; t.rate = rate; t.radius = radius;
+    t.speed = speed; t.roll = std::copysign(std::acos(1. / load) * DEGREES, turn);
+    t.turn_point = turn_point; t.exit_point = exit_point; t.run = run;
+    t.run_quaternion = angles_quaternion({exit_heading * DEGREES, 0., 0.});
+    for (double x : {t.start, t.end, t.heading, t.sine, t.cosine, t.rate, t.radius, t.speed, t.roll}) finite_or_bail(x);
+    finite_or_bail(t.turn_point); finite_or_bail(t.exit_point); finite_or_bail(t.run);
+    finite_or_bail(t.quaternion); finite_or_bail(t.run_quaternion);
+    E.target_velocity_raw = t.run; E.straight_from = t.end;
+}
+bool same_motion(const TargetMotion& a, const TargetMotion& b) {
+    auto eq = [](double x, double y) { return bits(x) == bits(y); };
+    auto eqv = [&](const auto& x, const auto& y) { for (size_t i = 0; i < x.size(); ++i) if (!eq(x[i], y[i])) return false; return true; };
+    return a.escape == b.escape && eq(a.start, b.start) && eq(a.end, b.end) && eq(a.heading, b.heading) && eq(a.sine, b.sine)
+        && eq(a.cosine, b.cosine) && eq(a.rate, b.rate) && eq(a.radius, b.radius) && eq(a.speed, b.speed) && eq(a.roll, b.roll)
+        && eqv(a.position, b.position) && eqv(a.velocity, b.velocity) && eqv(a.quaternion, b.quaternion)
+        && eqv(a.turn_point, b.turn_point) && eqv(a.exit_point, b.exit_point) && eqv(a.run, b.run) && eqv(a.run_quaternion, b.run_quaternion);
+}
+
 V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Mode mode = typed_mode();
     if (mode == Mode::Off) return call(reference, args, kwargs);
@@ -899,7 +982,7 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Comparison comparison{&p};
     int64_t typed_steps = 0;
     const char* declined = nullptr;
-    V typed_result;
+    V typed_result, escape_equal;
     try {
         auto began = std::chrono::steady_clock::now();
         // An escaping target (no-escape zone) is set up from its release state,
@@ -909,8 +992,14 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
             target = make_dict({{"position", item(a[2], V("position"))}, {"velocity", item(a[2], V("velocity"))},
                                 {"angles", item(a[2], V("angles"))}});
         (cached_setup() ? prepare_cached : prepare_full)(a[0], a[1], target, a[3], a[4], p);
-        if (!escape.is_none())
-            load_escape(invoke_fn("missile_worker", "escape_motion", {target, escape, item(a[1], V("position"))}), p.setup);
+        if (!escape.is_none()) {
+            escape_setup(target, escape, item(a[1], V("position")), p.setup);
+            if (mode == Mode::Compare) {
+                EvaluateSetup reference_escape;
+                load_escape(invoke_fn("missile_worker", "escape_motion", {target, escape, item(a[1], V("position"))}), reference_escape);
+                escape_equal = V(same_motion(p.setup.motion, reference_escape.motion));
+            }
+        }
         auto prepared = std::chrono::steady_clock::now();
         if (mode == Mode::Compare) comparison.state = p.session;
         EvaluateResult r = evaluate_loop(p.props, p.session, p.setup);
@@ -935,6 +1024,7 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Kw report{{"type", "typed_compare"}, {"missile", a[0]}, {"declined", declined ? V(std::string(declined)) : V()}};
     report.emplace_back("cache_hit", V(p.cache_hit));
     report.emplace_back("setup_cached", V(cached_setup()));
+    report.emplace_back("escape_equal", escape_equal);
     bool same = !declined && json_dump(expected, true) == json_dump(typed_result, true);
     report.emplace_back("result_equal", V(same));
     if (!declined && !same) { report.emplace_back("expected", expected); report.emplace_back("typed", typed_result); }
@@ -952,12 +1042,307 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     diagnostic(make_dict(report));
     return expected;
 }
+
+// ---------------------------------------------------------- simulate entry
+// missile_worker.simulate on typed state. The translated simulation_setup and
+// simulation_document supply the release, seeker initialization and the result
+// description; the step loop, samples, tracking descriptions, telemetry, closest
+// approach and early-miss test reproduce the reference expressions. Legacy
+// post-release requests, and anything the typed port declines, run the
+// translated function from scratch.
+
+// math.hypot as the translated runtime computes it.
+double runtime_hypot(const double* v, int n) {
+    double d[4], maximum = 0.; int nan = 0;
+    for (int i = 0; i < n; ++i) { d[i] = std::fabs(v[i]); if (d[i] > maximum) maximum = d[i]; nan |= std::isnan(d[i]); }
+    return vector_norm((size_t)n, d, maximum, nan);
+}
+
+// missile_tracking.describe
+struct TrackingStatus {
+    bool tracking = false; int available = -1;   // observation_available: -1 None
+    bool has_reason = false; std::string reason, state;
+    bool operator==(const TrackingStatus& o) const {
+        return tracking == o.tracking && available == o.available && has_reason == o.has_reason && reason == o.reason && state == o.state;
+    }
+};
+const char* loss_name(int reason) {
+    switch (reason) {
+        case LOSS_NO_TARGET: return "no_target"; case LOSS_BEHIND: return "behind"; case LOSS_MINIMUM_DISTANCE: return "minimum_distance";
+        case LOSS_HORIZON: return "horizon"; case LOSS_FIELD_OF_VIEW: return "field_of_view";
+        case LOSS_OBSERVATION_CONE: return "observation_cone"; case LOSS_SENSOR_GEOMETRY: return "sensor_geometry";
+        default: return nullptr;
+    }
+}
+TrackingStatus describe_step(int family, const Session& S, bool inertial_enabled, const ObservationLog& log) {
+    TrackingStatus t;
+    bool inertial_valid; int64_t mode;
+    if (family == 0) { t.tracking = S.optical.manager.tracking; inertial_valid = S.optical.manager.inertial_valid; mode = S.optical.manager.mode; }
+    else { t.tracking = S.radar.manager.tracking != 0; inertial_valid = S.radar.manager.inertial_valid != 0; mode = S.radar.manager.mode; }
+    if (log.count) {
+        t.available = log.any ? 1 : 0;
+        if (const char* name = loss_name(log.last)) { t.has_reason = true; t.reason = name; }
+    }
+    if (t.tracking) t.state = t.available == 1 ? "observed" : "coasting";
+    else if (inertial_enabled && inertial_valid && (mode == 0 || mode == 4)) t.state = "inertial";
+    else t.state = "acquiring";
+    return t;
+}
+TrackingStatus tracking_from(const V& d) {
+    TrackingStatus t;
+    t.tracking = truth(at_key(d, "tracking"));
+    V available = at_key(d, "observation_available"), reason = at_key(d, "loss_reason");
+    t.available = available.is_none() ? -1 : truth(available) ? 1 : 0;
+    if (!reason.is_none()) { t.has_reason = true; t.reason = reason.as_string(); }
+    t.state = at_key(d, "tracking_state").as_string();
+    return t;
+}
+void put_tracking(Kw& kw, const TrackingStatus& t) {
+    kw.emplace_back("tracking", V(t.tracking));
+    kw.emplace_back("observation_available", t.available < 0 ? V() : V(t.available == 1));
+    kw.emplace_back("tracking_state", V(t.state));
+    kw.emplace_back("loss_reason", t.has_reason ? V(t.reason) : V());
+}
+
+V list3(const d3& v) { return make_list({V(v[0]), V(v[1]), V(v[2])}); }
+V list4(const d4& v) { return make_list({V(v[0]), V(v[1]), V(v[2]), V(v[3])}); }
+
+// missile_telemetry.completed: the final substep's force evaluation again.
+struct Telemetry { double force_time, thrust, mass, propellant, drag, lift, cd, aoa, pressure, acceleration; };
+Telemetry completed_telemetry(const FlightProps& P, const StepCapture& k, const std::array<double,8>& controls) {
+    const wtm_body& b = k.force_input;
+    double sub_dt = div(STEP, (double)P.precision);
+    wtm_forces f;
+    aero_forces(&P.body, b.position.y, b.velocity, b.quaternion, b.omega, (float)controls[0], (float)controls[1], (float)sub_dt,
+                k.propulsion.world_force, k.propulsion.body_torque, k.propulsion.mass_lost, 0.0f, b.body_random, &f);
+    check_kernel();
+    double scale = std::fabs((double)perturbation_coefficients(0.0f, b.body_random).force_scale);
+    double world[3] = {k.propulsion.world_force.x, k.propulsion.world_force.y, k.propulsion.world_force.z};
+    double drag[3] = {f.baseline.drag.x, f.baseline.drag.y, f.baseline.drag.z};
+    double lift[3] = {f.baseline.lift.x, f.baseline.lift.y, f.baseline.lift.z};
+    double cosine = mx(-1., mn(1., (double)f.baseline.cosine));
+    return {(double)b.time, runtime_hypot(world, 3), (double)f.effective_mass, (double)k.propulsion.mass_lost,
+            runtime_hypot(drag, 3) * scale, runtime_hypot(lift, 3) * scale, (double)f.baseline.cd,
+            std::acos(cosine) * (180.0 / 3.141592653589793238462643383279502884), (double)f.pressure,
+            runtime_hypot(k.acceleration, 3)};
+}
+V telemetry_value(const Telemetry& t) {
+    return make_dict({{"force_time_s", V(t.force_time)}, {"thrust_n", V(t.thrust)}, {"mass_kg", V(t.mass)},
+                      {"propellant_used_kg", V(t.propellant)}, {"drag_n", V(t.drag)}, {"lift_n", V(t.lift)},
+                      {"drag_coefficient", V(t.cd)}, {"aoa_deg", V(t.aoa)}, {"dynamic_pressure_pa", V(t.pressure)},
+                      {"acceleration_mps2", V(t.acceleration)}});
+}
+
+// missile_worker.simulate's sample()
+struct Sample {
+    double time = 0.; d3 missile{}, target{}, velocity{}; double speed = 0.; d4 quaternion{}; double mach = 0., traveled = 0.;
+    TrackingStatus tracking; bool has_telemetry = false; Telemetry telemetry{};
+};
+Sample take_sample(const Session& S, const TargetMotion& motion, double traveled, const TrackingStatus& tracking) {
+    Sample s; const wtm_body& b = S.body;
+    s.time = b.time; s.missile = {b.position.x, b.position.y, b.position.z};
+    s.target = target_at(motion, s.time).position;
+    s.velocity = {b.velocity.x, b.velocity.y, b.velocity.z};
+    double total = 0.; for (double v : s.velocity) total = total + v * v;
+    s.speed = py_sqrt(total);
+    s.quaternion = dq(b.quaternion);
+    wtm_air air = ::atmosphere((float)s.missile[1]); check_kernel();
+    s.mach = runtime_hypot(s.velocity.data(), 3) / (double)air.sound_speed;
+    s.traveled = traveled; s.tracking = tracking;
+    return s;
+}
+V sample_value(const Sample& s, const V* telemetry = nullptr) {
+    Kw kw{{"time_s", V(s.time)}, {"missile", list3(s.missile)}, {"target", list3(s.target)}, {"velocity", list3(s.velocity)},
+          {"speed_mps", V(s.speed)}, {"quaternion", list4(s.quaternion)}, {"mach", V(s.mach)}, {"traveled_distance_m", V(s.traveled)}};
+    put_tracking(kw, s.tracking);
+    if (telemetry) kw.emplace_back("telemetry", *telemetry);
+    else if (s.has_telemetry) kw.emplace_back("telemetry", telemetry_value(s.telemetry));
+    return make_dict(kw);
+}
+// missile_worker.proximity_endpoint
+struct Endpoint { double time; d3 missile, target; double traveled; };
+V endpoint_value(const Endpoint& e) {
+    return make_dict({{"kind", V("proximity_event")}, {"time_s", V(e.time)}, {"missile", list3(e.missile)}, {"target", list3(e.target)},
+                      {"velocity", V()}, {"speed_mps", V()}, {"quaternion", V()}, {"tracking", V()}, {"observation_available", V()},
+                      {"tracking_state", V("event")}, {"loss_reason", V()}, {"mach", V()}, {"telemetry", V()},
+                      {"traveled_distance_m", V(e.traveled)}});
+}
+
+V simulate_loop(const V& request, const V& progress) {
+    V w = import_module("missile_worker");
+    V config = call(attr(w, "validate"), {request});
+    if (!has(config, "launcher")) bail("Legacy post-release launch uses the translated simulator");
+    V setup = call(attr(w, "simulation_setup"), {config});
+    V session = at_key(setup, "session"), frame = at_key(setup, "frame");
+    V session_flight = attr(attr(session, "frame"), "flight");
+    std::string family_name = attr(session_flight, "family").as_string();
+    FlightProps P;
+    P.family = family_name == "optical" ? 0 : family_name == "radar" ? 1 : -1;
+    if (P.family < 0) bail("Unsupported guidance family");
+    load_flight_props(attr(session_flight, "properties"), item(attr(session_flight, "serialized_properties"), V("rocket")),
+                      attr(session, "props"), P);
+    Session S;
+    load_session(session, P.family, S);
+    validate_flight_numbers(S, P.family);
+    V motion_value = at_key(setup, "target_motion");
+    TargetMotion motion;
+    if (field(motion_value, "kind").as_string() == "escape") {
+        EvaluateSetup E; load_escape(motion_value, E); motion = E.motion;
+    } else {
+        motion.position = vec_at<3>(motion_value, "position"); motion.velocity = vec_at<3>(motion_value, "velocity");
+        motion.quaternion = vec_at<4>(motion_value, "quaternion");
+        finite_or_bail(motion.position); finite_or_bail(motion.velocity);
+    }
+    V launch_value = at_key(setup, "launch");
+    LaunchState launch{vec_at<3>(launch_value, "position"), vec_at<3>(launch_value, "velocity"),
+                       vec<4>(call(attr(w, "quaternion"), {at_key(launch_value, "angles")}))};
+    bool inertial_enabled = truth(at_key(setup, "inertial_enabled"));
+    bool early_exit = truth(at_key(config, "early_exit"));
+    double straight_from = num(at_key(setup, "straight_from"));
+    d3 straight_velocity = vec_at<3>(setup, "straight_velocity");
+    std::vector<double> burn_end; for (V end : iter(at_key(setup, "burn_end"))) burn_end.push_back(num(end));
+    double deadline = num(at_key(setup, "deadline")), reach_radius = num(at_key(setup, "reach_radius"));
+    double duration = num(at_key(config, "duration"));
+    V initialization = at_key(setup, "initialization");
+    V describe = attr(import_module("missile_tracking"), "describe");
+    V session_state = attr(session_flight, "state");
+    TrackingStatus tracking = tracking_from(call(describe, {V(family_name), item(item(session_state, V("guidance")), V("manager")),
+                                                           V(inertial_enabled)}, {{"initialization", initialization}}));
+
+    Args rows, transitions, seeker_transitions;
+    double traveled = 0.;
+    auto seeker_entry = [](double time, const TrackingStatus& t) {
+        Kw kw{{"time_s", V(time)}}; put_tracking(kw, t); return make_dict(kw);
+    };
+    seeker_transitions.push_back(seeker_entry(0., tracking));
+    V target_value = at_key(config, "target");
+    double best_distance = reference_dist(vec_at<3>(attr(frame, "website_release"), "position"), vec_at<3>(target_value, "position"));
+    double best_time = 0.;
+    bool tracked_before = truth(at_key(initialization, "tracking"));
+    if (tracked_before) transitions.push_back(make_dict({{"time_s", V(0.)}, {"tracking", V(true)}}));
+    V initial_telemetry = call(attr(import_module("missile_telemetry"), "initial"), {attr(attr(frame, "flight"), "properties")});
+    Sample first = take_sample(S, motion, traveled, tracking);
+    rows.push_back(sample_value(first, &initial_telemetry));
+    const char* code = "time_limit"; const char* label = "Time limit reached \xe2\x80\x94 unresolved";
+    bool outcome_event = false; Event event_value{};
+    double count_value = std::ceil(duration / STEP);
+    if (!std::isfinite(count_value) || count_value < 0 || count_value > 1e9) bail("Unsupported step count");
+    int64_t count = (int64_t)count_value;
+    Sample last_new; bool have_new = false;
+    for (int64_t i = 0; i < count; ++i) {
+        Sample old = take_sample(S, motion, traveled, tracking);
+        double now = add(old.time, STEP);
+        std::array<double,8> controls = S.controls;
+        ObservationLog log; StepCapture capture;
+        observation_log = &log; step_capture = &capture;
+        Expiry expiry;
+        try { expiry = interaction_advance(P, S, motion, launch, now, STEP, now); }
+        catch (...) { observation_log = nullptr; step_capture = nullptr; throw; }
+        observation_log = nullptr; step_capture = nullptr;
+        if (capture.updates != 1) bail("Simulator step made other than one flight update");
+        TrackingStatus previous = tracking;
+        tracking = describe_step(P.family, S, inertial_enabled, log);
+        Sample now_sample = take_sample(S, motion, traveled, tracking);
+        bool event = S.has_event;
+        // endpoint: the proximity event, or the new sample itself (aliased)
+        Endpoint end{};
+        if (event) {
+            if (!(old.time <= S.event.time && S.event.time <= now_sample.time)) bail("ValueError: proximity time outside the step");
+            end.time = S.event.time; end.missile = S.event.position; end.target = target_at(motion, end.time).position;
+        } else { end.time = now_sample.time; end.missile = now_sample.missile; end.target = now_sample.target; }
+        traveled = traveled + reference_dist(old.missile, end.missile);
+        if (event) end.traveled = traveled; else now_sample.traveled = traveled;
+        auto seg = closest_segment(old.missile, end.missile, old.target, end.target);
+        if (seg.first < best_distance) { best_distance = seg.first; best_time = old.time + seg.second * (end.time - old.time); }
+        if (!event && now_sample.tracking.tracking != tracked_before) {
+            transitions.push_back(make_dict({{"time_s", V(now_sample.time)}, {"tracking", V(now_sample.tracking.tracking)}}));
+            tracked_before = now_sample.tracking.tracking;
+        }
+        bool terminal = false;
+        if (event) { code = "proximity_event"; label = "Target proximity event"; outcome_event = true; event_value = S.event; terminal = true; }
+        else if (now_sample.missile[1] <= 0) { code = "ground"; label = "Missile reached ground"; terminal = true; }
+        else if (now_sample.target[1] <= 0) { code = "target_ground"; label = "Target reached ground \xe2\x80\x94 scenario ended"; terminal = true; }
+        else if (S.expiry_flag) {
+            if (expiry.time_expired) { code = "lifetime"; label = "Missile lifetime expired"; }
+            else if (expiry.distance_expired) { code = "distance_limit"; label = "Missile distance limit reached"; }
+            else { code = "tracking_timeout"; label = "Geometric tracking timeout"; }
+            terminal = true;
+        } else if (early_exit && i % 6 == 5 && now_sample.time >= straight_from) {
+            bool burned = true;
+            size_t n = burn_end.size() < 4 ? burn_end.size() : 4;
+            for (size_t k = 0; k < n; ++k) if (!((double)S.body.clocks[k] >= burn_end[k] + 1e-3)) { burned = false; break; }
+            if (burned && unreachable(now_sample.missile, now_sample.speed, now_sample.target, straight_velocity,
+                                      deadline - now_sample.time + 2 * STEP, reach_radius, S.origin, S.distance_limit)) {
+                code = "unreachable"; label = "Miss \xe2\x80\x94 target is unreachable"; terminal = true;
+            }
+        }
+        if (event) {
+            seeker_transitions.push_back(make_dict({{"time_s", V(end.time)}, {"tracking", V()}, {"observation_available", V()},
+                                                    {"tracking_state", V("event")}, {"loss_reason", V()}}));
+        } else if (!(tracking == previous)) seeker_transitions.push_back(seeker_entry(now_sample.time, tracking));
+        if (i % 3 == 2 || terminal || i == count - 1) {
+            now_sample.telemetry = completed_telemetry(P, capture, controls); now_sample.has_telemetry = true;
+            if (event) {
+                now_sample.traveled = old.traveled + reference_dist(old.missile, now_sample.missile);
+                V last = rows.back();
+                bool same_time = num(at_key(last, "time_s")) == end.time;
+                if (same_time) rows.back() = endpoint_value(end); else rows.push_back(endpoint_value(end));
+            } else rows.push_back(sample_value(now_sample));
+        }
+        if (i % 24 == 23) call(progress, {make_dict({{"time_s", V(now)}, {"duration_s", V(duration)}, {"fraction", V(mn(1., now / duration))}})});
+        last_new = now_sample; have_new = true;
+        if (terminal) break;
+    }
+    if (!have_new) bail("No simulator step");
+    Kw outcome{{"code", V(code)}, {"label", V(label)}};
+    if (outcome_event) outcome.emplace_back("event", make_dict({{"position", list3(event_value.position)},
+                                                                {"direction", list3(event_value.direction)}, {"time", V(event_value.time)}}));
+    V best = make_dict({{"distance_m", V(best_distance)}, {"time_s", V(best_time)}});
+    return call(attr(w, "simulation_document"), {config, setup, make_list(rows), make_list(transitions), make_list(seeker_transitions),
+                                                 best, make_dict(outcome), sample_value(last_new)});
+}
+
+V typed_simulate(const V& reference, const Args& args, const Kw& kwargs) {
+    Mode mode = typed_mode();
+    if (mode == Mode::Off || args.empty() || args.size() > 2 || !kwargs.empty()) return call(reference, args, kwargs);
+    V progress = args.size() > 1 ? args[1] : builtin("progress", [](const Args&, const Kw&) { return V(); });
+    const char* declined = nullptr; V typed_result;
+    try { typed_result = simulate_loop(args[0], progress); }
+    catch (const Bail& b) { declined = b.reason; }
+    catch (const PyError&) { declined = "setup raised"; }
+    if (declined && typed_log())
+        diagnostic(make_dict({{"type", "typed_simulate_fallback"}, {"reason", V(std::string(declined))}}));
+    if (mode == Mode::On) return declined ? call(reference, args, kwargs) : typed_result;
+    V expected = call(reference, args, kwargs);
+    bool same = !declined && json_dump(expected, true) == json_dump(typed_result, true);
+    Kw report{{"type", "typed_simulate_compare"}, {"declined", declined ? V(std::string(declined)) : V()}, {"result_equal", V(same)}};
+    if (!declined && !same) {
+        // First differing trajectory row, for diagnosis.
+        Args a = iter(item(expected, V("trajectory"))), b = iter(item(typed_result, V("trajectory")));
+        report.emplace_back("rows_reference", V((int64_t)a.size())); report.emplace_back("rows_typed", V((int64_t)b.size()));
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+            if (json_dump(a[i], true) != json_dump(b[i], true)) {
+                report.emplace_back("first_row", V((int64_t)i)); report.emplace_back("reference", a[i]); report.emplace_back("typed", b[i]); break;
+            }
+        for (const char* key : {"outcome", "closest_approach", "tracking_transitions", "seeker_transitions", "final_body_sample"})
+            if (json_dump(item(expected, V(key)), true) != json_dump(item(typed_result, V(key)), true)) report.emplace_back(std::string("differs_") + key, V(true));
+    }
+    diagnostic(make_dict(report));
+    return expected;
+}
 }  // namespace
 
 void install_typed_evaluate(E env) {
     V reference = get(env, "evaluate");
     set(env, "evaluate", builtin("evaluate", [reference](const Args& args, const Kw& kwargs) {
         return typed_evaluate(reference, args, kwargs);
+    }));
+}
+
+void install_typed_simulate(E env) {
+    V reference = get(env, "simulate");
+    set(env, "simulate", builtin("simulate", [reference](const Args& args, const Kw& kwargs) {
+        return typed_simulate(reference, args, kwargs);
     }));
 }
 }  // namespace nt

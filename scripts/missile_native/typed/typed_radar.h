@@ -176,13 +176,14 @@ inline RadarObservation geometric_measure(const RadarSeekerProps& p, const Radar
     if (p.frame.active && !illumination.present) bail("ValueError: Geometric radar policy requires an explicit illumination frame");
     RadarObservation out;
     out.measurement = {1., 0., 0.}; out.has_effects = true;
-    if (!target) return out;
+    if (!target) { log_observation(false, LOSS_NO_TARGET); return out; }
     d3 axis = {frame[0], frame[1], frame[2]};
-    if (!admitted(target->position, nw.position, axis, p.query_cosine, 0., BOUND, 0.)) return out;
+    if (!admitted(target->position, nw.position, axis, p.query_cosine, 0., BOUND, 0.)) { log_observation(false, LOSS_OBSERVATION_CONE); return out; }
     const Frame12& transmitter = p.frame.active ? illumination.frame : frame;
     const d3& transmitter_velocity = p.frame.active ? illumination.velocity : nw.velocity;
     ReturnValues values = return_response(p.frame, target->position, target->velocity, transmitter, frame, transmitter_velocity, nw.velocity);
-    if (!values.accepted) return out;
+    if (!values.accepted) { log_observation(false, LOSS_SENSOR_GEOMETRY); return out; }
+    log_observation(true, LOSS_NONE);
     d4 q = nw.quaternion; q[3] = -q[3];
     out.accepted_effects = true; out.target_value = values.range;
     out.los_check_time = state.los_cache_valid ? state.los_check_time : f32(nw.time);

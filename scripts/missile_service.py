@@ -51,7 +51,7 @@ def metadata():
     return dict(missiles=entries, defaults=dict(missile='us_aim9l_sidewinder', duration=60,
                 launcher=dict(position=[0,5000,0],velocity=[300,0,0],angles=[0,0,0]),
                 target=dict(position=[4000,5000,0],velocity=[200,0,0],angles=[0,0,0])),
-                model_status='experimental', profile_build='2.59.0.34',
+                model_status='experimental', profile_build='2.59.0.34', property_loading=index.get('property_loading'),
                 max_concurrent_jobs=MAX_WORKERS,
                 assumptions='Ideal observability; geometric tracking limits; constant-velocity point target; flat ground; no wind.',
                 units=dict(position='m',velocity='m/s',angles='degrees',time='s'),

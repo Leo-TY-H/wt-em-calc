@@ -1203,7 +1203,7 @@
       "fluid_rotation_resistance": 0.0,
       "fins_hor": 0.45293599367141724,
       "fins_ver": 0.45293599367141724,
-      "fin_pressure_limit": 84085.203125,
+      "fin_pressure_limit": 54694.671875,
       "damping_geometry": 0.5008995532989502,
       "inertia": [
         2.204681396484375,
@@ -1661,7 +1661,7 @@
     "end_speed": 2000.0,
     "policy": "geometric_radar_v1"
   },
-  "properties_sha256": "8d64fda5a92c94282d0ff7fb6e027eafa989f513151b93fa0576e72b2198fe60",
+  "properties_sha256": "dfc51e5b65ccdd94d778935b2c8b069c5ad0f2ebc648b65527f0f95443800a8b",
   "state": {
     "body": {
       "position": [
@@ -2122,5 +2122,11 @@
       ],
       "ray_requests": []
     }
+  },
+  "property_loading": {
+    "schema": "wt-projectile-properties-v1",
+    "validated_build": "2.59.0.87",
+    "rocket_sha256": "f74b3cca0f636ee1c160a5b33989e07a0262ff647bedeb43d2a50ac735bd157a",
+    "globals_sha256": "c47fc6a10659b15ea117da4b814a1dee95bda14a8821574a82f4eee1c3387bd0"
   }
 }
