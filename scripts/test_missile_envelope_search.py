@@ -4,8 +4,9 @@ import unittest
 from missile_envelope import Ray, gaps, structure, unreachable
 
 
-def search(intervals, seed=None, blocked=False, time=lambda r: 1.):
-    ray = Ray((0, 0), 1000., 45., 150., 152000., .0075, 15.)
+def search(intervals, seed=None, blocked=False, time=lambda r: 1., hit=None, closest=lambda r: 0., fuze_m=0.):
+    ray = Ray((0, 0), 1000., 45., 150., 152000., .0075, 15., fuze_m=fuze_m)
+    hit = hit or (lambda r: any(a <= r <= b for a, b in intervals))
     ray.blocked = blocked
     work = ray.search(seed)
     count = 0
@@ -13,8 +14,7 @@ def search(intervals, seed=None, blocked=False, time=lambda r: 1.):
         batch = next(work)
         while True:
             count += len(batch)
-            outcomes = [dict(hit=any(a <= r <= b for a, b in intervals),
-                             outcome='fixture', time_s=time(r), closest_m=0.) for r in batch]
+            outcomes = [dict(hit=hit(r), outcome='fixture', time_s=time(r), closest_m=closest(r)) for r in batch]
             batch = work.send(outcomes)
     except StopIteration:
         pass
@@ -71,6 +71,35 @@ class CloseRangeMissBands(unittest.TestCase):
         ray, _ = search([(150., 900.), (1100., 70000.)], seeded([1000.]))
         self.assertEqual(len(structure(ray.result, 5 * .0075 * ray.result['max_range_m'])), 1)
         self.assertEqual(len(gaps(ray.result, .0075, 15.)), 1)
+
+
+class RaggedFarEdge(unittest.TestCase):
+    # Every launch hits to 90 km; to 96 km hits thin out and the misses pass
+    # 20 m from the target (12 m fuze); beyond, the miss distance grows.
+    @staticmethod
+    def band_hit(r):
+        if r <= 90000.: return True
+        if r >= 96000.: return False
+        return (int(r) * 2654435761 % 1000) / 10. < 100. * (96000. - r) / 6000.
+
+    @staticmethod
+    def band_closest(r):
+        return 20. if r < 96000. else 200. + (r - 96000.) * .5
+
+    def test_band_beyond_the_solid_edge_is_reported_as_a_fringe(self):
+        ray, _ = search([], hit=self.band_hit, closest=self.band_closest, fuze_m=12.)
+        fringe = ray.result['fringe']
+        self.assertIsNotNone(fringe)
+        self.assertLessEqual(ray.result['max_range_m'], 93000.)
+        self.assertGreaterEqual(ray.result['max_range_m'], 89000.)
+        self.assertEqual(fringe['start_m'], ray.result['max_range_m'])
+        self.assertGreater(fringe['end_m'], 93000.)
+        self.assertTrue(all(self.band_hit(s) for s in ray.samples if s < 90000.))
+
+    def test_sharp_far_edge_has_no_fringe(self):
+        ray, _ = search([(150., 90000.)], closest=lambda r: 0. if r <= 90000. else (r - 90000.) * .9, fuze_m=12.)
+        self.assertIsNone(ray.result['fringe'])
+        self.assertAlmostEqual(ray.result['max_range_m'], 90000., delta=ray.width(90000.))
 
 
 class ConservativeReachability(unittest.TestCase):
