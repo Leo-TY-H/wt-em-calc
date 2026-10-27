@@ -575,12 +575,13 @@ class Ray:
                      and b - a > self.width((a + b) / 2)]
             if ragged:
                 # A fixed grid (powers of 1 + half the tolerance), so later rounds reuse
-                # earlier points; every fourth point until a band is found. Inside the
+                # earlier points; every fourth point until this ray or a neighbour has
+                # found a band. Inside the
                 # band the outcome follows where the last integration step falls, so
                 # each point is moved by a fixed pseudo-random fraction of a step:
                 # a regular grid would see the same few step phases.
                 step = math.log(1 + self.tolerance / 2)
-                stride = 1 if ragged[2] < ragged[3] else 4
+                stride = 1 if ragged[2] < ragged[3] or self.hint else 4
                 k = stride * math.ceil(math.log(ragged[0]) / step / stride)
                 while math.exp(k * step) <= ragged[1]:
                     batch.append(math.exp((k + (k * 2654435761 % 1000) / 1000 * .6 - .3) * step)); k += stride
