@@ -6,1364 +6,1374 @@
       "asset": "atam_mistral.blkx",
       "family": "optical",
       "path": "atam_mistral.json",
-      "properties_sha256": "ecc84a9d7ffcb7ccbd8080bc359514472a2432dc703d86f402cfd571e34454af"
+      "properties_sha256": "78331b2a250adc87c994aded748e79f9f9b3c919e5494e410397bc8f6df7dfcc"
     },
     {
       "asset": "atam_mistral_a129.blkx",
       "family": "optical",
       "path": "atam_mistral_a129.json",
-      "properties_sha256": "869965e4e9503ca72cf3a0a2c6b037a461e41ef82fca63d7038d762861cf278a"
+      "properties_sha256": "39cd67c346cc14e311d2c39e7c548c4a3602d37a2fd09d549edd55f8b544818c"
     },
     {
       "asset": "br_maa_1.blkx",
       "family": "optical",
       "path": "br_maa_1.json",
-      "properties_sha256": "25df4012c883722314ca1c0b9386702a236e2da13ee849f0ac72f7061838076d"
+      "properties_sha256": "fb87dfd0d35eb7e4d54432fffc07039935253012623529acf3d9a29d0c348ebc"
     },
     {
       "asset": "br_maa_1_default.blkx",
       "family": "optical",
       "path": "br_maa_1_default.json",
-      "properties_sha256": "f55dbc1c54c761e0e50b9f32f054a7a269d15389943d9c037dd5e2dbd2ec77ce"
+      "properties_sha256": "fb87dfd0d35eb7e4d54432fffc07039935253012623529acf3d9a29d0c348ebc"
     },
     {
       "asset": "cn_pl8b.blkx",
       "family": "optical",
       "path": "cn_pl8b.json",
-      "properties_sha256": "6d991d2b0ed919a804e41a55a46120cd561be08487b51b159feba367b49adf31"
+      "properties_sha256": "737698f8cd847a5a5dc991298d209db1b0df293614aa004ec8478f6c00f4ebda"
     },
     {
       "asset": "cn_pl8b_default.blkx",
       "family": "optical",
       "path": "cn_pl8b_default.json",
-      "properties_sha256": "02a7fc0e072a5f57413fe3626ad61b614292f3a2c52d73eb4258a8e2f6804aef"
+      "properties_sha256": "737698f8cd847a5a5dc991298d209db1b0df293614aa004ec8478f6c00f4ebda"
     },
     {
       "asset": "cn_ty_90.blkx",
       "family": "optical",
       "path": "cn_ty_90.json",
-      "properties_sha256": "697e8eb979231ab08b26c7c1f11bfa2dc9c37e8018e8354e50e97d1b184551fc"
+      "properties_sha256": "460591aa79c906f77673be926b21ba234156c7503f28cd759a62aecc13d89ad4"
     },
     {
       "asset": "fr_r_530_matra_ir.blkx",
       "family": "optical",
       "path": "fr_r_530_matra_ir.json",
-      "properties_sha256": "dfa60111359225850bfc1353fb5192bf6f3b6de8fe444474a837a9f92887a1c7"
+      "properties_sha256": "9e3d2218a61e794d7c3aec05efe22ae48e42a2990bb1229ea4db0c72854476ab"
     },
     {
       "asset": "fr_r_550_magic.blkx",
       "family": "optical",
       "path": "fr_r_550_magic.json",
-      "properties_sha256": "caa2a5bb6915380870333a0504687406e053a02f4375e4af4cd8b3ac4bafe88c"
+      "properties_sha256": "7534f50b810d5ff138476c778cf0f4b81d94fd2d72b7582048af448458e6f3c3"
     },
     {
       "asset": "fr_r_550_magic_2.blkx",
       "family": "optical",
       "path": "fr_r_550_magic_2.json",
-      "properties_sha256": "4951e40f51b03a13455d00b67d61cdc1b6e9383ae29211f9f53db954c3b0c55a"
+      "properties_sha256": "f82788d50699a25bf021df3bc5a4cb3305eaa9c3c6e64680bdf44d4e1f48c64b"
     },
     {
       "asset": "fr_r_550_magic_2_default.blkx",
       "family": "optical",
       "path": "fr_r_550_magic_2_default.json",
-      "properties_sha256": "8bb5bdeae972635a8e47f78f93d4b8d954af34afcec399c8ead771c2888a1a94"
+      "properties_sha256": "f82788d50699a25bf021df3bc5a4cb3305eaa9c3c6e64680bdf44d4e1f48c64b"
     },
     {
       "asset": "il_pyton_3.blkx",
       "family": "optical",
       "path": "il_pyton_3.json",
-      "properties_sha256": "6a73795c50aa473cf7505ffed856f7ca0d8e80598e7654d200d0d268bfb22328"
+      "properties_sha256": "579bb847e35dd205d50b0c07ef10709742cbc607949e644d57714fa85a499c73"
     },
     {
       "asset": "il_pyton_3_default.blkx",
       "family": "optical",
       "path": "il_pyton_3_default.json",
-      "properties_sha256": "5b7838e9a7145c2c915af324512c81525ca3e30d4c8140a4f96c5fdcfb314662"
+      "properties_sha256": "579bb847e35dd205d50b0c07ef10709742cbc607949e644d57714fa85a499c73"
     },
     {
       "asset": "il_pyton_4.blkx",
       "family": "optical",
       "path": "il_pyton_4.json",
-      "properties_sha256": "7c163516c1dadf8c67f76e66a492b9b74bbe703ff2bd9d87e49c26e461e14a25"
+      "properties_sha256": "4f4ea9204231c6acca6d977641a11f0ce221426080ade40b0035ccdd8f3ed4dd"
     },
     {
       "asset": "il_shafrir_1.blkx",
       "family": "optical",
       "path": "il_shafrir_1.json",
-      "properties_sha256": "bfd516fd7561698fadd25f85f85afea00e4a70a57e3e4a47260bd758b8309176"
+      "properties_sha256": "cfc7da06f47f82397d4d87b19acfcd381eca99abed50ad5ea2fc67c00d1be054"
     },
     {
       "asset": "il_shafrir_2.blkx",
       "family": "optical",
       "path": "il_shafrir_2.json",
-      "properties_sha256": "a5582c21c9c806a0d24a42c129137c4bac583ba51406b71937ed2b0fbaa5ee2e"
+      "properties_sha256": "1c1c2862dbc6cce46882f271bef26563b58596885818106d94003e20b3b13c42"
     },
     {
       "asset": "il_shafrir_2_default.blkx",
       "family": "optical",
       "path": "il_shafrir_2_default.json",
-      "properties_sha256": "7dea2a474b26eaa01b5d67e0a8c757601a3bd25b3a7e7e8a9833d2c03f75d918"
+      "properties_sha256": "1c1c2862dbc6cce46882f271bef26563b58596885818106d94003e20b3b13c42"
     },
     {
       "asset": "jp_aam3.blkx",
       "family": "optical",
       "path": "jp_aam3.json",
-      "properties_sha256": "ce54e971b228688f0f14b344bdbb55d1ae3483f925702c241d8ae68589abcabd"
+      "properties_sha256": "2610f155ecaf458b18406720a8d03d3f5220e3a8e4b5a3502d665ef52a736a50"
     },
     {
       "asset": "jp_aam3_default.blkx",
       "family": "optical",
       "path": "jp_aam3_default.json",
-      "properties_sha256": "883f2d2f726d108692d924e86e5c0140ec68919925f4ec9f9a91a76656f42386"
+      "properties_sha256": "2610f155ecaf458b18406720a8d03d3f5220e3a8e4b5a3502d665ef52a736a50"
     },
     {
       "asset": "ro_a91.blkx",
       "family": "optical",
       "path": "ro_a91.json",
-      "properties_sha256": "36ec189a6e497391860278221e8cce5eae2bf456b43e8b0004a336337da84aa1"
+      "properties_sha256": "e729416c2a5d510d8db2b169a097ec58ccae6030eb41d0df38bd6306c30bfda7"
     },
     {
       "asset": "ro_a91_default.blkx",
       "family": "optical",
       "path": "ro_a91_default.json",
-      "properties_sha256": "e1f75cbeee608d4c81ea72c63a4c5fc50671b0cacb73e41327df41fe51a70541"
+      "properties_sha256": "e729416c2a5d510d8db2b169a097ec58ccae6030eb41d0df38bd6306c30bfda7"
     },
     {
       "asset": "su_9m336.blkx",
       "family": "optical",
       "path": "su_9m336.json",
-      "properties_sha256": "a19a0de94a120a015257625528a5ca9e26611e2719f3ecc9fedc8783b0f787f4"
+      "properties_sha256": "224115b7348a0ba85915a70c0401c553d22ef23a7df5e63928dcb8893bd6fb71"
     },
     {
       "asset": "su_9m342.blkx",
       "family": "optical",
       "path": "su_9m342.json",
-      "properties_sha256": "666dffb67d9feae0edb813f8e903ecede2664e7d05a666faa3c690536eaee6de"
+      "properties_sha256": "3eb2886690eae66419a932f668754ec66bfd396cfae80dd07b1461ad449e7298"
     },
     {
       "asset": "su_9m39.blkx",
       "family": "optical",
       "path": "su_9m39.json",
-      "properties_sha256": "2e8d027dfa936088462186f86abb68d37a931a95a34df1180de5e9f327fedc72"
+      "properties_sha256": "18b7fe8094ec7f9077d244eca950babe6f325540c33d3b6c755c11b0c3f5d44d"
     },
     {
       "asset": "su_pl2.blkx",
       "family": "optical",
       "path": "su_pl2.json",
-      "properties_sha256": "3ccacab248557a41c65a1e6112bdd2287b53bcbd06b24c49d6405ffc37edf5ac"
+      "properties_sha256": "19b23d8e3e4d41c46a712c842da1804c5dddf0eb438ae1392356ca1c590480b5"
     },
     {
       "asset": "su_pl2_default.blkx",
       "family": "optical",
       "path": "su_pl2_default.json",
-      "properties_sha256": "094e77dc99168de71467b29d2eb82fc2e2043e4edcfef75a547c1834b5315e59"
+      "properties_sha256": "19b23d8e3e4d41c46a712c842da1804c5dddf0eb438ae1392356ca1c590480b5"
     },
     {
       "asset": "su_pl5b.blkx",
       "family": "optical",
       "path": "su_pl5b.json",
-      "properties_sha256": "085ccb3aa07a61422ea676226d53bab2b2c2135dc7aac953124f644b71b90f1a"
+      "properties_sha256": "17fd641041c051067acc2b92909c894f5468d19037cbb91a68f58e03c19e2b56"
     },
     {
       "asset": "su_pl5b_default.blkx",
       "family": "optical",
       "path": "su_pl5b_default.json",
-      "properties_sha256": "06f487b3d36ff735f6b68c86b792d5de25e57fb9d5a6f0b6d45711df66696b42"
+      "properties_sha256": "17fd641041c051067acc2b92909c894f5468d19037cbb91a68f58e03c19e2b56"
     },
     {
       "asset": "su_pl5c.blkx",
       "family": "optical",
       "path": "su_pl5c.json",
-      "properties_sha256": "ca8fcc181fcc9d593831d78700c38911a75477bce9babee51f33e8fb47844144"
+      "properties_sha256": "0ee7e4663974ec71669116d6d64c60bd5b252a2c94478d1cd2df2323c6fef131"
     },
     {
       "asset": "su_pl5c_default.blkx",
       "family": "optical",
       "path": "su_pl5c_default.json",
-      "properties_sha256": "d2db5c9e087a85eece707c1cabe864ea0e086705a8ce9392039f39419c7dcf4b"
+      "properties_sha256": "0ee7e4663974ec71669116d6d64c60bd5b252a2c94478d1cd2df2323c6fef131"
     },
     {
       "asset": "su_pl5e2.blkx",
       "family": "optical",
       "path": "su_pl5e2.json",
-      "properties_sha256": "a5582780fd09a79e78e7b159dcb7d3adc0939aa8a52d4887e10e00aa38e2d6ad"
+      "properties_sha256": "ec056f756f663745ee84b3276b8020e2afe9cacc73ff27565c5d60690c2c2e91"
     },
     {
       "asset": "su_pl5e2_default.blkx",
       "family": "optical",
       "path": "su_pl5e2_default.json",
-      "properties_sha256": "a65939f29a1a32b4aa5a859df4b792b1235f9f3cd2b3f32605057d49f4e1229c"
+      "properties_sha256": "ec056f756f663745ee84b3276b8020e2afe9cacc73ff27565c5d60690c2c2e91"
     },
     {
       "asset": "su_pl7.blkx",
       "family": "optical",
       "path": "su_pl7.json",
-      "properties_sha256": "a48f65aa91d9b827b27d776dc3186b5a13215647cba8a2dfb784e8dbb41487e3"
+      "properties_sha256": "424cb8f1446a26e5b3f17600654307315ba393fb4609acb94e5cf79dd884d7b6"
     },
     {
       "asset": "su_pl8.blkx",
       "family": "optical",
       "path": "su_pl8.json",
-      "properties_sha256": "bd3e919affa707482e010aff3e23470e9f9ffcc9bf7964e96a7531ce0d501ee5"
+      "properties_sha256": "4e32e12350bcf32689b17cd69123332dc33d564cf0aa3a249896052401ca3b8a"
     },
     {
       "asset": "su_pl8_default.blkx",
       "family": "optical",
       "path": "su_pl8_default.json",
-      "properties_sha256": "d4bc5f8a7c1b0ac07409176e2ebbdc245d9b6d5861c7871a4b2077ef61a3c127"
+      "properties_sha256": "4e32e12350bcf32689b17cd69123332dc33d564cf0aa3a249896052401ca3b8a"
     },
     {
       "asset": "su_pl9.blkx",
       "family": "optical",
       "path": "su_pl9.json",
-      "properties_sha256": "1be1cc3f5c82cfe50b2571e44e4affd838ed7a4dc208ba2398e9778989d86319"
+      "properties_sha256": "5970c6bdf2e3d02d1803fd984c8b0987f7626ea348e4a033c336f3d1c2698886"
     },
     {
       "asset": "su_r_13m.blkx",
       "family": "optical",
       "path": "su_r_13m.json",
-      "properties_sha256": "a10203a38702b76c3f68677603c1528523ac8a8027e2b0aaf157e420f2734f56"
+      "properties_sha256": "1f8b3134153ddb15fd67de328277f73ba937df08fd446c04a58b2c955172140c"
     },
     {
       "asset": "su_r_13m1.blkx",
       "family": "optical",
       "path": "su_r_13m1.json",
-      "properties_sha256": "f3a3cf94b9370502066c4c6a2a3283d6d6da341f4d0cba21c14e7f2c3d884526"
+      "properties_sha256": "4baa86ca45f9dee8ee61b1cefb4951cbe2dcb21a5350f994dab9a0e7fe2b08e5"
     },
     {
       "asset": "su_r_13m1_default.blkx",
       "family": "optical",
       "path": "su_r_13m1_default.json",
-      "properties_sha256": "c5c745852c6edbd469b01ecaf3955bdaec2d077878a053a4eb8ea88a0deed56a"
+      "properties_sha256": "4baa86ca45f9dee8ee61b1cefb4951cbe2dcb21a5350f994dab9a0e7fe2b08e5"
     },
     {
       "asset": "su_r_23t.blkx",
       "family": "optical",
       "path": "su_r_23t.json",
-      "properties_sha256": "88a4824480cfe2b05e827ce1aec98eb9261c03a869f9db55d79f4d45876fca15"
+      "properties_sha256": "9b4127579aa901cb76b9f81414823541cba137938596fe8bae51639b59b075d6"
     },
     {
       "asset": "su_r_24t.blkx",
       "family": "optical",
       "path": "su_r_24t.json",
-      "properties_sha256": "0607cbfd39ee4a85e7c5eca9c914871576ad6bd412424a39ea05e86235a4a0bc"
+      "properties_sha256": "0db921281b960fcbc87fc3c3cfee4a8c9d7689200751a2a97009e40b7ceb851e"
     },
     {
       "asset": "su_r_27et.blkx",
       "family": "optical",
       "path": "su_r_27et.json",
-      "properties_sha256": "50d9c68ec9f47bf6432abeabdd0b75d6e13cae463cd9374e1a16dec94b52b5c0"
+      "properties_sha256": "581607642a11e6610aa9fa4f8de4b4fbef865d36347cf9fd49d2a25331c8fa12"
     },
     {
       "asset": "su_r_27et1.blkx",
       "family": "optical",
       "path": "su_r_27et1.json",
-      "properties_sha256": "1f4256a79c125ead62499b45eb09791fb948acb51e6ba65c39b5ecbe03213aec"
+      "properties_sha256": "26af84a45c9397533289238a028a9666ddfa6b6e175bc3346318ed02e77a2c61"
     },
     {
       "asset": "su_r_27t.blkx",
       "family": "optical",
       "path": "su_r_27t.json",
-      "properties_sha256": "5235bf89d780e1fd1a10cd10056ec430185cb1b842d2c6fbdfe4c66009ec03b9"
+      "properties_sha256": "2cafc8d25959fe8ad5525666f40dde706e08b6e1fb61943b8ab336d867a357ca"
     },
     {
       "asset": "su_r_27t1.blkx",
       "family": "optical",
       "path": "su_r_27t1.json",
-      "properties_sha256": "997cad669f7126d4257123304e9f2371206e3e9ee98dcdb0d31f6a67540c83d6"
+      "properties_sha256": "0256876f8955918ea5d56e2f3a8eaa380946acef167378d026fbbe324b277f42"
     },
     {
       "asset": "su_r_3s.blkx",
       "family": "optical",
       "path": "su_r_3s.json",
-      "properties_sha256": "3c1b39dbc984355cb31f3bf87b30bdb4a95cb43dc0d8203e037bb39a28f9c8ac"
+      "properties_sha256": "e729416c2a5d510d8db2b169a097ec58ccae6030eb41d0df38bd6306c30bfda7"
     },
     {
       "asset": "su_r_3s_default.blkx",
       "family": "optical",
       "path": "su_r_3s_default.json",
-      "properties_sha256": "36ec189a6e497391860278221e8cce5eae2bf456b43e8b0004a336337da84aa1"
+      "properties_sha256": "e729416c2a5d510d8db2b169a097ec58ccae6030eb41d0df38bd6306c30bfda7"
     },
     {
       "asset": "su_r_40td.blkx",
       "family": "optical",
       "path": "su_r_40td.json",
-      "properties_sha256": "d365b5e8f50349e8b845996266244dd5a00a6ae7f1901b376282bbe061e80d80"
+      "properties_sha256": "5f5baba1083638d8f621d5c6a430d9bc79c01f8a445f5c70f7a13547c187e37c"
     },
     {
       "asset": "su_r_40td_default.blkx",
       "family": "optical",
       "path": "su_r_40td_default.json",
-      "properties_sha256": "272399a5bfe5e3b86735e76ef39a4de8fb27a5ba69ee81304073c9a97e7da89c"
+      "properties_sha256": "5f5baba1083638d8f621d5c6a430d9bc79c01f8a445f5c70f7a13547c187e37c"
     },
     {
       "asset": "su_r_60.blkx",
       "family": "optical",
       "path": "su_r_60.json",
-      "properties_sha256": "4b3ff22ed29f9f8a9d923a8638ed392457919ea3d76ab755daf4fc9fd9ec4f19"
+      "properties_sha256": "609d5b522d71c74e7bf56d14e203faa922bdb50cae250ad59797647c801ec8d9"
     },
     {
       "asset": "su_r_60_default.blkx",
       "family": "optical",
       "path": "su_r_60_default.json",
-      "properties_sha256": "d8579600898fa371c9ae8c05f42c5637500304ca9facc648afeec1232089d7c2"
+      "properties_sha256": "609d5b522d71c74e7bf56d14e203faa922bdb50cae250ad59797647c801ec8d9"
     },
     {
       "asset": "su_r_60m.blkx",
       "family": "optical",
       "path": "su_r_60m.json",
-      "properties_sha256": "6eba2b85f00d6629ff3799e5a4c0d25ac7950be4d0d2382996c53cce1e62ee34"
+      "properties_sha256": "1afa6ad595592aa1e7b568a21fc9b39d0160454ee3a47d7b2b16ea462d897525"
     },
     {
       "asset": "su_r_60m_default.blkx",
       "family": "optical",
       "path": "su_r_60m_default.json",
-      "properties_sha256": "7862e5ac57aaa01655cd18328c0686480d026fff0e5cbd5c7237338cbc0dec8b"
+      "properties_sha256": "1afa6ad595592aa1e7b568a21fc9b39d0160454ee3a47d7b2b16ea462d897525"
     },
     {
       "asset": "su_r_60mk.blkx",
       "family": "optical",
       "path": "su_r_60mk.json",
-      "properties_sha256": "beb07c2f320673a139106ca94c4ce78ce5b5cab515beca3f552404d100c735a0"
+      "properties_sha256": "ab3ff695560faab2517a8c1c1f11f3b03f3444af944519a2a9d665ac34e28d6b"
     },
     {
       "asset": "su_r_60mk_default.blkx",
       "family": "optical",
       "path": "su_r_60mk_default.json",
-      "properties_sha256": "b0fd89be2b859b5734315b2ed0829b3bee8a904b2f9231289950a5b564965c7f"
+      "properties_sha256": "ab3ff695560faab2517a8c1c1f11f3b03f3444af944519a2a9d665ac34e28d6b"
     },
     {
       "asset": "su_r_73.blkx",
       "family": "optical",
       "path": "su_r_73.json",
-      "properties_sha256": "1e4db81bb0fd1f6983b14cb6ea7328fc3192a8ce5d79a2d6a0017e39b31b472b"
+      "properties_sha256": "0540598bf0088a9da674ec24a1819286639546caed4acdd0e5a9e84514222ff3"
     },
     {
       "asset": "su_r_73_default.blkx",
       "family": "optical",
       "path": "su_r_73_default.json",
-      "properties_sha256": "93fee22489ac5367757a623f12ec50a1c167839659a9e62518e8694f2206f40f"
+      "properties_sha256": "0540598bf0088a9da674ec24a1819286639546caed4acdd0e5a9e84514222ff3"
     },
     {
       "asset": "su_r_73e.blkx",
       "family": "optical",
       "path": "su_r_73e.json",
-      "properties_sha256": "747316eafde7bbaf787801914c3de31e1c660068a5e05b1c6a734f14788ea00f"
+      "properties_sha256": "a5a745a85b3748a765010b227ce4b3576358b5888c83815c81ef488227d54e42"
     },
     {
       "asset": "su_r_73e_default.blkx",
       "family": "optical",
       "path": "su_r_73e_default.json",
-      "properties_sha256": "f459d9b87953717a70f67b43835e926b46bb6bc14cc1ccdecbc88a836773635f"
+      "properties_sha256": "a5a745a85b3748a765010b227ce4b3576358b5888c83815c81ef488227d54e42"
     },
     {
       "asset": "swd_rb24.blkx",
       "family": "optical",
       "path": "swd_rb24.json",
-      "properties_sha256": "3114dc9b4b0d3c457a5dadcfbc3f5a031de07fc938f54ab2f605c0964eda54d2"
+      "properties_sha256": "634e4fbaf1f8c14c974ecb0d038524f2ffb204f895ec2087278652d44675d232"
     },
     {
       "asset": "swd_rb24_default.blkx",
       "family": "optical",
       "path": "swd_rb24_default.json",
-      "properties_sha256": "28172af7ffc81a88a098304dd5a1db68cb6c8687e6e29b9416610a3ba2395c73"
+      "properties_sha256": "634e4fbaf1f8c14c974ecb0d038524f2ffb204f895ec2087278652d44675d232"
     },
     {
       "asset": "swd_rb24j.blkx",
       "family": "optical",
       "path": "swd_rb24j.json",
-      "properties_sha256": "504bfeee9258f83b3bc45b8ddc4bc3f4758117b6db02890f7a0e33baf8743f66"
+      "properties_sha256": "7c727feb1416831c7fffa9fe33017fbeaf5c4744b81b9767022a23ea3891d7b5"
     },
     {
       "asset": "swd_rb24j_default.blkx",
       "family": "optical",
       "path": "swd_rb24j_default.json",
-      "properties_sha256": "7801b0b1f2f350bc3fd344eab29b12b0059c25617216b60e786d964763ec53f1"
+      "properties_sha256": "7c727feb1416831c7fffa9fe33017fbeaf5c4744b81b9767022a23ea3891d7b5"
     },
     {
       "asset": "swd_rb28.blkx",
       "family": "optical",
       "path": "swd_rb28.json",
-      "properties_sha256": "594fbddffeb33efb31f59c9f4702a2d0fe937fa010e6a51372854fb04c6c1a85"
+      "properties_sha256": "1313a4a0007a3dcfb913160b218ef5060070722db2f7d8cbed420aacc8f2b57c"
     },
     {
       "asset": "swd_rb74.blkx",
       "family": "optical",
       "path": "swd_rb74.json",
-      "properties_sha256": "481341735db275f901ce40a72758a37cda88f13b929513a2cfb61a30ecbdbcd8"
+      "properties_sha256": "3c1c9d7df17ad45b6b98592166188173c031265a17cdedfdcaef1045dc35837b"
     },
     {
       "asset": "swd_rb74_bol_pod.blkx",
       "family": "optical",
       "path": "swd_rb74_bol_pod.json",
-      "properties_sha256": "235c7f5e3f5c8aab673278b7f8e21c72e493180b63723a9d919c8c2b1e9fd230"
+      "properties_sha256": "3c1c9d7df17ad45b6b98592166188173c031265a17cdedfdcaef1045dc35837b"
     },
     {
       "asset": "swd_rb74_default.blkx",
       "family": "optical",
       "path": "swd_rb74_default.json",
-      "properties_sha256": "590736f2ba0f762843d7cdc17c24402c017082651c2fe68ffdb23f9c84ede53d"
+      "properties_sha256": "3c1c9d7df17ad45b6b98592166188173c031265a17cdedfdcaef1045dc35837b"
     },
     {
       "asset": "swd_rb74m.blkx",
       "family": "optical",
       "path": "swd_rb74m.json",
-      "properties_sha256": "64cf37d4850b96f8964b9e7b394d87279adf26ce80c1af7f36acae8f923c5257"
+      "properties_sha256": "34c199f34258ce32bc82b737522f05da61a77e4684bc8d3afd9d5fd297d28b20"
     },
     {
       "asset": "swd_rb74m_bol_pod.blkx",
       "family": "optical",
       "path": "swd_rb74m_bol_pod.json",
-      "properties_sha256": "f7d8d852e325041c468fe997bd050ea24dd032b642aab2a0487df6b88b0cceb9"
+      "properties_sha256": "34c199f34258ce32bc82b737522f05da61a77e4684bc8d3afd9d5fd297d28b20"
     },
     {
       "asset": "swd_rb74m_default.blkx",
       "family": "optical",
       "path": "swd_rb74m_default.json",
-      "properties_sha256": "73d9ba3e0432296758277cdb1c1c13b26bc09e98b7a08c23a7c29be2be99ed4e"
+      "properties_sha256": "34c199f34258ce32bc82b737522f05da61a77e4684bc8d3afd9d5fd297d28b20"
     },
     {
       "asset": "sws_flz_lwf_63.blkx",
       "family": "optical",
       "path": "sws_flz_lwf_63.json",
-      "properties_sha256": "a77192fbe2a21c984186ba1f03ecf94f841bc1d1c333f7dcd3072f26842bbd16"
+      "properties_sha256": "04afd0179c15c30b512f849f9c371e9e09747ae71c0ebb5e8d20793e23d9abf2"
     },
     {
       "asset": "sws_flz_lwf_63_75.blkx",
       "family": "optical",
       "path": "sws_flz_lwf_63_75.json",
-      "properties_sha256": "4b43014b9b4eb9a66b945f3dabebc95d5b4110effd7899a35b50a12486d8d445"
+      "properties_sha256": "6cfb4aeb0d9d4fdc570be91fec3b0002be15f0d6376846f64ef5c64b0b26f184"
     },
     {
       "asset": "sws_flz_lwf_63_80.blkx",
       "family": "optical",
       "path": "sws_flz_lwf_63_80.json",
-      "properties_sha256": "46b4e287d962cc93348f9b5c60b04f38722fccacfb5beb89a345b50910ac4586"
+      "properties_sha256": "42807ad9f60b1c8d7aebe2e1d0de103c68f7c51ea5d12df3f1018ca9c32cb407"
     },
     {
       "asset": "uk_firestreak.blkx",
       "family": "optical",
       "path": "uk_firestreak.json",
-      "properties_sha256": "34d65bdd69ce9257541a59ac5c9351eed34d538d588209637df83c3a923aac3e"
+      "properties_sha256": "da314fa026ea0493cd47414ce2e5c1681a7869fcd10e18383f598196bfbf9df8"
     },
     {
       "asset": "uk_firestreak_default.blkx",
       "family": "optical",
       "path": "uk_firestreak_default.json",
-      "properties_sha256": "64a7ef78964ad03aeaa23cf7234552e34543e72a8b2696eaf178a83c143ac24c"
+      "properties_sha256": "da314fa026ea0493cd47414ce2e5c1681a7869fcd10e18383f598196bfbf9df8"
     },
     {
       "asset": "uk_firestreak_javelin.blkx",
       "family": "optical",
       "path": "uk_firestreak_javelin.json",
-      "properties_sha256": "de9b376370be152aecd7197ffbfd352df7ba9bacd392925be550535282c6e9bb"
+      "properties_sha256": "da314fa026ea0493cd47414ce2e5c1681a7869fcd10e18383f598196bfbf9df8"
     },
     {
       "asset": "uk_redtop.blkx",
       "family": "optical",
       "path": "uk_redtop.json",
-      "properties_sha256": "55af0d2fa465f29d368c098628a008d48886e3314684a9e3dee478699a7f5dd2"
+      "properties_sha256": "2b397520fac9a9a37679bc69b04b4b22254a13f2dd8958e2f6a2202458fffbcf"
     },
     {
       "asset": "uk_sraam.blkx",
       "family": "optical",
       "path": "uk_sraam.json",
-      "properties_sha256": "24ef2f546fcc0383756e36a77a11348d1b4442b6f257a243cf381732098ff434"
+      "properties_sha256": "2bba785094b33146e4be3adff0eff5399be405ad3df6ef86b62c5431c1d6c092"
     },
     {
       "asset": "uk_sraam_default.blkx",
       "family": "optical",
       "path": "uk_sraam_default.json",
-      "properties_sha256": "25a593e65ffeb5363814ac97d18ce62a3b4d6f8ce36baac2d55812aa47680bbb"
+      "properties_sha256": "2bba785094b33146e4be3adff0eff5399be405ad3df6ef86b62c5431c1d6c092"
     },
     {
       "asset": "us_aim4d_falcon.blkx",
       "family": "optical",
       "path": "us_aim4d_falcon.json",
-      "properties_sha256": "a29f31c23fb1ab6ea38caa3afa0b25afd029092a9becfcc7a88380001ca65fea"
+      "properties_sha256": "e93ab1a8b3d815d9d973d4260a602178fdac46b5b7a8ab368e74de74517194da"
     },
     {
       "asset": "us_aim4g_falcon.blkx",
       "family": "optical",
       "path": "us_aim4g_falcon.json",
-      "properties_sha256": "04b87b75a355d3e14ce694a797d841d3e419bfd2abbba8827e178aa78670709d"
+      "properties_sha256": "8f81fc401a90ab61525ab1b0db38feef08fb44f4344bf1cbd4fd414c73ba7dbe"
     },
     {
       "asset": "us_aim4g_falcon_default.blkx",
       "family": "optical",
       "path": "us_aim4g_falcon_default.json",
-      "properties_sha256": "a551da36727485782e307ad8c475742e2d103d62333346366daf011ef14a2ec1"
+      "properties_sha256": "8f81fc401a90ab61525ab1b0db38feef08fb44f4344bf1cbd4fd414c73ba7dbe"
     },
     {
       "asset": "us_aim92_stinger.blkx",
       "family": "optical",
       "path": "us_aim92_stinger.json",
-      "properties_sha256": "974b08a56ea68923a7dd17ee2e04ede82dfdcc03fe1edc29370df0f447ccd142"
+      "properties_sha256": "d1627700edc9bb273d8f8a7f252701453c159c7f2347ac15ea9abdeacfe4a5fb"
     },
     {
       "asset": "us_aim92_stinger_atas_tiger.blkx",
       "family": "optical",
       "path": "us_aim92_stinger_atas_tiger.json",
-      "properties_sha256": "6fffde21a5bc4aba4279f04fc08d715d405e42906e1b82074fdfcd4cdd86afb8"
+      "properties_sha256": "6825adcd98bad54f12126bb167ce7b6fac99cfb52a9513e1ad96bba3e136c9df"
     },
     {
       "asset": "us_aim92_stinger_left.blkx",
       "family": "optical",
       "path": "us_aim92_stinger_left.json",
-      "properties_sha256": "d9444acb78b0661275fe1ba380fb74563b17bd55b7365b8ecea1e515d71ac0a7"
+      "properties_sha256": "295a68e322eff60dae25d2340f4031dd8c84b4ce9000385321cdce0c0b20420a"
     },
     {
       "asset": "us_aim92_stinger_right.blkx",
       "family": "optical",
       "path": "us_aim92_stinger_right.json",
-      "properties_sha256": "ae7b52108fe079fc8303cb02bc3326e9cfe7247666b2fac9b471d0e6f6647a89"
+      "properties_sha256": "2f3965c37ad20ecfdcac8cbc856d991f6b23d1ace441e93c1ccb9d65929a21a4"
     },
     {
       "asset": "us_aim9b_fgw_2_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9b_fgw_2_sidewinder.json",
-      "properties_sha256": "58886bfd852704a6443625e90d7df2f0a33e03f7ba594ec40535b13c3092a6e7"
+      "properties_sha256": "bb274cb2e4d44142b829832edf28a38d6397d16b9b1a955e471f2836ef808f5e"
     },
     {
       "asset": "us_aim9b_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9b_sidewinder.json",
-      "properties_sha256": "1b04513e883b43c8adf6312188a58059d1b998fbbf25077c51747b26814643a6"
+      "properties_sha256": "d5925740bacf858719ce8f9914ed4507f96305b7e316e3b18cb51e1eadbe3170"
     },
     {
       "asset": "us_aim9b_sidewinder_cwp.blkx",
       "family": "optical",
       "path": "us_aim9b_sidewinder_cwp.json",
-      "properties_sha256": "8187c7616e07a03997eb2e165ecacfaef92677b3a931cd60f4c8b8c63cc0a49a"
+      "properties_sha256": "d5925740bacf858719ce8f9914ed4507f96305b7e316e3b18cb51e1eadbe3170"
     },
     {
       "asset": "us_aim9b_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9b_sidewinder_default.json",
-      "properties_sha256": "d220a5b109b54acba83cc6117423b0ad9c9343e9b3bacd856a1d42bd1777fe5b"
+      "properties_sha256": "d5925740bacf858719ce8f9914ed4507f96305b7e316e3b18cb51e1eadbe3170"
     },
     {
       "asset": "us_aim9b_sidewinder_default_group.blkx",
       "family": "optical",
       "path": "us_aim9b_sidewinder_default_group.json",
-      "properties_sha256": "1b04513e883b43c8adf6312188a58059d1b998fbbf25077c51747b26814643a6"
+      "properties_sha256": "d5925740bacf858719ce8f9914ed4507f96305b7e316e3b18cb51e1eadbe3170"
     },
     {
       "asset": "us_aim9d_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9d_sidewinder.json",
-      "properties_sha256": "f68626760a7d52438260df45c78ca5ab596f9370a50e4e1cc96bd52fbbf35f2d"
+      "properties_sha256": "d0a6abcb5117e4181098578d00b1f42a307a2e2342b8fee1eab7e0c8b4f6a37d"
     },
     {
       "asset": "us_aim9d_sidewinder_cwp.blkx",
       "family": "optical",
       "path": "us_aim9d_sidewinder_cwp.json",
-      "properties_sha256": "386ab15b103f458192573aae64ac60a5faa3481c6207fa3b1571639efc412861"
+      "properties_sha256": "d0a6abcb5117e4181098578d00b1f42a307a2e2342b8fee1eab7e0c8b4f6a37d"
     },
     {
       "asset": "us_aim9d_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9d_sidewinder_default.json",
-      "properties_sha256": "8eef291b5b56a5fafd0e7bbb77a3fef1a15b358851605c1f33782e02819f0f15"
+      "properties_sha256": "d0a6abcb5117e4181098578d00b1f42a307a2e2342b8fee1eab7e0c8b4f6a37d"
     },
     {
       "asset": "us_aim9d_sidewinder_default_group.blkx",
       "family": "optical",
       "path": "us_aim9d_sidewinder_default_group.json",
-      "properties_sha256": "f68626760a7d52438260df45c78ca5ab596f9370a50e4e1cc96bd52fbbf35f2d"
+      "properties_sha256": "d0a6abcb5117e4181098578d00b1f42a307a2e2342b8fee1eab7e0c8b4f6a37d"
     },
     {
       "asset": "us_aim9e_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9e_sidewinder.json",
-      "properties_sha256": "886ff954df549eff23347f57b1ba9b7d666e67e6ad3d6e99621f5e80c84f90a7"
+      "properties_sha256": "770906de134ec96c62b10664d966d509e946dd716c49937bff2fa61a8b871ad5"
     },
     {
       "asset": "us_aim9e_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9e_sidewinder_default.json",
-      "properties_sha256": "f0f90a1c47c0490b1a551624dfa52a56f1e4c0808ad137c32403e16780e68757"
+      "properties_sha256": "770906de134ec96c62b10664d966d509e946dd716c49937bff2fa61a8b871ad5"
     },
     {
       "asset": "us_aim9g_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9g_sidewinder.json",
-      "properties_sha256": "668672e86ce3420e94679f37f58a96152d243a39c4cb7e968a771a23f6d2c01a"
+      "properties_sha256": "c13a9087790a22aa346fa180b5fc7e02cbbbaa4aff2421d8da00585b59727c8a"
     },
     {
       "asset": "us_aim9g_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9g_sidewinder_default.json",
-      "properties_sha256": "1b1d65276bf78ba29c81936daeae1495bd296e26808fd4dfc245844d30582996"
+      "properties_sha256": "c13a9087790a22aa346fa180b5fc7e02cbbbaa4aff2421d8da00585b59727c8a"
     },
     {
       "asset": "us_aim9h_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9h_sidewinder.json",
-      "properties_sha256": "ed05f106135734df9bf88f310c912a5f4f819ca533b97ed39ee244565f74d42e"
+      "properties_sha256": "5d6fcd766fff47af485996f76a0c569b33f611c3bfd75489aecbeeb25f471bd1"
     },
     {
       "asset": "us_aim9j_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9j_sidewinder.json",
-      "properties_sha256": "e068c6f3e5dea8cfe91973ca2f8d59bf4eed5867ffc6609c09011895a30fc4f1"
+      "properties_sha256": "4a26dc4f8115bc6748670b9957bfc002448dcf75e9b942a79e8e8b4033e03bf3"
     },
     {
       "asset": "us_aim9j_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9j_sidewinder_default.json",
-      "properties_sha256": "c6cd21645bf536faf780e407df62801da1c0dca0a90ea80d37479bf5fe0b7472"
+      "properties_sha256": "4a26dc4f8115bc6748670b9957bfc002448dcf75e9b942a79e8e8b4033e03bf3"
     },
     {
       "asset": "us_aim9l_i_1_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9l_i_1_sidewinder.json",
-      "properties_sha256": "0d891ce232c6b3a36c4a64c5cd816506fd5ce0f74ca9341eecf71612025c4518"
+      "properties_sha256": "17367ee983d8cd34d5f4a567a1e6727c60dee7859d24a3bfecb7f2305e339eef"
     },
     {
       "asset": "us_aim9l_i_1_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9l_i_1_sidewinder_default.json",
-      "properties_sha256": "681f70dfe04c0a8ef50c30a1d13366ecb0bf2814ad58ce79c4e210e1928c35db"
+      "properties_sha256": "17367ee983d8cd34d5f4a567a1e6727c60dee7859d24a3bfecb7f2305e339eef"
     },
     {
       "asset": "us_aim9l_i_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9l_i_sidewinder.json",
-      "properties_sha256": "89f152f1f0a445cfa20ab33cc71ab92ff76aa7338953337c316705df8860464d"
+      "properties_sha256": "30e6acd797b01891559e50a2ee6c9744ac79fb77f0ad96f0d585ade9e69c730b"
     },
     {
       "asset": "us_aim9l_i_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9l_i_sidewinder_default.json",
-      "properties_sha256": "dcb27f2c99a20de28187e7ff4f43004ceb8b267b45744405cf656a984e69dbd0"
+      "properties_sha256": "30e6acd797b01891559e50a2ee6c9744ac79fb77f0ad96f0d585ade9e69c730b"
     },
     {
       "asset": "us_aim9l_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9l_sidewinder.json",
-      "properties_sha256": "af3438cb9bde229e015ba2d255a1606299bd3f1165c54ef570904f0e9928dcd5"
+      "properties_sha256": "97d7326b7afc4a528bf802c37d440a82c5c9f052913b545aa4ef03f4dd4a390f"
     },
     {
       "asset": "us_aim9l_sidewinder_bol_pod.blkx",
       "family": "optical",
       "path": "us_aim9l_sidewinder_bol_pod.json",
-      "properties_sha256": "a94219d672ddd2d9f42cac25ff2174f693aae6da2277c136a66314159ad9a0c0"
+      "properties_sha256": "97d7326b7afc4a528bf802c37d440a82c5c9f052913b545aa4ef03f4dd4a390f"
     },
     {
       "asset": "us_aim9l_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9l_sidewinder_default.json",
-      "properties_sha256": "89126aa53342cbb1fa0aee90c7a37b304a2c67cf808225188cc3525ebcdc9616"
+      "properties_sha256": "97d7326b7afc4a528bf802c37d440a82c5c9f052913b545aa4ef03f4dd4a390f"
     },
     {
       "asset": "us_aim9l_sidewinder_default_bol_pod.blkx",
       "family": "optical",
       "path": "us_aim9l_sidewinder_default_bol_pod.json",
-      "properties_sha256": "af3438cb9bde229e015ba2d255a1606299bd3f1165c54ef570904f0e9928dcd5"
+      "properties_sha256": "97d7326b7afc4a528bf802c37d440a82c5c9f052913b545aa4ef03f4dd4a390f"
     },
     {
       "asset": "us_aim9m_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9m_sidewinder.json",
-      "properties_sha256": "14dda78b4aaf0a49d871e2f2fb5cd59855d682488e039b65b0c1cbba12d84577"
+      "properties_sha256": "087416b90f33722b0db0cdf9ab49cf49dd42c26ee5d5006cfb86ab1606ea6fe8"
     },
     {
       "asset": "us_aim9m_sidewinder_bol_pod.blkx",
       "family": "optical",
       "path": "us_aim9m_sidewinder_bol_pod.json",
-      "properties_sha256": "8d341480d35e9572b8edbf84ce607546cb26dde9270c3e40645fb2c67abb0f74"
+      "properties_sha256": "087416b90f33722b0db0cdf9ab49cf49dd42c26ee5d5006cfb86ab1606ea6fe8"
     },
     {
       "asset": "us_aim9m_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9m_sidewinder_default.json",
-      "properties_sha256": "defc412d26da90152ae91cb57e28156f078145a5fe68d3ac2f9c75b941f26566"
+      "properties_sha256": "087416b90f33722b0db0cdf9ab49cf49dd42c26ee5d5006cfb86ab1606ea6fe8"
     },
     {
       "asset": "us_aim9n_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9n_sidewinder.json",
-      "properties_sha256": "c45977d6a72249e9a65eeaf02edb4c375488417108f847fd02d9c8340bf60dca"
+      "properties_sha256": "23a83ba267be3ad1631aea08f885c5d68ca37640807e0f7223686ff46cf4bee4"
     },
     {
       "asset": "us_aim9p4_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9p4_sidewinder.json",
-      "properties_sha256": "5faaf3457213d7db50aafbe6c56e401b2f0d26669775ce4b0571a3f69328e590"
+      "properties_sha256": "a819aad77e1467e56efc7350d5146c5ffd6027964c0d2f8da71ed12de66a4f5d"
     },
     {
       "asset": "us_aim9p4_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9p4_sidewinder_default.json",
-      "properties_sha256": "5fbdf19a340c1e1faf992efc5b09ca8d6934818121f215f6cd24b8b9a604f61c"
+      "properties_sha256": "a819aad77e1467e56efc7350d5146c5ffd6027964c0d2f8da71ed12de66a4f5d"
     },
     {
       "asset": "us_aim9p_sidewinder.blkx",
       "family": "optical",
       "path": "us_aim9p_sidewinder.json",
-      "properties_sha256": "7680e1ca929d98bdd7575b99f005b99fbdd44c74a8efe518c740c229b28b408c"
+      "properties_sha256": "ca42c692695b6a22837133a23033ff871045eee4f5f2acc7954bb89ee75935b1"
     },
     {
       "asset": "us_aim9p_sidewinder_default.blkx",
       "family": "optical",
       "path": "us_aim9p_sidewinder_default.json",
-      "properties_sha256": "b6ab876a40281f8a8eeca6af7331112373cb0de8ef490e89e6c6205ab9b87a73"
+      "properties_sha256": "ca42c692695b6a22837133a23033ff871045eee4f5f2acc7954bb89ee75935b1"
     },
     {
       "asset": "us_fim-92b.blkx",
       "family": "optical",
       "path": "us_fim-92b.json",
-      "properties_sha256": "6265e87fa9b6cbcd313e1746022a93c748fa45f81fecc4ecc6a7b021bc566a71"
+      "properties_sha256": "0f02cb0d1e417a3744a41285e31ea5a4f62b6b9f5809d450c4134e6d714cfb88"
     },
     {
       "asset": "cn_pf10.blkx",
       "family": "radar",
       "path": "cn_pf10.json",
-      "properties_sha256": "5476b26c049b099724aa7807124bc39a8873b648e79c8c8ea61e2bd8ee2c9c94"
+      "properties_sha256": "27bf03bc3d537d8e0a64f5c59feb842d157febc185e71eb62b674140e2ca96e1"
     },
     {
       "asset": "cn_pl11.blkx",
       "family": "radar",
       "path": "cn_pl11.json",
-      "properties_sha256": "878a996aa76ba19a4191b94fe5f56fa42ce3ab94cdfe855c6b3ecc6d6ed6ea67"
+      "properties_sha256": "aa9de957d626b7390cea6b7044bf8ec689723e9d75daabe348b187bbb10a902b"
     },
     {
       "asset": "cn_pl12.blkx",
       "family": "radar",
       "path": "cn_pl12.json",
-      "properties_sha256": "dd7ebbcf3e55a0bc3c305547e91c4f6c318e8369d389236462a37460b2477f94"
+      "properties_sha256": "1cb3e7d9e1d469dd5425f65dcc6fe6c5573bbcfa33bd3333681c4fbd9bfb4ef3"
     },
     {
       "asset": "cn_pl12_default.blkx",
       "family": "radar",
       "path": "cn_pl12_default.json",
-      "properties_sha256": "865f0571b3a99e9945f54958146fd1c5ee45692f3eb9e0affff038fc7f4f2181"
+      "properties_sha256": "1cb3e7d9e1d469dd5425f65dcc6fe6c5573bbcfa33bd3333681c4fbd9bfb4ef3"
     },
     {
       "asset": "cn_pl12a.blkx",
       "family": "radar",
       "path": "cn_pl12a.json",
-      "properties_sha256": "8d64fda5a92c94282d0ff7fb6e027eafa989f513151b93fa0576e72b2198fe60"
+      "properties_sha256": "dfc51e5b65ccdd94d778935b2c8b069c5ad0f2ebc648b65527f0f95443800a8b"
     },
     {
       "asset": "cn_pl12a_default.blkx",
       "family": "radar",
       "path": "cn_pl12a_default.json",
-      "properties_sha256": "41ca2fc40cee0f68ca934f6f0a51eb9e6dff47abb2a840f42922057e29d6b8da"
+      "properties_sha256": "dfc51e5b65ccdd94d778935b2c8b069c5ad0f2ebc648b65527f0f95443800a8b"
     },
     {
       "asset": "cn_pl15.blkx",
       "family": "radar",
       "path": "cn_pl15.json",
-      "properties_sha256": "6c37b7c1f4d862ddb301908a61f90fd323f428d88f8d9622c68a61f8433aab08"
+      "properties_sha256": "8800054292e83046c8d96639e30d2d21125acf805ba6cb7149f473c359fd4ff5"
     },
     {
       "asset": "cn_pl15_default.blkx",
       "family": "radar",
       "path": "cn_pl15_default.json",
-      "properties_sha256": "711b0ff13617c4ab04f6e142c28d871f74e7ee6416beaabc6d18021cac7a2730"
+      "properties_sha256": "8800054292e83046c8d96639e30d2d21125acf805ba6cb7149f473c359fd4ff5"
     },
     {
       "asset": "cn_sd10a.blkx",
       "family": "radar",
       "path": "cn_sd10a.json",
-      "properties_sha256": "d0c6315b378e2b0b5d9bb2b50c3e44032cdc56bac4956c422ca2bfb865cb5e4d"
+      "properties_sha256": "ecea7e3e41e19a9a7775a6711235e8301e3e8d9625557ba467f8cc50a8fa14f2"
     },
     {
       "asset": "cn_sd10a_default.blkx",
       "family": "radar",
       "path": "cn_sd10a_default.json",
-      "properties_sha256": "585cd53ba3b541b9d966315477ca830187cf4e4a6fdb48bbc41aac0c55cf8887"
+      "properties_sha256": "ecea7e3e41e19a9a7775a6711235e8301e3e8d9625557ba467f8cc50a8fa14f2"
     },
     {
       "asset": "fr_matra_super_530d.blkx",
       "family": "radar",
       "path": "fr_matra_super_530d.json",
-      "properties_sha256": "421c9fe41311a23d50eb2e6acd381ead952da6c1c60f058f3972f67db9d6950a"
+      "properties_sha256": "1d2ab29b893fe398bfdd89142cf527acea3248eeecaa0989c0b7c660f531dcd0"
     },
     {
       "asset": "fr_matra_super_530d_default.blkx",
       "family": "radar",
       "path": "fr_matra_super_530d_default.json",
-      "properties_sha256": "e594b2693b83162063cf813f1fce15f3e6dda754b2c7491cba5635ca13880216"
+      "properties_sha256": "1d2ab29b893fe398bfdd89142cf527acea3248eeecaa0989c0b7c660f531dcd0"
     },
     {
       "asset": "fr_matra_super_530f.blkx",
       "family": "radar",
       "path": "fr_matra_super_530f.json",
-      "properties_sha256": "2ba4d44cc29ed8421f86f596f9c659c73c85f7823a2fe2cb18f8ccf94a428624"
+      "properties_sha256": "d3cb4c086c3f7fd294c476de344d06e8f9bcb61d898cfd8d9184c4fb98ba683f"
     },
     {
       "asset": "fr_matra_super_530f_default.blkx",
       "family": "radar",
       "path": "fr_matra_super_530f_default.json",
-      "properties_sha256": "7548d3f5cab90517ca2c46b97dd423c012e4af430bd72d1da861319325163d92"
+      "properties_sha256": "d3cb4c086c3f7fd294c476de344d06e8f9bcb61d898cfd8d9184c4fb98ba683f"
     },
     {
       "asset": "fr_matra_super_530f_mirage_2000.blkx",
       "family": "radar",
       "path": "fr_matra_super_530f_mirage_2000.json",
-      "properties_sha256": "b74900843e7c3b02b7b8ef93d15887af209393ea7ecf54de70772b689c0271fc"
+      "properties_sha256": "110481345a8b8647ca8c71a4f43c220a3328c7732e116b7b741b750753e120d4"
     },
     {
       "asset": "fr_matra_super_530f_mirage_2000_default.blkx",
       "family": "radar",
       "path": "fr_matra_super_530f_mirage_2000_default.json",
-      "properties_sha256": "02a327ffb3088d992c17580a7e707c4aa801ff44d933c1148180a77ffdf03cfb"
+      "properties_sha256": "110481345a8b8647ca8c71a4f43c220a3328c7732e116b7b741b750753e120d4"
     },
     {
       "asset": "fr_mica_em.blkx",
       "family": "radar",
       "path": "fr_mica_em.json",
-      "properties_sha256": "2f6df4c6bf39570c7a663c8769541efc8c7b7ca7785d206722245b9c5a6ff21b"
+      "properties_sha256": "91ef5a1a86ef6a28075ae12675a807bfcc2fc649b0cc964fabfd7797e531a802"
     },
     {
       "asset": "fr_mica_em_default.blkx",
       "family": "radar",
       "path": "fr_mica_em_default.json",
-      "properties_sha256": "4a911860b47ce53680c7f03ef75df95725a8bce1ce671bafec48d2c8f771ce69"
+      "properties_sha256": "91ef5a1a86ef6a28075ae12675a807bfcc2fc649b0cc964fabfd7797e531a802"
     },
     {
       "asset": "fr_r_511_matra.blkx",
       "family": "radar",
       "path": "fr_r_511_matra.json",
-      "properties_sha256": "06c5a18cdee34fdf7b7f01b666bbb7c0a3a680ffbd45d841a49e8907dc8e29d8"
+      "properties_sha256": "097d3fba66ace986a28c9faf82a4e395a65d26bd97abee1385902d2065e1fed9"
     },
     {
       "asset": "fr_r_530_matra_radar.blkx",
       "family": "radar",
       "path": "fr_r_530_matra_radar.json",
-      "properties_sha256": "120170bd97c9d2dc44dd9abcad9a70d93501b99a2b4ffb274bba1d1955a55ef6"
+      "properties_sha256": "7ddaf70869eb0b852c87c44637cca53b1341a4916b1a64e1f36e95e2e74877a7"
     },
     {
       "asset": "il_derby.blkx",
       "family": "radar",
       "path": "il_derby.json",
-      "properties_sha256": "73f083884165a823fa3f714af56e5ab072287c0339ddf808294327cb5425d0d7"
+      "properties_sha256": "11936b7c92be99d5567a71ec84612436bf8c7da6ab58fdda097811b75a0607db"
     },
     {
       "asset": "il_derby_default.blkx",
       "family": "radar",
       "path": "il_derby_default.json",
-      "properties_sha256": "579e11b9af4ad7e7a80fc6482b8571a3fa9e9d8f86933f659af27a4bb48b7d55"
+      "properties_sha256": "11936b7c92be99d5567a71ec84612436bf8c7da6ab58fdda097811b75a0607db"
     },
     {
       "asset": "ir_fakour_90.blkx",
       "family": "radar",
       "path": "ir_fakour_90.json",
-      "properties_sha256": "8e38217cc95292972cea82554bc3d30e813c0487b710632f1d8eea7123496367"
+      "properties_sha256": "d1ce72e1e5df48b2ada9980c024e545304c17730cb5db6f36249518d6dc45839"
     },
     {
       "asset": "ir_sedjil.blkx",
       "family": "radar",
       "path": "ir_sedjil.json",
-      "properties_sha256": "e604f3c539de71b6ffaf1646897520f2c2ae99165a8695da78ea0e8e2d0728fe"
+      "properties_sha256": "aa0261c291e7cbba2874da8a5f1f3db4c0439b1b1129e6cc333fe3b4d9d4efc1"
     },
     {
       "asset": "it_aspide_1a.blkx",
       "family": "radar",
       "path": "it_aspide_1a.json",
-      "properties_sha256": "520662df48b3435aa631d6f3bd3eea485dfbf531cf97e0901b8a5d0b008d2c18"
+      "properties_sha256": "2af8b40ae603a8376b2f5c54414f9de34da36b30578ce9ecdad1c7581dfd394e"
     },
     {
       "asset": "jp_aam4.blkx",
       "family": "radar",
       "path": "jp_aam4.json",
-      "properties_sha256": "66c26f7e18f36d4b40333b553b1b50cc2277cdffca89e0860679fc308b962a71"
+      "properties_sha256": "0c6df7e71451adf53ea603352320ff57fbc3b20f1d0c3ee88d1c296b99b797d6"
     },
     {
       "asset": "jp_aam4_default.blkx",
       "family": "radar",
       "path": "jp_aam4_default.json",
-      "properties_sha256": "f3d5b9c11e89afd37e79763a5dd5363a5fefa28c55a47b4a4c79483040dd8a90"
+      "properties_sha256": "0c6df7e71451adf53ea603352320ff57fbc3b20f1d0c3ee88d1c296b99b797d6"
     },
     {
       "asset": "r_darter.blkx",
       "family": "radar",
       "path": "r_darter.json",
-      "properties_sha256": "aba270ffc07f51b99f07cadf5fba1c8ea5ae656c704a135b8bfb03f4d8db70f7"
+      "properties_sha256": "36719596faaf2d472e94ced1fe864931fe468ee0148cd37b3f6fd604b1b08083"
     },
     {
       "asset": "r_darter_default.blkx",
       "family": "radar",
       "path": "r_darter_default.json",
-      "properties_sha256": "eadfa15397784070c600584a478f74b72fb51a2175bfde68c70650a67b56103c"
+      "properties_sha256": "36719596faaf2d472e94ced1fe864931fe468ee0148cd37b3f6fd604b1b08083"
     },
     {
       "asset": "su_r_23r.blkx",
       "family": "radar",
       "path": "su_r_23r.json",
-      "properties_sha256": "1ec7f8f224dfb200e7d86e5a5feda95195e4e0204769d60e4d8234135beb9f48"
+      "properties_sha256": "83b5a14b0263c6a71c0ca4bbbefafa07b30d8b1c93ec0c5fab4285d638e2de64"
     },
     {
       "asset": "su_r_24r.blkx",
       "family": "radar",
       "path": "su_r_24r.json",
-      "properties_sha256": "5429eb86c7160c8faecdeaf4e7a61ee2bb206c27ee491749337273266331b508"
+      "properties_sha256": "c59ded5bc09b51d1593fde73570722ff418e6a7dff97ead762dccba6ea6830c1"
     },
     {
       "asset": "su_r_27er.blkx",
       "family": "radar",
       "path": "su_r_27er.json",
-      "properties_sha256": "d778708b4efdf6c5c7341510fce74d337a7f041fb8abc6c86c51d5158dc0360d"
+      "properties_sha256": "a976268f85fd8390b0881ffb8cc32367b70be937c57ddd27c1232e926fdab973"
     },
     {
       "asset": "su_r_27er1.blkx",
       "family": "radar",
       "path": "su_r_27er1.json",
-      "properties_sha256": "f1593a889106a4225bf9514c089f37cce034ce07980ee01b41512f610b5ed180"
+      "properties_sha256": "677685cd78b4858fa8dfce1e46179bde9377ad6c89f4e7247353500b21dbda9b"
     },
     {
       "asset": "su_r_27er_default.blkx",
       "family": "radar",
       "path": "su_r_27er_default.json",
-      "properties_sha256": "04f2d5941bfbdf2018947dbce57cad9a41bdbd090b9e507402ce9a91f85587d6"
+      "properties_sha256": "a976268f85fd8390b0881ffb8cc32367b70be937c57ddd27c1232e926fdab973"
     },
     {
       "asset": "su_r_27r.blkx",
       "family": "radar",
       "path": "su_r_27r.json",
-      "properties_sha256": "9efe888824375701b89a12f7c66493b42ab8f1218b7c4dc9ff4aa2efef3b851d"
+      "properties_sha256": "a8cb44e3851d4338a0871b55f7c16ddf467b810b29ec7aed90fadbe6fcf4901c"
     },
     {
       "asset": "su_r_27r1.blkx",
       "family": "radar",
       "path": "su_r_27r1.json",
-      "properties_sha256": "a762aa3a5f1c3f5f0f907c704a38d2b810759982610ad16b9f1355b9173222e8"
+      "properties_sha256": "7f725625b039ce896db399ec200d28f1750b8342572568f696e1c8db2dba4d2e"
     },
     {
       "asset": "su_r_27r1_default.blkx",
       "family": "radar",
       "path": "su_r_27r1_default.json",
-      "properties_sha256": "d74ff7baaa15aa762f4d7708e0b82d54e2985d81a61f2899bc8dada951d6971b"
+      "properties_sha256": "7f725625b039ce896db399ec200d28f1750b8342572568f696e1c8db2dba4d2e"
     },
     {
       "asset": "su_r_27r_default.blkx",
       "family": "radar",
       "path": "su_r_27r_default.json",
-      "properties_sha256": "9efe888824375701b89a12f7c66493b42ab8f1218b7c4dc9ff4aa2efef3b851d"
+      "properties_sha256": "a8cb44e3851d4338a0871b55f7c16ddf467b810b29ec7aed90fadbe6fcf4901c"
     },
     {
       "asset": "su_r_3r.blkx",
       "family": "radar",
       "path": "su_r_3r.json",
-      "properties_sha256": "af97cc93ca8bb1df1b84452597a07be9f3b74dbd0e72a613023de1d13ce162e6"
+      "properties_sha256": "f76995b63d82a44593b0d4285545ba594168d84696ec8dc9a0ecc56e640e0f17"
     },
     {
       "asset": "su_r_3r_default.blkx",
       "family": "radar",
       "path": "su_r_3r_default.json",
-      "properties_sha256": "75bafcf14612775c55b52e5c4115aa253267d07824c8b0eee6019baa4e3cff09"
+      "properties_sha256": "f76995b63d82a44593b0d4285545ba594168d84696ec8dc9a0ecc56e640e0f17"
     },
     {
       "asset": "su_r_40rd.blkx",
       "family": "radar",
       "path": "su_r_40rd.json",
-      "properties_sha256": "24ac29881cc243553a414438088f1edfcc8573ddf997709b6d66c33b337942be"
+      "properties_sha256": "d031e118531353e920f4bab7c923a75bd8961407b374653bfd5284a366b0e5b0"
     },
     {
       "asset": "su_r_40rd_default.blkx",
       "family": "radar",
       "path": "su_r_40rd_default.json",
-      "properties_sha256": "386a2b9accbb81c8a06f8dcdc24cb8265f4a83cadd31849fd0c66afae94c1af2"
+      "properties_sha256": "d031e118531353e920f4bab7c923a75bd8961407b374653bfd5284a366b0e5b0"
     },
     {
       "asset": "su_r_77.blkx",
       "family": "radar",
       "path": "su_r_77.json",
-      "properties_sha256": "2e6fd1090f9245ed9b38c0191edd93e8a44b100ff649a997eaef52c55aabfcaf"
+      "properties_sha256": "c2289c0284258b67efe415850f3857c4c11c2b56b7525c8f493b918bbeee24ed"
     },
     {
       "asset": "su_r_77_1.blkx",
       "family": "radar",
       "path": "su_r_77_1.json",
-      "properties_sha256": "575bb39ed818c7b59dda629c1ba0de393612a0e9345330d77ffd8d197c57b32f"
+      "properties_sha256": "64c108adce25e6bd2a4498fe9e8dcf20358a70a539212457d63c1716e6994410"
     },
     {
       "asset": "su_r_77_1_default.blkx",
       "family": "radar",
       "path": "su_r_77_1_default.json",
-      "properties_sha256": "46b52e0fc764bc6679b3a36b7c2f911c3c8493041afc227cc64b2e27268c4bcc"
+      "properties_sha256": "64c108adce25e6bd2a4498fe9e8dcf20358a70a539212457d63c1716e6994410"
     },
     {
       "asset": "su_r_77_default.blkx",
       "family": "radar",
       "path": "su_r_77_default.json",
-      "properties_sha256": "2e6fd1090f9245ed9b38c0191edd93e8a44b100ff649a997eaef52c55aabfcaf"
+      "properties_sha256": "c2289c0284258b67efe415850f3857c4c11c2b56b7525c8f493b918bbeee24ed"
     },
     {
       "asset": "su_rvv_ae.blkx",
       "family": "radar",
       "path": "su_rvv_ae.json",
-      "properties_sha256": "c4184969a50ba46946164c8d48832c55f1e6514e0865eb05a8b9251abc722d76"
+      "properties_sha256": "b0726cd751f8fd0ba61647545bb591c4a899586bc74d59e601c020df2a9b3075"
     },
     {
       "asset": "su_rvv_ae_default.blkx",
       "family": "radar",
       "path": "su_rvv_ae_default.json",
-      "properties_sha256": "bba582e95eaa1633677975a4320ca3ab36ac2272d8cf4c3beaeef8d3803f2c2c"
+      "properties_sha256": "b0726cd751f8fd0ba61647545bb591c4a899586bc74d59e601c020df2a9b3075"
     },
     {
       "asset": "su_rvv_sd.blkx",
       "family": "radar",
       "path": "su_rvv_sd.json",
-      "properties_sha256": "159b6258516c53a86df6b7b11b400a895ab2ad7bedbf2bab0df92c943c93578d"
+      "properties_sha256": "64c108adce25e6bd2a4498fe9e8dcf20358a70a539212457d63c1716e6994410"
     },
     {
       "asset": "su_rvv_sd_default.blkx",
       "family": "radar",
       "path": "su_rvv_sd_default.json",
-      "properties_sha256": "575bb39ed818c7b59dda629c1ba0de393612a0e9345330d77ffd8d197c57b32f"
+      "properties_sha256": "64c108adce25e6bd2a4498fe9e8dcf20358a70a539212457d63c1716e6994410"
     },
     {
       "asset": "swd_rb27.blkx",
       "family": "radar",
       "path": "swd_rb27.json",
-      "properties_sha256": "7433bc229c59b5dff5256d3d529392965b78b88cc4fb7488b3a68f7d550b3d29"
+      "properties_sha256": "880da9d3b5cfbc56a2fe483b425bc886619cd32de38eb6a450b9787a2b3b1d3b"
     },
     {
       "asset": "swd_rb71.blkx",
       "family": "radar",
       "path": "swd_rb71.json",
-      "properties_sha256": "31e8ae3118419000443bb796894732cbf970cb09d48b3a72b07100eaabcf3333"
+      "properties_sha256": "802b8f7d6dea08055c30f1439830e1d26c60fce2cad0ff112ba47b6771165602"
     },
     {
       "asset": "swd_rb71_default.blkx",
       "family": "radar",
       "path": "swd_rb71_default.json",
-      "properties_sha256": "e73a467b14b5b7900a7653cd0c85066e8ba9f5b2712fba9e117c4499d7dbd291"
+      "properties_sha256": "802b8f7d6dea08055c30f1439830e1d26c60fce2cad0ff112ba47b6771165602"
     },
     {
       "asset": "swd_rb99.blkx",
       "family": "radar",
       "path": "swd_rb99.json",
-      "properties_sha256": "58558565ddfdf3d65ec323faababfaa2b6094b4cc79d64901cfc13652d487f93"
+      "properties_sha256": "9a592a406c7e1da0388f3fa7b35bac24aa2496fa6eaf8a77e250610cd6ec8e55"
     },
     {
       "asset": "swd_rb99_default.blkx",
       "family": "radar",
       "path": "swd_rb99_default.json",
-      "properties_sha256": "65806a63270669cd219600a489bf2d5400d4ebdbdb0382704d5cb7985979aa20"
+      "properties_sha256": "9a592a406c7e1da0388f3fa7b35bac24aa2496fa6eaf8a77e250610cd6ec8e55"
     },
     {
       "asset": "sws_flz_lwf_ll_64.blkx",
       "family": "radar",
       "path": "sws_flz_lwf_ll_64.json",
-      "properties_sha256": "f1fe5b6510bd4abfa556ede9b0f0bc2f9e7a1523afc0913d84a039205d250d11"
+      "properties_sha256": "880da9d3b5cfbc56a2fe483b425bc886619cd32de38eb6a450b9787a2b3b1d3b"
     },
     {
       "asset": "uk_skyflash_aim_7.blkx",
       "family": "radar",
       "path": "uk_skyflash_aim_7.json",
-      "properties_sha256": "645f4c01a1065ac5aa51cd205a17b873018c8681ecada8d4932f3f1b51da16ec"
+      "properties_sha256": "9eb207e7a29ce28c1896c1ca980aec2c34691f99e3816c67c3d685d09c695529"
     },
     {
       "asset": "uk_skyflash_aim_7_dogfight.blkx",
       "family": "radar",
       "path": "uk_skyflash_aim_7_dogfight.json",
-      "properties_sha256": "57c0933cb88035d766bece325f37b95354dfaaf593d76ccf21abf17c7ab56428"
+      "properties_sha256": "59b5998f26230a7be121dbcc7233a8d7fdbba8e17dcf2a6d2c9d03a6b88ceb4c"
     },
     {
       "asset": "uk_skyflash_aim_7_dogfight_default.blkx",
       "family": "radar",
       "path": "uk_skyflash_aim_7_dogfight_default.json",
-      "properties_sha256": "7649ff793ec8df0590083f5063afc5bcb07489f9ed4119982041326323320170"
+      "properties_sha256": "59b5998f26230a7be121dbcc7233a8d7fdbba8e17dcf2a6d2c9d03a6b88ceb4c"
     },
     {
       "asset": "uk_skyflash_aim_7_dogfight_tornado.blkx",
       "family": "radar",
       "path": "uk_skyflash_aim_7_dogfight_tornado.json",
-      "properties_sha256": "a70fb63e75f111d72d8e91f724908274361b5f52e058e26cf3a1a610a7850b5c"
+      "properties_sha256": "f685b0702037f8f5f617efca53d44cc4dad6157a37d215cfa52dbf60f8347588"
     },
     {
       "asset": "uk_skyflash_aim_7_dogfight_tornado_default.blkx",
       "family": "radar",
       "path": "uk_skyflash_aim_7_dogfight_tornado_default.json",
-      "properties_sha256": "0a826a03e28f1e0c10b8c2d134fb17543f932ffb354a55d736176ac87e658c1c"
+      "properties_sha256": "f685b0702037f8f5f617efca53d44cc4dad6157a37d215cfa52dbf60f8347588"
     },
     {
       "asset": "uk_skyflash_temp.blkx",
       "family": "radar",
       "path": "uk_skyflash_temp.json",
-      "properties_sha256": "f73e3358d504d16dc9bdf2cbe131ce8b49abdb84e9353303a5d262fee4662b48"
+      "properties_sha256": "2fa26fcc84f0ab3c4dda75adccfa49b42b9358977e2364102dcb5adbd300e1d4"
     },
     {
       "asset": "us_aim4f_falcon.blkx",
       "family": "radar",
       "path": "us_aim4f_falcon.json",
-      "properties_sha256": "64c59e5195a50a6231db25e8ce393d5dccf223eda5734c369e56d9d524e7de0d"
+      "properties_sha256": "13e42ab058d4cdb91a595826ef7f00a1b701ce57d55280deac5a2168c5bf0563"
     },
     {
       "asset": "us_aim4f_falcon_default.blkx",
       "family": "radar",
       "path": "us_aim4f_falcon_default.json",
-      "properties_sha256": "1c0ee8e7bb9b936e9edfa2bf1e956f040530b63b084d26c5093e3f7389cc4410"
+      "properties_sha256": "13e42ab058d4cdb91a595826ef7f00a1b701ce57d55280deac5a2168c5bf0563"
     },
     {
       "asset": "us_aim7c_sparrow.blkx",
       "family": "radar",
       "path": "us_aim7c_sparrow.json",
-      "properties_sha256": "4092ffe039dc1f23f192301c280561b9f282a89830169171b8528d2a31d3dbfb"
+      "properties_sha256": "f9a0f785b4a9cf3358d3a0214480cfe6dd0509877cd6074082c1516aa49d2d46"
     },
     {
       "asset": "us_aim7d_sparrow.blkx",
       "family": "radar",
       "path": "us_aim7d_sparrow.json",
-      "properties_sha256": "c0a213840abe6a839b1ebca076dd7c92753d3f83f9cdd7a521c0790e832c11f9"
+      "properties_sha256": "1629e2253020fe14a3b6c0927531261533585f399a21078d7a9dfb474f245c9a"
     },
     {
       "asset": "us_aim7e2_dogfight_sparrow.blkx",
       "family": "radar",
       "path": "us_aim7e2_dogfight_sparrow.json",
-      "properties_sha256": "9997fa794f6bc23d4bc53da6d72a03700d7569b4d2704aca6020b6a9c9245a94"
+      "properties_sha256": "c1592dc2ce63c5bd65768c63e4e85493a5dc7174cd0d96fdf1f04a746dd97954"
     },
     {
       "asset": "us_aim7e_sparrow.blkx",
       "family": "radar",
       "path": "us_aim7e_sparrow.json",
-      "properties_sha256": "15b437adb3aff144c59c9bda97a9408c3b03f968dcc63a83d4cb3bca81c0d631"
+      "properties_sha256": "f6c82dcd154b7d37f480f7415ed46e79a6c9ec840909a76ecedb6f44a0ee9ca5"
     },
     {
       "asset": "us_aim7f_sparrow.blkx",
       "family": "radar",
       "path": "us_aim7f_sparrow.json",
-      "properties_sha256": "1d7e467c64977f1d1d15277c7974a474d4bce6c4a967a2bc45205c7546092d3b"
+      "properties_sha256": "087b932343a40a0802e9fc5d8ab609555baa5d72796d620ba498a48d24ddac7b"
     },
     {
       "asset": "us_aim7f_sparrow_default.blkx",
       "family": "radar",
       "path": "us_aim7f_sparrow_default.json",
-      "properties_sha256": "a45c1dd874ba7b4892073c4274586861dbc4c0c1b721b6d4fc65f4c0048acbfd"
+      "properties_sha256": "087b932343a40a0802e9fc5d8ab609555baa5d72796d620ba498a48d24ddac7b"
     },
     {
       "asset": "us_aim7f_sparrow_f_14.blkx",
       "family": "radar",
       "path": "us_aim7f_sparrow_f_14.json",
-      "properties_sha256": "41c787162bb56f24a3e1c5a57af83509dddeea0c5accea07e8e98b29e824ec98"
+      "properties_sha256": "0617c1fe341ab6c6b53968ef59bbcc9cbc36d1980b093d0013e49b1cab4a6704"
     },
     {
       "asset": "us_aim7f_sparrow_fa_18.blkx",
       "family": "radar",
       "path": "us_aim7f_sparrow_fa_18.json",
-      "properties_sha256": "f6cc0944b186a1d403736e91c1372aa9409bd01086a13ede17184210958eb6f7"
+      "properties_sha256": "90311a9011ba3923f413044cb67fc71c3186e7238a3523dd61a2070c52ac49a5"
     },
     {
       "asset": "us_aim7m_sparrow.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow.json",
-      "properties_sha256": "ed0ec2b0d5a726879e2b54b172d557fe76055d42ed2b331d446b98100f17e13c"
+      "properties_sha256": "19868373d4964ea673dcad4e0c17753d9fd801e3d8149f9c787ca51e0acf3aaf"
     },
     {
       "asset": "us_aim7m_sparrow_default.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_default.json",
-      "properties_sha256": "07dac87cb8559e5c01dbe6dfc357a197cc7469de2c5076a8bf47b24a2cd01e7b"
+      "properties_sha256": "19868373d4964ea673dcad4e0c17753d9fd801e3d8149f9c787ca51e0acf3aaf"
     },
     {
       "asset": "us_aim7m_sparrow_f_14.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_f_14.json",
-      "properties_sha256": "b51d82694531cd98db06f8066bdf91e260c861b9ccff7e41989c1be4d5097004"
+      "properties_sha256": "f78c05f06f412804caeb008e3d307b3fea6a7feff32460ef6328da7442b6509a"
     },
     {
       "asset": "us_aim7m_sparrow_f_15.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_f_15.json",
-      "properties_sha256": "92a95485fe2c4460a88d9ed96dc5c18f0d4bb8a24e863bdec2c641127f44b4d9"
+      "properties_sha256": "bcd8061ff115ef857de91503fff06339cb5c9a7d273a3479b5ee08a7f6d8f18e"
     },
     {
       "asset": "us_aim7m_sparrow_f_15_default.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_f_15_default.json",
-      "properties_sha256": "ea452caaa643ae66a7e790762b29bd5c2dea59c427c5a64af2f3222f79c867c1"
+      "properties_sha256": "bcd8061ff115ef857de91503fff06339cb5c9a7d273a3479b5ee08a7f6d8f18e"
     },
     {
       "asset": "us_aim7m_sparrow_f_16.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_f_16.json",
-      "properties_sha256": "25d7bff67bfa1a514d43ff1493f0a891757397577c6a9b6e89557bfa5780e65a"
+      "properties_sha256": "d0744addc793c91df97cff136e19f3a6423f45d898c7d5aa0566c2922aed2d74"
     },
     {
       "asset": "us_aim7m_sparrow_f_16_default.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_f_16_default.json",
-      "properties_sha256": "6aeab5213b6cd4247170adeb5aa836f7d0bb71ab4df5efc2802093c68b46aebe"
+      "properties_sha256": "d0744addc793c91df97cff136e19f3a6423f45d898c7d5aa0566c2922aed2d74"
     },
     {
       "asset": "us_aim7m_sparrow_fa_18.blkx",
       "family": "radar",
       "path": "us_aim7m_sparrow_fa_18.json",
-      "properties_sha256": "c9d7959b294e1ec24144ed7f1151a88d510c1422b599aa84799cd842ebb33fef"
+      "properties_sha256": "3063671fc7bc55930b7655552924222ab5d8ab4ec65b63824c41b95d0f2c1475"
     },
     {
       "asset": "us_aim7p_sparrow_fa_18.blkx",
       "family": "radar",
       "path": "us_aim7p_sparrow_fa_18.json",
-      "properties_sha256": "99a0221225397e016492909afb9e193784fdfc6afa5bcc5daba4d54c5318502e"
+      "properties_sha256": "51334886e142c5c3dc0e37d0bfa4504f0d3abe442eacdb3f6452b9c8ffa57d2e"
     },
     {
       "asset": "us_aim7p_sparrow_fa_18_default.blkx",
       "family": "radar",
       "path": "us_aim7p_sparrow_fa_18_default.json",
-      "properties_sha256": "5769e9ab263e3f8431249adaaa58f67dbd6e3ed443def860a7ce6fc37fe8cf89"
+      "properties_sha256": "51334886e142c5c3dc0e37d0bfa4504f0d3abe442eacdb3f6452b9c8ffa57d2e"
     },
     {
       "asset": "us_aim9c_sidewinder.blkx",
       "family": "radar",
       "path": "us_aim9c_sidewinder.json",
-      "properties_sha256": "5cb5a64f468635cbbe78710d19b917a67d23902f24241e65d1630a00c6501bf3"
+      "properties_sha256": "d595f7f84b269de695e1c91c1e28d3460945eee28eb09bdadb95231a5d927790"
     },
     {
       "asset": "us_aim9c_sidewinder_default.blkx",
       "family": "radar",
       "path": "us_aim9c_sidewinder_default.json",
-      "properties_sha256": "26e10cbf285c41aa25d7e584fc2c33b39fa6972ed99c019c172252c5fc4bdc4d"
+      "properties_sha256": "d595f7f84b269de695e1c91c1e28d3460945eee28eb09bdadb95231a5d927790"
     },
     {
       "asset": "us_aim9c_sidewinder_default_group.blkx",
       "family": "radar",
       "path": "us_aim9c_sidewinder_default_group.json",
-      "properties_sha256": "739dd61eea112d2f8fa422b6541ac807c9cbe7d79985c97069403033f61c3f00"
+      "properties_sha256": "d595f7f84b269de695e1c91c1e28d3460945eee28eb09bdadb95231a5d927790"
     },
     {
       "asset": "us_aim_120a.blkx",
       "family": "radar",
       "path": "us_aim_120a.json",
-      "properties_sha256": "a6d022de2683b32591b7f46322b670f2cff11ac0af261eb76f60b24f2e171426"
+      "properties_sha256": "54814113c6654327d7e07fe00543351fa8e6264afc8255790e01e3d1672fa59f"
     },
     {
       "asset": "us_aim_120a_default.blkx",
       "family": "radar",
       "path": "us_aim_120a_default.json",
-      "properties_sha256": "43b1eb11aecc7fc95901e8166773b69b897f629c68b450fd320e9738ada56780"
+      "properties_sha256": "54814113c6654327d7e07fe00543351fa8e6264afc8255790e01e3d1672fa59f"
     },
     {
       "asset": "us_aim_120b.blkx",
       "family": "radar",
       "path": "us_aim_120b.json",
-      "properties_sha256": "d07ab8f095c5373d7e535b7379a4b5ff5437213496774510a5b766b507fe54c2"
+      "properties_sha256": "d4d71448620b66b706d4ae45905218d6821cb0b3527f8bbaf02086405a3d79a3"
     },
     {
       "asset": "us_aim_120b_bol_pod.blkx",
       "family": "radar",
       "path": "us_aim_120b_bol_pod.json",
-      "properties_sha256": "dd2c9a7535418623113a7259eb08b625b761cfd47a9f4e690cf9af9ba2613bd5"
+      "properties_sha256": "d4d71448620b66b706d4ae45905218d6821cb0b3527f8bbaf02086405a3d79a3"
     },
     {
       "asset": "us_aim_120b_default.blkx",
       "family": "radar",
       "path": "us_aim_120b_default.json",
-      "properties_sha256": "97fd2c873692e3ca0b02a40acf3644eea6eacfcf99c85ceba85d56b07d9596e2"
+      "properties_sha256": "d4d71448620b66b706d4ae45905218d6821cb0b3527f8bbaf02086405a3d79a3"
     },
     {
       "asset": "us_aim_120b_default_switzerland.blkx",
       "family": "radar",
       "path": "us_aim_120b_default_switzerland.json",
-      "properties_sha256": "d07ab8f095c5373d7e535b7379a4b5ff5437213496774510a5b766b507fe54c2"
+      "properties_sha256": "d4d71448620b66b706d4ae45905218d6821cb0b3527f8bbaf02086405a3d79a3"
     },
     {
       "asset": "us_aim_120b_switzerland.blkx",
       "family": "radar",
       "path": "us_aim_120b_switzerland.json",
-      "properties_sha256": "dd2c9a7535418623113a7259eb08b625b761cfd47a9f4e690cf9af9ba2613bd5"
+      "properties_sha256": "d4d71448620b66b706d4ae45905218d6821cb0b3527f8bbaf02086405a3d79a3"
     },
     {
       "asset": "us_aim_120c_5.blkx",
       "family": "radar",
       "path": "us_aim_120c_5.json",
-      "properties_sha256": "4c32bb091868ccfce40db36d968ffd504b688564969a147b92ef6e4c55453e51"
+      "properties_sha256": "47b35ca339a5a6de2544fd23b617fc7159d7d7c7df1dc33d316f7b1f989f7ff8"
     },
     {
       "asset": "us_aim_120c_5_default.blkx",
       "family": "radar",
       "path": "us_aim_120c_5_default.json",
-      "properties_sha256": "c0d528d4241a3eb3837f49ad991a67b2e7ad5cd0bda1957bd9638ff8aa95da61"
+      "properties_sha256": "47b35ca339a5a6de2544fd23b617fc7159d7d7c7df1dc33d316f7b1f989f7ff8"
     },
     {
       "asset": "us_aim_120c_5_default_switzerland.blkx",
       "family": "radar",
       "path": "us_aim_120c_5_default_switzerland.json",
-      "properties_sha256": "7b5b7a9752fa9c4c274a4ae7f61d86884377307c68b4ecb0ce82d0199077a612"
+      "properties_sha256": "47b35ca339a5a6de2544fd23b617fc7159d7d7c7df1dc33d316f7b1f989f7ff8"
     },
     {
       "asset": "us_aim_120c_5_switzerland.blkx",
       "family": "radar",
       "path": "us_aim_120c_5_switzerland.json",
-      "properties_sha256": "4c32bb091868ccfce40db36d968ffd504b688564969a147b92ef6e4c55453e51"
+      "properties_sha256": "47b35ca339a5a6de2544fd23b617fc7159d7d7c7df1dc33d316f7b1f989f7ff8"
     },
     {
       "asset": "us_aim_120c_7.blkx",
       "family": "radar",
       "path": "us_aim_120c_7.json",
-      "properties_sha256": "e02b44b00f38f8d8aeda1a6822636ef2ca478c1ab30bbfe1c8fc06218ad5f53c"
+      "properties_sha256": "dc23dc97d4d4ba6e0ea616a1b39b8d0e4cff9589cf7f48ac267978bc582fefb6"
     },
     {
       "asset": "us_aim_120c_7_default.blkx",
       "family": "radar",
       "path": "us_aim_120c_7_default.json",
-      "properties_sha256": "19185f36aa0d0d2c32481c6ce7ffe092403abf067c493239856eb04da4442701"
+      "properties_sha256": "dc23dc97d4d4ba6e0ea616a1b39b8d0e4cff9589cf7f48ac267978bc582fefb6"
     },
     {
       "asset": "us_aim_120d.blkx",
       "family": "radar",
       "path": "us_aim_120d.json",
-      "properties_sha256": "16ad4768ff9a1cff8f510720a0c376f8e085998a063da453830821bbc0ff6b99"
+      "properties_sha256": "6f12316f02a4556cf8d8b55b740c243f245f09fcab874de78785b1e56b818f5e"
     },
     {
       "asset": "us_aim_120d_default.blkx",
       "family": "radar",
       "path": "us_aim_120d_default.json",
-      "properties_sha256": "00fb93581e82bdfdd19fa2e65b7b430e6c36c8ac2159d99dc6f799899386691e"
+      "properties_sha256": "6f12316f02a4556cf8d8b55b740c243f245f09fcab874de78785b1e56b818f5e"
     },
     {
       "asset": "us_aim_26b.blkx",
       "family": "radar",
       "path": "us_aim_26b.json",
-      "properties_sha256": "f1fe5b6510bd4abfa556ede9b0f0bc2f9e7a1523afc0913d84a039205d250d11"
+      "properties_sha256": "880da9d3b5cfbc56a2fe483b425bc886619cd32de38eb6a450b9787a2b3b1d3b"
     },
     {
       "asset": "us_aim_54a.blkx",
       "family": "radar",
       "path": "us_aim_54a.json",
-      "properties_sha256": "14eb8159f41bbdff8f9603628239b99ef86c7100a40fc437dd06783cf4781e30"
+      "properties_sha256": "bd4539f861109c0cf7711fd9a3475c21fefb611f07018358db98d00943912f9b"
     },
     {
       "asset": "us_aim_54a_default.blkx",
       "family": "radar",
       "path": "us_aim_54a_default.json",
-      "properties_sha256": "ea216e976e7ba99dec1da725ac5d8b289431d46a0baabfb13675c776f09c7fe7"
+      "properties_sha256": "bd4539f861109c0cf7711fd9a3475c21fefb611f07018358db98d00943912f9b"
     },
     {
       "asset": "us_aim_54b.blkx",
       "family": "radar",
       "path": "us_aim_54b.json",
-      "properties_sha256": "4f6f7f7bfbb48c3402b3875cb2325a95360a0ac54e98437e06a6ca2e07cdcdf6"
+      "properties_sha256": "59a09fc6301d8def1bd06e84bfa3eaa428d40e26ac023bedd427de29867e3dcd"
     },
     {
       "asset": "us_aim_54c.blkx",
       "family": "radar",
       "path": "us_aim_54c.json",
-      "properties_sha256": "cc22391fa9a82db3fea160fff118709a48b2ba8c421fa715c5620793df58d229"
+      "properties_sha256": "b1ab3213323a89a4c9923450b5320acd5f948fe15b9b41031cf1187165facae7"
     },
     {
       "asset": "us_aim_54c_default.blkx",
       "family": "radar",
       "path": "us_aim_54c_default.json",
-      "properties_sha256": "79163a97ba51483bfa63ce8bdab55245f53b18358484426834bec7f517fd6cde"
+      "properties_sha256": "b1ab3213323a89a4c9923450b5320acd5f948fe15b9b41031cf1187165facae7"
     },
     {
       "asset": "us_aim_54c_plus.blkx",
       "family": "radar",
       "path": "us_aim_54c_plus.json",
-      "properties_sha256": "101f21ebc344fbe7d2515c77491450065fab7c2bfd930b929768ebc3335d44c9"
+      "properties_sha256": "eba9d7c67c7fa584893088c89ce1576cf15e8fb410fc39e237ff7eb0b398c0f7"
     },
     {
       "asset": "us_aim_54c_plus_default.blkx",
       "family": "radar",
       "path": "us_aim_54c_plus_default.json",
-      "properties_sha256": "640682f6ec7665bc8b7e312ccf16b016bf419e905961c97907108d5315b5180e"
+      "properties_sha256": "eba9d7c67c7fa584893088c89ce1576cf15e8fb410fc39e237ff7eb0b398c0f7"
     }
   ],
-  "scope": "Explicit constructor histories and world release inputs; launch-relative epoch zero, no prelaunch acquisition or aircraft providers."
+  "scope": "Explicit constructor histories and world release inputs; launch-relative epoch zero, no prelaunch acquisition or aircraft providers.",
+  "property_loading": {
+    "schema": "wt-projectile-properties-v1",
+    "validated_build": "2.59.0.87",
+    "native_binary_sha256": "b56178905baedba7717f97202976ff8df2afa4c7819d4a6a2815cd8010598402",
+    "globals_sha256": "c47fc6a10659b15ea117da4b814a1dee95bda14a8821574a82f4eee1c3387bd0",
+    "generator": "scripts/regenerate_missile_profiles.py",
+    "generator_sha256": "c8f9b11b50130a47b61977c0d9ff6aac47b17228d33cc782257b02b6d87c4a5c",
+    "loader_sha256": "fc094d6a6b9de663b4f64d398f19889c9fd3de057db5cec5249401f386974aa1",
+    "scope": "Outer rocket fin-cap scaling, authored precision, flat numeric CyMachMult loading; existing core and constructor histories retain their original provenance."
+  }
 }

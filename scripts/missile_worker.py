@@ -181,6 +181,9 @@ def validate(request):
         if not 0 < clean[role]['position'][1] <= 30000: raise ValueError(f'{role} altitude must be above 0 and at most 30000 m')
         if not -90 <= clean[role]['angles'][1] <= 90: raise ValueError(f'{role} pitch must be between -90 and 90 degrees')
     clean['duration'] = number(request.get('duration', RUN_LIMIT_S), 'Duration', .1, RUN_LIMIT_S)
+    early_exit = request.get('early_exit', True)
+    if not isinstance(early_exit, bool): raise ValueError('Early-exit setting must be boolean')
+    clean['early_exit'] = early_exit
     if math.dist(clean[launch_key]['position'], clean['target']['position']) < 10:
         raise ValueError('Initial launcher/target separation must be at least 10 m')
     escape = request.get('escape')
@@ -259,6 +262,9 @@ def proximity_endpoint(event, old, new, target_at):
 
 
 def simulate(request, progress=lambda _: None, cancelled=lambda: False):
+    # Share the envelope's conservative miss certificate. This local import
+    # avoids a module-initialization cycle with the envelope's lazy worker.
+    from missile_envelope import unreachable, _burn_end
     config = validate(request)
     profile = json.loads((input_directory() / 'launch-profiles' / (config['missile']+'.json')).read_text())
     launcher_aircraft = 'launcher' in config
@@ -271,6 +277,12 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
     target_motion = (escape_motion(config['target'], escape, launch['position']) if escape is not None else
                      dict(kind='constant_velocity', position=config['target']['position'],
                           velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles'])))
+    straight_from = 0. if escape is None else target_motion['end']
+    straight_velocity = config['target']['velocity'] if escape is None else target_motion['run']
+    burn_end = _burn_end(frame.flight.properties['guidance']['motors'])
+    limits = frame.limits
+    deadline = limits['launch_time'] + limits['lifetime']
+    reach_radius = float(session.props.get('radius', 0.) or 0.) + 30.
     def target(t): return target_point(target_motion, t)
     def targets(old, next_time):
         new = target(next_time)
@@ -330,6 +342,13 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
             code = 'lifetime' if expiry['time_expired'] else 'distance_limit' if expiry['distance_expired'] else 'tracking_timeout'
             labels = dict(lifetime='Missile lifetime expired',distance_limit='Missile distance limit reached',tracking_timeout='Geometric tracking timeout')
             outcome = dict(code=code,label=labels[code]); terminal=True
+        elif config['early_exit'] and i % 6 == 5 and new['time_s'] >= straight_from:
+            body = session.frame.flight.state['body']
+            if (all(c >= end + 1e-3 for c, end in zip(body['clocks'], burn_end))
+                    and unreachable(new['missile'], new['speed_mps'], new['target'], straight_velocity,
+                                    deadline - new['time_s'] + 2 * STEP, reach_radius,
+                                    limits['origin'], limits['distance_limit'])):
+                outcome = dict(code='unreachable', label='Miss — target is unreachable'); terminal=True
         if event:
             seeker_transitions.append(dict(time_s=endpoint['time_s'],tracking=None,
                 observation_available=None,tracking_state='event',loss_reason=None))
@@ -348,12 +367,12 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
                 seeker_transitions=seeker_transitions,
                 closest_approach=best, outcome=outcome, elapsed_s=rows[-1]['time_s'],
                 simulation_time_s=new['time_s'], final_body_sample=new,
-                model=dict(profile_build='2.59.0.34', policy=frame.flight.policy,
+                model=dict(profile_build='2.59.0.34', property_loading=profile.get('property_loading'), policy=frame.flight.policy,
                            step_s=STEP, launch_state=frame.website_release['input_state'], seeker_initialization=initialization['policy'],
                            time_origin='release', units=dict(position='m', velocity='m/s', angles='degrees', time='s'),
                            initialization=initialization,
                            radar_support='ideal_recovered_provider' if frame.flight.family=='radar' else None,
-                           component_provenance='2.59.0.34 profiles/core with separately recovered 2.59.0.38 shared arithmetic; whole-build equivalence unproven',
+                           component_provenance='2.59.0.34 core and 2.59.0.38 shared arithmetic, with scoped 2.59.0.87 projectile-loader corrections; whole-build equivalence unproven',
                            target_motion='constant_velocity' if escape is None else dict(escape, kind='level_break_away'),
                            geometry='point_target',
                            telemetry=dict(force_sampling='Final integration substep; force_time_s records its evaluation time. Thrust is the actual propulsion update held over that step.',
@@ -363,6 +382,7 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
                                missing='No integrated forces at release; no dynamics inferred at an intermediate proximity event.',
                                distance='Sum of 48 Hz missile position segments, truncated to the event position when present.'),
                            trajectory_endpoint='Recovered proximity-event position/time when present; completed body sample retained separately.',
+                           early_miss_termination='After motor burnout and any target turn, stop if the conservative energy/lifetime/distance bound excludes every future hit. Closest approach covers the simulated portion. Disable with early_exit=false.',
                            limitations=['Whole engagements are not yet validated against live-game flights.',
                                         ('Launcher mount is coincident and aligned with the aircraft; aircraft-specific hardpoint offsets, ejector impulses and angular rates are not supplied.'
                                          if launcher_aircraft else 'Legacy launch inputs are the missile state after release; release speed/spread is not applied again.'),
