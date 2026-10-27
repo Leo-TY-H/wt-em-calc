@@ -22,12 +22,10 @@
   const positionFields = role => {
     if(role==='launch')return `<div class="missile-motion">${unitField('missile-launch-position-1','Altitude','Launcher altitude','m',initial.launch.position[1],0.001,30000)}</div>`;
     const [azimuth,distance]=cylindrical(initial.target.position.map((v,i)=>v-initial.launch.position[i]));
-    return `<div class="missile-vector"><span>Position from the launcher</span><div class="missile-motion">${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Distance','Target horizontal distance','km',distance,0,200)}${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}</div></div>`;
+    return `<div class="missile-motion">${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Distance','Target horizontal distance','km',distance,0,200)}</div>`;
   };
-  const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Travel heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
-  const stateFields = (role,number,title,description) => `<fieldset class="missile-step missile-${role}"><legend><span class="missile-step-number">${number}</span>${title}</legend><p class="hint">${description}</p>${positionFields(role)}${motion(role)}
-    ${role==='launch'?'<p class="hint">Travel heading and target azimuth: 0° = +X, 90° = +Z. Launch and climb angles: positive = climbing, 0° = level.</p>':''}
-    </fieldset>`;
+  const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
+  const stateFields = (role,number,title) => `<fieldset class="missile-step missile-${role}"><legend><span class="missile-step-number">${number}</span>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
     <div class="section-heading"><span class="eyebrow">ENGAGEMENT SETUP</span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
     <div class="missile-presets" role="group" aria-label="Starter scenarios">
@@ -43,8 +41,8 @@
       <div id="missile-selected" class="missile-selected" aria-label="Selected missiles"></div>
       <button id="missile-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    ${stateFields('launch',2,'Launcher aircraft','Aircraft state at the instant of release (t = 0).')}
-    ${stateFields('target',3,'Target aircraft','Flies in a straight line at constant velocity throughout the simulation.')}
+    ${stateFields('launch',2,'Launcher aircraft')}
+    ${stateFields('target',3,'Target aircraft')}
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
     <button id="missile-run" class="primary-button" type="submit" disabled>Simulate engagement <span>↗</span></button>
@@ -67,7 +65,6 @@
     <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select></div></section>
     <p id="missile-frame" class="missile-frame-readout"></p>
     <label id="missile-result-label" class="field missile-result-choice" hidden>Inspect missile result<select id="missile-result-select"></select></label>
-    <div class="missile-metrics"><div class="missile-metric"><span>Outcome</span><strong id="missile-outcome">—</strong></div><div class="missile-metric"><span>Closest approach</span><strong id="missile-closest">—</strong></div><div class="missile-metric"><span>Elapsed time</span><strong id="missile-elapsed">—</strong></div></div>
     <details id="missile-flight-data" class="missile-flight-data" hidden><summary>Propulsion &amp; aerodynamic plots <span id="missile-flight-name"></span></summary>
       <p class="hint">Click a plotted point to inspect that missile and time. In Drag &amp; lift, solid lines show drag and dashed lines show lift.</p>
       <div class="missile-data-grid">
@@ -450,9 +447,6 @@
   }
   function inspectFlight(index) {
     focusIndex=index;result=flights[index];el('missile-result-select').value=index;
-    el('missile-outcome').textContent=result.outcome.label;
-    el('missile-closest').textContent=result.closest_approach.distance_m.toFixed(2)+' m';
-    el('missile-elapsed').textContent=result.elapsed_s.toFixed(2)+' s';
     el('missile-model-details').replaceChildren(...result.model.limitations.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
   }
   el('missile-result-select').addEventListener('change',()=>{inspectFlight(Number(el('missile-result-select').value));updateFrame(Number(el('missile-time').value));});
