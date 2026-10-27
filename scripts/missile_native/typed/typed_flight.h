@@ -68,6 +68,12 @@ struct Session {
 };
 struct Expiry { bool returned, expiry_flag, time_expired, distance_expired; };
 
+// The last flight update's propulsion, final-substep input state and final
+// acceleration, for missile_telemetry.completed. Recorded only while the typed
+// simulator sets it; updates counts the flight updates since it was reset.
+struct StepCapture { int64_t updates = 0; wtm_propulsion_out propulsion{}; wtm_body force_input{}; double acceleration[3]{}; };
+inline thread_local StepCapture* step_capture = nullptr;
+
 inline Packet packet(const wtm_body& b) {
     return {b.position.x, b.position.y, b.position.z, b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w,
             b.velocity.x, b.velocity.y, b.velocity.z, b.omega.x, b.omega.y, b.omega.z, b.time};
@@ -122,7 +128,17 @@ inline void flight_update(const FlightProps& P, Session& S, const TargetPoint& n
     float c[8]; for (int i = 0; i < 8; ++i) c[i] = (float)S.controls[i];
     wtm_flight_props fp{&P.body, &P.rocket, &P.motors, P.precision, (float)P.end_speed};
     wtm_body_step_out out{};
-    body_advance(&fp, &S.body, c, dt, &out, nullptr);
+    if (step_capture) {
+        if (P.precision > 64) bail("Unsupported integration precision");
+        wtm_substep substeps[64];
+        wtm_body input = S.body;
+        body_advance(&fp, &S.body, c, dt, &out, substeps);
+        check_kernel();
+        StepCapture& k = *step_capture;
+        ++k.updates; k.propulsion = out.propulsion;
+        k.force_input = P.precision > 1 ? substeps[P.precision - 2].state : input;
+        for (int i = 0; i < 3; ++i) k.acceleration[i] = substeps[P.precision - 1].acceleration[i];
+    } else body_advance(&fp, &S.body, c, dt, &out, nullptr);
     check_kernel();
     Packet pre_cap = packet(S.body);
     double elapsed = fsub(out.target_time, 0.0f);   // state carries no launch_time

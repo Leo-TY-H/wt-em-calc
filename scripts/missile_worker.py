@@ -261,28 +261,44 @@ def proximity_endpoint(event, old, new, target_at):
                 tracking_state='event', loss_reason=None, mach=None, telemetry=None)
 
 
-def simulate(request, progress=lambda _: None, cancelled=lambda: False):
+def simulation_setup(config):
+    """Release, seeker initialization, interaction session and target motion of one run.
+
+    Shared by simulate() and the native typed simulator, which runs the same
+    step loop on typed state and assembles its result with simulation_document().
+    """
     # Share the envelope's conservative miss certificate. This local import
     # avoids a module-initialization cycle with the envelope's lazy worker.
-    from missile_envelope import unreachable, _burn_end
-    config = validate(request)
+    from missile_envelope import _burn_end
     profile = json.loads((input_directory() / 'launch-profiles' / (config['missile']+'.json')).read_text())
     launcher_aircraft = 'launcher' in config
     launch = config['launcher' if launcher_aircraft else 'launch']
     frame = initial_frame(profile, launch, config['target'], launcher_aircraft=launcher_aircraft)
-    initialization = frame.website_initialization
     session = InteractionSession.from_frame(frame, clock=0., origin=frame.website_release['position'],
                                             enabled=True, guidance_flag=False)
     escape = config.get('escape')
     target_motion = (escape_motion(config['target'], escape, launch['position']) if escape is not None else
                      dict(kind='constant_velocity', position=config['target']['position'],
                           velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles'])))
-    straight_from = 0. if escape is None else target_motion['end']
-    straight_velocity = config['target']['velocity'] if escape is None else target_motion['run']
-    burn_end = _burn_end(frame.flight.properties['guidance']['motors'])
     limits = frame.limits
-    deadline = limits['launch_time'] + limits['lifetime']
-    reach_radius = float(session.props.get('radius', 0.) or 0.) + 30.
+    return dict(profile=profile, launcher_aircraft=launcher_aircraft, launch=launch, frame=frame, session=session,
+                initialization=frame.website_initialization, escape=escape, target_motion=target_motion,
+                straight_from=0. if escape is None else target_motion['end'],
+                straight_velocity=config['target']['velocity'] if escape is None else target_motion['run'],
+                burn_end=_burn_end(frame.flight.properties['guidance']['motors']),
+                deadline=limits['launch_time'] + limits['lifetime'],
+                reach_radius=float(session.props.get('radius', 0.) or 0.) + 30.,
+                inertial_enabled=bool(frame.flight.properties['rocket']['guidance'].get('inertialNavigation',False)))
+
+
+def simulate(request, progress=lambda _: None, cancelled=lambda: False):
+    from missile_envelope import unreachable
+    config = validate(request)
+    setup = simulation_setup(config)
+    frame, session, launch = setup['frame'], setup['session'], setup['launch']
+    initialization, target_motion = setup['initialization'], setup['target_motion']
+    straight_from, straight_velocity, burn_end = setup['straight_from'], setup['straight_velocity'], setup['burn_end']
+    limits, deadline, reach_radius = frame.limits, setup['deadline'], setup['reach_radius']
     def target(t): return target_point(target_motion, t)
     def targets(old, next_time):
         new = target(next_time)
@@ -293,7 +309,7 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
                   if frame.flight.family=='radar' else None)
     history = PointHistory(lambda t: target(t)['position'], lambda t: target(t)['quaternion'])
     rows = []; transitions = []; traveled_distance = 0.
-    inertial_enabled = bool(frame.flight.properties['rocket']['guidance'].get('inertialNavigation',False))
+    inertial_enabled = setup['inertial_enabled']
     tracking_status = describe_tracking(frame.flight.family,session.frame.flight.state['guidance']['manager'],
                                        inertial_enabled,initialization=initialization)
     seeker_transitions = [dict(time_s=0.,**tracking_status)]
@@ -363,6 +379,13 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
             else: rows.append(endpoint)
         if i % 24 == 23: progress(dict(time_s=now, duration_s=config['duration'], fraction=min(1.,now/config['duration'])))
         if terminal: break
+    return simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new)
+
+
+def simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new):
+    """The simulator's result: trajectory, transitions and model description."""
+    profile, frame, escape = setup['profile'], setup['frame'], setup['escape']
+    launcher_aircraft, initialization = setup['launcher_aircraft'], setup['initialization']
     return dict(scenario=config, release=frame.website_release, trajectory=rows, tracking_transitions=transitions,
                 seeker_transitions=seeker_transitions,
                 closest_approach=best, outcome=outcome, elapsed_s=rows[-1]['time_s'],
