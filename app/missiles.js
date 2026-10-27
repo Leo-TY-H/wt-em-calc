@@ -237,13 +237,14 @@
     el('missile-preview-note').textContent='';
   }
   // Starting geometry in 3D (Leo, 2026-10-26): the launcher, the target placed from it by azimuth, horizontal distance
-  // and altitude, and both headings as arrows. World X, Z and altitude are the scene's x, y and z, as in the flight chart.
+  // and altitude, and both headings as arrows. World X, Z and altitude are the scene's x, -y and z (Leo, 2026-10-27: a
+  // right-handed X, Y up, Z picture, as in the flight chart).
   // Labels (Leo, 2026-10-27: no overlapping text) go on screen where no line or other label is: each takes the side of
   // its point, of eight, whose box covers the least, and they are placed again when the view is turned.
   function drawPreview(launch,target) {
     const node=el('missile-geometry');if(!node.clientWidth)return;   // hidden tab: drawn once it is shown (ResizeObserver)
     const light='#dce5f0',grey='#8d9aae',cyan='#38c9d7',orange='#ffa66b';
-    const scene=p=>[p[0],p[2],p[1]],L=scene(launch.position),T=scene(target.position),G=[T[0],T[1],L[2]];
+    const scene=p=>[p[0],-p[2],p[1]],L=scene(launch.position),T=scene(target.position),G=[T[0],T[1],L[2]];
     const horizontal=Math.hypot(T[0]-L[0],T[1]-L[1]),rise=T[2]-L[2],size=Math.max(horizontal,Math.abs(rise),300);
     const azimuth=Math.atan2(T[1]-L[1],T[0]-L[0]),deg=v=>`${+v.toFixed(1)}°`,turned=Math.abs(azimuth)>1e-3;
     const along=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t),points=[L,T],traces=[],segments=[],labels=[];
@@ -258,7 +259,7 @@
       line([L,[L[0]+r*1.25,L[1],L[2]]],grey,2,'dot');
       const steps=Math.max(1,Math.ceil(Math.abs(azimuth)*180/Math.PI/3));
       line(Array.from({length:steps+1},(_,i)=>{const a=azimuth*i/steps;return [L[0]+r*Math.cos(a),L[1]+r*Math.sin(a),L[2]];}),light,2);
-      label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],deg(azimuth*180/Math.PI),light);
+      label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],deg(-azimuth*180/Math.PI),light);
     }
     // Horizontal distance, then the altitude difference and the line of sight.
     if(horizontal>0){line([L,G],light,2.5,'dash');label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
@@ -315,8 +316,8 @@
     const horizontal=Math.hypot(eye.x,eye.y)||1e-9,length=Math.hypot(horizontal,eye.z),c=AXES_SIZE/2,arm=24;
     const right=[-eye.y/horizontal,eye.x/horizontal,0],up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
     const toward=[eye.x/length,eye.y/length,eye.z/length],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-    // World X, Z and altitude are the scene's x, y and z; the axis nearest the viewer is drawn last.
-    const axes=[['X',[1,0,0],'#ef7d7a'],['Y',[0,0,1],'#86d38a'],['Z',[0,1,0],'#76a9f5']].map(([name,v,color])=>({name,color,x:dot(v,right),y:dot(v,up),depth:dot(v,toward)}))
+    // World X, Y (altitude) and Z are the scene's x, z and -y, a right-handed triad; the axis nearest the viewer is drawn last.
+    const axes=[['X',[1,0,0],'#ef7d7a'],['Y',[0,0,1],'#86d38a'],['Z',[0,-1,0],'#76a9f5']].map(([name,v,color])=>({name,color,x:dot(v,right),y:dot(v,up),depth:dot(v,toward)}))
       .sort((a,b)=>a.depth-b.depth);
     // Letters just beyond the tips, pushed apart where two foreshortened axes point the same way.
     for(const a of axes){const n=Math.max(Math.hypot(a.x,a.y),.35);a.lx=c+(arm+9)*a.x/n;a.ly=c-(arm+9)*a.y/n;}
@@ -648,13 +649,13 @@
       return [Math.min(...values),Math.max(...values)];
     });
     flightBounds=bounds;const fitted=sceneFit(bounds);camera=fitted.camera;
-    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#000000'};};
+    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:index===1?[center+span/2,center-span/2]:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#000000'};};
     const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',tickformat:',.0f',automargin:true});
     // Mouse logic as on the EM chart (Leo, 2026-10-27): drag pans (turns the 3D view), the wheel zooms, the toolbar resets.
     const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#e3edf7',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
       dragmode:is3d?'turntable':'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},
       ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#a9b8ca'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
-        {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1},hovermode:'closest'})};
+        {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1,...(view==='xz'?{autorange:'reversed'}:{})},hovermode:'closest'})};
     el('missile-slice-note').hidden=is3d;
     el('missile-chart').setAttribute('aria-label',is3d?'Interactive 3D missile and target trajectories':`Interactive 2D missile and target trajectories: ${axisNames[viewAxes[view][0]]} / ${axisNames[viewAxes[view][1]]}`);
     await Plotly.newPlot(el('missile-chart'),[...flights.map((f,i)=>trace(f,'missile',resultColors[i])),trace(longest,'target','#ffa66b'),...flights.map((f,i)=>marker(missileName(f.scenario.missile)+' now',resultColors[i])),marker('Target now','#ffd0ac',false)],
