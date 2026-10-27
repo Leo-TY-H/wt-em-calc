@@ -63,7 +63,7 @@
     <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="sidebar-actions">
       <p id="envelope-ready" class="hint" hidden></p>
-      <button id="envelope-run" class="primary-button" type="submit" disabled>Calculate envelope <span>↗</span></button>
+      <button id="envelope-run" class="primary-button" type="submit" disabled>Calculate</button>
       <button id="envelope-cancel" class="secondary-button" type="button" hidden>Stop</button>
     </div>
   </form></aside>
