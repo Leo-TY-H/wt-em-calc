@@ -723,6 +723,14 @@ function propellerPower(a,p){
 }
 // The model's body axes are forward, up and left (the left wing sits at +z), so the Right column is -z.
 const bodyRight=([forward,up,left])=>[forward,up,-left];
+// Lift and drag (Leo, 2026-10-27): every aerodynamic component (no engine) across and against the flight path. Body
+// axes are forward, up, left; the path is (cos α cos β, −sin α cos β, sin β) and lift acts along (sin α, cos α, 0).
+function liftDrag(p){
+  const f=Object.values(p.component_forces||{}).reduce((s,v)=>s.map((x,i)=>x+v[i]),[0,0,0]);
+  const a=(p.alpha_deg||0)*Math.PI/180,b=(p.sideslip_deg||0)*Math.PI/180;
+  const lift=f[0]*Math.sin(a)+f[1]*Math.cos(a),drag=-(f[0]*Math.cos(a)*Math.cos(b)-f[1]*Math.sin(a)*Math.cos(b)+f[2]*Math.sin(b));
+  return [['Lift',fmt(lift/KGF,0)+' kgf'],['Drag',fmt(drag/KGF,0)+' kgf'],['L/D',drag>0?fmt(lift/drag,2):'—']];
+}
 function controlDeflections(p){
   // Surface deflection, % of full travel; the server reports + as nose up, roll right and nose right.
   const d=p.control_deflection_percent;if(!d)return [];
@@ -754,7 +762,7 @@ async function inspect(a,p,clicked){
     ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
     ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
-    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],
+    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],...liftDrag(p),
     ...(p.propulsion?[
       ...propellerPower(a,p),
       ['Engine RPM',p.propulsion.engine_rpm.map(v=>fmt(v,0)).join(' / ')],
