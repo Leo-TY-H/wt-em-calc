@@ -261,7 +261,9 @@
     }
     // Horizontal distance, then the altitude difference and the line of sight.
     if(horizontal>0){line([L,G],light,2.5,'dash');label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
-    if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey);line([L,T],grey,1.5,'dash');}
+    if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey);
+      // Total separation (Leo, 2026-10-27) along the line of sight; level aircraft show only the horizontal distance.
+      line([L,T],grey,1.5,'dash');label(along(L,T,.45),`${(Math.hypot(horizontal,rise)/1000).toFixed(2)} km total`,grey);}
     // Each aircraft with its heading (and climb) as an arrow of one size for both.
     for(const [state,p,color,name,climbName] of [[launch,L,cyan,'Launcher','launch angle'],[target,T,orange,'Target','climb']]) {
       const v=scene(state.velocity),speed=Math.hypot(...v),[heading,climb]=state.angles;
