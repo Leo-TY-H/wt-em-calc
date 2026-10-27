@@ -173,7 +173,6 @@ body h1{text-transform:uppercase;letter-spacing:.01em;font-weight:600}
 /* Surfaces */
 body>header.topbar,body .sidebar,body .missile-sidebar,body .sidebar-actions,body .missile-run-panel{background:#000}
 body .sidebar-actions,body .missile-run-panel{border-top:1px solid var(--line);box-shadow:none}
-body .missile-preview{background:#000;border-color:var(--line)}
 body .missile-coordinate-guide{background:none;border-left:1px solid var(--hairline)}
 body .progress-panel{background:#000;border-color:var(--line)}
 body #progress-fill,body #envelope-progress-fill{background:var(--text)}
