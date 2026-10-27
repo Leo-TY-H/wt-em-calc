@@ -240,7 +240,7 @@ Exact settings, limitations and preserved reports are in `SOLVER-WORK.md`.
 
 [Open the website](https://neothunderism.pages.dev) or [download the Windows app](https://github.com/Leo-TY-H/wt-em-calc/releases/latest/download/neothunderism-windows-x64.zip).
 
-On the website, add aircraft, choose flight conditions, and click **Calculate diagram**. Hover over the plot to inspect results; use the download buttons to save charts or data.
+On the website, add aircraft, choose flight conditions, and click **Calculate**. Hover over the plot to inspect results; use the download buttons to save charts or data.
 
 The EM calculator keeps its equation version for the current session. **Calculate** does not check for updates or restart the app. After local equation edits, refresh the browser to load the changes before calculating. A refresh during an active calculation keeps that calculation's version; refresh again after it finishes to apply updates.
 

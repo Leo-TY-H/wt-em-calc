@@ -45,7 +45,7 @@
     ${stateFields('target',3,'Target aircraft')}
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
-    <button id="missile-run" class="primary-button" type="submit" disabled>Simulate engagement <span>↗</span></button>
+    <button id="missile-run" class="primary-button" type="submit" disabled>Calculate</button>
     <button id="missile-cancel" class="secondary-button" type="button" hidden>Cancel simulation</button>
     <div id="missile-status" role="status" aria-live="polite"></div></div>
   </form></aside>
@@ -55,13 +55,12 @@
     <section class="missile-preview" aria-labelledby="missile-preview-title">
       <div class="missile-preview-heading"><div><h2 id="missile-preview-title">Starting geometry</h2></div></div>
       <div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div>
-      <div class="missile-setup-stats"><div><span>Aircraft separation</span><strong id="missile-separation">—</strong></div><div><span>Target altitude difference</span><strong id="missile-altitude-difference">—</strong></div><div><span>Aircraft closing speed</span><strong id="missile-closing">—</strong></div></div>
       <p id="missile-preview-note" class="hint"></p>
     </section>
     <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label><button id="missile-view-reset" type="button">Reset view</button></div></div>
     <p id="missile-slice-note" class="hint missile-hover-hint" hidden>2D slices project the full trajectories onto the selected plane.</p>
     <p class="hint missile-hover-hint">Hover over the missile or its flight path to inspect flight data.</p>
-    <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories"><div class="empty"><span class="empty-glyph">↗</span><h2>Ready for your first flight</h2><p>Choose a starter scenario or adjust the setup,<br>then select <strong>Simulate engagement</strong> to see the 3D flight.</p><button id="missile-run-preview" class="secondary-button" type="submit" form="missile-form" disabled>Simulate engagement ↗</button></div></div>
+    <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories"><div class="empty"><span class="empty-glyph">↗</span><h2>Ready for your first flight</h2><p>Choose a starter scenario or adjust the setup,<br>then select <strong>Calculate</strong> to see the 3D flight.</p><button id="missile-run-preview" class="secondary-button" type="submit" form="missile-form" disabled>Calculate</button></div></div>
     <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select></div></section>
     <p id="missile-frame" class="missile-frame-readout"></p>
     <label id="missile-result-label" class="field missile-result-choice" hidden>Inspect missile result<select id="missile-result-select"></select></label>
@@ -207,9 +206,8 @@
       if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetDistance.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
     }
     const invalid=numericFields.find(field=>!field.validity.valid),valid=!invalid;
-    el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:'Add a missile to simulate.'):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
+    el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:''):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
     if(!valid) {
-      for(const id of ['missile-separation','missile-altitude-difference','missile-closing'])el(id).textContent='—';
       if(el('missile-geometry').data)Plotly.purge(el('missile-geometry'));
       el('missile-geometry').setAttribute('aria-label','Preview unavailable. Check the setup values.');
       el('missile-preview-note').textContent='Complete the numeric fields within their allowed ranges to see the preview.';
@@ -217,52 +215,49 @@
     }
     const {launcher:launch,target}=inputs(),offset=target.position.map((v,i)=>v-launch.position[i]);
     const distance=Math.hypot(...offset),altitude=offset[1];
-    const closing=distance?offset.reduce((sum,v,i)=>sum+v*(launch.velocity[i]-target.velocity[i]),0)/distance:0;
     const format=value=>value.toLocaleString(undefined,{maximumFractionDigits:1});
-    el('missile-separation').textContent=(distance/1000).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' km';
-    el('missile-altitude-difference').textContent=altitude===0?'Same altitude':`${format(Math.abs(altitude))} m ${altitude>0?'above':'below'}`;
-    el('missile-closing').textContent=distance===0?'Same position':`${format(Math.abs(closing)*3.6)} km/h${closing<0?' · opening':closing>0?' · closing':''}`;
     drawPreview(launch,target);
     el('missile-geometry').setAttribute('aria-label',`3D view of aircraft at release. Initial separation ${(distance/1000).toFixed(2)} kilometres. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
     el('missile-preview-note').textContent='';
   }
   // Starting geometry in 3D (Leo, 2026-10-26): the launcher, the target placed from it by azimuth, horizontal distance
-  // and altitude, and both travel headings. World X, Z and altitude are the scene's x, y and z, as in the flight chart.
+  // and altitude, and both headings as arrows. World X, Z and altitude are the scene's x, y and z, as in the flight chart.
+  // Labels (Leo, 2026-10-27: no overlapping text) go on screen where no line or other label is: each takes the side of
+  // its point, of eight, whose box covers the least, and they are placed again when the view is turned.
   function drawPreview(launch,target) {
     const node=el('missile-geometry');if(!node.clientWidth)return;   // hidden tab: drawn once it is shown (ResizeObserver)
     const light='#dce5f0',grey='#8d9aae',cyan='#38c9d7',orange='#ffa66b';
     const scene=p=>[p[0],p[2],p[1]],L=scene(launch.position),T=scene(target.position),G=[T[0],T[1],L[2]];
     const horizontal=Math.hypot(T[0]-L[0],T[1]-L[1]),rise=T[2]-L[2],size=Math.max(horizontal,Math.abs(rise),300);
-    const azimuth=Math.atan2(T[1]-L[1],T[0]-L[0]),deg=v=>`${+v.toFixed(1)}°`;
-    const along=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t),points=[L,T],traces=[],annotations=[];
-    const line=(ps,color,width,dash='solid')=>{points.push(...ps);traces.push({type:'scatter3d',mode:'lines',x:ps.map(p=>p[0]),y:ps.map(p=>p[1]),z:ps.map(p=>p[2]),line:{color,width,dash},hoverinfo:'skip',showlegend:false});};
-    // Labels beside the aircraft (the target's above it on a narrow preview); the scene leaves them room.
-    const W=node.clientWidth,H=node.clientHeight||260,narrow=W<560,widths={};
-    const context=(drawPreview.canvas||=document.createElement('canvas')).getContext('2d');context.font=`12px ${getComputedStyle(document.body).fontFamily}`;
-    const textWidth=text=>Math.max(...text.split('<br>').map(t=>context.measureText(t).width));
-    const place={above:{yanchor:'bottom',yshift:7},below:{yanchor:'top',yshift:-7},left:{xanchor:'right',xshift:-9,align:'right'},right:{xanchor:'left',xshift:9,align:'left'}};
-    const label=(p,text,color,where)=>{points.push(p);annotations.push({x:p[0],y:p[1],z:p[2],text,showarrow:false,font:{color,size:12},...place[where]});};
-    // Azimuth: the arc from the 0° (+X) reference to the target's bearing, in the launcher's horizontal plane.
-    const r=.22*size;
-    line([L,[L[0]+r*1.25,L[1],L[2]]],grey,2,'dot');
-    const steps=Math.max(1,Math.ceil(Math.abs(azimuth)*180/Math.PI/3));
-    if(horizontal>0&&azimuth)line(Array.from({length:steps+1},(_,i)=>{const a=azimuth*i/steps;return [L[0]+r*Math.cos(a),L[1]+r*Math.sin(a),L[2]];}),light,3);
-    label([L[0]+r*1.1*Math.cos(azimuth/2),L[1]+r*1.1*Math.sin(azimuth/2),L[2]],`Azimuth ${deg(azimuth*180/Math.PI)}${narrow?'<br>':' '}from +X`,light,'below');
+    const azimuth=Math.atan2(T[1]-L[1],T[0]-L[0]),deg=v=>`${+v.toFixed(1)}°`,turned=Math.abs(azimuth)>1e-3;
+    const along=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t),points=[L,T],traces=[],segments=[],labels=[];
+    const W=node.clientWidth,H=node.clientHeight||260,narrow=W<560;
+    const line=(ps,color,width,dash='solid')=>{points.push(...ps);for(let i=1;i<ps.length;i++)segments.push([ps[i-1],ps[i]]);
+      traces.push({type:'scatter3d',mode:'lines',x:ps.map(p=>p[0]),y:ps.map(p=>p[1]),z:ps.map(p=>p[2]),line:{color,width,dash},hoverinfo:'skip',showlegend:false});};
+    const label=(p,text,color,lines=[text])=>{points.push(p);labels.push({p,text,color,lines});};
+    // Azimuth: the arc from the +X reference (dotted) to the target's bearing, in the launcher's horizontal plane,
+    // drawn beyond the heading arrows.
+    const r=.3*size;
+    if(horizontal>0&&turned) {
+      line([L,[L[0]+r*1.25,L[1],L[2]]],grey,2,'dot');
+      const steps=Math.max(1,Math.ceil(Math.abs(azimuth)*180/Math.PI/3));
+      line(Array.from({length:steps+1},(_,i)=>{const a=azimuth*i/steps;return [L[0]+r*Math.cos(a),L[1]+r*Math.sin(a),L[2]];}),light,2);
+      label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],`Azimuth ${deg(azimuth*180/Math.PI)}`,light);
+    }
     // Horizontal distance, then the altitude difference and the line of sight.
-    if(horizontal>0){line([L,G],light,3);label(along(L,G,.62),`${(horizontal/1000).toFixed(2)} km`,light,'below');}
-    if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey,'left');line([L,T],grey,2,'dash');}
-    // Each aircraft with its travel heading (and climb) as an arrow.
-    // The view looks from behind the launcher, so its label goes left and the target's right (above when narrow).
-    for(const [state,p,color,name,climbName,side] of [[launch,L,cyan,'Launcher','launch angle','left'],[target,T,orange,'Target','climb',narrow?'above':'right']]) {
+    if(horizontal>0){line([L,G],light,3);label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
+    if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey);line([L,T],grey,1.5,'dash');}
+    // Each aircraft with its heading (and climb) as an arrow of one size for both.
+    for(const [state,p,color,name,climbName] of [[launch,L,cyan,'Launcher','launch angle'],[target,T,orange,'Target','climb']]) {
       const v=scene(state.velocity),speed=Math.hypot(...v),[heading,climb]=state.angles;
-      traces.push({type:'scatter3d',mode:'markers',x:[p[0]],y:[p[1]],z:[p[2]],marker:{size:6,color},showlegend:false,
-        hovertemplate:`${name}<br>${Math.round(p[2]).toLocaleString()} m · ${Math.round(speed*3.6).toLocaleString()} km/h<br>Heading ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}<extra></extra>`});
-      const text=`${name}<br>heading ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}`;
-      widths[name]=textWidth(text);label(p,text,color,side);
+      const detail=`heading ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}`;
+      traces.push({type:'scatter3d',mode:'markers',x:[p[0]],y:[p[1]],z:[p[2]],marker:{size:5,color},showlegend:false,
+        hovertemplate:`${name}<br>${Math.round(p[2]).toLocaleString()} m · ${Math.round(speed*3.6).toLocaleString()} km/h<br>${detail[0].toUpperCase()+detail.slice(1)}<extra></extra>`});
+      if(narrow)label(p,name,color);else label(p,`${name}<br><span style="font-size:11px;color:${grey}">${detail}</span>`,color,[name,detail]);
       if(!speed)continue;
-      const u=v.map(c=>c/speed),length=.3*size,head=.08*size,end=p.map((c,i)=>c+u[i]*length);
-      line([p,end],color,4);points.push(end.map((c,i)=>c+u[i]*head));
-      traces.push({type:'cone',x:[end[0]],y:[end[1]],z:[end[2]],u:[u[0]*head],v:[u[1]*head],w:[u[2]*head],anchor:'tail',sizemode:'raw',sizeref:1,
+      const u=v.map(c=>c/speed),length=.2*size,head=.05*size,end=p.map((c,i)=>c+u[i]*length);
+      line([p,end],color,3);points.push(end.map((c,i)=>c+u[i]*head));segments.push([end,end.map((c,i)=>c+u[i]*head)]);
+      traces.push({type:'cone',x:[end[0]],y:[end[1]],z:[end[2]],u:[u[0]*head],v:[u[1]*head],w:[u[2]*head],anchor:'tail',sizemode:'raw',sizeref:.7,
         colorscale:[[0,color],[1,color]],showscale:false,hoverinfo:'skip',lighting:{ambient:1,diffuse:0,specular:0,roughness:1,fresnel:0}});
     }
     // Seen from behind the launcher's left, 35° above, so the target's bearing and the horizontal plane both read;
@@ -270,16 +265,61 @@
     const view=azimuth-2*Math.PI/3,elevation=35*Math.PI/180,E=1.73;
     const eye={x:E*Math.cos(elevation)*Math.cos(view),y:E*Math.cos(elevation)*Math.sin(view),z:E*Math.sin(elevation)};
     const bounds=[0,1,2].map(i=>[Math.min(...points.map(p=>p[i])),Math.max(...points.map(p=>p[i]))]);
-    const margin=[widths.Launcher+16,narrow?widths.Target/2+8:widths.Target+16];
-    const domain={x:[Math.min(.35,margin[0]/W),1-Math.min(.35,margin[1]/W)],y:narrow?[44/H,1-44/H]:[.04,.96]};
+    // Labels may sit on any side: the scene keeps a margin of the widest one all round.
+    const context=(drawPreview.canvas||=document.createElement('canvas')).getContext('2d');context.font=`12px ${getComputedStyle(document.body).fontFamily}`;
+    for(const l of labels){l.width=Math.max(...l.lines.map(t=>context.measureText(t).width))+4;l.height=15*l.lines.length;}
+    const widest=Math.max(...labels.map(l=>l.width));
+    const mx=Math.min(.3,(widest+14)/W),my=Math.min(.25,34/H),domain={x:[mx,1-mx],y:[my,1-my]};
     const viewport=W*(domain.x[1]-domain.x[0])/(H*(domain.y[1]-domain.y[0]));
-    const fitted=sceneFit(bounds,{chart:node,floor:.05,pad:1.25,eye:previewCamera?.eye||eye,points,viewport}),axis=i=>{const c=(bounds[i][0]+bounds[i][1])/2,span=fitted.spans[i];return {range:[c-span/2,c+span/2],visible:false};};
+    const fitted=sceneFit(bounds,{chart:node,floor:.05,pad:1.15,eye:previewCamera?.eye||eye,points,viewport}),axis=i=>{const c=(bounds[i][0]+bounds[i][1])/2,span=fitted.spans[i];return {range:[c-span/2,c+span/2],visible:false};};
+    // Plotly's orthographic scene shows two scene units over the domain's height.
+    const frame={W,H,domain,scale:H*(domain.y[1]-domain.y[0])/2};
+    const place=camera=>placeLabels(labels,segments,bounds,fitted,camera.eye,frame);
     Plotly.react(node,traces,{paper_bgcolor:'#000000',margin:{l:0,r:0,t:0,b:0},showlegend:false,
       hoverlabel:{bgcolor:'#0c0c0f',font:{color:'#e3edf7',size:12}},
-      scene:{domain,xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera:previewCamera||fitted.camera,annotations}},
+      scene:{domain,xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera:previewCamera||fitted.camera,annotations:place(previewCamera||fitted.camera)}},
       {displayModeBar:false,responsive:true,scrollZoom:false});
     node.removeAllListeners?.('plotly_relayout');
-    node.on('plotly_relayout',event=>{if(event['scene.camera'])previewCamera=event['scene.camera'];});
+    let placing=false;
+    node.on('plotly_relayout',event=>{
+      if(placing||!event['scene.camera'])return;
+      // The turned view goes into the layout with its labels, or relaying them out would turn it back.
+      previewCamera=event['scene.camera'];placing=true;
+      Plotly.relayout(node,{'scene.camera':previewCamera,'scene.annotations':place(previewCamera)}).finally(()=>{placing=false;});
+    });
+  }
+  // Annotations for the preview's labels. Each label's box goes on the side of its point (of eight, diagonals first)
+  // that covers the fewest drawn line pixels and no label placed before it; the aircraft are labelled first.
+  function placeLabels(labels,segments,bounds,fitted,eye,frame) {
+    const keys=['x','y','z'],centre=bounds.map(([low,high])=>(low+high)/2),k=frame.scale;
+    const horizontal=Math.hypot(eye.x,eye.y)||1e-9,length=Math.hypot(horizontal,eye.z);
+    const right=[-eye.y/horizontal,eye.x/horizontal,0],up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
+    // Pixels from the scene domain's centre, y up.
+    const screen=p=>{const q=p.map((v,i)=>fitted.aspectratio[keys[i]]*(v-centre[i])/fitted.spans[i]);return [k*q.reduce((s,v,i)=>s+v*right[i],0),k*q.reduce((s,v,i)=>s+v*up[i],0)];};
+    const samples=[];
+    for(const [a,b] of segments){const A=screen(a),B=screen(b),n=Math.max(1,Math.ceil(Math.hypot(B[0]-A[0],B[1]-A[1])/3));
+      for(let i=0;i<=n;i++)samples.push([A[0]+(B[0]-A[0])*i/n,A[1]+(B[1]-A[1])*i/n]);}
+    const cx=(frame.domain.x[0]+frame.domain.x[1])/2*frame.W,cy=(frame.domain.y[0]+frame.domain.y[1])/2*frame.H;
+    const limits=[-cx+2,frame.W-cx-2,-cy+2,frame.H-cy-2],placed=[];
+    // Close to the point first; a second, farther ring when everything near is taken.
+    const sides=[9,26].flatMap((gap,ring)=>[[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>[dx,dy,gap,ring*4]));
+    const order=labels.map((l,i)=>i).sort((a,b)=>(labels[b].lines.length>1||/Launcher|Target/.test(labels[b].text))-(labels[a].lines.length>1||/Launcher|Target/.test(labels[a].text)));
+    const out=[];
+    for(const i of order) {
+      const {p,text,color,width:w,height:h}=labels[i],s=screen(p);let best=null;
+      for(const [dx,dy,gap,far] of sides) {
+        const x0=dx>0?gap:dx<0?-gap-w:-w/2,y0=dy>0?gap:dy<0?-gap-h:-h/2,box=[s[0]+x0,s[0]+x0+w,s[1]+y0,s[1]+y0+h];
+        let cost=far;
+        for(const [x,y] of samples)if(x>box[0]-2&&x<box[1]+2&&y>box[2]-2&&y<box[3]+2)cost+=1;
+        for(const b of placed)cost+=400*Math.max(0,Math.min(box[1],b[1])-Math.max(box[0],b[0]))*Math.max(0,Math.min(box[3],b[3])-Math.max(box[2],b[2]))/(w*h);
+        cost+=40*(Math.max(0,limits[0]-box[0])+Math.max(0,box[1]-limits[1])+Math.max(0,limits[2]-box[2])+Math.max(0,box[3]-limits[3]))/Math.min(w,h);
+        if(!best||cost<best.cost-1e-6)best={cost,dx,dy,gap,box};
+      }
+      placed.push(best.box);const {dx,dy,gap}=best;
+      out[i]={x:p[0],y:p[1],z:p[2],text,showarrow:false,font:{color,size:12},xshift:dx*gap,yshift:dy*gap,
+        xanchor:dx>0?'left':dx<0?'right':'center',yanchor:dy>0?'bottom':dy<0?'top':'middle',align:dx<0?'right':dx>0?'left':'center'};
+    }
+    return out;
   }
   // The preview's view once it has been turned by hand; a preset or Reset all turns it back.
   let previewCamera=null;
@@ -313,7 +353,6 @@
       syncMotion(role,states[role].velocity);
     }
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.preset===preset)));
-    // The setup preview shows the scenario's separation and closing speed; no note repeats them.
     el('missile-preset-note').textContent='';
     changed();
   }
