@@ -25,7 +25,7 @@
     return `<div class="missile-motion">${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Distance','Target horizontal distance','km',distance,0,200)}</div>`;
   };
   const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
-  const stateFields = (role,number,title) => `<fieldset class="missile-step missile-${role}"><legend><span class="missile-step-number">${number}</span>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
+  const stateFields = (role,title) => `<fieldset class="missile-step missile-${role}"><legend>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
     <div class="section-heading"><span class="eyebrow">ENGAGEMENT SETUP</span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
     <div class="missile-presets" role="group" aria-label="Starter scenarios">
@@ -41,8 +41,8 @@
       <div id="missile-selected" class="missile-selected" aria-label="Selected missiles"></div>
       <button id="missile-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    ${stateFields('launch',2,'Launcher aircraft')}
-    ${stateFields('target',3,'Target aircraft')}
+    ${stateFields('launch','Launcher aircraft')}
+    ${stateFields('target','Target aircraft')}
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
     <button id="missile-run" class="primary-button" type="submit" disabled>Calculate</button>
@@ -54,7 +54,7 @@
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
     <section class="missile-preview" aria-labelledby="missile-preview-title">
       <div class="missile-preview-heading"><div><h2 id="missile-preview-title">Starting geometry</h2></div></div>
-      <div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div>
+      <div class="missile-geometry-wrap"><div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div><svg id="missile-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true"></svg></div>
       <p id="missile-preview-note" class="hint"></p>
     </section>
     <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label></div></div>
@@ -208,6 +208,7 @@
     el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:''):`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
     if(!valid) {
       if(el('missile-geometry').data)Plotly.purge(el('missile-geometry'));
+      el('missile-axes').innerHTML='';
       el('missile-geometry').setAttribute('aria-label','Preview unavailable. Check the setup values.');
       el('missile-preview-note').textContent='Complete the numeric fields within their allowed ranges to see the preview.';
       return;
@@ -241,7 +242,7 @@
       line([L,[L[0]+r*1.25,L[1],L[2]]],grey,2,'dot');
       const steps=Math.max(1,Math.ceil(Math.abs(azimuth)*180/Math.PI/3));
       line(Array.from({length:steps+1},(_,i)=>{const a=azimuth*i/steps;return [L[0]+r*Math.cos(a),L[1]+r*Math.sin(a),L[2]];}),light,2);
-      label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],`Azimuth ${deg(azimuth*180/Math.PI)}`,light);
+      label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],deg(azimuth*180/Math.PI),light);
     }
     // Horizontal distance, then the altitude difference and the line of sight.
     if(horizontal>0){line([L,G],light,3);label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
@@ -249,7 +250,7 @@
     // Each aircraft with its heading (and climb) as an arrow of one size for both.
     for(const [state,p,color,name,climbName] of [[launch,L,cyan,'Launcher','launch angle'],[target,T,orange,'Target','climb']]) {
       const v=scene(state.velocity),speed=Math.hypot(...v),[heading,climb]=state.angles;
-      const detail=`heading ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}`;
+      const detail=`HDG ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}`;
       traces.push({type:'scatter3d',mode:'markers',x:[p[0]],y:[p[1]],z:[p[2]],marker:{size:5,color},showlegend:false,
         hovertemplate:`${name}<br>${Math.round(p[2]).toLocaleString()} m · ${Math.round(speed*3.6).toLocaleString()} km/h<br>${detail[0].toUpperCase()+detail.slice(1)}<extra></extra>`});
       if(narrow)label(p,name,color);else label(p,`${name}<br><span style="font-size:11px;color:${grey}">${detail}</span>`,color,[name,detail]);
@@ -272,20 +273,42 @@
     const viewport=W*(domain.x[1]-domain.x[0])/(H*(domain.y[1]-domain.y[0]));
     const fitted=sceneFit(bounds,{chart:node,floor:.05,pad:1.15,eye:previewCamera?.eye||eye,points,viewport}),axis=i=>{const c=(bounds[i][0]+bounds[i][1])/2,span=fitted.spans[i];return {range:[c-span/2,c+span/2],visible:false};};
     // Plotly's orthographic scene shows two scene units over the domain's height.
-    const frame={W,H,domain,scale:H*(domain.y[1]-domain.y[0])/2};
+    // The axes indicator's corner (bottom right) is kept free of labels.
+    const frame={W,H,domain,scale:H*(domain.y[1]-domain.y[0])/2,reserved:[W-AXES_SIZE-8,W,H-AXES_SIZE-8,H]};
     const place=camera=>placeLabels(labels,segments,bounds,fitted,camera.eye,frame);
     Plotly.react(node,traces,{paper_bgcolor:'#000000',margin:{l:0,r:0,t:0,b:0},showlegend:false,
       hoverlabel:{bgcolor:'#0c0c0f',font:{color:'#e3edf7',size:12}},
       scene:{domain,xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera:previewCamera||fitted.camera,annotations:place(previewCamera||fitted.camera)}},
       {displayModeBar:false,responsive:true,scrollZoom:false});
-    node.removeAllListeners?.('plotly_relayout');
+    drawAxes((previewCamera||fitted.camera).eye);
+    node.removeAllListeners?.('plotly_relayout');node.removeAllListeners?.('plotly_relayouting');
+    node.on('plotly_relayouting',event=>{if(event['scene.camera'])drawAxes(event['scene.camera'].eye);});
     let placing=false;
     node.on('plotly_relayout',event=>{
       if(placing||!event['scene.camera'])return;
       // The turned view goes into the layout with its labels, or relaying them out would turn it back.
-      previewCamera=event['scene.camera'];placing=true;
+      previewCamera=event['scene.camera'];placing=true;drawAxes(previewCamera.eye);
       Plotly.relayout(node,{'scene.camera':previewCamera,'scene.annotations':place(previewCamera)}).finally(()=>{placing=false;});
     });
+  }
+  // Axes indicator (Leo, 2026-10-27): world X, Y (altitude) and Z as seen from the preview's camera, turning with it.
+  const AXES_SIZE=72;
+  function drawAxes(eye) {
+    const horizontal=Math.hypot(eye.x,eye.y)||1e-9,length=Math.hypot(horizontal,eye.z),c=AXES_SIZE/2,arm=24;
+    const right=[-eye.y/horizontal,eye.x/horizontal,0],up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
+    const toward=[eye.x/length,eye.y/length,eye.z/length],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    // World X, Z and altitude are the scene's x, y and z; the axis nearest the viewer is drawn last.
+    const axes=[['X',[1,0,0],'#ef7d7a'],['Y',[0,0,1],'#86d38a'],['Z',[0,1,0],'#76a9f5']].map(([name,v,color])=>({name,color,x:dot(v,right),y:dot(v,up),depth:dot(v,toward)}))
+      .sort((a,b)=>a.depth-b.depth);
+    // Letters just beyond the tips, pushed apart where two foreshortened axes point the same way.
+    for(const a of axes){const n=Math.max(Math.hypot(a.x,a.y),.35);a.lx=c+(arm+9)*a.x/n;a.ly=c-(arm+9)*a.y/n;}
+    for(let pass=0;pass<4;pass++)for(const a of axes)for(const b of axes){if(a===b)continue;const dx=a.lx-b.lx,dy=a.ly-b.ly,d=Math.hypot(dx,dy);
+      if(d<11){const push=(11-d)/2,ux=d>1e-6?dx/d:1,uy=d>1e-6?dy/d:0;a.lx+=ux*push;a.ly+=uy*push;b.lx-=ux*push;b.ly-=uy*push;}}
+    el('missile-axes').innerHTML=`<circle cx="${c}" cy="${c}" r="2" fill="#8d9aae"/>`+axes.map(a=>{
+      const x=c+arm*a.x,y=c-arm*a.y,lx=a.lx,ly=a.ly;
+      return `<line x1="${c}" y1="${c}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${a.color}" stroke-width="2" stroke-linecap="round"/>`+
+        `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${a.color}" font-size="11" text-anchor="middle" dominant-baseline="central">${a.name}</text>`;
+    }).join('');
   }
   // Annotations for the preview's labels. Each label's box goes on the side of its point (of eight, diagonals first)
   // that covers the fewest drawn line pixels and no label placed before it; the aircraft are labelled first.
@@ -299,7 +322,9 @@
     for(const [a,b] of segments){const A=screen(a),B=screen(b),n=Math.max(1,Math.ceil(Math.hypot(B[0]-A[0],B[1]-A[1])/3));
       for(let i=0;i<=n;i++)samples.push([A[0]+(B[0]-A[0])*i/n,A[1]+(B[1]-A[1])*i/n]);}
     const cx=(frame.domain.x[0]+frame.domain.x[1])/2*frame.W,cy=(frame.domain.y[0]+frame.domain.y[1])/2*frame.H;
-    const limits=[-cx+2,frame.W-cx-2,-cy+2,frame.H-cy-2],placed=[];
+    const limits=[-cx+2,frame.W-cx-2,-cy+2,frame.H-cy-2],r=frame.reserved;
+    // The reserved corner (screen px, y down) as a box already taken, in these coordinates (y up).
+    const placed=r?[[r[0]-cx,r[1]-cx,frame.H-r[3]-cy,frame.H-r[2]-cy]]:[];
     // Close to the point first; a second, farther ring when everything near is taken.
     const sides=[9,26].flatMap((gap,ring)=>[[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>[dx,dy,gap,ring*4]));
     const order=labels.map((l,i)=>i).sort((a,b)=>(labels[b].lines.length>1||/Launcher|Target/.test(labels[b].text))-(labels[a].lines.length>1||/Launcher|Target/.test(labels[a].text)));
