@@ -57,10 +57,9 @@
       <div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div>
       <p id="missile-preview-note" class="hint"></p>
     </section>
-    <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label><button id="missile-view-reset" type="button">Reset view</button></div></div>
-    <p id="missile-slice-note" class="hint missile-hover-hint" hidden>2D slices project the full trajectories onto the selected plane.</p>
-    <p class="hint missile-hover-hint">Hover over the missile or its flight path to inspect flight data.</p>
-    <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories"><div class="empty"><span class="empty-glyph">↗</span><h2>Ready for your first flight</h2><p>Choose a starter scenario or adjust the setup,<br>then select <strong>Calculate</strong> to see the 3D flight.</p><button id="missile-run-preview" class="secondary-button" type="submit" form="missile-form" disabled>Calculate</button></div></div>
+    <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label></div></div>
+    <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p>
+    <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories"><div class="empty"><span class="empty-glyph">↗</span><h2>Add a missile and press Calculate</h2></div></div>
     <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select></div></section>
     <p id="missile-frame" class="missile-frame-readout"></p>
     <label id="missile-result-label" class="field missile-result-choice" hidden>Inspect missile result<select id="missile-result-select"></select></label>
@@ -324,7 +323,7 @@
   // The preview's view once it has been turned by hand; a preset or Reset all turns it back.
   let previewCamera=null;
   function busy(value) {
-    for(const id of ['missile-run','missile-run-preview'])if(el(id))el(id).disabled=value||!meta||!selectedMissiles.length;
+    el('missile-run').disabled=value||!meta||!selectedMissiles.length;
     el('missile-cancel').hidden=!value;el('missile-reset').disabled=value;
     root.querySelectorAll('[data-preset]').forEach(button=>button.disabled=value);
     el('missile-selected').querySelectorAll('button').forEach(button=>button.disabled=value);
@@ -506,8 +505,8 @@
       await Plotly.react(node,traces,{paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0',size:11},
         margin:{l:62,r:18,t:30,b:55},xaxis:{title:'Time after release · s',gridcolor:'rgba(240,240,250,.09)',range:[0,totalTime()]},
         yaxis:{title:metric.unit,gridcolor:'rgba(240,240,250,.09)',rangemode:'tozero'},showlegend:false,
-        hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+key},
-        {responsive:true,displaylogo:false,toImageButtonOptions:{filename:'missile-comparison-'+kind+'-'+key,format:'png',scale:2}});
+        hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+key,dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}},
+        {responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],toImageButtonOptions:{filename:'missile-comparison-'+kind+'-'+key,format:'png',scale:2}});
       node.removeAllListeners('plotly_click');
       node.on('plotly_click',event=>{const point=event.points?.[0]?.customdata;if(Array.isArray(point)){pause();inspectFlight(point[0]);updateFrame(indexAt(timeline,point[1],null));}});
     }));
@@ -531,14 +530,16 @@
     flightBounds=bounds;const fitted=sceneFit(bounds);camera=fitted.camera;
     const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#000000'};};
     const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#455568',tickformat:',.0f',automargin:true});
+    // Mouse logic as on the EM chart (Leo, 2026-10-27): drag pans (turns the 3D view), the wheel zooms, the toolbar resets.
     const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#e3edf7',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
+      dragmode:is3d?'turntable':'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},
       ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#a9b8ca'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
         {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1},hovermode:'closest'})};
     el('missile-slice-note').hidden=is3d;
     el('missile-chart').setAttribute('aria-label',is3d?'Interactive 3D missile and target trajectories':`Interactive 2D missile and target trajectories: ${axisNames[viewAxes[view][0]]} / ${axisNames[viewAxes[view][1]]}`);
     await Plotly.newPlot(el('missile-chart'),[...flights.map((f,i)=>trace(f,'missile',resultColors[i])),trace(longest,'target','#ffa66b'),...flights.map((f,i)=>marker(missileName(f.scenario.missile)+' now',resultColors[i])),marker('Target now','#ffd0ac',false)],
       layout,
-      {responsive:true,displaylogo:false,modeBarButtonsToRemove:['toImage']});
+      {responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['toImage','select2d','lasso2d']});
   }
   async function render() {
     flightRevision++;
@@ -583,7 +584,6 @@
     pause();const index=Number(el('missile-time').value);el('missile-view').disabled=true;
     try{await renderTrajectory();updateFrame(index);}catch(error){showError(error.message);}finally{el('missile-view').disabled=false;}
   });
-  el('missile-view-reset').addEventListener('click',()=>{if(result)Plotly.relayout(el('missile-chart'),el('missile-view').value==='3d'?{'scene.camera':camera}:{'xaxis.autorange':true,'yaxis.autorange':true});});
   el('missile-play').addEventListener('click',()=>{
     if(playing){pause();return;}if(!result)return;
     if(Number(el('missile-time').value)>=timeline.length-1)updateFrame(0);

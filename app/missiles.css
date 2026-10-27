@@ -6,6 +6,7 @@
 .missile-sidebar{padding:18px 16px 0;border-right:1px solid var(--line);background:#0f1621}
 .missile-sidebar h2{font-size:14px;margin:22px 0 10px;font-weight:600}
 .missile-sidebar .field{margin:12px 0}
+.missile-plot-note{padding:0 14px;margin:10px 0 0;font-size:11px}
 .missile-view-controls{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
 .missile-view-controls label{font-size:10px;color:var(--muted)}
 .missile-view-controls select{display:block;margin-top:4px;width:auto;max-width:100%;font-size:11px}
@@ -16,7 +17,6 @@
 .missile-playback button,.missile-main .chart-toolbar button{border:1px solid var(--line);border-radius:5px;background:var(--panel2);padding:7px 12px}
 .missile-playback input{flex:1;margin:0}.missile-playback select{width:70px}.missile-playback output{min-width:65px;text-align:right;font-variant-numeric:tabular-nums}
 .missile-frame-readout{font-size:12px;color:var(--muted);min-height:24px;margin:10px 0}
-.missile-hover-hint{padding:0 14px;margin:10px 0 0;font-size:11px}
 .missile-flight-data{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .missile-flight-data[hidden]{display:none}.missile-flight-data>summary{cursor:pointer;font-size:14px;color:var(--text)}
 #missile-flight-name{display:inline-block;font-size:11px;color:var(--cyan);margin-left:10px}
@@ -64,7 +64,6 @@
 .missile-preview h2{font-weight:500;font-size:18px;margin:3px 0 0}
 #missile-geometry{display:block;width:100%;height:280px;margin:10px 0}
 .missile-preview>.hint{margin-bottom:0;font-size:10px}
-#missile-run-preview{width:auto;color:var(--cyan);margin-top:12px;padding:10px 20px}
 .missile-sidebar input[type=number]:user-invalid{border-color:#ed9688;background:#302029}
 @media(max-width:1150px){#missile-workspace{grid-template-columns:254px minmax(0,1fr)}.missile-main{padding:18px 12px}}
 @media(max-width:760px){#missile-workspace{display:flex;flex-direction:column}.missile-sidebar{border-right:0;border-bottom:1px solid var(--line)}.missile-main{padding:16px 10px}.missile-playback{gap:8px;flex-wrap:wrap}.missile-playback input{min-width:100px}.tool-tabs{padding:8px}.tool-tabs button{padding:8px 12px}}
@@ -76,7 +75,7 @@
 #missile-add{margin:4px 0 0;padding:8px;font-size:11px}#missile-add:disabled{opacity:.55}
 .missile-result-choice{margin:10px 0 0;min-width:0}.missile-result-choice[hidden]{display:none}.missile-result-choice select{display:block;margin-top:6px}
 .missile-main .chart-toolbar{align-items:flex-start;padding:10px 12px;flex-wrap:wrap}.missile-legend{flex-wrap:wrap;gap:6px 12px;align-items:center}
-.missile-main .missile-legend button{background:transparent;border:0;padding:0;font-size:11px;text-align:left}.missile-legend span{font-size:11px}#missile-view-reset{flex-shrink:0;font-size:11px}
+.missile-main .missile-legend button{background:transparent;border:0;padding:0;font-size:11px;text-align:left}.missile-legend span{font-size:11px}
 .missile-sidebar .missile-setup-title{font-size:18px}.missile-sidebar .field{margin:8px 0}.missile-step{margin-top:14px;padding-top:12px}
 .missile-presets{margin-top:10px;gap:5px}.missile-presets button{padding:6px 3px}#missile-preset-note{min-height:0;font-size:10px}
 .missile-coordinate-guide{margin:12px 0;padding:9px}.missile-advanced{padding:8px 9px;margin:8px 0 10px}
