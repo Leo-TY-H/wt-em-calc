@@ -717,6 +717,12 @@ function propellerPower(a,p){
     rows.push(['Propeller efficiency',fmt(p.engine_force_n[0]*p.speed_kmh/3.6/total*100,1)+'%']);
   return rows;
 }
+function controlDeflections(p){
+  // Surface deflection, % of full travel; the server reports + as nose up, roll right and nose right.
+  const d=p.control_deflection_percent;if(!d)return [];
+  const side=(v,plus,minus)=>Math.abs(v)<.05?'0%':`${fmt(Math.abs(v),1)}% ${v>0?plus:minus}`;
+  return [['Elevator',side(d.elevator,'nose up','nose down')],['Ailerons',side(d.ailerons,'right','left')],['Rudder',side(d.rudder,'right','left')]];
+}
 async function inspect(a,p,clicked){
   const sequence=state.inspection=(state.inspection||0)+1;
   if(!p.component_forces&&p.detail_index!=null){
@@ -741,7 +747,7 @@ async function inspect(a,p,clicked){
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
-    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'°'],['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
+    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'°'],...controlDeflections(p),['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
     ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],
     ...(p.propulsion?[
       ...propellerPower(a,p),
