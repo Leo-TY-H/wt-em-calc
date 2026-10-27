@@ -1,6 +1,7 @@
 import math
 from component_assembly import f32, add, sub, mul
 from control_mixer import prepare_rows, curve, density_at_height
+from overrev import TORQUE as OVERREV_TORQUE, LIMIT_DECAY, TORQUE_GAIN
 
 RAD_PER_RPM = f32(.10471975803375244)
 RPM_PER_RAD = f32(9.549296379089355)
@@ -95,6 +96,16 @@ def boost_active(p, throttle, afterburner, gear, nitro=0.):
     return not (0 <= gear < len(p['stages'])) or mul(p['stages'][gear]['boost'], p['afterburner_boost']) > f32(.99)
 
 
+def overrev_torque(p, omega, torque):
+    """The game's torque of an engine over RPMMaxAllowed (overrev.py; aces.exe 0x142f9fd8e, Engine_Overheat on): the
+    first over-rev step of a fresh engine, 1 + 0.01 x (omega - 0.999965 x limit) (rad/s), after the throttle boost and
+    before the afterburner boost. Off under WT_OVERREV=0 or WT_OVERREV_TORQUE=0."""
+    limit = p.get('omega_limit') if OVERREV_TORQUE else None
+    if not limit or not omega > f32(limit):
+        return torque
+    return mul(torque, add(mul(sub(omega, mul(f32(LIMIT_DECAY), limit)), f32(TORQUE_GAIN)), 1.))
+
+
 def rpm_torque(p, omega, throttle, torque_multiplier=1., afterburner=False, gear=0, nitro=0.):
     omega, throttle, torque_multiplier = map(f32, (omega, throttle, torque_multiplier))
     effective = add(mul(sub(1., p['min_throttle']), min(p['max_throttle'], throttle)), p['min_throttle'])
@@ -109,6 +120,7 @@ def rpm_torque(p, omega, throttle, torque_multiplier=1., afterburner=False, gear
         if throttle < f32(1.1):
             tboost = add(mul(add(mul(tboost, f32(9.999998092651367)), f32(-9.999998092651367)), sub(throttle, 1.)), 1.)
         torque = mul(torque, tboost)
+    torque = overrev_torque(p, omega, torque)
     if boost:
         torque = mul(torque, mul(p['afterburner_boost'], p['stages'][gear]['boost']))
     if torque < 0.:

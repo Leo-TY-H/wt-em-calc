@@ -147,10 +147,8 @@ inline OpticalGeometry optical_point_response(const Frame12& frame_in, const d3&
     double radial = add(yy, zz), cosine_squared = mul(std::fabs(cosine), cosine);
     bool in_primary = sub(1., radial) > cosine_squared;
     bool in_secondary = sub(1., yy) > cosine_squared;
-    // The lobe values are unused by the geometric policy; evaluating them keeps
-    // the reference's numerical error behaviour.
-    if (!in_primary) (void)f32(py_exp(mul(-radial, 1e6)));
-    if (!in_secondary) (void)f32(py_exp(mul(-yy, 1e6)));
+    // The lobe values are unused by the geometric policy. The reference computes
+    // exp(-x * 1e6) for x >= 0 there, which cannot overflow or raise, so it is skipped.
     out.admitted = true;
     out.world_los = {mul(delta[0], inverse), mul(delta[1], inverse), mul(delta[2], inverse)};
     out.distance = distance;
@@ -342,6 +340,9 @@ inline OpticalObservation geometric_optical_observe(const OpticalObservationProp
         distance = -1.; out_target_id = -1;
     }
     r.available = accepted;
+    log_observation(accepted, accepted ? LOSS_NONE : !geometry.admitted
+        ? (geometry.reason == REASON_BEHIND ? LOSS_BEHIND : geometry.reason == REASON_MINIMUM ? LOSS_MINIMUM_DISTANCE : LOSS_HORIZON)
+        : LOSS_FIELD_OF_VIEW);
     r.distance = distance;
     r.strength = accepted ? 2. : 0.;
     r.flag = false;

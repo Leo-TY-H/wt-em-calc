@@ -2,82 +2,76 @@
   'use strict';
   const el = id => document.getElementById(id);
   const root = el('missile-workspace');
-  const initial = {missile:'us_aim9l_sidewinder',duration:60,
-    launch:{position:[0,5000,0],velocity:[300,0,0],angles:[0,0,0]},
-    target:{position:[4000,5000,0],velocity:[200,0,0],angles:[0,0,0]}};
+  const initial = {missile:'us_aim9l_sidewinder',
+    // Both aircraft at 1,200 km/h by default (Leo, 2026-10-27).
+    launch:{position:[0,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]},
+    target:{position:[4000,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]}};
   let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0;
   const activeJobs=new Set();
   let selectedMissiles=[], flights=[], resultColors=[], timeline=[], comparison=null, batchRunning=false, cancelRequested=false, focusIndex=0;
-  const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296','#f08070'];
+  const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296','#f08070'];
   const missileName=id=>meta?.missiles.find(m=>m.id===id)?.name||id;
   const missileLabel=id=>`${missileName(id)} [${id}]`;
+  const PLAY_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M4.5 2.5v11l9-5.5z"/></svg>';
+  const PAUSE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>';
+  const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   const escapeHtml=text=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const positionFields = role => `<div class="missile-vector"><span>Aircraft position · m</span><div class="${role==='launch'?'missile-altitude-input':'three-inputs'}">${['Along X','Altitude · Y','Along Z'].map((axis,i)=>role==='launch'&&i!==1?'':`<label>${axis}<input id="missile-${role}-position-${i}" aria-label="${role==='launch'?'Launcher':'Target'} ${axis}" type="number" step="any" required value="${initial[role].position[i]}" ${i===1?'min="0.001" max="30000"':'min="-200000" max="200000"'}></label>`).join('')}</div></div>`;
-  const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Travel heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
-  const stateFields = (role,number,title,description) => `<fieldset class="missile-step missile-${role}"><legend><span class="missile-step-number">${number}</span>${title}</legend><p class="hint">${description}</p>${positionFields(role)}${motion(role)}
-    <p class="hint">Travel heading sets movement: 0° = +X, 90° = +Z. ${role==='launch'?'Launch angle':'Climb angle'}: positive = climbing, 0° = level.</p>
-    </fieldset>`;
+  // The launcher sits above the origin; the target is placed from it in cylindrical coordinates (Leo, 2026-10-26):
+  // azimuth (0° = +X, 90° = +Z, as headings), horizontal distance in km and altitude.
+  // Rounded below a micrometre so replayed shots read cleanly (not 158.29999999999998°).
+  const cylindrical = offset => [+(Math.atan2(offset[2], offset[0]) * 180 / Math.PI).toFixed(10) + 0, +(Math.hypot(offset[0], offset[2]) / 1000).toFixed(9)];
+  // Position fields in the same style as the motion fields: label above, unit inside the input.
+  const unitField = (id, label, aria, unit, value, min, max) => `<label class="field">${label}<div class="input-unit"><input id="${id}" aria-label="${aria}" type="number" step="any" required value="${value}" min="${min}" max="${max}"><span>${unit}</span></div></label>`;
+  const positionFields = role => {
+    if(role==='launch')return `<div class="missile-motion">${unitField('missile-launch-position-1','Altitude','Launcher altitude','m',initial.launch.position[1],0.001,30000)}</div>`;
+    const [azimuth,distance]=cylindrical(initial.target.position.map((v,i)=>v-initial.launch.position[i]));
+    return `<div class="missile-motion">${unitField('missile-target-position-1','Altitude','Target altitude','m',initial.target.position[1],0.001,30000)}${unitField('missile-target-azimuth','Azimuth','Target azimuth','°',azimuth,-360,360)}${unitField('missile-target-distance','Horizontal distance','Target horizontal distance','km',distance,0,200)}</div>`;
+  };
+  const motion = role => `<div class="missile-motion">${[['speed','Speed','km/h',0,12470.76582],['course','Heading','°',-360,360],['climb',role==='launch'?'Launch angle':'Climb angle','°',-90,90]].map(([key,label,unit,min,max])=>`<label class="field">${label}<div class="input-unit"><input id="missile-${role}-${key}" aria-label="${role==='launch'?'Launcher':'Target'} ${label.toLowerCase()}" type="number" min="${min}" max="${max}" step="any" required><span>${unit}</span></div></label>`).join('')}</div>`;
+  const stateFields = (role,title) => `<fieldset class="missile-step missile-${role}"><legend>${title}</legend>${positionFields(role)}${motion(role)}</fieldset>`;
   root.innerHTML = `<aside class="missile-sidebar"><form id="missile-form">
-    <div class="section-heading"><span class="eyebrow">ENGAGEMENT SETUP</span><button id="missile-reset" class="text-button" type="button">Reset all</button></div>
-    <h2 class="missile-setup-title">Build your engagement</h2><p class="hint">Start with an example, then adjust the flight conditions.</p>
     <div class="missile-presets" role="group" aria-label="Starter scenarios">
       <button type="button" data-preset="chase" aria-pressed="true"><span aria-hidden="true">⇉</span>Tail chase</button>
       <button type="button" data-preset="head-on" aria-pressed="false"><span aria-hidden="true">⇄</span>Head-on</button>
       <button type="button" data-preset="crossing" aria-pressed="false"><span aria-hidden="true">↱</span>Crossing</button>
-    </div><p id="missile-preset-note" class="hint">Target starts 4 km ahead, flying away at 720 km/h. Examples replace both aircraft states.</p>
-    <fieldset id="missile-picker" class="missile-step"><legend>Add missiles <small>Up to eight entries</small></legend>
+    </div><p id="missile-preset-note" class="hint"></p>
+    <fieldset id="missile-picker" class="missile-step"><legend class="visually-hidden">Add missiles</legend>
       <input id="missile-search" type="search" placeholder="Search missiles…" autocomplete="off" aria-label="Search missiles" aria-controls="missile-list">
       <div id="missile-list" class="aircraft-list" aria-label="Available missiles"></div>
       <p id="missile-search-empty" class="hint" hidden>No missiles match your search.</p>
       <p id="missile-catalog-note" class="hint" role="status">Loading missiles…</p>
-      <div class="section-heading"><span class="eyebrow">ADDED MISSILES</span><span id="missile-entry-count" class="hint">0 / 8</span></div>
-      <p id="missile-entries-empty" class="hint">No missiles added.</p>
       <div id="missile-selected" class="missile-selected" aria-label="Selected missiles"></div>
-      <p class="hint">All missiles launch at t = 0 from the same aircraft setup and fly independently toward the same target.</p>
-      <details class="missile-timing"><summary id="missile-timing-title">Automatic release &amp; timing</summary><dl id="missile-timing-values"></dl><p class="hint">Times start at release (t = 0). Each motor uses its own clock; later stages may wait for flight conditions. Guidance ramps and seeker search gates remain separate.</p><p class="hint">Seeker warm-up is complete before release. The missile starts at the launcher’s position, aligned with its body. Aircraft-specific hardpoint offsets and ejector impulses are not supplied.</p></details>
       <button id="missile-retry" class="text-button" type="button" hidden>Retry loading missiles</button>
     </fieldset>
-    <div class="missile-coordinate-guide"><strong>One shared world coordinate system</strong><p>The launcher starts at X = 0, Z = 0. +X points right in the top view, +Z points up, and +Y is altitude. Target X and Z locate it relative to the launcher's starting horizontal position; altitude is absolute.</p><p>Aircraft face their travel heading and vertical angle (launcher: launch angle; target: climb angle), with zero roll.</p></div>
-    ${stateFields('launch',2,'Launcher aircraft','Aircraft state at the instant of release (t = 0). Missile release adjustments are applied automatically.')}
-    ${stateFields('target',3,'Target aircraft','Flies in a straight line at constant velocity throughout the simulation.')}
-    <fieldset class="missile-step"><legend><span class="missile-step-number">4</span>Simulation time</legend>
-      <label class="field">Stop after<div class="input-unit"><input id="missile-duration" type="number" min="0.1" max="180" step="any" value="60" required><span>s</span></div></label>
-      <p class="hint">Up to 180 seconds. The run may end earlier at interception or a modeled limit.</p>
-    </fieldset>
+    ${stateFields('launch','Launcher aircraft')}
+    ${stateFields('target','Target aircraft')}
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
-    <button id="missile-run" class="primary-button" type="submit" disabled>Simulate engagement <span>↗</span></button>
+    <div class="action-row"><button id="missile-run" class="primary-button" type="submit" disabled>Calculate</button><button id="missile-reset" class="secondary-button reset-button" type="button">Reset</button></div>
     <button id="missile-cancel" class="secondary-button" type="button" hidden>Cancel simulation</button>
     <div id="missile-status" role="status" aria-live="polite"></div></div>
   </form></aside>
   <div class="missile-main">
-    <div class="page-heading"><div><span class="eyebrow">MISSILE FLIGHT</span><h1>3D engagement simulator</h1></div><span class="status-badge">EXPERIMENTAL</span></div>
-    <p class="missile-model-note">Set the launcher and target aircraft at release. Missile launch processing, ignition delays and guidance timing follow the selected game profile. Ideal target visibility and radar support retain geometric seeker limits.</p>
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
-    <section class="missile-preview" aria-labelledby="missile-preview-title">
-      <div class="missile-preview-heading"><div><span class="eyebrow">LIVE SETUP PREVIEW</span><h2 id="missile-preview-title">Starting geometry</h2></div><span class="missile-preview-tag">Top view · X / Z</span></div>
-      <svg id="missile-geometry" viewBox="0 0 640 200" role="img" aria-label="Starting positions and flight directions"></svg>
-      <div class="missile-setup-stats"><div><span>Aircraft separation</span><strong id="missile-separation">—</strong></div><div><span>Target altitude difference</span><strong id="missile-altitude-difference">—</strong></div><div><span>Aircraft closing speed</span><strong id="missile-closing">—</strong></div></div>
-      <p id="missile-preview-note" class="hint">Arrows show flight direction. Preview uses current inputs; it is not a simulated trajectory.</p>
-    </section>
-    <section class="chart-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"><span>━ Missile</span><span>━ Target</span></div><div class="missile-view-controls"><label for="missile-view">Plot view<select id="missile-view"><option value="3d">3D</option><option value="xz">2D slice · Top (X / Z)</option><option value="xy">2D slice · Side (X / altitude)</option><option value="zy">2D slice · Front (Z / altitude)</option></select></label><button id="missile-view-reset" type="button">Reset view</button></div></div>
-    <p id="missile-slice-note" class="hint missile-hover-hint" hidden>2D slices project the full trajectories onto the selected plane.</p>
-    <p class="hint missile-hover-hint">Hover over the missile or its flight path to inspect flight data.</p>
-    <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories"><div class="empty"><span class="empty-glyph">↗</span><h2>Ready for your first flight</h2><p>Choose a starter scenario or adjust the setup,<br>then select <strong>Simulate engagement</strong> to see the 3D flight.</p><button id="missile-run-preview" class="secondary-button" type="submit" form="missile-form" disabled>Simulate engagement ↗</button></div></div>
-    <div class="missile-playback"><button id="missile-play" type="button" disabled>Play</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select></div></section>
-    <p id="missile-frame" class="missile-frame-readout"></p>
-    <label id="missile-result-label" class="field missile-result-choice" hidden>Inspect missile result<select id="missile-result-select"></select></label>
-    <div class="missile-metrics"><div class="missile-metric"><span>Outcome</span><strong id="missile-outcome">—</strong></div><div class="missile-metric"><span>Closest approach</span><strong id="missile-closest">—</strong></div><div class="missile-metric"><span>Elapsed time</span><strong id="missile-elapsed">—</strong></div></div>
-    <details id="missile-flight-data" class="missile-flight-data" hidden><summary>Propulsion &amp; aerodynamic plots <span id="missile-flight-name"></span></summary>
-      <p class="hint">Compare every missile using the same colors as the 3D view. Hover for values; click a plotted point to inspect that missile and time. In Drag &amp; lift, solid lines show drag and dashed lines show lift.</p>
-      <div class="missile-data-grid">
-        <section class="chart-card"><label class="field missile-plot-choice" for="missile-propulsion-metric">Propulsion<select id="missile-propulsion-metric"><option value="thrust">Thrust · kN</option><option value="mass">Missile mass · kg</option><option value="propellant">Propellant consumed · kg</option></select></label><div id="missile-propulsion-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-propulsion-chart" class="missile-data-chart" aria-label="Propulsion over flight time"></div></section>
-        <section class="chart-card"><label class="field missile-plot-choice" for="missile-aero-metric">Aerodynamics<select id="missile-aero-metric"><option value="forces">Drag &amp; lift · kN</option><option value="cd">Drag coefficient · Cd</option><option value="aoa">Angle of attack · degrees</option><option value="pressure">Dynamic pressure · kPa</option><option value="acceleration">Net acceleration · m/s²</option></select></label><div id="missile-aero-legend" class="missile-plot-legend" aria-label="Missile colors"></div><div id="missile-aero-chart" class="missile-data-chart" aria-label="Aerodynamics over flight time"></div></section>
-      </div><p class="hint">Forces come from the final integration substep before each saved position. Lift and drag are force magnitudes; angle of attack is unsigned local-flow incidence. Net acceleration includes gravity. Missing values at release or the exact proximity event are left blank.</p>
+    <section class="chart-card missile-plot-card"><div class="chart-toolbar"><div id="missile-legend" class="missile-legend"></div>
+      <div class="mode-switch missile-views" role="radiogroup" aria-label="Plot view"><label><input type="radio" name="missile-plot-view" value="setup" checked><span>Setup</span></label><label><input type="radio" name="missile-plot-view" value="3d" disabled><span>3D</span></label><label><input type="radio" name="missile-plot-view" value="xz" disabled><span>Top</span></label><label><input type="radio" name="missile-plot-view" value="xy" disabled><span>Side</span></label><label><input type="radio" name="missile-plot-view" value="zy" disabled><span>Front</span></label></div>
+      <select id="missile-view" hidden aria-hidden="true"><option value="3d">3D</option><option value="xz">Top</option><option value="xy">Side</option><option value="zy">Front</option></select></div>
+    <div class="missile-plot">
+      <div id="missile-setup-pane" class="missile-geometry-wrap"><div id="missile-geometry" role="img" aria-label="Starting positions and flight directions"></div><svg id="missile-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true"></svg><p id="missile-preview-note" class="missile-plot-message"></p></div>
+      <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories" hidden></div>
+      <svg id="missile-flight-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true" hidden></svg>
+    </div>
+    <div class="missile-playback"><button id="missile-play" class="play-button" type="button" aria-label="Play" title="Play" disabled>${PLAY_ICON}</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
+    <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p></section>
+    <details id="missile-flight-data" class="missile-flight-data" open hidden><summary>Telemetry <span id="missile-flight-name"></span></summary>
+      <div class="missile-telemetry-picks"><div id="missile-telemetry-chips" class="contour-levels" aria-label="Plotted quantities"></div>
+        <select id="missile-telemetry-add" aria-label="Add a quantity to the telemetry plot"></select></div>
+      <div id="missile-telemetry-legend" class="missile-plot-legend" aria-label="Missile colors"></div>
+      <div id="missile-telemetry-chart" class="missile-telemetry-chart" aria-label="Telemetry over flight time"></div>
     </details>
     <div class="exports"><span>EXPORT</span><a id="missile-download" aria-disabled="true">Flight data JSON</a></div>
-    <details class="missile-details"><summary>Model and current limitations</summary><p>Recovered profile baseline: War Thunder 2.59.0.34. Seekers begin with warm-up complete, respecting designation and angle limits. Radar missiles retain their lock-before-launch or lock-after-launch behavior. Ideal radar support moves from the launch position at the entered launch velocity; recovered inertial guidance remains active where configured. Target geometry is a point, so a proximity event does not assert aircraft damage. Full engagements and native collision timing are still being validated.</p><ul id="missile-model-details"></ul></details>
+    <details class="missile-details" hidden><summary>Model and current limitations</summary><p>Recovered profile baseline: War Thunder 2.59.0.34. Seekers begin with warm-up complete, respecting designation and angle limits. Radar missiles retain their lock-before-launch or lock-after-launch behavior. Ideal radar support moves from the launch position at the entered launch velocity; recovered inertial guidance remains active where configured. Target geometry is a point, so a proximity event does not assert aircraft damage. Full engagements and native collision timing are still being validated.</p><ul id="missile-model-details"></ul></details>
   </div>`;
   const apiBase=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   async function request(path, options={}) {
@@ -87,14 +81,17 @@
     return body;
   }
   const showError = text => {el('missile-error').textContent=text;el('missile-error').hidden=!text;};
-  const pause = () => {playing=false;el('missile-play').textContent='Play';};
+  const playButton=(icon,label)=>{const button=el('missile-play');button.innerHTML=icon;button.setAttribute('aria-label',label);button.title=label;};
+  const pause = () => {playing=false;playButton(PLAY_ICON,'Play');};
   const toolTabs=[['em','em-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';
     for(const [key,tab,panel] of toolTabs) {
       const selected=key===name;el(panel).hidden=!selected;
-      el(tab).setAttribute('aria-selected',String(selected));el(tab).tabIndex=selected?0:-1;
+      if(selected)el(tab).setAttribute('aria-current','page');else el(tab).removeAttribute('aria-current');
     }
+    // The header group holding the open calculator is marked current (app.js runs its menus).
+    for(const group of document.querySelectorAll('.nav-group'))group.classList.toggle('current',!!group.querySelector('[aria-current=page]'));
     if(name==='missile') {
       if(!meta) load();
       if(result) requestAnimationFrame(()=>{Plotly.Plots.resize(el('missile-chart'));resizeDataPlots();});
@@ -102,13 +99,6 @@
     document.dispatchEvent(new CustomEvent('tool-tab-change',{detail:name}));
   }
   for(const [key,tab] of toolTabs) el(tab).addEventListener('click',()=>selectTab(key));
-  document.querySelector('.tool-tabs').addEventListener('keydown',event=>{
-    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-    event.preventDefault();
-    const current=toolTabs.findIndex(([,,panel])=>!el(panel).hidden);
-    const index=event.key==='Home'?0:event.key==='End'?toolTabs.length-1:(current+(event.key==='ArrowRight'?1:toolTabs.length-1))%toolTabs.length;
-    selectTab(toolTabs[index][0]);el(toolTabs[index][1]).focus();
-  });
   async function load() {
     if(loading) return loading;
     loading=(async()=>{try{
@@ -120,17 +110,27 @@
       }
       meta.missiles=[...unique.values()];
       meta.missiles.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})||a.id.localeCompare(b.id));
-      populateMissiles();renderSelected();updateTiming();busy(false);
+      populateMissiles();renderSelected();busy(false);
     }catch(error){meta=null;busy(false);el('missile-retry').hidden=false;showError('Could not load missile configurations. Check that the simulator server is running, then retry. '+error.message);}
     finally{loading=null;}})();return loading;
   }
+  // The target's position (m) from the cylindrical fields; the launcher is above the origin.
+  function targetPosition() {
+    const azimuth=radians(Number(el('missile-target-azimuth').value)),distance=Number(el('missile-target-distance').value)*1000;
+    return [distance*Math.cos(azimuth),Number(el('missile-target-position-1').value),distance*Math.sin(azimuth)];
+  }
+  // Fills the cylindrical fields from a position relative to the launcher's ground point (x, altitude, z in m).
+  function setTargetPosition(offset) {
+    const [azimuth,distance]=cylindrical(offset);
+    el('missile-target-azimuth').value=String(azimuth);el('missile-target-distance').value=String(distance);el('missile-target-position-1').value=String(offset[1]);
+  }
   function inputs() {
-    const config={missiles:[...selectedMissiles],duration:Number(el('missile-duration').value)};
+    const config={missiles:[...selectedMissiles]};
     for(const role of ['launch','target']) {
       const [speed,heading,climb]=['speed','course','climb'].map(key=>Number(el(`missile-${role}-${key}`).value));
       const horizontal=speed/3.6*Math.cos(radians(climb));
       config[role==='launch'?'launcher':role]={
-        position:[0,1,2].map(i=>role==='launch'&&i!==1?0:Number(el(`missile-${role}-position-${i}`).value)),
+        position:role==='launch'?[0,Number(el('missile-launch-position-1').value),0]:targetPosition(),
         velocity:[horizontal*Math.cos(radians(heading)),speed/3.6*Math.sin(radians(climb)),horizontal*Math.sin(radians(heading))],
         angles:[heading,climb,0]};
     }
@@ -142,13 +142,13 @@
       const row=document.createElement('div');row.className='aircraft-option';
       const family=item.family==='optical'?'Optical / infrared':'Radar';
       row.dataset.search=item.id+' '+item.name+' '+family;
-      const label=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small');
-      name.textContent=missileLabel(item.id);detail.textContent=family;label.append(name,detail);
+      const label=document.createElement('span'),name=document.createElement('strong'),detail=document.createElement('small'),code=document.createElement('code');
+      name.textContent=item.name;code.textContent=item.id;detail.append(code);label.append(name,detail);label.title=missileLabel(item.id);
       const button=document.createElement('button');button.type='button';button.dataset.addMissile=item.id;
       button.textContent='Add';button.setAttribute('aria-label','Add '+missileLabel(item.id));
       row.append(label,button);return row;
     }));
-    el('missile-catalog-note').textContent=`${meta.missiles.length} available missiles`;
+    el('missile-catalog-note').hidden=true;
     filterMissiles();
   }
   function filterMissiles() {
@@ -169,91 +169,208 @@
   }
   function renderSelected() {
     el('missile-selected').replaceChildren(...selectedMissiles.map((id,i)=>{
-      const row=document.createElement('div');row.className='missile-selected-row';
-      const name=document.createElement('span');name.textContent=missileLabel(id);name.style.borderColor=flightColors[i];
-      const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.disabled=batchRunning;
-      remove.setAttribute('aria-label','Remove '+missileLabel(id));remove.title='Remove missile';
+      const card=document.createElement('article');card.className='aircraft-entry missile-entry';card.style.setProperty('--entry-color',flightColors[i]);
+      card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong><code>${escapeHtml(id)}</code></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
+      const remove=card.querySelector('button');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+missileLabel(id));
       remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);renderSelected();filterMissiles();changed();busy(false);});
-      row.append(name,remove);return row;
+      return card;
     }));
-    el('missile-entry-count').textContent=`${selectedMissiles.length} / 8`;
-    el('missile-entries-empty').hidden=selectedMissiles.length>0;
-    updateTiming();updateAddButton();
+    updateAddButton();
   }
   el('missile-list').addEventListener('click',event=>{
     const button=event.target.closest('[data-add-missile]');
     if(!button||button.disabled)return;
     selectedMissiles.push(button.dataset.addMissile);renderSelected();filterMissiles();changed();busy(false);
   });
-  function updateTiming() {
-    const id=selectedMissiles.at(-1);
-    el('missile-timing-title').textContent=id?'Release & timing · '+missileName(id):'Automatic release & timing';
-    const timing=meta?.missiles.find(item=>item.id===id)?.timing;
-    const list=el('missile-timing-values');list.replaceChildren();
-    if(!timing){const note=document.createElement('dd');note.textContent=id?'Timing details need the updated local simulator server.':'Add a missile to see its timing details.';list.append(note);return;}
-    const seconds=value=>Number(value.toFixed(3))+' s';
-    const rows=[['Motor ignition delays',timing.motor_delays_s.map((delay,i)=>`Motor ${i+1}: ${seconds(delay)}`).join(' · ')],
-      ['Guidance gain over time',timing.guidance_gain.map(point=>`${seconds(point.time_s)}: ${Math.round(point.gain*100)}%`).join(' → ')],
-      ['Seeker search gate',`${seconds(timing.seeker_search_delay_s)}${timing.lock_after_launch?' · lock after launch':''}; geometry still applies`],
-      ['Proximity arming delay',timing.proximity_delay_s===null?'No proximity fuze':seconds(timing.proximity_delay_s)+' + distance / altitude gates'],
-      ['Seeker preparation',`${seconds(timing.warm_up_s)} warm-up completed before release`]];
-    for(const [label,value] of rows){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;list.append(dt,dd);}
-  }
   const radians = angle => angle*Math.PI/180;
   const degrees = angle => angle*180/Math.PI;
-  function syncMotion(role,velocity=initial[role].velocity) {
+  // A stationary aircraft (a surface-to-air launcher) keeps the heading and climb of its angles.
+  function syncMotion(role,velocity=initial[role].velocity,angles=null) {
     const [x,y,z]=velocity.map(v=>v*3.6);
     const speed=Math.hypot(x,y,z);
-    for(const [key,value] of Object.entries({speed,course:speed?degrees(Math.atan2(z,x)):0,climb:speed?degrees(Math.atan2(y,Math.hypot(x,z))):0})) {
+    for(const [key,value] of Object.entries({speed,course:speed?degrees(Math.atan2(z,x)):angles?.[0]??0,climb:speed?degrees(Math.atan2(y,Math.hypot(x,z))):angles?.[1]??0})) {
       el(`missile-${role}-${key}`).value=Number(value.toFixed(10));
     }
   }
   function changed() {
     if(result)el('missile-stale').hidden=false;
-    updatePreview();
+    // One plot (Leo, 2026-10-27): a changed setup is shown as its starting geometry until the next run.
+    if(plotView!=='setup')showView('setup');else updatePreview();
   }
+  // The plot shows the setup's starting geometry or the calculated flight in one of four views.
+  let plotView='setup',flightView='3d';
+  function showPanes(view) {
+    plotView=view;const setup=view==='setup';
+    for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.checked=input.value===view;
+    el('missile-setup-pane').hidden=!setup;el('missile-chart').hidden=setup;
+    el('missile-slice-note').hidden=setup||view==='3d';el('missile-flight-axes').toggleAttribute('hidden',view!=='3d');
+  }
+  function showView(view) {
+    showPanes(view);
+    if(view==='setup'){updatePreview();return;}
+    flightView=view;
+    if(el('missile-view').value!==view){el('missile-view').value=view;el('missile-view').dispatchEvent(new Event('change'));}
+    else if(el('missile-chart').data)Plotly.Plots.resize(el('missile-chart'));
+  }
+  for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.addEventListener('change',()=>{if(input.checked)showView(input.value);});
   function updatePreview() {
-    const targetX=el('missile-target-position-0');targetX.setCustomValidity('');
+    const targetDistance=el('missile-target-distance');targetDistance.setCustomValidity('');
     const numericFields=[...el('missile-form').querySelectorAll('input[type=number]')];
     for(const role of ['launch','target'])el(`missile-${role}-speed`).setCustomValidity('');
     if(numericFields.every(field=>field.validity.valid)) {
       const config=inputs();
       for(const role of ['launch','target'])if(config[role==='launch'?'launcher':role].velocity.some(v=>Math.abs(v)>2000))el(`missile-${role}-speed`).setCustomValidity('Reduce speed: each world-axis velocity must be at most 7,200 km/h.');
-      if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetX.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
+      if(Math.hypot(...config.target.position.map((v,i)=>v-config.launcher.position[i]))<10)targetDistance.setCustomValidity('Place the target at least 10 m from the launcher aircraft.');
     }
     const invalid=numericFields.find(field=>!field.validity.valid),valid=!invalid;
-    el('missile-ready').textContent=valid?(selectedMissiles.length?`${selectedMissiles.length} missile${selectedMissiles.length===1?'':'s'} ready · shared aircraft setup.`:'Add a missile to simulate.'):`${invalid.getAttribute('aria-label')||'Simulation time'}: ${invalid.validationMessage}`;
+    el('missile-ready').textContent=valid?'':`${invalid.getAttribute('aria-label')||'Setup'}: ${invalid.validationMessage}`;
     if(!valid) {
-      for(const id of ['missile-separation','missile-altitude-difference','missile-closing'])el(id).textContent='—';
-      el('missile-geometry').replaceChildren();
+      if(el('missile-geometry').data)Plotly.purge(el('missile-geometry'));
+      el('missile-axes').innerHTML='';
       el('missile-geometry').setAttribute('aria-label','Preview unavailable. Check the setup values.');
       el('missile-preview-note').textContent='Complete the numeric fields within their allowed ranges to see the preview.';
       return;
     }
     const {launcher:launch,target}=inputs(),offset=target.position.map((v,i)=>v-launch.position[i]);
     const distance=Math.hypot(...offset),altitude=offset[1];
-    const closing=distance?offset.reduce((sum,v,i)=>sum+v*(launch.velocity[i]-target.velocity[i]),0)/distance:0;
     const format=value=>value.toLocaleString(undefined,{maximumFractionDigits:1});
-    el('missile-separation').textContent=format(distance)+' m';
-    el('missile-altitude-difference').textContent=altitude===0?'Same altitude':`${format(Math.abs(altitude))} m ${altitude>0?'above':'below'}`;
-    el('missile-closing').textContent=distance===0?'Same position':`${format(Math.abs(closing)*3.6)} km/h${closing<0?' · opening':closing>0?' · closing':''}`;
-    const width=Math.max(240,el('missile-geometry').clientWidth||640),height=150;
-    el('missile-geometry').setAttribute('viewBox',`0 0 ${width} ${height}`);
-    const scale=Math.min((width-150)/Math.max(Math.abs(offset[0]),1),70/Math.max(Math.abs(offset[2]),1));
-    const dx=offset[0]*scale,dz=offset[2]*scale;
-    const points=[[width/2-dx/2,height/2+dz/2],[width/2+dx/2,height/2-dz/2]];
-    const markers=[launch,target].map((state,i)=>{
-      const [x,y]=points[i],color=i?'#ffa66b':'#38c9d7',name=i?'Target aircraft':'Launcher aircraft';
-      const horizontal=Math.hypot(state.velocity[0],state.velocity[2]);
-      const vx=horizontal?state.velocity[0]/horizontal*34:0,vz=horizontal?-state.velocity[2]/horizontal*34:0;
-      return `<g fill="${color}">${horizontal?`<path d="M ${x} ${y} l ${vx} ${vz}" fill="none" stroke="${color}" stroke-width="2" marker-end="url(#missile-arrow-${i})"/>`:''}<circle cx="${x}" cy="${y}" r="5"/><text x="${x}" y="${y+(i?27:-16)}" text-anchor="middle">${name}</text></g>`;
-    }).join('');
-    el('missile-geometry').innerHTML=`<defs>${['#38c9d7','#ffa66b'].map((color,i)=>`<marker id="missile-arrow-${i}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join('')}<pattern id="missile-grid" width="32" height="25" patternUnits="userSpaceOnUse"><path d="M 32 0 H 0 V 25" fill="none" stroke="#223042" stroke-width=".6"/></pattern></defs><rect width="${width}" height="${height}" fill="url(#missile-grid)"/><path d="M ${points[0].join(' ')} L ${points[1].join(' ')}" stroke="#78879a" stroke-dasharray="5 5"/>${markers}<path d="M 24 42 V 20 M 24 42 H 48" stroke="#8d9aae"/><g fill="#8d9aae" font-size="10"><text x="15" y="14">+Z</text><text x="53" y="46">+X</text></g>`;
-    el('missile-geometry').setAttribute('aria-label',`Top view of aircraft at release. Initial separation ${format(distance)} meters. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
-    el('missile-preview-note').textContent='Arrows show aircraft travel direction. Positions are scaled to fit; altitude is shown below. Missile release adjustments are applied when you simulate.';
+    drawPreview(launch,target);
+    el('missile-geometry').setAttribute('aria-label',`3D view of aircraft at release. Initial separation ${(distance/1000).toFixed(2)} kilometres. Target ${altitude===0?'at the same altitude':`${format(Math.abs(altitude))} meters ${altitude>0?'above':'below'} the launcher aircraft`}.`);
+    el('missile-preview-note').textContent='';
   }
+  // Starting geometry in 3D (Leo, 2026-10-26): the launcher, the target placed from it by azimuth, horizontal distance
+  // and altitude, and both headings as arrows. World X, Z and altitude are the scene's x, -y and z (Leo, 2026-10-27: a
+  // right-handed X, Y up, Z picture, as in the flight chart).
+  // Labels (Leo, 2026-10-27: no overlapping text) go on screen where no line or other label is: each takes the side of
+  // its point, of eight, whose box covers the least, and they are placed again when the view is turned.
+  function drawPreview(launch,target) {
+    const node=el('missile-geometry');if(!node.clientWidth)return;   // hidden tab: drawn once it is shown (ResizeObserver)
+    const light='#e2e2ea',grey='#97979f',cyan='#38c9d7',orange='#ffa66b';
+    const scene=p=>[p[0],-p[2],p[1]],L=scene(launch.position),T=scene(target.position),G=[T[0],T[1],L[2]];
+    const horizontal=Math.hypot(T[0]-L[0],T[1]-L[1]),rise=T[2]-L[2],size=Math.max(horizontal,Math.abs(rise),300);
+    const azimuth=Math.atan2(T[1]-L[1],T[0]-L[0]),deg=v=>`${+v.toFixed(1)}°`,turned=Math.abs(azimuth)>1e-3;
+    const along=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t),points=[L,T],traces=[],segments=[],labels=[];
+    const W=node.clientWidth,H=node.clientHeight||260,narrow=W<560;
+    const line=(ps,color,width,dash='solid')=>{points.push(...ps);for(let i=1;i<ps.length;i++)segments.push([ps[i-1],ps[i]]);
+      traces.push({type:'scatter3d',mode:'lines',x:ps.map(p=>p[0]),y:ps.map(p=>p[1]),z:ps.map(p=>p[2]),line:{color,width,dash},hoverinfo:'skip',showlegend:false});};
+    const label=(p,text,color,lines=[text])=>{points.push(p);labels.push({p,text,color,lines});};
+    // Azimuth: the arc from the +X reference (dotted) to the target's bearing, in the launcher's horizontal plane,
+    // drawn beyond the heading arrows.
+    const r=.3*size;
+    if(horizontal>0&&turned) {
+      line([L,[L[0]+r*1.25,L[1],L[2]]],grey,2,'dot');
+      const steps=Math.max(1,Math.ceil(Math.abs(azimuth)*180/Math.PI/3));
+      line(Array.from({length:steps+1},(_,i)=>{const a=azimuth*i/steps;return [L[0]+r*Math.cos(a),L[1]+r*Math.sin(a),L[2]];}),light,2);
+      label([L[0]+r*Math.cos(azimuth/2),L[1]+r*Math.sin(azimuth/2),L[2]],deg(-azimuth*180/Math.PI),light);
+    }
+    // Horizontal distance, then the altitude difference and the line of sight.
+    if(horizontal>0){line([L,G],light,2.5,'dash');label(along(L,G,.6),`${(horizontal/1000).toFixed(2)} km`,light);}
+    if(rise){line([G,T],grey,2,'dot');label(along(G,T,.5),`${rise>0?'+':'−'}${Math.abs(rise).toLocaleString()} m`,grey);
+      // Total separation (Leo, 2026-10-27) along the line of sight; level aircraft show only the horizontal distance.
+      line([L,T],grey,1.5,'dash');label(along(L,T,.45),`${(Math.hypot(horizontal,rise)/1000).toFixed(2)} km total`,grey);}
+    // Each aircraft with its heading (and climb) as an arrow of one size for both.
+    for(const [state,p,color,name,climbName] of [[launch,L,cyan,'Launcher','launch angle'],[target,T,orange,'Target','climb']]) {
+      const v=scene(state.velocity),speed=Math.hypot(...v),[heading,climb]=state.angles;
+      const detail=`HDG ${deg(heading)}${climb?` · ${climbName} ${deg(climb)}`:''}`;
+      traces.push({type:'scatter3d',mode:'markers',x:[p[0]],y:[p[1]],z:[p[2]],marker:{size:5,color},showlegend:false,
+        hovertemplate:`${name}<br>${Math.round(p[2]).toLocaleString()} m · ${Math.round(speed*3.6).toLocaleString()} km/h<br>${detail[0].toUpperCase()+detail.slice(1)}<extra></extra>`});
+      if(narrow)label(p,name,color);else label(p,`${name}<br><span style="font-size:11px;color:${grey}">${detail}</span>`,color,[name,detail]);
+      if(!speed)continue;
+      const u=v.map(c=>c/speed),length=.2*size,head=.05*size,end=p.map((c,i)=>c+u[i]*length);
+      line([p,end],color,3);points.push(end.map((c,i)=>c+u[i]*head));segments.push([end,end.map((c,i)=>c+u[i]*head)]);
+      traces.push({type:'cone',x:[end[0]],y:[end[1]],z:[end[2]],u:[u[0]*head],v:[u[1]*head],w:[u[2]*head],anchor:'tail',sizemode:'raw',sizeref:.7,
+        colorscale:[[0,color],[1,color]],showscale:false,hoverinfo:'skip',lighting:{ambient:1,diffuse:0,specular:0,roughness:1,fresnel:0}});
+    }
+    // Seen from behind the launcher's left, 35° above, so the target's bearing and the horizontal plane both read;
+    // a view turned by hand is kept and fitted as it is.
+    const view=azimuth-2*Math.PI/3,elevation=35*Math.PI/180,E=1.73;
+    const eye={x:E*Math.cos(elevation)*Math.cos(view),y:E*Math.cos(elevation)*Math.sin(view),z:E*Math.sin(elevation)};
+    const bounds=[0,1,2].map(i=>[Math.min(...points.map(p=>p[i])),Math.max(...points.map(p=>p[i]))]);
+    // Labels may sit on any side: the scene keeps a margin of the widest one all round.
+    const context=(drawPreview.canvas||=document.createElement('canvas')).getContext('2d');context.font=`12px ${getComputedStyle(document.body).fontFamily}`;
+    for(const l of labels){l.width=Math.max(...l.lines.map(t=>context.measureText(t).width))+4;l.height=15*l.lines.length;}
+    const widest=Math.max(...labels.map(l=>l.width));
+    const mx=Math.min(.3,(widest+14)/W),my=Math.min(.25,34/H),domain={x:[mx,1-mx],y:[my,1-my]};
+    const viewport=W*(domain.x[1]-domain.x[0])/(H*(domain.y[1]-domain.y[0]));
+    const fitted=sceneFit(bounds,{chart:node,floor:.05,pad:1.15,eye:previewCamera?.eye||eye,points,viewport}),axis=i=>{const c=(bounds[i][0]+bounds[i][1])/2,span=fitted.spans[i];return {range:[c-span/2,c+span/2],visible:false};};
+    // Plotly's orthographic scene shows two scene units over the domain's height.
+    // The axes indicator's corner (bottom right) is kept free of labels.
+    const frame={W,H,domain,scale:H*(domain.y[1]-domain.y[0])/2,reserved:[W-AXES_SIZE-8,W,H-AXES_SIZE-8,H]};
+    const place=camera=>placeLabels(labels,segments,bounds,fitted,camera.eye,frame);
+    Plotly.react(node,traces,{paper_bgcolor:'#000000',margin:{l:0,r:0,t:0,b:0},showlegend:false,
+      hoverlabel:{bgcolor:'#0c0c0f',font:{color:'#eaeaf2',size:12}},
+      scene:{domain,xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera:previewCamera||fitted.camera,annotations:place(previewCamera||fitted.camera)}},
+      {displayModeBar:false,responsive:true,scrollZoom:false});
+    drawAxes((previewCamera||fitted.camera).eye);
+    node.removeAllListeners?.('plotly_relayout');node.removeAllListeners?.('plotly_relayouting');
+    node.on('plotly_relayouting',event=>{if(event['scene.camera'])drawAxes(event['scene.camera'].eye);});
+    let placing=false;
+    node.on('plotly_relayout',event=>{
+      if(placing||!event['scene.camera'])return;
+      // The turned view goes into the layout with its labels, or relaying them out would turn it back.
+      previewCamera=event['scene.camera'];placing=true;drawAxes(previewCamera.eye);
+      Plotly.relayout(node,{'scene.camera':previewCamera,'scene.annotations':place(previewCamera)}).finally(()=>{placing=false;});
+    });
+  }
+  // Axes indicator (Leo, 2026-10-27): world X, Y (altitude) and Z as seen from the preview's camera, turning with it.
+  const AXES_SIZE=72;
+  function drawAxes(eye,id='missile-axes') {
+    const horizontal=Math.hypot(eye.x,eye.y)||1e-9,length=Math.hypot(horizontal,eye.z),c=AXES_SIZE/2,arm=24;
+    const right=[-eye.y/horizontal,eye.x/horizontal,0],up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
+    const toward=[eye.x/length,eye.y/length,eye.z/length],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    // World X, Y (altitude) and Z are the scene's x, z and -y, a right-handed triad; the axis nearest the viewer is drawn last.
+    // Greys, the axis nearest the viewer brightest (Leo, 2026-10-27: no blue on the site).
+    const axes=[['X',[1,0,0]],['Y',[0,0,1]],['Z',[0,-1,0]]].map(([name,v])=>({name,x:dot(v,right),y:dot(v,up),depth:dot(v,toward)}))
+      .sort((a,b)=>a.depth-b.depth);axes.forEach((a,i)=>{a.color=['#7d7d88','#b9b9c4','#f0f0fa'][i];});
+    // Letters just beyond the tips, pushed apart where two foreshortened axes point the same way.
+    for(const a of axes){const n=Math.max(Math.hypot(a.x,a.y),.35);a.lx=c+(arm+9)*a.x/n;a.ly=c-(arm+9)*a.y/n;}
+    for(let pass=0;pass<4;pass++)for(const a of axes)for(const b of axes){if(a===b)continue;const dx=a.lx-b.lx,dy=a.ly-b.ly,d=Math.hypot(dx,dy);
+      if(d<11){const push=(11-d)/2,ux=d>1e-6?dx/d:1,uy=d>1e-6?dy/d:0;a.lx+=ux*push;a.ly+=uy*push;b.lx-=ux*push;b.ly-=uy*push;}}
+    el(id).innerHTML=`<circle cx="${c}" cy="${c}" r="2" fill="#97979f"/>`+axes.map(a=>{
+      const x=c+arm*a.x,y=c-arm*a.y,lx=a.lx,ly=a.ly;
+      return `<line x1="${c}" y1="${c}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${a.color}" stroke-width="2" stroke-linecap="round"/>`+
+        `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${a.color}" font-size="11" text-anchor="middle" dominant-baseline="central">${a.name}</text>`;
+    }).join('');
+  }
+  // Annotations for the preview's labels. Each label's box goes on the side of its point (of eight, diagonals first)
+  // that covers the fewest drawn line pixels and no label placed before it; the aircraft are labelled first.
+  function placeLabels(labels,segments,bounds,fitted,eye,frame) {
+    const keys=['x','y','z'],centre=bounds.map(([low,high])=>(low+high)/2),k=frame.scale;
+    const horizontal=Math.hypot(eye.x,eye.y)||1e-9,length=Math.hypot(horizontal,eye.z);
+    const right=[-eye.y/horizontal,eye.x/horizontal,0],up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
+    // Pixels from the scene domain's centre, y up.
+    const screen=p=>{const q=p.map((v,i)=>fitted.aspectratio[keys[i]]*(v-centre[i])/fitted.spans[i]);return [k*q.reduce((s,v,i)=>s+v*right[i],0),k*q.reduce((s,v,i)=>s+v*up[i],0)];};
+    const samples=[];
+    for(const [a,b] of segments){const A=screen(a),B=screen(b),n=Math.max(1,Math.ceil(Math.hypot(B[0]-A[0],B[1]-A[1])/3));
+      for(let i=0;i<=n;i++)samples.push([A[0]+(B[0]-A[0])*i/n,A[1]+(B[1]-A[1])*i/n]);}
+    const cx=(frame.domain.x[0]+frame.domain.x[1])/2*frame.W,cy=(frame.domain.y[0]+frame.domain.y[1])/2*frame.H;
+    const limits=[-cx+2,frame.W-cx-2,-cy+2,frame.H-cy-2],r=frame.reserved;
+    // The reserved corner (screen px, y down) as a box already taken, in these coordinates (y up).
+    const placed=r?[[r[0]-cx,r[1]-cx,frame.H-r[3]-cy,frame.H-r[2]-cy]]:[];
+    // Close to the point first; a second, farther ring when everything near is taken.
+    const sides=[9,26].flatMap((gap,ring)=>[[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>[dx,dy,gap,ring*4]));
+    const order=labels.map((l,i)=>i).sort((a,b)=>(labels[b].lines.length>1||/Launcher|Target/.test(labels[b].text))-(labels[a].lines.length>1||/Launcher|Target/.test(labels[a].text)));
+    const out=[];
+    for(const i of order) {
+      const {p,text,color,width:w,height:h}=labels[i],s=screen(p);let best=null;
+      for(const [dx,dy,gap,far] of sides) {
+        const x0=dx>0?gap:dx<0?-gap-w:-w/2,y0=dy>0?gap:dy<0?-gap-h:-h/2,box=[s[0]+x0,s[0]+x0+w,s[1]+y0,s[1]+y0+h];
+        let cost=far;
+        for(const [x,y] of samples)if(x>box[0]-2&&x<box[1]+2&&y>box[2]-2&&y<box[3]+2)cost+=1;
+        for(const b of placed)cost+=400*Math.max(0,Math.min(box[1],b[1])-Math.max(box[0],b[0]))*Math.max(0,Math.min(box[3],b[3])-Math.max(box[2],b[2]))/(w*h);
+        cost+=40*(Math.max(0,limits[0]-box[0])+Math.max(0,box[1]-limits[1])+Math.max(0,limits[2]-box[2])+Math.max(0,box[3]-limits[3]))/Math.min(w,h);
+        if(!best||cost<best.cost-1e-6)best={cost,dx,dy,gap,box};
+      }
+      placed.push(best.box);const {dx,dy,gap}=best;
+      out[i]={x:p[0],y:p[1],z:p[2],text,showarrow:false,font:{color,size:12},xshift:dx*gap,yshift:dy*gap,
+        xanchor:dx>0?'left':dx<0?'right':'center',yanchor:dy>0?'bottom':dy<0?'top':'middle',align:dx<0?'right':dx>0?'left':'center'};
+    }
+    return out;
+  }
+  // The preview's view once it has been turned by hand; a preset or Reset all turns it back.
+  let previewCamera=null;
   function busy(value) {
-    for(const id of ['missile-run','missile-run-preview'])if(el(id))el(id).disabled=value||!meta||!selectedMissiles.length;
+    el('missile-run').disabled=value||!meta||!selectedMissiles.length;
     el('missile-cancel').hidden=!value;el('missile-reset').disabled=value;
     root.querySelectorAll('[data-preset]').forEach(button=>button.disabled=value);
     el('missile-selected').querySelectorAll('button').forEach(button=>button.disabled=value);
@@ -266,7 +383,7 @@
     if(event.target.id==='missile-search')return;
     if(event.target.id.match(/^missile-(launch|target)-/)) {
       root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
-      el('missile-preset-note').textContent='Custom setup · choosing an example replaces both aircraft states.';
+      el('missile-preset-note').textContent='';
     }
     changed();
   });
@@ -274,22 +391,22 @@
     const details=event.target.closest('details');if(details)details.open=true;
   },true);
   function applyPreset(preset) {
-    const states=JSON.parse(JSON.stringify(initial));
-    if(preset==='head-on'){states.target.velocity=[-200,0,0];states.target.angles=[180,0,0];}
-    if(preset==='crossing'){states.target.velocity=[0,0,200];states.target.angles=[90,0,0];}
+    const states=JSON.parse(JSON.stringify(initial));previewCamera=null;
+    if(preset==='head-on'){states.target.velocity=[-1200/3.6,0,0];states.target.angles=[180,0,0];}
+    if(preset==='crossing'){states.target.velocity=[0,0,1200/3.6];states.target.angles=[90,0,0];}
     for(const role of ['launch','target']) {
-      for(let i=0;i<3;i++)if(role!=='launch'||i===1)el(`missile-${role}-position-${i}`).value=states[role].position[i];
+      if(role==='launch')el('missile-launch-position-1').value=states.launch.position[1];else setTargetPosition(states.target.position);
       syncMotion(role,states[role].velocity);
     }
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.preset===preset)));
-    el('missile-preset-note').textContent={chase:'Target starts 4 km ahead, flying away at 720 km/h.','head-on':'Target starts 4 km ahead, flying toward the launcher at 720 km/h.',crossing:'Target starts 4 km ahead, flying across the launcher’s path at 720 km/h.'}[preset]+' Examples replace both aircraft states.';
+    el('missile-preset-note').textContent='';
     changed();
   }
   root.querySelectorAll('[data-preset]').forEach(button=>button.addEventListener('click',()=>applyPreset(button.dataset.preset)));
   el('missile-reset').addEventListener('click',()=>{
     selectedMissiles=[];renderSelected();busy(false);
-    el('missile-search').value='';filterMissiles();el('missile-duration').value=initial.duration;
-    applyPreset('chase');updateTiming();if(!meta)load();
+    el('missile-search').value='';filterMissiles();
+    applyPreset('chase');if(!meta)load();
   });
   for(const role of ['launch','target'])syncMotion(role);
   updatePreview();
@@ -301,11 +418,10 @@
     const origin=scenario.launcher.position;
     // Full precision: near an envelope boundary a rounded position can change the outcome.
     el('missile-launch-position-1').value=String(origin[1]);
-    for(let i=0;i<3;i++)el(`missile-target-position-${i}`).value=String(i===1?scenario.target.position[1]:scenario.target.position[i]-origin[i]);
-    syncMotion('launch',scenario.launcher.velocity);syncMotion('target',scenario.target.velocity);
-    if(scenario.duration)el('missile-duration').value=scenario.duration;
+    setTargetPosition(scenario.target.position.map((v,i)=>i===1?v:v-origin[i]));
+    syncMotion('launch',scenario.launcher.velocity,scenario.launcher.angles);syncMotion('target',scenario.target.velocity,scenario.target.angles);
     root.querySelectorAll('[data-preset]').forEach(button=>button.setAttribute('aria-pressed','false'));
-    el('missile-preset-note').textContent='Loaded from the launch envelope · choosing an example replaces both aircraft states.';
+    el('missile-preset-note').textContent='Loaded from the launch envelope.';
     changed();busy(false);root.scrollIntoView?.({block:'start'});
     return true;
   }};
@@ -327,7 +443,7 @@
             if(status.status==='complete') {completed.push(status.result);break;}
             if(status.status==='failed')throw new Error(status.error);
             if(status.status==='cancelled'){cancelRequested=true;break;}
-            const p=status.progress;el('missile-status').textContent=`${completed.length}/${missiles.length} complete · ${missileName(id)} · `+(p?`${p.time_s.toFixed(1)} / ${p.duration_s.toFixed(1)} s…`:'Waiting for simulation…');
+            const p=status.progress;el('missile-status').textContent=`${completed.length}/${missiles.length} complete · ${missileName(id)} · `+(p?`${p.time_s.toFixed(1)} s flown…`:'Waiting for simulation…');
             await new Promise(resolve=>setTimeout(resolve,200));
           }
         } catch(error) {
@@ -347,7 +463,7 @@
         comparison={requested_missiles:missiles,shared_conditions:shared,complete:completed.length===missiles.length,cancelled:cancelRequested,errors:failed};
         flights=completed;resultColors=flights.map(f=>flightColors[missiles.indexOf(f.scenario.missile)]);focusIndex=0;result=flights[0];await render();
       }
-      el('missile-status').textContent=cancelRequested?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'Simulation complete.';
+      el('missile-status').textContent=cancelRequested?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'';
       if(failed.length)showError(failed.join(' · '));
       el('missile-stale').hidden=completed.length===submitted.missiles.length&&JSON.stringify(inputs())===JSON.stringify(submitted);
       el('missile-stale').textContent=!completed.length?(flights.length?'No new flights completed. Previous results are still displayed.':'No flights completed. Run again to compare the selected missiles.'):completed.length<submitted.missiles.length?'Comparison incomplete. Only completed flights are shown; run again to compare all selected missiles.':'Inputs changed. Run again to update the trajectories.';
@@ -360,16 +476,18 @@
     await Promise.all([...activeJobs].map(async id=>{try{await request('/api/missiles/jobs/'+id+'/cancel',{method:'POST'});}catch(error){showError(error.message);}}));
   });
   let camera={eye:{x:.15,y:-1.6,z:1},up:{x:0,y:0,z:1},projection:{type:'orthographic'}},flightBounds=null;
-  function sceneFit(bounds) {
+  function sceneFit(bounds,{chart=el('missile-chart'),floor=.08,pad=1.08,eye=null,points=null,viewport=null}={}) {
     const raw=bounds.map(([low,high])=>high-low),largest=Math.max(100,...raw);
-    const spans=raw.map(span=>Math.max(100,largest*.08,span)*1.08);
-    const eye=raw[0]>=raw[1]?{x:.15,y:-1.6,z:.65}:{x:1.6,y:.15,z:.65};
+    const spans=raw.map(span=>Math.max(100,largest*floor,span)*pad);
+    eye=eye||(raw[0]>=raw[1]?{x:.15,y:-1.6,z:.65}:{x:1.6,y:.15,z:.65});
     const horizontal=Math.hypot(eye.x,eye.y),length=Math.hypot(horizontal,eye.z);
     const right=[-eye.y/horizontal,eye.x/horizontal,0];
     const up=[-eye.x*eye.z/(horizontal*length),-eye.y*eye.z/(horizontal*length),horizontal/length];
     const ratio=spans.map(span=>span/largest);
-    const extent=basis=>basis.reduce((sum,value,i)=>sum+Math.abs(value)*ratio[i],0);
-    const chart=el('missile-chart'),viewport=(chart.clientWidth||640)/(chart.clientHeight||360);
+    // On screen: the box's projected size, or that of the given points.
+    const centre=bounds.map(([low,high])=>(low+high)/2),project=(basis,p)=>basis.reduce((sum,value,i)=>sum+value*ratio[i]*(p[i]-centre[i])/spans[i],0);
+    const extent=basis=>points?Math.max(...points.map(p=>project(basis,p)))-Math.min(...points.map(p=>project(basis,p))):basis.reduce((sum,value,i)=>sum+Math.abs(value)*ratio[i],0);
+    viewport=viewport||(chart.clientWidth||640)/(chart.clientHeight||360);
     const scale=Math.min(1.65*viewport/extent(right),1.45/extent(up));
     return {spans,aspectratio:Object.fromEntries(['x','y','z'].map((key,i)=>[key,ratio[i]*scale])),
       camera:{eye,up:{x:0,y:0,z:1},projection:{type:'orthographic'}}};
@@ -378,7 +496,8 @@
     if(el('missile-view').value==='3d'&&flightBounds&&el('missile-chart').data&&el('missile-chart').clientWidth)
       Plotly.relayout(el('missile-chart'),{'scene.aspectratio':sceneFit(flightBounds).aspectratio});
   }).observe(el('missile-chart'));
-  const trackingLabels={observed:'Target observed',coasting:'Coasting on the previous track',inertial:'Inertial guidance · seeker not tracking',acquiring:'Acquiring / searching for target'};
+  // Seeker states as short codes (Leo, 2026-10-27): tracking (observed or coasting on the track), inertial guidance, acquiring.
+  const trackingLabels={observed:'TRK',coasting:'TRK',inertial:'IOG',acquiring:'ACQ'};
   const formatValue=(value,unit='',digits=1)=>Number.isFinite(value)?`${value.toLocaleString(undefined,{maximumFractionDigits:digits,minimumFractionDigits:digits})}${unit?' '+unit:''}`:'Unavailable';
   function flightHover(row,role='missile',flight=result) {
     const range=Math.hypot(...row.missile.map((v,i)=>v-row.target[i]));
@@ -398,13 +517,70 @@
     }
     return lines.join('<br>');
   }
-  const propulsionMetrics={thrust:{unit:'kN',series:[['thrust_n','Thrust',.001,'#38c9d7']]},mass:{unit:'kg',series:[['mass_kg','Missile mass',1,'#38c9d7']]},propellant:{unit:'kg',series:[['propellant_used_kg','Propellant consumed',1,'#38c9d7']]}};
-  const aeroMetrics={forces:{unit:'kN',series:[['drag_n','Drag',.001,'#ffa66b'],['lift_n','Lift',.001,'#a7a0ff']]},cd:{unit:'Cd',series:[['drag_coefficient','Drag coefficient',1,'#ffa66b']]},aoa:{unit:'degrees',series:[['aoa_deg','Angle of attack',1,'#ffa66b']]},pressure:{unit:'kPa',series:[['dynamic_pressure_pa','Dynamic pressure',.001,'#ffa66b']]},acceleration:{unit:'m/s²',series:[['acceleration_mps2','Net acceleration',1,'#ffa66b']]}};
+  // Telemetry quantities (Leo, 2026-10-27: one plot, add whatever you want). field: a key of each sample's telemetry
+  // (listed only when a flight records it, e.g. the autopilot values); value: from the sample itself; derived: controlSeries.
+  // Grouped and in this order in the list and on the plot. A pair (fields) is one lane: horizontal solid, vertical dashed,
+  // in the missile's own control axes.
+  const QUANTITY_GROUPS=[
+    ['Flight',{speed:{label:'Speed',unit:'km/h',value:r=>Number.isFinite(r.speed_mps)?r.speed_mps*3.6:null},mach:{label:'Mach',unit:'',value:r=>r.mach},
+      altitude:{label:'Altitude',unit:'m',value:r=>r.missile?.[1]},
+      range:{label:'Range to target',unit:'km',value:r=>r.missile&&r.target?Math.hypot(...r.missile.map((v,i)=>v-r.target[i]))/1000:null}}],
+    ['Propulsion',{thrust:{label:'Thrust',unit:'kN',field:'thrust_n',scale:.001},mass:{label:'Missile mass',unit:'kg',field:'mass_kg'},
+      propellant:{label:'Propellant consumed',unit:'kg',field:'propellant_used_kg'}}],
+    ['Aerodynamics',{drag:{label:'Drag',unit:'kN',field:'drag_n',scale:.001},lift:{label:'Lift',unit:'kN',field:'lift_n',scale:.001},
+      cd:{label:'Drag coefficient',unit:'',field:'drag_coefficient'},aoa:{label:'Angle of attack',unit:'°',field:'aoa_deg'},
+      pressure:{label:'Dynamic pressure',unit:'kPa',field:'dynamic_pressure_pa',scale:.001},
+      acceleration:{label:'Net acceleration',unit:'m/s²',field:'acceleration_mps2'}}],
+    ['Guidance',{load:{label:'Manoeuvre load',unit:'g',derived:'load_g'},turn:{label:'Turn rate',unit:'°/s',derived:'turn_rate_dps'},
+      look:{label:'Seeker look angle',unit:'°',derived:'look_deg'},los:{label:'Line-of-sight rate',unit:'°/s',derived:'los_rate_dps'}}],
+    ['Autopilot',{accel_cmd:{label:'Commanded acceleration',unit:'m/s²',fields:['accel_cmd_h_mps2','accel_cmd_v_mps2']},
+      accel:{label:'Achieved acceleration',unit:'m/s²',fields:['accel_h_mps2','accel_v_mps2']},
+      fins:{label:'Fin command',unit:'',fields:['fin_h','fin_v']},tvc:{label:'Thrust vector',unit:'°',fields:['tvc_h_deg','tvc_v_deg']}}],
+    ['PID',{pid_p:{label:'PID P term',unit:'',fields:['pid_p_h','pid_p_v']},pid_i:{label:'PID I term',unit:'',fields:['pid_i_h','pid_i_v']},
+      pid_d:{label:'PID D term',unit:'',fields:['pid_d_h','pid_d_v']},cruise_pid:{label:'Cruise-speed PID',unit:'',field:'cruise_pid'}}]];
+  const QUANTITIES=Object.assign({},...QUANTITY_GROUPS.map(([,group])=>group)),QUANTITY_ORDER=Object.keys(QUANTITIES);
+  const TELEMETRY_KEY='missile-telemetry-quantities',DEFAULT_QUANTITIES=['thrust','speed','load'];
+  let telemetryPicks=(()=>{try{const saved=JSON.parse(localStorage.getItem(TELEMETRY_KEY));
+    return Array.isArray(saved)&&saved.every(k=>QUANTITIES[k])?saved:[...DEFAULT_QUANTITIES];}catch{return [...DEFAULT_QUANTITIES];}})();
+  const quantityName=q=>q.unit?`${q.label} · ${q.unit}`:q.label;
+  // One series per quantity, or [horizontal, vertical] for a pair.
+  function quantitySeries(flight,key) {
+    const q=QUANTITIES[key],scale=q.scale||1,finite=v=>Number.isFinite(v)?v*scale:null;
+    if(q.derived)return [controlSeries(flight)[q.derived].map(finite)];
+    if(q.fields)return q.fields.map(field=>flight.trajectory.map(r=>finite(r.telemetry?.[field])));
+    return [flight.trajectory.map(r=>finite(q.value?q.value(r):r.telemetry?.[q.field]))];
+  }
+  // Recorded quantities a flight does not carry (all blank) stay out of the list.
+  const quantityAvailable=key=>{const fields=QUANTITIES[key].fields||(QUANTITIES[key].field?[QUANTITIES[key].field]:null);
+    return !fields||flights.some(f=>f.trajectory.some(r=>fields.some(field=>Number.isFinite(r.telemetry?.[field]))));};
+  // Control quantities derived from each saved sample's motion (Leo, 2026-10-27).
+  const controlCache=new WeakMap();
+  function controlSeries(flight) {
+    if(controlCache.has(flight))return controlCache.get(flight);
+    const rows=flight.trajectory,n=rows.length,G=9.80665,deg=180/Math.PI,out={load_g:[],look_deg:[],los_rate_dps:[],turn_rate_dps:[]};
+    const sub=(a,b)=>a.map((v,i)=>v-b[i]),dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>Math.hypot(...a);
+    const angle=(a,b)=>Math.acos(Math.max(-1,Math.min(1,dot(a,b)/(norm(a)*norm(b)||1))));
+    rows.forEach((r,i)=>{
+      // The nose from the attitude quaternion [x, y, z, w] (missile_model/control_frame.frame); the look angle is to the target.
+      const q=r.quaternion,los=sub(r.target,r.missile);
+      const nose=q?[2*(q[0]*q[0]+q[3]*q[3])-1,2*(q[3]*q[2]+q[1]*q[0]),2*(q[2]*q[0]-q[3]*q[1])]:null;
+      out.look_deg.push(nose&&norm(los)>0?angle(nose,los)*deg:null);
+      // Central differences: acceleration across the velocity (turn rate), less gravity (load), and the sight line's turn.
+      const a=rows[Math.max(0,i-1)],b=rows[Math.min(n-1,i+1)],dt=b.time_s-a.time_s,v=r.velocity;
+      if(!(dt>1e-6)||!a.velocity||!b.velocity||!v){out.load_g.push(null);out.turn_rate_dps.push(null);out.los_rate_dps.push(null);return;}
+      const speed=norm(v),across=c=>{const k=dot(c,v)/(speed*speed||1);return c.map((x,j)=>x-k*v[j]);};
+      const acceleration=sub(b.velocity,a.velocity).map(c=>c/dt);
+      out.turn_rate_dps.push(speed?norm(across(acceleration))/speed*deg:null);
+      out.load_g.push(norm(across(acceleration.map((c,j)=>j===1?c+G:c)))/G);
+      out.los_rate_dps.push(angle(sub(b.target,b.missile),sub(a.target,a.missile))/dt*deg);
+    });
+    controlCache.set(flight,out);return out;
+  }
   function timeCursor() {
-    return [{type:'line',xref:'x',yref:'paper',x0:playbackTime,x1:playbackTime,y0:0,y1:1,line:{color:'#b8cada',width:1,dash:'dot'}}];
+    return [{type:'line',xref:'x',yref:'paper',x0:playbackTime,x1:playbackTime,y0:0,y1:1,line:{color:'#c5c5cd',width:1,dash:'dot'}}];
   }
   function resizeDataPlots() {
-    if(el('missile-flight-data').open)for(const kind of ['propulsion','aero'])if(el(`missile-${kind}-chart`).data)Plotly.Plots.resize(el(`missile-${kind}-chart`));
+    if(el('missile-flight-data').open&&el('missile-telemetry-chart').data)Plotly.Plots.resize(el('missile-telemetry-chart'));
   }
   const totalTime=()=>Math.max(...flights.map(f=>f.elapsed_s));
   function indexAt(rows,time,key='time_s') {
@@ -413,38 +589,61 @@
     return low;
   }
   function inspectFlight(index) {
-    focusIndex=index;result=flights[index];el('missile-result-select').value=index;
-    el('missile-outcome').textContent=result.outcome.label;
-    el('missile-closest').textContent=result.closest_approach.distance_m.toFixed(2)+' m';
-    el('missile-elapsed').textContent=result.elapsed_s.toFixed(2)+' s';
+    focusIndex=index;result=flights[index];
+    el('missile-legend').querySelectorAll('button').forEach((button,i)=>button.setAttribute('aria-pressed',String(i===index)));
     el('missile-model-details').replaceChildren(...result.model.limitations.map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
   }
-  el('missile-result-select').addEventListener('change',()=>{inspectFlight(Number(el('missile-result-select').value));updateFrame(Number(el('missile-time').value));});
+  function renderTelemetryPicks() {
+    telemetryPicks=telemetryPicks.filter(k=>QUANTITIES[k]&&(!flights.length||quantityAvailable(k)))
+      .sort((a,b)=>QUANTITY_ORDER.indexOf(a)-QUANTITY_ORDER.indexOf(b));
+    el('missile-telemetry-chips').innerHTML=telemetryPicks.map(k=>`<button type="button" data-quantity="${k}" aria-label="Remove ${escapeHtml(QUANTITIES[k].label)}">${escapeHtml(quantityName(QUANTITIES[k]))} ×</button>`).join('');
+    const groups=QUANTITY_GROUPS.map(([name,group])=>[name,Object.keys(group).filter(k=>!telemetryPicks.includes(k)&&quantityAvailable(k))]).filter(([,keys])=>keys.length);
+    el('missile-telemetry-add').innerHTML=`<option value="">Add a quantity…</option>`+groups.map(([name,keys])=>
+      `<optgroup label="${name}">${keys.map(k=>`<option value="${k}">${escapeHtml(quantityName(QUANTITIES[k]))}</option>`).join('')}</optgroup>`).join('');
+    el('missile-telemetry-add').disabled=!groups.length;
+    try{localStorage.setItem(TELEMETRY_KEY,JSON.stringify(telemetryPicks));}catch{}
+  }
   async function renderDataPlots() {
     if(!result||!el('missile-flight-data').open)return;
-    await Promise.all(['propulsion','aero'].map(async kind=>{
-      const node=el(`missile-${kind}-chart`),key=el(`missile-${kind}-metric`).value;
-      const metric=(kind==='propulsion'?propulsionMetrics:aeroMetrics)[key];
-      el(`missile-${kind}-legend`).replaceChildren(...flights.map((flight,i)=>{
-        const label=document.createElement('span');label.textContent=`━ ${i+1} · ${missileName(flight.scenario.missile)}`;
-        label.style.color=resultColors[i];label.title=missileLabel(flight.scenario.missile);return label;
-      }));
-      const traces=flights.flatMap((flight,i)=>metric.series.map(([field,name,scale],s)=>({type:'scatter',mode:'lines',name:`${i+1} · ${missileName(flight.scenario.missile)}`,
-        legendgroup:String(i),showlegend:s===0,
-        x:flight.trajectory.map(r=>r.time_s),y:flight.trajectory.map(r=>Number.isFinite(r.telemetry?.[field])?r.telemetry[field]*scale:null),
-        customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,line:{color:resultColors[i],width:2,dash:s?'dash':'solid'},
-        hovertemplate:`${escapeHtml(missileLabel(flight.scenario.missile))}<br>%{x:.3f} s<br>${name}: %{y:.3f} ${metric.unit}<extra></extra>`})));
-      await Plotly.react(node,traces,{paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{color:'#dce5f0',size:11},
-        margin:{l:62,r:18,t:30,b:55},xaxis:{title:'Time after release · s',gridcolor:'#263244',range:[0,totalTime()]},
-        yaxis:{title:metric.unit,gridcolor:'#263244',rangemode:'tozero'},showlegend:false,
-        hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+key},
-        {responsive:true,displaylogo:false,toImageButtonOptions:{filename:'missile-comparison-'+kind+'-'+key,format:'png',scale:2}});
-      node.removeAllListeners('plotly_click');
-      node.on('plotly_click',event=>{const point=event.points?.[0]?.customdata;if(Array.isArray(point)){pause();inspectFlight(point[0]);updateFrame(indexAt(timeline,point[1],null));}});
+    renderTelemetryPicks();
+    el('missile-telemetry-legend').replaceChildren(...flights.map((flight,i)=>{
+      const label=document.createElement('span');label.textContent=`━ ${i+1} · ${missileName(flight.scenario.missile)}`;
+      label.style.color=resultColors[i];label.title=missileLabel(flight.scenario.missile);return label;
     }));
+    // One lane per quantity, stacked on one time axis.
+    const node=el('missile-telemetry-chart'),lanes=telemetryPicks.length,gap=lanes>1?.06:0,grid='rgba(240,240,250,.09)';
+    const height=lanes?120+150*lanes:160;node.style.height=height+'px';
+    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#e2e2ea',size:11},height,
+      margin:{l:70,r:18,t:16,b:50},xaxis:{title:'Time after release · s',gridcolor:grid,range:[0,totalTime()],anchor:lanes?'y'+(lanes>1?lanes:''):'y'},
+      showlegend:false,hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+telemetryPicks.join(','),dragmode:'pan',
+      modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},annotations:[]};
+    const traces=[];
+    telemetryPicks.forEach((key,lane)=>{
+      const q=QUANTITIES[key],axis=lane?`yaxis${lane+1}`:'yaxis',ref=lane?`y${lane+1}`:'y';
+      const top=1-lane/lanes,bottom=1-(lane+1)/lanes,domain=[bottom+(lane<lanes-1?gap/2:0),top-(lane?gap/2:0)];
+      // The lane's name above it (long names overlap as vertical axis titles); the axis keeps the unit.
+      layout[axis]={title:{text:q.unit,font:{size:10}},gridcolor:grid,domain,anchor:'x',zeroline:false};
+      layout.annotations.push({xref:'paper',yref:'paper',x:0,y:domain[1],xanchor:'left',yanchor:'bottom',showarrow:false,
+        text:escapeHtml(q.label)+(q.fields?' <span style="color:#9a9aa6">· solid horizontal, dashed vertical</span>':''),font:{size:11,color:'#f0f0fa'}});
+      flights.forEach((flight,i)=>quantitySeries(flight,key).forEach((y,s)=>traces.push({type:'scatter',mode:'lines',xaxis:'x',yaxis:ref,
+        name:`${i+1} · ${missileName(flight.scenario.missile)}`,x:flight.trajectory.map(r=>r.time_s),y,customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,
+        line:{color:resultColors[i],width:2,dash:s?'dash':'solid'},
+        hovertemplate:`${escapeHtml(q.label)}${q.fields?(s?' · vertical':' · horizontal'):''}: %{y:.3f}${q.unit?' '+q.unit:''}<extra>${i+1}</extra>`})));
+    });
+    await Plotly.react(node,traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
+      toImageButtonOptions:{filename:'missile-telemetry',format:'png',scale:2}});
+    node.removeAllListeners('plotly_click');
+    node.on('plotly_click',event=>{const point=event.points?.[0]?.customdata;if(Array.isArray(point)){pause();inspectFlight(point[0]);updateFrame(indexAt(timeline,point[1],null));}});
   }
   el('missile-flight-data').addEventListener('toggle',()=>{if(el('missile-flight-data').open)renderDataPlots().catch(error=>showError(error.message));});
-  for(const kind of ['propulsion','aero'])el(`missile-${kind}-metric`).addEventListener('change',()=>renderDataPlots().catch(error=>showError(error.message)));
+  el('missile-telemetry-add').addEventListener('change',()=>{
+    const key=el('missile-telemetry-add').value;if(!key)return;
+    telemetryPicks.push(key);renderDataPlots().catch(error=>showError(error.message));
+  });
+  el('missile-telemetry-chips').addEventListener('click',event=>{
+    const button=event.target.closest('[data-quantity]');if(!button)return;
+    telemetryPicks=telemetryPicks.filter(k=>k!==button.dataset.quantity);renderDataPlots().catch(error=>showError(error.message));
+  });
   const viewAxes={ '3d':[0,2,1],xz:[0,2],xy:[0,1],zy:[2,1] };
   const axisNames=['X · m','Altitude · Y · m','Z · m'];
   function projectedPositions(positions,view=el('missile-view').value) {
@@ -460,20 +659,31 @@
       return [Math.min(...values),Math.max(...values)];
     });
     flightBounds=bounds;const fitted=sceneFit(bounds);camera=fitted.camera;
-    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'#263244',zerolinecolor:'#455568',color:'#a9b8ca',backgroundcolor:'#121925'};};
-    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'#263244',zerolinecolor:'#455568',tickformat:',.0f',automargin:true});
-    const layout={paper_bgcolor:'#121925',plot_bgcolor:'#121925',font:{color:'#dce5f0'},hoverlabel:{bgcolor:'#172638',bordercolor:'#38c9d7',font:{color:'#e3edf7',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
-      ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#a9b8ca'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
-        {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1},hovermode:'closest'})};
+    const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:index===1?[center+span/2,center-span/2]:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',color:'#b4b4bc',backgroundcolor:'#000000'};};
+    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',tickformat:',.0f',automargin:true});
+    // Mouse logic as on the EM chart (Leo, 2026-10-27): drag pans (turns the 3D view), the wheel zooms, the toolbar resets.
+    const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#e2e2ea'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#eaeaf2',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
+      dragmode:is3d?'turntable':'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},
+      ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#b4b4bc'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
+        {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1,...(view==='xz'?{autorange:'reversed'}:{})},hovermode:'closest'})};
     el('missile-slice-note').hidden=is3d;
     el('missile-chart').setAttribute('aria-label',is3d?'Interactive 3D missile and target trajectories':`Interactive 2D missile and target trajectories: ${axisNames[viewAxes[view][0]]} / ${axisNames[viewAxes[view][1]]}`);
     await Plotly.newPlot(el('missile-chart'),[...flights.map((f,i)=>trace(f,'missile',resultColors[i])),trace(longest,'target','#ffa66b'),...flights.map((f,i)=>marker(missileName(f.scenario.missile)+' now',resultColors[i])),marker('Target now','#ffd0ac',false)],
       layout,
-      {responsive:true,displaylogo:false,modeBarButtonsToRemove:['toImage']});
+      {responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['toImage','select2d','lasso2d']});
+    // The setup view's axes indicator, turning with the 3D flight view too (Leo, 2026-10-27).
+    const chart=el('missile-chart');el('missile-flight-axes').toggleAttribute('hidden',!is3d);   // an SVG has no hidden property
+    if(is3d) {
+      drawAxes(camera.eye,'missile-flight-axes');
+      const follow=event=>{if(event['scene.camera'])drawAxes(event['scene.camera'].eye,'missile-flight-axes');};
+      chart.removeAllListeners?.('plotly_relayouting');chart.on('plotly_relayouting',follow);chart.on('plotly_relayout',follow);
+    }
   }
   async function render() {
     flightRevision++;
     timeline=[...new Set(flights.flatMap(f=>f.trajectory.map(r=>r.time_s)))].sort((a,b)=>a-b);
+    for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.disabled=false;
+    showPanes(flightView);el('missile-view').value=flightView;
     el('missile-view').disabled=true;
     try{await renderTrajectory();}finally{el('missile-view').disabled=false;}
     el('missile-legend').replaceChildren(...flights.map((flight,i)=>{
@@ -482,8 +692,7 @@
     }));
     const targetLegend=document.createElement('span');targetLegend.textContent='┄ Target';targetLegend.style.color='#ffa66b';targetLegend.style.opacity='.45';el('missile-legend').append(targetLegend);
     el('missile-time').max=timeline.length-1;el('missile-time').value=0;el('missile-time').disabled=false;el('missile-play').disabled=false;
-    el('missile-result-select').replaceChildren(...flights.map((f,i)=>{const option=document.createElement('option');option.value=i;option.textContent=`${i+1} · ${missileLabel(f.scenario.missile)} · ${f.elapsed_s.toFixed(2)} s`;return option;}));
-    el('missile-result-label').hidden=false;inspectFlight(focusIndex);
+    inspectFlight(focusIndex);
     const single=comparison.requested_missiles.length===1;
     const exported=single?flights[0]:{format:'missile-comparison-v1',...comparison,flights};
     if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=URL.createObjectURL(new Blob([JSON.stringify(exported,null,2)],{type:'application/json'}));
@@ -497,7 +706,7 @@
     if(!result)return;const time=timeline[index],rows=flights.map(f=>f.trajectory[indexAt(f.trajectory,time)]),row=rows[focusIndex];
     el('missile-time').value=index;playbackTime=time;el('missile-time-label').textContent=time.toFixed(2)+' s';
     const finished=time>=result.elapsed_s;
-    el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':`Sample ${row.time_s.toFixed(2)} s · ${(row.speed_mps*3.6).toFixed(1)} km/h · ${trackingLabels[row.tracking_state]||'Tracking unavailable'}`);
+    el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':(trackingLabels[row.tracking_state]||'—'));
     const targetPosition=result.scenario.target.position.map((v,i)=>v+result.scenario.target.velocity[i]*time);
     const positions=[...rows.map(r=>r.missile),targetPosition];
     const projected=Object.fromEntries(Object.entries(projectedPositions(positions)).map(([axis,values])=>[axis,values.map(v=>[v])]));
@@ -506,19 +715,19 @@
     const trailUpdate=Object.fromEntries(Object.keys(trailPositions[0]).map(axis=>[axis,trailPositions.map(p=>p[axis])]));
     Plotly.restyle(el('missile-chart'),{...trailUpdate,text:trails.map((path,i)=>path.map(r=>flightHover(r,'missile',flights[i])))},flights.map((_,i)=>i));
     Plotly.restyle(el('missile-chart'),{...projected,text:[...rows.map((r,i)=>[flightHover(r,'missile',flights[i])+(time>flights[i].elapsed_s?'<br>Flight ended · marker remains at the final position':'')]),[]]},positions.map((_,i)=>flights.length+1+i));
-    if(el('missile-flight-data').open)for(const kind of ['propulsion','aero'])if(el(`missile-${kind}-chart`).data)Plotly.relayout(el(`missile-${kind}-chart`),{shapes:timeCursor()});
+    if(el('missile-flight-data').open&&el('missile-telemetry-chart').data)Plotly.relayout(el('missile-telemetry-chart'),{shapes:timeCursor()});
   }
-  el('missile-time').addEventListener('input',()=>{pause();updateFrame(Number(el('missile-time').value));});
+  el('missile-time').addEventListener('input',()=>{pause();if(plotView==='setup')showView(flightView);updateFrame(Number(el('missile-time').value));});
   el('missile-view').addEventListener('change',async()=>{
     if(!result)return;
     pause();const index=Number(el('missile-time').value);el('missile-view').disabled=true;
     try{await renderTrajectory();updateFrame(index);}catch(error){showError(error.message);}finally{el('missile-view').disabled=false;}
   });
-  el('missile-view-reset').addEventListener('click',()=>{if(result)Plotly.relayout(el('missile-chart'),el('missile-view').value==='3d'?{'scene.camera':camera}:{'xaxis.autorange':true,'yaxis.autorange':true});});
   el('missile-play').addEventListener('click',()=>{
     if(playing){pause();return;}if(!result)return;
+    if(plotView==='setup')showView(flightView);
     if(Number(el('missile-time').value)>=timeline.length-1)updateFrame(0);
-    playing=true;lastFrame=performance.now();el('missile-play').textContent='Pause';requestAnimationFrame(animate);
+    playing=true;lastFrame=performance.now();playButton(PAUSE_ICON,'Pause');requestAnimationFrame(animate);
   });
   function animate(now) {
     if(!playing)return;const wanted=playbackTime+(now-lastFrame)/1000*Number(el('missile-play-speed').value);lastFrame=now;

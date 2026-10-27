@@ -11,20 +11,21 @@ from em_numeric_core import closure,turn_quaternion
 
 
 def flight_condition(self, speed, load, x):
-    from em_solver import turn_geometry
+    from em_solver import turn_geometry,turn_direction
     evaluation_dt=self.dt
     alpha,bank=x[:2]
+    turn=turn_direction(self.config)
     # The first former turn_geometry call supplied only its attitude. Building
     # force directions, angular rate and a provisional air cache there was dead
     # work: attitude does not depend on its provisional IAS or angular rate.
-    quaternion=turn_quaternion(alpha,bank,self.sideslip_attitude_deg)
+    quaternion=turn_quaternion(alpha,turn*bank,self.sideslip_attitude_deg)
     velocity=world_to_body_air(quaternion,[speed,0.,0.])
     if self.config.get('experimental_lateral_trim','full')!='full':
         if self.sideslip_attitude_deg!=0.:raise ValueError('Experimental trim requires zero sideslip')
         # Remove quaternion-rounding leakage from the explicitly zero-beta input.
         velocity[2]=0.
     air=cache(velocity,self.config['altitude_m'])
-    geometry=turn_geometry(alpha,bank,speed,load,self.dt,air['ias_u'],self.sideslip_attitude_deg)
+    geometry=turn_geometry(alpha,bank,speed,load,self.dt,air['ias_u'],self.sideslip_attitude_deg,turn)
     return velocity,air,geometry,evaluation_dt
 
 

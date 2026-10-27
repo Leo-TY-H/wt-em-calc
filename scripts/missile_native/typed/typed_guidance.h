@@ -22,6 +22,14 @@ struct PropulsionCtl { int64_t stages[4]; float pid[8]; };
 struct Controllers { OrientationCtl orientation; GuidanceCtl guidance; PropulsionCtl propulsion; };
 
 struct OrientationResult { bool override_; d2 fins, auxiliary; };
+
+// The simulator step's last acceleration- and propulsion-control results, for
+// missile_telemetry.controls. Recorded only while the typed simulator sets it.
+struct ControlCapture {
+    bool accel = false; float fins[2]{}, limited[2]{}, actual[2]{}, pid[16]{};
+    bool cruise = false; double cruise_factor = 0.;
+};
+inline thread_local ControlCapture* control_capture = nullptr;
 // optical_manager_controls.orientation through engine_kernels' verified adapter.
 inline OrientationResult orientation_service(const ControlProps& p, OrientationCtl& s, double time, double range_squared,
         const d4& q, const d3& omega, const d2& angles, double context_value, double dt) {
@@ -60,19 +68,32 @@ inline d2 guidance_service(const ControlProps& p, GuidanceCtl& gs, const float* 
     ::acceleration_update(&p.acceleration, &p.aero, motor, pid, command.acceleration, fv(feedback), fq(q), fv(velocity),
                           (float)position[1], (float)time, (float)dt, matrix_velocity_frame ? 1 : 0, &out);
     check_kernel();
+    if (control_capture) {
+        ControlCapture& c = *control_capture;
+        c.accel = out.has_fins != 0;
+        if (c.accel) {
+            for (int k = 0; k < 2; ++k) { c.fins[k] = out.fins[k]; c.limited[k] = out.limited[k]; c.actual[k] = out.actual[k]; }
+            std::memcpy(c.pid, pid, sizeof pid);
+        }
+    }
     if (!out.has_fins) return fins_in;
     for (int i = 0; i < 2; ++i) for (int j = 0; j < 8; ++j) gs.pid[i][j] = pid[i * 8 + j];
     return {out.fins[0], out.fins[1]};
 }
 inline d4 propulsion_service(const ControlProps& p, PropulsionCtl& s, double time, const d3& position, const d3& velocity,
                              double time_to_hit, double closure, double dt) {
+    if (control_capture) control_capture->cruise = false;
     if (!p.propulsion.count) return {1., 1., 1., 1.};
     wtm_propulsion_control_state st{}; bool cruising = false;
     for (int i = 0; i < 4; ++i) { st.stages[i] = (int)s.stages[i]; if (i < p.propulsion.count && st.stages[i] == 2) cruising = true; }
     std::memcpy(st.pid, s.pid, sizeof st.pid);
     float factors[4];
+    int before[4]; std::memcpy(before, st.stages, sizeof before);
     ::propulsion_control_update(&p.propulsion, &st, (float)time, fv(position), fv(velocity), (float)time_to_hit, (float)closure, (float)dt, factors);
     check_kernel();
+    if (control_capture)   // the factor set by the cruise-speed PID (a stage that entered in mode 2)
+        for (int i = 0; i < p.propulsion.count; ++i)
+            if (before[i] == 2) { control_capture->cruise = true; control_capture->cruise_factor = factors[i]; break; }
     if (cruising) std::memcpy(s.pid, st.pid, sizeof st.pid);
     for (int i = 0; i < 4; ++i) s.stages[i] = st.stages[i];
     return {factors[0], factors[1], factors[2], factors[3]};
@@ -499,7 +520,7 @@ inline int64_t designation_indicator(const RadarManagerProps& p, int64_t source_
 inline void radar_guidance_update(const RadarProps& P, RadarGuidance& g, const Packet& old_in, const Packet& new_in, double elapsed_in,
         const float* clocks, const RadarTarget& target, const LaunchState& launch, double context_value, bool matrix_velocity_frame) {
     const RadarManagerProps& p = P.manager;
-    IdealContext context;
+    static thread_local IdealContext context;   // rebuilt every step; kept only to reuse the record storage
     ideal_context(launch, target, new_in[13], p.designation_mask, context);
     const std::vector<Record>& records = context.records;
     const double lag = context.lag_limit;
@@ -634,6 +655,59 @@ inline void radar_guidance_update(const RadarProps& P, RadarGuidance& g, const P
     s.search_value = mul(add(sv[1], sv[0]), .5);
     if (p.designation_notification == 1) s.designation_indicator = designation_indicator(p, s.inertial_source_tag, records);
     g.manager = s; g.seeker = ss;
+}
+
+// ---------------------------------------------- website optical prelaunch
+// missile_initialization.optical_ready after its cached optical_reset: optical_modes.update
+// in mode 4 with the authored designation source (seeker_designation.allowed/point)
+// and the launcher's measurement callback (geometric_optical_observation.observe).
+struct OpticalAcquired { OpticalSeekerState state; Opaque raw; bool tracking; };
+inline OpticalAcquired optical_prelaunch_acquire(const OpticalProps& P, const OpticalSeekerState& reset, const Opaque& reset_raw,
+                                                 const d4& body_q, const d3& body_position, const d3& target_position) {
+    const OpticalSeekerProps& p = P.seeker;
+    const double old_time = -(double)(float)(1.0 / 48.0), new_time = 0.;   // -frame_session.STEP, 0
+    double dt = sub(new_time, old_time);
+    Opaque raw = reset_raw;
+    d4 q = f32s(body_q);
+    OpticalSeekerState out = reset;
+    out.angles = f32s(reset.angles); out.direction = f32s(reset.direction); out.angular_rate = f32s(reset.angular_rate);
+    out.widths = f32s(reset.widths);
+    out.gap = f32(reset.gap); out.distance = f32(reset.distance); out.los_check_time = f32(reset.los_check_time);
+    if (!(dt >= f32(1e-5))) bail("Optical prelaunch interval");
+    int source = -1;
+    for (int s : {6, 3, 5, 2, 1, 4, 7, 8, 9, 0}) if (p.designation_mask & (1LL << s)) { source = s; break; }
+    // seeker_designation.allowed(4, source, designation_mask, constant_mask)
+    bool designated = source >= 0 && ((((p.designation_mask & 0xffff) | 0) & 0xffffffffLL) & (1LL << (source & 31))) != 0;
+    if (designated) {
+        if (p.surface_as_target) bail("NotImplementedError: Designated surface-target generation is not reconstructed here");
+        d3 delta = {sub(target_position[0], body_position[0]), sub(target_position[1], body_position[1]), sub(target_position[2], body_position[2])};
+        Shared shared = designation_point(p.shared, q, world_to_body(body_q, delta), {0., 0., 0.}, out.angles, true);
+        out.widths = {p.width_max, p.width_max};
+        out.angles = shared.angles; out.direction = shared.direction; out.angular_rate = shared.angular_rate;
+        raw[0] = 0;
+        if (shared.accepted == 1) for (int i = 4; i < 16; ++i) raw[i] = 0;
+    } else {
+        out.angles = p.arret_angles; out.direction = boresight_of(q, p.arret_angles);
+        out.angular_rate = {0., 0., 0.}; out.widths = {p.width_max, p.width_max};
+    }
+    out.los_cache_valid = false;
+    // The launcher's callback packs its result into a copy of the reset bytes,
+    // which then replace the mode's working copy.
+    OpticalObservation observed = geometric_optical_observe(P.observation, out, reset_raw, body_q, body_position, target_position, {0., 0., 0.}, false);
+    if (observed.refresh_los_cache) { out.los_check_time = f32(new_time); out.los_cache_valid = true; }
+    out.distance = f32(observed.distance); raw = observed.opaque;
+    OpticalAcquired result{out, raw, observed.available};
+    if (!observed.available) { result.state.gap = add(out.gap, dt); return result; }
+    d3 measurement = f32s(observed.measurement);
+    Shared shared = reseed(p.shared, q, measurement);
+    shared = shared_update(p.shared, q, &measurement, shared, dt, true, true, false);
+    out.angles = shared.angles; out.direction = shared.direction; out.angular_rate = shared.angular_rate;
+    double inverse_distance = safe_div(1., out.distance);
+    double aux[2] = {f32(observed.auxiliary[2]), f32(observed.auxiliary[1])};
+    for (int i = 0; i < 2; ++i) out.widths[i] = mn(p.width_max, mx(p.width_min, mul(mul(aux[i], inverse_distance), .5)));
+    out.gap = 0.;
+    result.state = out;
+    return result;
 }
 
 }  // namespace typed

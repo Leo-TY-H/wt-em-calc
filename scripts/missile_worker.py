@@ -51,6 +51,7 @@ from missile_backend import activate
 BACKEND = activate()
 if BACKEND != 'reference':
     InteractionSession = FastInteractionSession
+missile_telemetry.record_controls()
 
 
 def quaternion(angles):
@@ -62,6 +63,98 @@ def quaternion(angles):
     return [f32(v) for v in product(product([0,-math.sin(heading),0,math.cos(heading)],
                           [0,0,math.sin(pitch),math.cos(pitch)]),
                           [math.sin(roll),0,0,math.cos(roll)])]
+
+
+ESCAPE_GRAVITY = 9.81
+ESCAPE_LOAD_G = (1.5, 15.)
+ESCAPE_DELAY_S = (0., 60.)
+# A simulation runs until an outcome (Leo, 2026-10-26): the longest missile lifetime is 180 s and expires just
+# after it, so this default limit is never the one reached.
+RUN_LIMIT_S = 300.
+
+
+def escape_motion(target, escape, origin):
+    """Target path of the no-escape zone: a level break away from the launch point.
+
+    The target holds its course for escape['delay_s'], then turns at
+    escape['load_g'] the shorter way until origin (the launch point) lies directly
+    behind it, and flies straight on. The turn is level and coordinated: rate
+    g sqrt(n^2 - 1) / V, banked acos(1 / n) into the turn. Speed and altitude stay
+    constant, so the path has a closed form; target_point() evaluates it at any
+    time after release.
+    """
+    position, velocity = list(target['position']), list(target['velocity'])
+    if velocity[1] != 0: raise ValueError('An escaping target must fly level')
+    delay, load = float(escape['delay_s']), float(escape['load_g'])
+    if not ESCAPE_DELAY_S[0] <= delay <= ESCAPE_DELAY_S[1] or not ESCAPE_LOAD_G[0] <= load <= ESCAPE_LOAD_G[1]:
+        raise ValueError('Escape load factor or delay out of range')
+    def wrapped(angle):   # (-pi, pi]
+        angle = math.fmod(angle, 2 * math.pi)
+        if angle > math.pi: angle -= 2 * math.pi
+        if angle <= -math.pi: angle += 2 * math.pi
+        return angle
+    speed = math.sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2])
+    turn_point = [p + v * delay for p, v in zip(position, velocity)]
+    heading = math.atan2(velocity[2], velocity[0])
+    turn = wrapped(math.atan2(turn_point[2] - origin[2], turn_point[0] - origin[0]) - heading)   # head-on: toward +Z
+    sine, cosine = math.sin(heading), math.cos(heading)
+    rate = radius = 0.; end = delay; exit_point = turn_point[:]; run = velocity[:]; exit_heading = heading
+    if speed > 0 and turn != 0:
+        rate = math.copysign(ESCAPE_GRAVITY * math.sqrt(load * load - 1.) / speed, turn)
+        radius = speed / rate
+        sign = math.copysign(1., turn)
+        def ahead(tau):
+            """Turn still needed tau seconds into the turn until origin lies dead astern."""
+            h = heading + rate * tau
+            x, z = turn_point[0] + radius * (math.sin(h) - sine), turn_point[2] - radius * (math.cos(h) - cosine)
+            return sign * wrapped(math.atan2(z - origin[2], x - origin[0]) - h)
+        # First crossing in 1-degree steps of heading (a jump across +-180 degrees is no
+        # crossing), then bisection. Without one in a full circle (origin close to the
+        # turn), the turn ends on the bearing seen from its start.
+        step = math.pi / 180. / abs(rate)
+        duration = turn / rate; previous = ahead(0.)
+        for k in range(1, 361):
+            value = ahead(k * step)
+            if value <= 0. and previous < math.pi / 2:
+                low, high = (k - 1) * step, k * step
+                for _ in range(60):
+                    middle = (low + high) / 2
+                    if ahead(middle) > 0.: low = middle
+                    else: high = middle
+                duration = high
+                break
+            previous = value
+        end = delay + duration
+        exit_heading = heading + rate * (end - delay)
+        exit_point = [turn_point[0] + radius * (math.sin(exit_heading) - sine), turn_point[1],
+                      turn_point[2] - radius * (math.cos(exit_heading) - cosine)]
+        run = [speed * math.cos(exit_heading), 0., speed * math.sin(exit_heading)]
+    return dict(kind='escape', position=position, velocity=velocity, quaternion=quaternion(target['angles']),
+                load_g=load, delay_s=delay, speed=speed, start=delay, end=end, heading=heading, sine=sine, cosine=cosine,
+                rate=rate, radius=radius, roll=math.copysign(math.degrees(math.acos(1. / load)), turn),
+                turn_point=turn_point, exit_point=exit_point, run=run,
+                run_quaternion=quaternion([math.degrees(exit_heading), 0., 0.]))
+
+
+def target_point(motion, time):
+    """Target position, velocity and attitude at time: linear_point() or an escape_motion() path."""
+    if motion.get('kind') != 'escape': return linear_point(motion, time)
+    if time <= motion['start']:
+        position = [p + v * time for p, v in zip(motion['position'], motion['velocity'])]
+        velocity, attitude = motion['velocity'], motion['quaternion']
+    elif time < motion['end']:
+        heading = motion['heading'] + motion['rate'] * (time - motion['start'])
+        point, radius = motion['turn_point'], motion['radius']
+        position = [point[0] + radius * (math.sin(heading) - motion['sine']), point[1],
+                    point[2] - radius * (math.cos(heading) - motion['cosine'])]
+        velocity = [motion['speed'] * math.cos(heading), 0., motion['speed'] * math.sin(heading)]
+        attitude = quaternion([math.degrees(heading), 0., motion['roll']])
+    else:
+        delta = time - motion['end']
+        position = [p + v * delta for p, v in zip(motion['exit_point'], motion['run'])]
+        velocity, attitude = motion['run'], motion['run_quaternion']
+    return dict(position=[f32(x) for x in position], velocity=[f32(x) for x in velocity],
+                quaternion=[f32(x) for x in attitude])
 
 
 def validate(request):
@@ -88,9 +181,18 @@ def validate(request):
             clean[role][name] = [number(v, f'{role} {name}', -bound, bound) for v in values]
         if not 0 < clean[role]['position'][1] <= 30000: raise ValueError(f'{role} altitude must be above 0 and at most 30000 m')
         if not -90 <= clean[role]['angles'][1] <= 90: raise ValueError(f'{role} pitch must be between -90 and 90 degrees')
-    clean['duration'] = number(request.get('duration', 60), 'Duration', .1, 180)
+    clean['duration'] = number(request.get('duration', RUN_LIMIT_S), 'Duration', .1, RUN_LIMIT_S)
+    early_exit = request.get('early_exit', True)
+    if not isinstance(early_exit, bool): raise ValueError('Early-exit setting must be boolean')
+    clean['early_exit'] = early_exit
     if math.dist(clean[launch_key]['position'], clean['target']['position']) < 10:
         raise ValueError('Initial launcher/target separation must be at least 10 m')
+    escape = request.get('escape')
+    if escape is not None:
+        if not isinstance(escape, dict): raise ValueError('Escape settings must be an object')
+        if clean['target']['velocity'][1] != 0: raise ValueError('An escaping target must fly level')
+        clean['escape'] = dict(load_g=number(escape.get('load_g'), 'Escape load factor', *ESCAPE_LOAD_G),
+                               delay_s=number(escape.get('delay_s', 0.), 'Escape delay', *ESCAPE_DELAY_S))
     return clean
 
 
@@ -160,18 +262,45 @@ def proximity_endpoint(event, old, new, target_at):
                 tracking_state='event', loss_reason=None, mach=None, telemetry=None)
 
 
-def simulate(request, progress=lambda _: None, cancelled=lambda: False):
-    config = validate(request)
+def simulation_setup(config):
+    """Release, seeker initialization, interaction session and target motion of one run.
+
+    Shared by simulate() and the native typed simulator, which runs the same
+    step loop on typed state and assembles its result with simulation_document().
+    """
+    # Share the envelope's conservative miss certificate. This local import
+    # avoids a module-initialization cycle with the envelope's lazy worker.
+    from missile_envelope import _burn_end
     profile = json.loads((input_directory() / 'launch-profiles' / (config['missile']+'.json')).read_text())
     launcher_aircraft = 'launcher' in config
     launch = config['launcher' if launcher_aircraft else 'launch']
     frame = initial_frame(profile, launch, config['target'], launcher_aircraft=launcher_aircraft)
-    initialization = frame.website_initialization
     session = InteractionSession.from_frame(frame, clock=0., origin=frame.website_release['position'],
                                             enabled=True, guidance_flag=False)
-    target_motion = dict(kind='constant_velocity', position=config['target']['position'],
-                         velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles']))
-    def target(t): return linear_point(target_motion, t)
+    escape = config.get('escape')
+    target_motion = (escape_motion(config['target'], escape, launch['position']) if escape is not None else
+                     dict(kind='constant_velocity', position=config['target']['position'],
+                          velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles'])))
+    limits = frame.limits
+    return dict(profile=profile, launcher_aircraft=launcher_aircraft, launch=launch, frame=frame, session=session,
+                initialization=frame.website_initialization, escape=escape, target_motion=target_motion,
+                straight_from=0. if escape is None else target_motion['end'],
+                straight_velocity=config['target']['velocity'] if escape is None else target_motion['run'],
+                burn_end=_burn_end(frame.flight.properties['guidance']['motors']),
+                deadline=limits['launch_time'] + limits['lifetime'],
+                reach_radius=float(session.props.get('radius', 0.) or 0.) + 30.,
+                inertial_enabled=bool(frame.flight.properties['rocket']['guidance'].get('inertialNavigation',False)))
+
+
+def simulate(request, progress=lambda _: None, cancelled=lambda: False):
+    from missile_envelope import unreachable
+    config = validate(request)
+    setup = simulation_setup(config)
+    frame, session, launch = setup['frame'], setup['session'], setup['launch']
+    initialization, target_motion = setup['initialization'], setup['target_motion']
+    straight_from, straight_velocity, burn_end = setup['straight_from'], setup['straight_velocity'], setup['burn_end']
+    limits, deadline, reach_radius = frame.limits, setup['deadline'], setup['reach_radius']
+    def target(t): return target_point(target_motion, t)
     def targets(old, next_time):
         new = target(next_time)
         if frame.flight.family == 'optical': return [dict(position=new['position'], auxiliary=[0.,0.,0.], id=123)]
@@ -181,7 +310,7 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
                   if frame.flight.family=='radar' else None)
     history = PointHistory(lambda t: target(t)['position'], lambda t: target(t)['quaternion'])
     rows = []; transitions = []; traveled_distance = 0.
-    inertial_enabled = bool(frame.flight.properties['rocket']['guidance'].get('inertialNavigation',False))
+    inertial_enabled = setup['inertial_enabled']
     tracking_status = describe_tracking(frame.flight.family,session.frame.flight.state['guidance']['manager'],
                                        inertial_enabled,initialization=initialization)
     seeker_transitions = [dict(time_s=0.,**tracking_status)]
@@ -202,6 +331,7 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
         old = sample(); now = add(old['time_s'], STEP)
         before = deepcopy(session.frame.flight.state['body'])
         controls = session.frame.flight.state['controls'][:]
+        missile_telemetry.begin_step()
         result = session.advance(now, STEP, targets, collision_time=now, point_history=history,
                                  flight_step=radar_step)
         previous_tracking_status = tracking_status
@@ -230,38 +360,56 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
             code = 'lifetime' if expiry['time_expired'] else 'distance_limit' if expiry['distance_expired'] else 'tracking_timeout'
             labels = dict(lifetime='Missile lifetime expired',distance_limit='Missile distance limit reached',tracking_timeout='Geometric tracking timeout')
             outcome = dict(code=code,label=labels[code]); terminal=True
+        elif config['early_exit'] and i % 6 == 5 and new['time_s'] >= straight_from:
+            body = session.frame.flight.state['body']
+            if (all(c >= end + 1e-3 for c, end in zip(body['clocks'], burn_end))
+                    and unreachable(new['missile'], new['speed_mps'], new['target'], straight_velocity,
+                                    deadline - new['time_s'] + 2 * STEP, reach_radius,
+                                    limits['origin'], limits['distance_limit'])):
+                outcome = dict(code='unreachable', label='Miss — target is unreachable'); terminal=True
         if event:
             seeker_transitions.append(dict(time_s=endpoint['time_s'],tracking=None,
                 observation_available=None,tracking_state='event',loss_reason=None))
         elif tracking_status != previous_tracking_status:
             seeker_transitions.append(dict(time_s=new['time_s'],**tracking_status))
         if i % 3 == 2 or terminal or i == count-1:
-            new['telemetry'] = missile_telemetry.completed(session.frame.flight.properties,
+            new['telemetry'] = (missile_telemetry.completed(session.frame.flight.properties,
                 before, controls, result['frame']['updates'][-1], STEP)
+                | missile_telemetry.controls(session.frame.flight.properties, controls, session.frame.flight.state['body']))
             if event:
                 new['traveled_distance_m'] = old['traveled_distance_m'] + math.dist(old['missile'],new['missile'])
             if event and rows[-1]['time_s']==endpoint['time_s']: rows[-1]=endpoint
             else: rows.append(endpoint)
         if i % 24 == 23: progress(dict(time_s=now, duration_s=config['duration'], fraction=min(1.,now/config['duration'])))
         if terminal: break
+    return simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new)
+
+
+def simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new):
+    """The simulator's result: trajectory, transitions and model description."""
+    profile, frame, escape = setup['profile'], setup['frame'], setup['escape']
+    launcher_aircraft, initialization = setup['launcher_aircraft'], setup['initialization']
     return dict(scenario=config, release=frame.website_release, trajectory=rows, tracking_transitions=transitions,
                 seeker_transitions=seeker_transitions,
                 closest_approach=best, outcome=outcome, elapsed_s=rows[-1]['time_s'],
                 simulation_time_s=new['time_s'], final_body_sample=new,
-                model=dict(profile_build='2.59.0.34', policy=frame.flight.policy,
+                model=dict(profile_build='2.59.0.34', property_loading=profile.get('property_loading'), policy=frame.flight.policy,
                            step_s=STEP, launch_state=frame.website_release['input_state'], seeker_initialization=initialization['policy'],
                            time_origin='release', units=dict(position='m', velocity='m/s', angles='degrees', time='s'),
                            initialization=initialization,
                            radar_support='ideal_recovered_provider' if frame.flight.family=='radar' else None,
-                           component_provenance='2.59.0.34 profiles/core with separately recovered 2.59.0.38 shared arithmetic; whole-build equivalence unproven',
-                           target_motion='constant_velocity', geometry='point_target',
+                           component_provenance='2.59.0.34 core and 2.59.0.38 shared arithmetic, with scoped 2.59.0.87 projectile-loader corrections; whole-build equivalence unproven',
+                           target_motion='constant_velocity' if escape is None else dict(escape, kind='level_break_away'),
+                           geometry='point_target',
                            telemetry=dict(force_sampling='Final integration substep; force_time_s records its evaluation time. Thrust is the actual propulsion update held over that step.',
                                aerodynamic_forces='Magnitudes of pre-fin translational drag/lift including body perturbation scaling; Cd is the pre-fin drag coefficient.',
                                aoa='Unsigned local-flow incidence to the aerodynamic forward axis, 0–180 degrees.',
                                acceleration='Magnitude of integrated net acceleration, including gravity; not aerodynamic load factor.',
                                missing='No integrated forces at release; no dynamics inferred at an intermediate proximity event.',
-                               distance='Sum of 48 Hz missile position segments, truncated to the event position when present.'),
+                               distance='Sum of 48 Hz missile position segments, truncated to the event position when present.',
+                               controls='The step\'s last acceleration-control call: fin commands (-1 to 1), commanded lateral acceleration after the AoA limit and measured lateral acceleration (m/s2, horizontal and vertical axes of its control frame), and PID terms. Thrust-vector angles of the fins flown during the step while a vectoring motor burns; the cruise-speed PID\'s motor factor. Null where they do not apply.'),
                            trajectory_endpoint='Recovered proximity-event position/time when present; completed body sample retained separately.',
+                           early_miss_termination='After motor burnout and any target turn, stop if the conservative energy/lifetime/distance bound excludes every future hit. Closest approach covers the simulated portion. Disable with early_exit=false.',
                            limitations=['Whole engagements are not yet validated against live-game flights.',
                                         ('Launcher mount is coincident and aligned with the aircraft; aircraft-specific hardpoint offsets, ejector impulses and angular rates are not supplied.'
                                          if launcher_aircraft else 'Legacy launch inputs are the missile state after release; release speed/spread is not applied again.'),

@@ -2,7 +2,7 @@ from em_data import clone
 import re
 import time
 
-COLORS=('#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296')
+COLORS=('#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296')
 ENTRY_ID=re.compile(r'entry_[A-Za-z0-9_-]{1,48}\Z')
 
 
@@ -64,6 +64,7 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
             condition=entry['settings']
             mode=('RB' if condition['instructor'] else 'SB') if condition['instructor']!=condition['torque_gyro'] else (
                 f"Instructor {'on' if condition['instructor'] else 'off'} · torque/gyro {'on' if condition['torque_gyro'] else 'off'}")
+            if condition.get('turn_direction')=='right':mode+=' · Right turn'
             if not condition['structural_limits']:mode+=' · Flutter off'
             if condition['trim_solver_mode']!='stationary':mode+=' · Baseline solver'
             from em_model_experiments import label

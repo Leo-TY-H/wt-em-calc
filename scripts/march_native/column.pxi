@@ -362,6 +362,9 @@ cdef class NMarch:
         if (p < 0 or (not self.eng.passable(p) and not self.eng.hard_rejected(p))) and self.eng.soft and self.eng.is_prop:
             # S8: next to a blade-polar jump, the sliding state (from a sliding seed, the regular one)
             q = self.slide_at(seed, sol, load, FIX_ALPHA, alpha, 's8 sliding '+str(why))
+            if q < 0 and self.eng.wide_slide & 1:
+                # overrev follow-up: a blocking jump farther from the seed's shaft speed than the 2% window
+                q = self.slide_at(seed, sol, load, FIX_ALPHA, alpha, 'wide sliding '+str(why), SLIDE_WIDE)
             if q >= 0:p = q
         if self.store:self.eng.store_keep(p, self.speed, &self.preds)
         t = self.trial(why)
@@ -401,7 +404,8 @@ cdef class NMarch:
 
     @cython.boundscheck(True)
     @cython.wraparound(True)
-    cdef int slide_at(self, int low, const double* sol, double load, int fixed_kind, double value, why) except -2:
+    cdef int slide_at(self, int low, const double* sol, double load, int fixed_kind, double value, why,
+                      double wide=0.) except -2:
         """S8 (items 2-3): a correction that did not close next to a blade-polar jump. From a regular propeller seed whose
         blade polar jumps within reach of its shaft speed (MarchEngine.slide_candidate), the same correction with the
         shafts sliding on the jump (the Filippov state: theta in [0, 1]); from a sliding seed, the same correction regular
@@ -416,13 +420,13 @@ cdef class NMarch:
             if self.eng.s9:
                 # S9: from a sliding seed, the jump check again at the target: the shafts still blocked keep sliding, the
                 # others are regular (a set equal to the seed's is the correction that failed: then all regular, as S8)
-                if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value, True, self.speed, True)
-                else:self.eng.slide_candidate(low, &spec, value, sol[1], load, True, self.speed, True)
-                if spec.n > 0 and self.eng.same_slide(&spec, &self.eng.st[low].slide):spec.n = 0
+                if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value, True, self.speed, True, wide)
+                else:self.eng.slide_candidate(low, &spec, value, sol[1], load, True, self.speed, True, wide)
+                if spec.n > 0 and wide == 0. and self.eng.same_slide(&spec, &self.eng.st[low].slide):spec.n = 0
         else:
             # the jump check at the correction's own target (alpha, bank and load of its seed)
-            if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value, True, self.speed)
-            else:self.eng.slide_candidate(low, &spec, value, sol[1], load, True, self.speed)
+            if fixed_kind == FIX_LOAD:self.eng.slide_candidate(low, &spec, sol[0], sol[1], value, True, self.speed, False, wide)
+            else:self.eng.slide_candidate(low, &spec, value, sol[1], load, True, self.speed, False, wide)
 
             if spec.n == 0:return -1
         self.eng.slide_override = spec;self.eng.use_override = True

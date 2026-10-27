@@ -402,7 +402,7 @@ def preview_payload(data):
 
 
 def export_csv(data):
-    condition_fields=['torque_gyro','engine_control_mode','aircraft_trim_mode','turn_response_mode','instructor_authority_mode','trim_solver_mode','altitude_m','fuel_percent','throttle','afterburner','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','structural_limits','timestep_hz']
+    condition_fields=['torque_gyro','turn_direction','engine_control_mode','aircraft_trim_mode','turn_response_mode','instructor_authority_mode','trim_solver_mode','altitude_m','fuel_percent','throttle','afterburner','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','structural_limits','timestep_hz']
     out=io.StringIO();fields=['aircraft','aircraft_id','aircraft_name','kind','calculation_status','partial_result']+condition_fields+['speed_kmh','load_g','turn_dps','ps_mps','ps_continuous_mps',
           'valid','local_valid','status','chart_usable','chart_status','converged','reasons','alpha_deg','bank_deg','sideslip_deg','sideslip_attitude_deg','ias_kmh','mach','force_error_g',
           'angular_error_rad_s2','history_error','stall_margin_deg','vertical_step_velocity_mps',
@@ -423,7 +423,7 @@ def export_csv(data):
                 if kind=='Instructor boundary':
                     row.update(valid=p['turn_dps'] is not None,instructor_enabled=True,
                                reasons=p.get('edge_kind',''),flaps_percent=cfg['flaps_percent'])
-                row.update({k:cfg.get(k,'settled') if k=='turn_response_mode' else cfg.get(k,'nested') if k=='trim_solver_mode' else cfg.get(k,'native') if k=='instructor_authority_mode' else cfg.get(k,'discrete') if k=='aircraft_trim_mode' else cfg.get(k,'optimized') if k=='engine_control_mode' else cfg.get(k,True) if k=='torque_gyro' else cfg.get(k,'') if k=='loadout' else cfg.get(k,False) if k=='stores_released' else cfg[k] for k in condition_fields})
+                row.update({k:cfg.get(k,'settled') if k=='turn_response_mode' else cfg.get(k,'nested') if k=='trim_solver_mode' else cfg.get(k,'native') if k=='instructor_authority_mode' else cfg.get(k,'discrete') if k=='aircraft_trim_mode' else cfg.get(k,'optimized') if k=='engine_control_mode' else cfg.get(k,True) if k=='torque_gyro' else cfg.get(k,'left') if k=='turn_direction' else cfg.get(k,'') if k=='loadout' else cfg.get(k,False) if k=='stores_released' else cfg[k] for k in condition_fields})
                 for key,value in row.items():
                     if isinstance(value,(list,dict)):row[key]=json.dumps(value,separators=(',',':'))
                 writer.writerow(row)
@@ -547,7 +547,8 @@ def add_boundary_limits(aircraft, source):
            'Instructor pitch minimum-speed edge':'AoA limiter (Instructor)',
            'Instructor minimum-speed edge':'Instructor minimum-speed limit',
            'speed-range edge':'Selected speed range; aircraft limit not established',
-           'low-speed feasibility edge':'Low-speed feasibility limit'}
+           'low-speed feasibility edge':'Low-speed feasibility limit',
+           'unresolved level-flight edge':'Level flight unresolved below this speed; aircraft limit not established'}
     edges.update({kind:' · '.join(filter(None,label)) for kind,label in SPEED_BOUNDARY_LABELS.items()
                   if kind.startswith('Flap ')})
     # The march chart's high-speed edges (em_march_chart.outline): forward-IAS limits lean, the others stand vertical.

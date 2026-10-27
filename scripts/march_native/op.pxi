@@ -302,18 +302,19 @@ cdef struct Geometry:
 
 
 cdef void turn_geometry(double alpha_deg, double bank_deg, double speed, double load, double dt, double ias_u,
-                        double G, Geometry* out) noexcept nogil:
-    cdef double alpha = alpha_deg*DEG_TO_RAD, bank = bank_deg*DEG_TO_RAD
+                        double G, double turn, Geometry* out) noexcept nogil:
+    # em_solver.turn_geometry: bank into the turn; turn = 1 left (bit-identical to the left-only geometry), -1 right
+    cdef double alpha = alpha_deg*DEG_TO_RAD, bank = (turn*bank_deg)*DEG_TO_RAD
     cdef double sa = sin(alpha), ca = cos(alpha), sb = sin(bank), cb = cos(bank)
     cdef double x, y, z, w, s, r00, r10, r20, r11, r12, yaw, pitch, roll, damping, k
     out.forward[0] = ca; out.forward[1] = -sa; out.forward[2] = 0.
     out.normal[0] = sa; out.normal[1] = ca; out.normal[2] = 0.
     out.side[0] = 0.; out.side[1] = 0.; out.side[2] = 1.
     out.up[0] = cb*sa-sb*0.; out.up[1] = cb*ca-sb*0.; out.up[2] = cb*0.-sb*1.
-    out.lateral[0] = sb*sa+cb*0.; out.lateral[1] = sb*ca+cb*0.; out.lateral[2] = sb*0.+cb*1.
+    out.lateral[0] = turn*(sb*sa+cb*0.); out.lateral[1] = turn*(sb*ca+cb*0.); out.lateral[2] = turn*(sb*0.+cb*1.)
     out.turn_rate = G*sqrt(pmax(0., load*load-1.))/speed
     s = sin(out.turn_rate*dt*.5)
-    x = -out.up[0]*s; y = -out.up[1]*s; z = -out.up[2]*s
+    x = -turn*out.up[0]*s; y = -turn*out.up[1]*s; z = -turn*out.up[2]*s
     w = cos(out.turn_rate*dt*.5)
     r00 = 1-2*(y*y+z*z); r10 = 2*(x*y+w*z); r20 = 2*(x*z-w*y)
     r11 = 1-2*(x*x+z*z); r12 = 2*(y*z-w*x)
@@ -321,4 +322,4 @@ cdef void turn_geometry(double alpha_deg, double bank_deg, double speed, double 
     damping = pmax(1.-F(ias_u)*1e-5, .8)
     k = 2./(1.+damping)
     out.omega[0] = (-roll/dt)*k; out.omega[1] = (-yaw/dt)*k; out.omega[2] = (-pitch/dt)*k
-    turn_quaternion(alpha_deg, bank_deg, out.quaternion)
+    turn_quaternion(alpha_deg, turn*bank_deg, out.quaternion)

@@ -539,6 +539,8 @@ void apply_kernel_overrides(const std::string& name,E env) {
         bound_invocation(env,"FastInteractionSession","advance");
     } else if(name=="missile_envelope") {
         install_typed_evaluate(env);
+    } else if(name=="missile_worker") {
+        install_typed_simulate(env);
     } else return;
     set(env,"_native_kernel_overrides",true);
 }

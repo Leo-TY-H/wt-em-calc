@@ -31,8 +31,9 @@ NUMERIC = 1e-8  # Instructor trim and event corrections agree to rounding (S2/S3
 def run(spec):
     from em_solver import settings, compute
     name, mode = spec.split(':')
-    rb = mode == 'rb'
-    config = settings(dict(aircraft=[name], instructor=rb, torque_gyro=not rb, chart_solver='march'))
+    rb = mode.split('-')[0] == 'rb'
+    config = settings(dict(aircraft=[name], instructor=rb, torque_gyro=not rb, chart_solver='march',
+                           turn_direction='right' if mode.endswith('-right') else 'left'))
     t0 = time.perf_counter()
     data = compute(config)
     a = data['aircraft'][0]
@@ -60,7 +61,7 @@ def failures(row):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--aircraft', action='append', help='NAME:sb or NAME:rb (default: one aircraft per propulsion/Instructor class)')
+    ap.add_argument('--aircraft', action='append', help='NAME:sb, NAME:rb, or NAME:sb-right for a right turn (default: one aircraft per propulsion/Instructor class)')
     ap.add_argument('--stamp', action='store_true');ap.add_argument('--out')
     args = ap.parse_args()
     rows = [run(spec) for spec in (args.aircraft or DEFAULT)]

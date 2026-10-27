@@ -18,22 +18,22 @@ async function renderSurface(reset=false) {
   if(!Number.isFinite(lo)){lo=-1;hi=1;}
   if(lo===hi){lo-=1;hi+=1;}
   const zero=Math.max(0,Math.min(1,-lo/(hi-lo)));
-  const colors=lo>=0?[[0,'#244852'],[.45,'#299baa'],[1,'#bcf5d8']]:hi<=0?[[0,'#8d413b'],[.6,'#e59e70'],[1,'#bacad1']]:
-    [[0,'#873e3d'],[zero*.55,'#e59e70'],[zero,'#acbdc7'],[zero+(1-zero)*.38,'#249aa8'],[1,'#bcf5d8']];
+  const colors=lo>=0?[[0,'#3f3f47'],[.45,'#299baa'],[1,'#bcf5d8']]:hi<=0?[[0,'#8d413b'],[.6,'#e59e70'],[1,'#c5c5cd']]:
+    [[0,'#873e3d'],[zero*.55,'#e59e70'],[zero,'#b8b8c0'],[zero+(1-zero)*.38,'#249aa8'],[1,'#bcf5d8']];
   const traces=[{type:'surface',name:'Specific excess power',x:s.speeds_kmh,
     y:s.altitudes_m.map(h=>s.speeds_kmh[0].map(()=>h)),z:s.sep_mps,
     colorscale:colors,cmin:lo,cmax:hi,connectgaps:false,meta:{kind:'surface'},
     lighting:{ambient:.72,diffuse:.78,specular:.16,roughness:.65,fresnel:.08},lightposition:{x:150,y:100,z:500},
     contours:{z:{show:true,start:Math.ceil(lo/c.contour_interval_mps)*c.contour_interval_mps,end:hi,
       size:Math.max(c.contour_interval_mps,Math.ceil((hi-lo)/25/c.contour_interval_mps)*c.contour_interval_mps),
-      usecolormap:false,color:'#bdd8df',width:1,highlightcolor:'#ffffff'}},
+      usecolormap:false,color:'#d1d1d9',width:1,highlightcolor:'#ffffff'}},
     colorbar:{title:{text:'SEP · m/s',side:'right'},thickness:12,len:.7,x:1.01,tickfont:{size:10},outlinewidth:0},
     hovertemplate:'TAS %{x:.1f} km/h<br>Altitude %{y:.0f} m<br>SEP %{z:.1f} m/s<extra></extra>'}];
   const zeroContour=state.chart.contours.find(row=>row.sep_mps===0);
   if(zeroContour) {
     const xy=joined(zeroContour.paths);
     traces.push({type:'scatter3d',mode:'lines',...xy,z:xy.x.map(x=>x===null?null:0),
-      line:{color:'#f0f6fa',width:5},name:'SEP = 0',meta:{kind:'contour'},connectgaps:false,
+      line:{color:'#f3f3fb',width:5},name:'SEP = 0',meta:{kind:'contour'},connectgaps:false,
       hovertemplate:'SEP 0 m/s<br>TAS %{x:.1f} km/h<br>Altitude %{y:.0f} m<extra></extra>'});
   }
   if($('climb-visible').checked && state.route?.status==='complete') {
@@ -46,7 +46,7 @@ async function renderSurface(reset=false) {
   if($('samples').checked) {
     const points=state.chart.points.filter(p=>p.valid);
     traces.push({type:'scatter3d',mode:'markers',name:'Solved samples',x:points.map(p=>p.speed_kmh),y:points.map(p=>p.altitude_m),z:points.map(p=>p.ps_mps),
-      customdata:points.map(p=>[p.index]),marker:{size:2,color:'#e0edf1',opacity:.75},meta:{kind:'sample'},
+      customdata:points.map(p=>[p.index]),marker:{size:2,color:'#e9e9f1',opacity:.75},meta:{kind:'sample'},
       hovertemplate:'Solved sample<br>TAS %{x:.1f} km/h · %{y:.0f} m<br>SEP %{z:.2f} m/s<extra></extra>'});
   }
   if($('gaps').checked) {
@@ -56,9 +56,9 @@ async function renderSurface(reset=false) {
       text:gaps.map(c=>c.reason),marker:{size:3,color:'#ef977e',symbol:'x'},meta:{kind:'gap'},
       hovertemplate:'%{text}<br>TAS %{x:.1f} km/h · %{y:.0f} m<br>Shown on floor; SEP unavailable<extra></extra>'});
   }
-  const axis=(title,range)=>({title:{text:title,font:{size:11}},range,gridcolor:'#2c4051',zerolinecolor:'#758897',
-    showbackground:true,backgroundcolor:'#101d29',tickfont:{size:10},nticks:5,showspikes:false});
-  const layout={paper_bgcolor:'#0e1721',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#8ea7ba'},
+  const axis=(title,range)=>({title:{text:title,font:{size:11}},range,gridcolor:'#3b3b43',zerolinecolor:'#83838b',
+    showbackground:true,backgroundcolor:'#191921',tickfont:{size:10},nticks:5,showspikes:false});
+  const layout={paper_bgcolor:'#14141c',font:{family:'-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#a1a1a9'},
     margin:{l:10,r:65,t:12,b:10},showlegend:false,uirevision:state.resultId+'3d',
     scene:{xaxis:axis('True airspeed · km/h',[c.speed_min_kmh,c.speed_max_kmh]),
       yaxis:axis('Altitude · m',[c.altitude_min_m,c.altitude_max_m]),zaxis:axis('SEP · m/s',[lo,hi]),

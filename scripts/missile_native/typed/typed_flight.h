@@ -3,6 +3,7 @@
 // FastInteractionSession.advance (proximity trace) and missile_envelope.evaluate.
 #pragma once
 #include "typed_guidance.h"
+#include "typed_launch.h"
 
 namespace typed {
 
@@ -21,14 +22,36 @@ struct FlightProps {
     ProximityProps proximity{};
     OpticalProps optical{}; RadarProps radar{};
 };
-struct TargetMotion { d3 position, velocity; d4 quaternion; };
+struct TargetMotion {
+    d3 position, velocity; d4 quaternion;
+    // missile_worker.escape_motion fields (no-escape zone); constant velocity when escape is false.
+    bool escape = false;
+    double start = 0., end = 0., heading = 0., sine = 0., cosine = 0., rate = 0., radius = 0., speed = 0., roll = 0.;
+    d3 turn_point{}, exit_point{}, run{}; d4 run_quaternion{};
+};
 struct TargetPoint { d3 position, velocity; d4 quaternion; };
-// flight_session.linear_point for the constant-velocity target (epoch 0).
+// flight_session.linear_point for the constant-velocity target (epoch 0), or
+// missile_worker.target_point on an escape path.
 inline TargetPoint target_at(const TargetMotion& m, double time) {
-    double delta = time - 0.;
     TargetPoint p;
-    for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.position[i] + m.velocity[i] * delta); p.velocity[i] = f32(m.velocity[i]); }
-    p.quaternion = f32s(m.quaternion);
+    if (!m.escape) {
+        double delta = time - 0.;
+        for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.position[i] + m.velocity[i] * delta); p.velocity[i] = f32(m.velocity[i]); }
+        p.quaternion = f32s(m.quaternion);
+    } else if (time <= m.start) {
+        for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.position[i] + m.velocity[i] * time); p.velocity[i] = f32(m.velocity[i]); }
+        p.quaternion = f32s(m.quaternion);
+    } else if (time < m.end) {
+        double heading = m.heading + m.rate * (time - m.start);
+        p.position = {f32(m.turn_point[0] + m.radius * (std::sin(heading) - m.sine)), f32(m.turn_point[1]),
+                      f32(m.turn_point[2] - m.radius * (std::cos(heading) - m.cosine))};
+        p.velocity = {f32(m.speed * std::cos(heading)), f32(0.), f32(m.speed * std::sin(heading))};
+        p.quaternion = f32s(angles_quaternion({heading * (180.0 / 3.141592653589793238462643383279502884), 0., m.roll}));   // math.degrees
+    } else {
+        double delta = time - m.end;
+        for (int i = 0; i < 3; ++i) { p.position[i] = f32(m.exit_point[i] + m.run[i] * delta); p.velocity[i] = f32(m.run[i]); }
+        p.quaternion = f32s(m.run_quaternion);
+    }
     return p;
 }
 struct Event { d3 position, direction; double time; };
@@ -45,6 +68,12 @@ struct Session {
 };
 struct Expiry { bool returned, expiry_flag, time_expired, distance_expired; };
 
+// The last flight update's propulsion, final-substep input state and final
+// acceleration, for missile_telemetry.completed. Recorded only while the typed
+// simulator sets it; updates counts the flight updates since it was reset.
+struct StepCapture { int64_t updates = 0; wtm_propulsion_out propulsion{}; wtm_body force_input{}; double acceleration[3]{}; };
+inline thread_local StepCapture* step_capture = nullptr;
+
 inline Packet packet(const wtm_body& b) {
     return {b.position.x, b.position.y, b.position.z, b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w,
             b.velocity.x, b.velocity.y, b.velocity.z, b.omega.x, b.omega.y, b.omega.z, b.time};
@@ -53,44 +82,63 @@ inline Packet packet(const wtm_body& b) {
 // state_binary32.validate_flight_numbers: everything finite except PID records.
 inline void finite_or_bail(double x) { if (!finite(x)) bail("ValueError: state must be finite"); }
 template<size_t N> void finite_or_bail(const std::array<double,N>& v) { for (double x : v) finite_or_bail(x); }
+// x * 0 is NaN exactly when x is not finite, so one test covers a whole state
+// (strict floating point keeps every product).
+struct FiniteSum {
+    double sum = 0.;
+    void operator()(double x) { sum = sum + x * 0.; }
+    template<size_t N> void operator()(const std::array<double,N>& v) { for (double x : v) sum = sum + x * 0.; }
+};
 inline void validate_flight_numbers(const Session& S, int family) {
     const wtm_body& b = S.body;
+    FiniteSum c;
     for (float x : {b.position.x, b.position.y, b.position.z, b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w,
                     b.velocity.x, b.velocity.y, b.velocity.z, b.omega.x, b.omega.y, b.omega.z, b.time, b.body_random,
                     b.clocks[0], b.clocks[1], b.clocks[2], b.clocks[3], b.distance, b.water_distance, b.surface_depth, b.immersion})
-        finite_or_bail((double)x);
-    finite_or_bail(S.controls);
+        c((double)x);
+    c(S.controls);
     if (family == 0) {
         const OpticalManagerState& m = S.optical.manager;
-        for (double x : {m.transition_time, m.scan_phase, m.strength, m.distance, m.seeker_distance}) finite_or_bail(x);
-        finite_or_bail(m.fins); finite_or_bail(m.orientation_auxiliary); finite_or_bail(m.factors); finite_or_bail(m.auxiliary);
-        finite_or_bail(m.direction); finite_or_bail(m.seeker_direction); finite_or_bail(m.inertial_point); finite_or_bail(m.inertial_offset);
+        for (double x : {m.transition_time, m.scan_phase, m.strength, m.distance, m.seeker_distance}) c(x);
+        c(m.fins); c(m.orientation_auxiliary); c(m.factors); c(m.auxiliary);
+        c(m.direction); c(m.seeker_direction); c(m.inertial_point); c(m.inertial_offset);
         const OpticalSeekerState& s = S.optical.seeker;
-        finite_or_bail(s.angles); finite_or_bail(s.direction); finite_or_bail(s.angular_rate); finite_or_bail(s.widths);
-        for (double x : {s.gap, s.distance, s.los_check_time}) finite_or_bail(x);
+        c(s.angles); c(s.direction); c(s.angular_rate); c(s.widths);
+        for (double x : {s.gap, s.distance, s.los_check_time}) c(x);
     } else {
         const RadarManagerState& m = S.radar.manager;
-        for (double x : {m.transition_time, m.strength, m.distance, m.search_value, m.seeker_range, m.seeker_closure}) finite_or_bail(x);
-        finite_or_bail(m.fins); finite_or_bail(m.orientation_auxiliary); finite_or_bail(m.factors); finite_or_bail(m.direction);
-        finite_or_bail(m.seeker_angles); finite_or_bail(m.seeker_direction); finite_or_bail(m.inertial_point); finite_or_bail(m.inertial_offset);
-        finite_or_bail(m.inertial_velocity);
+        for (double x : {m.transition_time, m.strength, m.distance, m.search_value, m.seeker_range, m.seeker_closure}) c(x);
+        c(m.fins); c(m.orientation_auxiliary); c(m.factors); c(m.direction);
+        c(m.seeker_angles); c(m.seeker_direction); c(m.inertial_point); c(m.inertial_offset);
+        c(m.inertial_velocity);
         const RadarSeekerState& s = S.radar.seeker;
-        for (double x : {s.gap, s.range, s.range_rate, s.closure, s.closure_rate, s.target_value, s.los_check_time, s.visibility_weight}) finite_or_bail(x);
-        finite_or_bail(s.angles); finite_or_bail(s.direction); finite_or_bail(s.angular_rate);
+        for (double x : {s.gap, s.range, s.range_rate, s.closure, s.closure_rate, s.target_value, s.los_check_time, s.visibility_weight}) c(x);
+        c(s.angles); c(s.direction); c(s.angular_rate);
     }
+    finite_or_bail(c.sum);
 }
 
 // optical_point_flight.update (engine_kernels.flight_result) + family guidance.
 inline void flight_update(const FlightProps& P, Session& S, const TargetPoint& new_target, const LaunchState& launch, double dt_in) {
     float dt = (float)dt_in;
-    if (!std::isfinite(dt) || dt <= 0.f) bail("ValueError: Positive finite caller interval required");
+    if (!finite(dt) || dt <= 0.f) bail("ValueError: Positive finite caller interval required");
     if (P.precision <= 0) bail("ValueError: Positive body substep count required");
     Packet old = packet(S.body);
     if (S.body.water || S.body.immersion != 0.f) bail("NotImplementedError: Pure-air composition only");
     float c[8]; for (int i = 0; i < 8; ++i) c[i] = (float)S.controls[i];
     wtm_flight_props fp{&P.body, &P.rocket, &P.motors, P.precision, (float)P.end_speed};
     wtm_body_step_out out{};
-    body_advance(&fp, &S.body, c, dt, &out, nullptr);
+    if (step_capture) {
+        if (P.precision > 64) bail("Unsupported integration precision");
+        wtm_substep substeps[64];
+        wtm_body input = S.body;
+        body_advance(&fp, &S.body, c, dt, &out, substeps);
+        check_kernel();
+        StepCapture& k = *step_capture;
+        ++k.updates; k.propulsion = out.propulsion;
+        k.force_input = P.precision > 1 ? substeps[P.precision - 2].state : input;
+        for (int i = 0; i < 3; ++i) k.acceleration[i] = substeps[P.precision - 1].acceleration[i];
+    } else body_advance(&fp, &S.body, c, dt, &out, nullptr);
     check_kernel();
     Packet pre_cap = packet(S.body);
     double elapsed = fsub(out.target_time, 0.0f);   // state carries no launch_time
@@ -120,7 +168,9 @@ inline void flight_step(const FlightProps& P, Session& S, const TargetPoint& old
         finite_or_bail(new_target.velocity); finite_or_bail(new_target.quaternion);
         finite_or_bail(old_target.position); finite_or_bail(old_target.velocity); finite_or_bail(old_target.quaternion);
     }
-    validate_flight_numbers(S, P.family);
+    // The reference also validates the state on entry. Setup validates the
+    // initial state and every step validates its result, and nothing between
+    // steps changes the validated fields, so that check always passes here.
     if (add(S.body.time, dt) <= S.body.time) bail("ValueError: Step does not advance the binary32 clock");
     flight_update(P, S, new_target, launch, dt);
     validate_flight_numbers(S, P.family);
@@ -389,6 +439,7 @@ struct EvaluateSetup {
     bool has_reach = false; double reach_m = 0.; bool early_exit = true;
     int64_t count = 0; double radius = 0., deadline = 0.; std::vector<double> burn_end;
     double best_distance = 0.;
+    double straight_from = 0.;   // the target flies straight from then on (target_velocity_raw)
 };
 struct EvaluateResult {
     bool hit; const char* outcome; double time_s; bool has_event_time; double event_time_s;
@@ -424,7 +475,7 @@ inline EvaluateResult evaluate_loop(const FlightProps& P, Session& S, const Eval
             outcome = expiry.time_expired ? "lifetime" : expiry.distance_expired ? "distance_limit" : "tracking_timeout";
             break;
         }
-        if (E.early_exit && i % 6 == 5) {
+        if (E.early_exit && i % 6 == 5 && (double)S.body.time >= E.straight_from) {
             bool burned = true;   // all() over zip(clocks, burn_end)
             size_t n = E.burn_end.size() < 4 ? E.burn_end.size() : 4;
             for (size_t k = 0; k < n; ++k) if (!((double)S.body.clocks[k] >= E.burn_end[k] + 1e-3)) { burned = false; break; }

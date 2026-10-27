@@ -63,8 +63,8 @@ const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'e
 // Fixed browser model; diagnostic API settings remain independently available.
 const fixedSolverConditions={trim_solver_mode:'stationary',mach_curve_mode:'auto',experimental_instantaneous_aero:false,experimental_lateral_trim:'full',timestep_hz:48};
 const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolverConditions),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
-const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
+  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
+const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 // Catalog names end in the internal id ("Bf 109 F-4 [bf-109f-4]"): the page shows it apart, hover text keeps it.
 const cleanName=n=>String(n).replace(/\s*\[[^\]]*\]/,'');
@@ -103,7 +103,9 @@ function saveCondition(){
     manual_engine_controls:$('manual-engine-controls').checked,propeller_pitch_auto:$('propeller-pitch-auto').checked,
     ...fixedSolverConditions,structural_limits:$('flutter-on').checked,
     throttle:+$('throttle').value/100,afterburner:+$('throttle').value>100,
-    instructor:$('flight-mode-rb').checked,torque_gyro:$('flight-mode-sb').checked};
+    instructor:$('flight-mode-rb').checked,torque_gyro:$('flight-mode-sb').checked,
+    // A server without the turn setting (older release) gets no turn_direction and calculates left turns.
+    ...('turn_direction' in state.meta.defaults?{turn_direction:$('turn-right').checked?'right':'left'}:{})};
   if(!state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id].has_flaps)state.conditions[state.editing].flaps_percent=0;
 }
 function showCondition(id){
@@ -123,6 +125,8 @@ function showCondition(id){
   showLoadout();
   $('throttle').value=c.throttle*100;
   $('flight-mode-rb').checked=c.instructor;$('flight-mode-sb').checked=!c.instructor;
+  $('turn-left').checked=c.turn_direction!=='right';$('turn-right').checked=c.turn_direction==='right';
+  $('turn-left').closest('.field').hidden=!('turn_direction' in state.meta.defaults);
   $('flutter-on').checked=c.structural_limits!==false;$('flutter-off').checked=c.structural_limits===false;
   $('aircraft-condition').disabled=!id;
 }
@@ -144,31 +148,20 @@ function configEntries(c){
   if(c.compare_instructor&&entries.length===1)return [false,true].map((enabled,i)=>({...entries[0],id:`entry_${i+1}`,settings:{...entries[0].settings,instructor:enabled}}));
   return entries;
 }
+const COPY_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8"/><path d="M10.5 5.5v-3h-8v8h3"/></svg>';
+const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
+const EDIT_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"/><path d="M9 4l3 3"/></svg>';
 function renderEntries(){
-  // Move the single settings editor into the active card; never clone form IDs.
-  const editor=$('aircraft-condition');$('condition-home').append(editor);
+  // The single settings editor lives in the settings popup while an entry is open (Leo, 2026-10-26); never clone form IDs.
+  const editor=$('aircraft-condition');(state.editing?$('entry-dialog-body'):$('condition-home')).append(editor);
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
     <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong><code>${escapeText(nameCode(entryName(e))||e.aircraft_id)}</code></div>
-    <p class="entry-summary"></p><div class="entry-actions">
-    <button type="button" data-action="configure" aria-expanded="${e.id===state.editing}" aria-label="${e.id===state.editing?'Done configuring':'Configure'} entry ${i+1}">${e.id===state.editing?'Done':'Configure'}</button>
-    <button type="button" data-action="duplicate" aria-label="Duplicate entry ${i+1}" ${state.entries.length>=8?'disabled':''}>Duplicate</button>
-    <button type="button" data-action="remove" aria-label="Remove entry ${i+1}">Remove</button></div>
-    <div class="entry-editor"></div></article>`).join('');
-  const active=[...$('selected-aircraft').children].find(e=>e.dataset.entry===state.editing);
-  if(active)active.querySelector('.entry-editor').append(editor);
-  $('entries-empty').hidden=!!state.entries.length;
-  $('entry-count').textContent=`${state.entries.length} / 8`;
+    <div class="entry-actions">
+    <button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i+1}" title="Edit settings">${EDIT_ICON}</button>
+    <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i+1}" title="Duplicate" ${state.entries.length>=8?'disabled':''}>${COPY_ICON}</button>
+    <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i+1}" title="Remove">${REMOVE_ICON}</button></div></article>`).join('');
   $('apply-settings-to-all').disabled=state.entries.length<2;
   $('apply-settings-status').textContent='';
-  refreshEntrySummaries();
-}
-function refreshEntrySummaries(){
-  for(const row of $('selected-aircraft').children){
-    const c=state.conditions[row.dataset.entry];
-    const entry=state.entries.find(e=>e.id===row.dataset.entry);
-    const loadout=c.loadout?' · '+loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle))+(c.stores_released?' (released)':''):'';
-    row.querySelector('.entry-summary').textContent=`${fmt(c.altitude_m,0)} m · ${fmt(c.fuel_percent,0)}% fuel · ${fmt(c.throttle*100,0)}% power · ${flightModeLabel(c)}${c.structural_limits===false?' · Flutter off':''}${loadout}`;
-  }
 }
 function addEntry(name,condition){
   if(state.entries.length>=8)return;
@@ -177,7 +170,8 @@ function addEntry(name,condition){
   state.entries.push({id,aircraft_id:name});
   state.conditions[id]=structuredClone(aircraftConditions(name,condition||state.meta.defaults));
   updateDefaultContours();
-  showCondition(id);renderEntries();syncLabels();
+  // A new card stays closed; its settings open with Configure (Leo, 2026-10-26).
+  showCondition(state.editing);renderEntries();syncLabels();
 }
 function readConfig() {
   saveCondition();
@@ -201,19 +195,6 @@ function populate(c) {
     Object.keys(quality).find(k=>quality[k][0]===c.speed_samples&&quality[k][1]===c.load_samples&&quality[k][2]===c.sep_tolerance_mps);
   if(!selected){selected='custom';if(!$('quality').querySelector('[value=custom]'))$('quality').add(new Option('Saved sampling','custom'));}
   $('quality').value=selected;showCondition(state.entries[0]?.id);renderEntries();syncLabels();
-}
-function signature(c){
-  const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?
-    Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-  const shared=Object.fromEntries(Object.entries(c).filter(([k])=>!conditionKeys.includes(k)&&!['aircraft','aircraft_settings','compare_instructor','entries','sep_contour_levels_mps','enable_exports'].includes(k)));
-  // Instance IDs identify exports/inspection, not physical conditions. Preserve
-  // list order and duplicate multiplicity so colors and entries match the plot.
-  shared.entries=configEntries(c).map(e=>{
-    const settings=conditionsFrom(e.settings);
-    if(settings.mach_curve_mode==='auto')settings.mach_curve_mode=settings.trim_solver_mode==='stationary'?'stable':'native';
-    return {aircraft_id:e.aircraft_id,settings};
-  });
-  return JSON.stringify(canonical(shared));
 }
 function syncLabels(){
   $('fuel-label').textContent=$('fuel').value+'%';$('throttle-label').textContent=fmt(+$('throttle').value,0)+'%';
@@ -249,8 +230,8 @@ function syncLabels(){
   $('flap-limit-help').textContent=flapLimitLabel(aircraft?.flaps,+$('flaps').value);
   $('sweep-field').hidden=!aircraft?.has_sweep;
   syncAircraftMenu();
-  const config=readConfig();refreshEntrySummaries();
-  $('stale').hidden=!state.data||(signature(config)===signature(state.data.settings));
+  // readConfig also stores the open entry's settings. No "settings have changed" notice (Leo, 2026-10-26).
+  readConfig();
 }
 function flapLimitLabel(profile,percent){
   if(!profile?.available||percent<=0)return '';
@@ -305,8 +286,6 @@ function populateAircraft(){
   // The type stays searchable but is not shown (Leo, 2026-10-23).
   const family=a=>({piston:'Piston propeller',turboprop:'Turboprop',mixed:'Propeller + jet',rocket:'Rocket'})[a.propulsion]||(a.has_sweep?'Variable sweep':'Jet');
   $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):' · '+(a.reason||'Model integration pending'))}</small></span><button type="button" data-add="${escapeText(id)}" aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
-  const ready=entries.filter(([,a])=>a.supported).length;
-  $('catalog-status').textContent=`${ready} available aircraft`;
 }
 $('aircraft-search').addEventListener('input',syncAircraftMenu);
 $('aircraft-search').addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault();});
@@ -319,10 +298,20 @@ $('selected-aircraft').addEventListener('click',event=>{
   if(button.dataset.action==='remove'){
     const index=state.entries.findIndex(e=>e.id===id);state.entries.splice(index,1);delete state.conditions[id];
     updateDefaultContours();
-    if(state.editing===id)showCondition(state.entries[Math.min(index,state.entries.length-1)]?.id);
-  }else showCondition(state.editing===id?null:id);
+    if(state.editing===id)showCondition(null);
+  }else{
+    showCondition(id);renderEntries();syncLabels();
+    const index=state.entries.findIndex(e=>e.id===id);
+    $('entry-dialog-title').textContent=`${index+1} · ${cleanName(entryName(entry))}`;
+    $('entry-dialog').style.setProperty('--entry-color',entryColors[index]);
+    $('entry-dialog').showModal();return;
+  }
   renderEntries();syncLabels();
 });
+// Settings apply as they change; closing the popup (✕, Escape or a click outside) just puts them away.
+$('entry-dialog-close').addEventListener('click',()=>$('entry-dialog').close());
+$('entry-dialog').addEventListener('click',event=>{if(event.target===$('entry-dialog'))$('entry-dialog').close();});
+$('entry-dialog').addEventListener('close',()=>{saveCondition();showCondition(null);renderEntries();syncLabels();});
 $('apply-settings-to-all').addEventListener('click',()=>{
   if(!state.editing||state.entries.length<2)return;
   saveCondition();
@@ -334,7 +323,9 @@ $('apply-settings-to-all').addEventListener('click',()=>{
   renderEntries();syncLabels();
   $('apply-settings-status').textContent=`Applied to all ${state.entries.length} aircraft.`;
 });
-function setRunning(value){state.running=value;$('calculate').disabled=value;$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=!value;}
+// No progress panel or step text while calculating; the button says so instead (Leo, 2026-10-26). #progress stays hidden.
+const CALCULATE_LABEL=$('calculate').innerHTML;
+function setRunning(value){state.running=value;$('calculate').disabled=value;$('calculate').innerHTML=value?'Calculating…':CALCULATE_LABEL;$('calculate').classList.toggle('calculating',value);$('calculate').style.setProperty('--progress','0%');$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=true;}
 async function loadData(id,populateForm=false,preview=false){
   const sameResult=state.dataJob===id;
   const data=await api(`/api/jobs/${id}/${preview?'preview.json':'chart.json'}`);state.data=data;state.dataJob=id;
@@ -378,7 +369,7 @@ function rgba(hex,opacity){return `rgba(${parseInt(hex.slice(1,3),16)},${parseIn
 function updateDefaultContours(){
   if(state.customContours)return;
   const props=state.entries.length>0&&state.entries.every(e=>['piston','turboprop','mixed'].includes(state.meta.aircraft[e.aircraft_id].propulsion));
-  state.contourLevels=props?[10,0,-10,-20,-40]:[100,0,-100,-200,-400];
+  state.contourLevels=props?[20,10,0,-20,-40,-80]:[100,0,-100,-200,-400];
   renderContourControls();
 }
 function renderContourControls(){
@@ -418,10 +409,15 @@ async function refreshContours(){
     renderChart();
   }catch(e){if(token===state.contourRequest)error(e.message);}
 }
+function overrevText(percent,seconds){
+  // Hover line for an over-revving state (piston engines are not RPM-limited; Leo, 2026-10-26).
+  return Number.isFinite(percent)?`<br>Over-rev +${fmt(percent,1)}%${Number.isFinite(seconds)?` · engine quits after ${fmt(seconds,0)} s`:''}`:'';
+}
+const pathOverrev=path=>path.x.map((_,i)=>overrevText(path.percent_over?.[i],path.overrev_s?.[i]));
 function sustainedCurve(aircraft,data){
   // Both preview and completed curves follow the currently selected contour.
   const paths=aircraft.contours.filter(c=>c.level===0);
-  return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null])}:aircraft.sustained_curve;
+  return paths.length?{x:paths.flatMap(p=>[...p.x,null]),y:paths.flatMap(p=>[...p.y,null]),overrev:paths.flatMap(p=>[...pathOverrev(p),''])}:aircraft.sustained_curve;
 }
 function envelopeEnd(aircraft,data){
   // The speed axis ends just past the fastest drawn envelope, within the requested range.
@@ -433,32 +429,81 @@ function envelopeTop(aircraft){
   const peak=Math.max(0,...aircraft.flatMap(a=>[...(a.boundary||[]),...(a.points||[]).filter(chartUsable)].map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
   return Math.max(10,Math.ceil(peak*1.05+1));
 }
-function contourLabelTrace(a,data){
-  const x=[],y=[],labels=[],levels=[];
-  const xmin=data.settings.speed_min_kmh,xmax=data.settings.speed_max_kmh;
-  const ymax=envelopeTop([a]);
-  for(const level of state.contourLevels){
-    const paths=a.contours.filter(path=>path.level===level&&path.x.length>2);
-    let best=null;
-    for(const path of paths){
-      let length=0;for(let i=1;i<path.x.length;i++)length+=Math.hypot((path.x[i]-path.x[i-1])/(xmax-xmin),(path.y[i]-path.y[i-1])/ymax);
-      if(!best||length>best.length)best={path,length};
+function contourLabels(displayed,data,view){
+  // One label per aircraft and SEP level, placed together in screen space (Leo, 2026-10-26): a label never
+  // overlaps another, avoids the envelopes and every other line where its own line leaves room, and is
+  // slanted along its contour. Text is an annotation (rotatable); an invisible marker keeps hover and click.
+  const chart=$('chart'),size=chart._fullLayout?._size;
+  const width=size?.w||Math.max(300,(chart.clientWidth||1000)-80),height=size?.h||Math.max(200,(chart.clientHeight||700)-54-Math.max(40,displayed.length*22));
+  const [x0,x1]=view?.x||[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],[y0,y1]=view?.y||[0,envelopeTop(displayed)],cell=6;
+  const px=(x,y)=>[(x-x0)/(x1-x0)*width,(y1-y)/(y1-y0)*height];
+  const lines=new Map(),shown=displayed.filter(a=>!state.hiddenVehicles.has(a.id));
+  const mark=(key,xs,ys)=>{
+    for(let i=1;i<xs.length;i++){
+      if(![xs[i-1],ys[i-1],xs[i],ys[i]].every(Number.isFinite))continue;
+      const [ax,ay]=px(xs[i-1],ys[i-1]),[bx,by]=px(xs[i],ys[i]),steps=Math.ceil(Math.hypot(bx-ax,by-ay)/(cell/2))+1;
+      for(let k=0;k<=steps;k++){const c=Math.floor((ax+(bx-ax)*k/steps)/cell)+','+Math.floor((ay+(by-ay)*k/steps)/cell);
+        if(!lines.has(c))lines.set(c,new Set());lines.get(c).add(key);}
     }
-    if(!best||best.length<.06)continue;
-    let progress=0;const target=best.length*(data.aircraft.indexOf(a)%2?.65:.42);
-    for(let i=1;i<best.path.x.length;i++){
-      const step=Math.hypot((best.path.x[i]-best.path.x[i-1])/(xmax-xmin),(best.path.y[i]-best.path.y[i-1])/ymax);
-      if(progress+step>=target){const t=step?(target-progress)/step:0;
-        x.push(best.path.x[i-1]+t*(best.path.x[i]-best.path.x[i-1]));
-        y.push(best.path.y[i-1]+t*(best.path.y[i]-best.path.y[i-1]));
-        labels.push(`SEP ${level>0?'+':''}${level}`);levels.push(level);break;
-      }progress+=step;
-    }
+  };
+  for(const a of shown){
+    const edge=(a.boundary||[]).filter(q=>Number.isFinite(q.speed_kmh)&&Number.isFinite(q.turn_dps));
+    mark(a.id+'|envelope',edge.map(q=>q.speed_kmh),edge.map(q=>q.turn_dps));
+    for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,path.x,path.y);
+    for(const line of a.overrev_lines||[])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
   }
-  return {type:'scatter',mode:'markers+text',x,y,text:labels,customdata:levels,textposition:'middle center',
-    textfont:{color:a.color,size:11,family:'WTSymbols, Segoe UI, sans-serif'},marker:{size:12,color:'rgba(0,0,0,0)'},
+  const placed=[],inside=(x,y)=>x>=4&&y>=4&&x<=width-4&&y<=height-4;
+  const crossings=(box,own)=>{let n=0;
+    for(let cx=Math.floor(box[0]/cell);cx<=Math.floor(box[2]/cell);cx++)for(let cy=Math.floor(box[1]/cell);cy<=Math.floor(box[3]/cell);cy++){
+      const keys=lines.get(cx+','+cy);if(keys)for(const key of keys)if(key!==own){n++;break;}
+    }return n;};
+  const result=new Map(displayed.map(a=>[a.id,{x:[],y:[],labels:[],levels:[],angles:[]}]));
+  // Levels in turn across aircraft, so every aircraft gets its labels before crowding sets in.
+  for(const level of state.contourLevels)for(const [index,a] of shown.entries()){
+    const text=`SEP ${level>0?'+':''}${level}`,w=text.length*6.6+6,h=15,own=a.id+'|'+level;
+    let best=null;
+    for(const path of a.contours.filter(q=>q.level===level&&q.x.length>2)){
+      const pts=path.x.map((x,i)=>Number.isFinite(x)&&Number.isFinite(path.y[i])?px(x,path.y[i]):null);
+      const along=[0];for(let i=1;i<pts.length;i++)along.push(along[i-1]+(pts[i]&&pts[i-1]?Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]):0));
+      const total=along.at(-1);if(total<w*1.5)continue;
+      for(let f=.08;f<=.92;f+=.02){
+        const target=total*f,i=along.findIndex(v=>v>=target);if(i<1||!pts[i]||!pts[i-1])continue;
+        const t=(target-along[i-1])/((along[i]-along[i-1])||1),cx=pts[i-1][0]+t*(pts[i][0]-pts[i-1][0]),cy=pts[i-1][1]+t*(pts[i][1]-pts[i-1][1]);
+        // Direction over a label length, so small wiggles do not tilt the text; kept upright (-90..90°).
+        const ahead=pts[Math.min(pts.length-1,along.findIndex(v=>v>=target+w/2)>=0?along.findIndex(v=>v>=target+w/2):pts.length-1)],behind=pts[Math.max(0,along.findLastIndex(v=>v<=target-w/2))];
+        let angle=ahead&&behind?Math.atan2(ahead[1]-behind[1],ahead[0]-behind[0])*180/Math.PI:0;if(angle>90)angle-=180;if(angle<-90)angle+=180;
+        const c=Math.abs(Math.cos(angle*Math.PI/180)),s=Math.abs(Math.sin(angle*Math.PI/180)),bw=w*c+h*s,bh=w*s+h*c;
+        const box=[cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2];
+        if(!inside(box[0],box[1])||!inside(box[2],box[3]))continue;
+        if(placed.some(q=>box[0]<q[2]+4&&q[0]<box[2]+4&&box[1]<q[3]+3&&q[1]<box[3]+3))continue;
+        const near=placed.reduce((m,q)=>Math.min(m,Math.hypot((q[0]+q[2])/2-cx,(q[1]+q[3])/2-cy)),Infinity);
+        // Fewest crossed lines first, then away from other labels, then near this aircraft's usual spot.
+        const score=crossings(box,own)*10+Math.max(0,60-near)/6+Math.abs(f-(index%2?.62:.42))*8;
+        if(!best||score<best.score)best={score,cx,cy,box,angle};
+      }
+    }
+    if(!best)continue;
+    placed.push(best.box);
+    const r=result.get(a.id);r.x.push(x0+best.cx/width*(x1-x0));r.y.push(y1-best.cy/height*(y1-y0));r.labels.push(text);r.levels.push(level);r.angles.push(best.angle);
+  }
+  const traces=displayed.map(a=>{const r=result.get(a.id);return {type:'scatter',mode:'markers',x:r.x,y:r.y,customdata:r.levels,marker:{size:14,color:'rgba(0,0,0,0)'},
     meta:{id:a.id,kind:'contour-label'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-    hovertemplate:`${a.name}<br>SEP %{customdata} m/s<extra></extra>`};
+    hovertemplate:`SEP %{customdata} m/s<extra></extra>`};});
+  const annotations=displayed.flatMap(a=>{const r=result.get(a.id);return r.x.map((x,i)=>({name:a.id,sepLabel:true,x,y:r.y[i],xref:'x',yref:'y',text:r.labels[i],
+    textangle:r.angles[i],showarrow:false,xanchor:'center',yanchor:'middle',bgcolor:'rgba(0,0,0,.88)',borderpad:1,
+    font:{color:a.color,size:11,family:'WTSymbols, Segoe UI, sans-serif'},visible:!state.hiddenVehicles.has(a.id)}));});
+  return {traces,annotations};
+}
+function relabelContours(){
+  // Lay the SEP labels out again for the current view (zoom, pan, shown aircraft).
+  const chart=$('chart'),data=state.data;if(!data||!chart._fullLayout)return;
+  const indices=chart.data.flatMap((trace,i)=>trace.meta?.kind==='contour-label'?[i]:[]);
+  const shown=data.aircraft.filter(a=>indices.some(i=>chart.data[i].meta.id===a.id));
+  const labels=contourLabels(shown,data,{x:chart._fullLayout.xaxis.range,y:chart._fullLayout.yaxis.range});
+  const byId=new Map(labels.traces.map(t=>[t.meta.id,t])),fresh=indices.map(i=>byId.get(chart.data[i].meta.id));
+  state.relabeling=true;
+  Plotly.restyle(chart,{x:fresh.map(t=>t.x),y:fresh.map(t=>t.y),customdata:fresh.map(t=>t.customdata)},indices);
+  Plotly.relayout(chart,{annotations:[...(chart.layout.annotations||[]).filter(item=>!item.sepLabel),...labels.annotations]}).finally(()=>{state.relabeling=false;});
 }
 function projectedContourPoint(event,a,level){
   return projectedPoint(event,a.contours.filter(path=>path.level===level));
@@ -486,9 +531,9 @@ function speedBoundaryAnnotations(a,data){
   return labels.map(p=>({name:a.id,x:p.speed_kmh,y:p.dashed ? .5 : p.turn_dps,xref:'x',yref:p.dashed?'paper':'y',
     text:escapeText(p.text).replace(/\n/g,'<br>'),textangle:-90,showarrow:false,
     xanchor:p.speed_kmh>threshold?'right':'left',yanchor:'middle',xshift:p.speed_kmh>threshold?-7:7,
-    font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(12,17,26,.85)',
+    font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(0,0,0,.85)',
     visible:!state.hiddenVehicles.has(a.id),
-    hovertext:`${escapeText(a.name)}<br>${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
+    hoverlabel:{bordercolor:a.color},hovertext:`${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
 }
 function nearestSolved(a,speed,rate,showRejected){
   // Nearest on screen: distances in pixels of the current view.
@@ -508,7 +553,7 @@ async function solveAt(a,position,origin,showRejected){
   const load=Math.hypot(1,(position.speed/3.6)*(position.rate*Math.PI/180)/9.8100004196167);
   const clicked={...origin,speed:position.speed,rate:position.rate};
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${fmt(load,2)} g`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${fmt(position.rate,2)} °/s`;
   $('point-status').innerHTML='<span class="point-pill">Solving the clicked point…</span>';
   $('point-content').innerHTML='';
   let point;
@@ -541,30 +586,32 @@ function renderChart(){
   for(const n of [2,4,6,9,12,16]){
     if(n>(data.plot_max_load_g||data.settings.max_load_g))continue;
     traces.push({type:'scatter',mode:'lines',x:guideSpeeds,y:guideSpeeds.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
-      line:{color:'rgba(133,158,185,.16)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
+      line:{color:'rgba(240,240,250,.12)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
   }
   for(const a of displayed){
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
       if(!state.contourLevels.includes(level))continue;
       if(level===0&&a.sustained?.length>1)continue;
-      const x=[],y=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);}
-      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · Ps ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+      const x=[],y=[],over=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);over.push(...pathOverrev(path),'');}
+      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
-        text:x.map((v,i)=>turnRadius(v,y[i])),
-        hovertemplate:`${a.name}<br>Ps ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`,showlegend:false});
+        text:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
+        hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}%{customdata}<extra></extra>`,showlegend:false});
     }
-    // SEP jump lines: where SEP jumps along the turn (contours end at them); the hover names the cause
-    for(const j of a.sep_jumps||[]){
-      const why={supercharger:'Supercharger has no valid stage',propeller:'Propeller changes state'}[j.cause]||'SEP is discontinuous here';
-      traces.push({type:'scatter',mode:'lines',x:j.speed_kmh,y:j.turn_dps,name:`${a.name} · SEP jump`,meta:{id:a.id,kind:'sep jump'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-        line:{color:rgba(a.color,displayed.length===1?.9:.6),width:2.4,dash:'dot'},
-        customdata:j.speed_kmh.map((v,i)=>[fmt(j.sep_before_mps[i],1),fmt(j.sep_after_mps[i],1)]),
-        hovertemplate:`${a.name}<br>SEP jump %{customdata[0]} → %{customdata[1]} m/s<br>${why}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`,showlegend:false});
+    // SEP jump lines are not drawn (Leo, 2026-10-26); contours still end where SEP jumps (a.sep_jumps stays in the data).
+    for(const line of a.overrev_lines||[]){
+      // Where over-rev starts (RPM = RPMMaxAllowed); the higher-speed side over-revs. Amber dots, apart from contours and jumps.
+      const stop=new Map((line.stop_after_s||[]).map(([over,seconds])=>[over,seconds]));
+      const quits=stop.has(0)?`<br>Engine quits after about ${fmt(stop.get(0),0)} s just over${stop.has(5)?`, ${fmt(stop.get(5),0)} s at 5% over`:''}`:'';
+      traces.push({type:'scatter',mode:'lines',x:line.speed_kmh,y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+        // Approximate kinds (jump links, column crossings: traced false) are drawn fainter than traced lines.
+        line:{color:line.traced===false?'rgba(246,190,109,.5)':'rgba(246,190,109,.95)',width:line.traced===false?2:2.6,dash:'dot'},showlegend:false,
+        hovertemplate:`Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
       name:cleanName(a.name),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
-      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result']),
-      hovertemplate:`${a.name}<br>%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h<extra></extra>`});
+      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)]),
+      hovertemplate:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
       traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,marker:{size:8,symbol:'x',color:'#f6be6d'},
@@ -580,36 +627,38 @@ function renderChart(){
       const roots=new Map(a.sustained.map((p,i)=>[p.speed_kmh,{p,i}]));
       const curve=sustainedCurve(a,data);
       traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:curve?.x||data.speeds_kmh,y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
-        name:a.name+' Ps = 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
+        name:a.name+' SEP 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
-        text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate);}),
-        hovertemplate:`${a.name} · ${data.preview?'preview contour':'refined'} Ps = 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
+        text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate)+(curve?.overrev?.[i]||'');}),
+        hovertemplate:`${data.preview?'Preview · ':''}SEP 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
     }
     const valid=a.points.map((p,i)=>({p,i})).filter(r=>chartUsable(r.p));
     if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>r.p.speed_kmh),y:valid.map(r=>r.p.turn_dps),
       marker:{size:showSamples?5:9,color:showSamples?rgba(a.color,.5):'rgba(0,0,0,0)'},name:a.name,meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${a.name} · ${fmt(r.p.load_g,2)} g<br>Ps ${fmt(r.p.ps_mps,1)} m/s`),
+      customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${fmt(r.p.load_g,2)} g<br>SEP ${fmt(r.p.ps_mps,1)} m/s`),
       hovertemplate:'%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>'});
     if(showRejected){
       const rejected=a.points.map((p,i)=>({p,i})).filter(r=>!chartUsable(r.p));
       traces.push({type:'scatter',mode:'markers',x:rejected.map(r=>r.p.speed_kmh),y:rejected.map(r=>r.p.turn_dps),
         marker:{size:5,symbol:'x',color:rgba(a.color,.33)},name:a.name+((data.stationary_full_chart||data.stationary_baseline_chart)?' unresolved':' rejected'),meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         customdata:rejected.map(r=>[a.id,'grid',r.i]),text:rejected.map(r=>((data.stationary_full_chart||data.stationary_baseline_chart)?[r.p.chart_status,...r.p.reasons]:r.p.reasons).filter(Boolean).join(', ')),
-        hovertemplate:`${a.name} · ${(data.stationary_full_chart||data.stationary_baseline_chart)?'unresolved':'rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
+        hovertemplate:`${(data.stationary_full_chart||data.stationary_baseline_chart)?'Unresolved':'Rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
-    traces.push(contourLabelTrace(a,data));
   }
+  const sepLabels=contourLabels(displayed,data);traces.push(...sepLabels.traces);
+  // Tooltips carry no aircraft name (Leo, 2026-10-26); the border takes the aircraft's colour instead.
+  for(const trace of traces){const owner=displayed.find(a=>a.id===trace.legendgroup);if(owner)trace.hoverlabel={...trace.hoverlabel,bordercolor:owner.color};}
   const ymax=envelopeTop(displayed);
-  const layout={paper_bgcolor:'#0c111a',plot_bgcolor:'#0c111a',font:{family:'WTSymbols, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',color:'#b4c2d3',size:12},
-    annotations:displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),
+  const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
+    annotations:[...displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),...sepLabels.annotations],
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
-    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#202e40',bordercolor:'#40536b',font:{color:'#eff7ff',size:12}},
-    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'#1f2a3a',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
-    yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'#1f2a3a',zeroline:false,dtick:5,tickfont:{size:12}},
+    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
+    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
+    yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:5,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
-    uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan'};
+    uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
   Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
     // Downloads sit in the chart's own toolbar: Plotly's PNG of the current view, then the result's data files.
@@ -628,7 +677,13 @@ function renderChart(){
       if(item.name===group)visibility[`${key}[${i}].visible`]=hidden;
     });
     if(Object.keys(visibility).length)Plotly.relayout('chart',visibility);
+    // Labels are placed against the shown aircraft only, so lay them out again.
+    relabelContours();
     return false;
+  });
+  $('chart').removeAllListeners?.('plotly_relayout');
+  $('chart').on('plotly_relayout',event=>{
+    if(!state.relabeling&&Object.keys(event).some(key=>key.startsWith('xaxis')||key.startsWith('yaxis')||key==='autosize'))relabelContours();
   });
   $('chart').removeAllListeners?.('plotly_click');
   $('chart').on('plotly_click', event=>{
@@ -656,6 +711,24 @@ function renderChart(){
     if(best)inspect(best.a,best.point);
   });
 }
+const KGF=9.80665,METRIC_HP=735.49875;
+function propellerPower(a,p){
+  // Shaft power per engine (metric hp); propeller efficiency = thrust x airspeed / shaft power, for pure propeller aircraft.
+  const power=p.propulsion.shaft_power_kw;if(!power?.length)return [];
+  const rows=[['Engine power',power.map(kw=>fmt(kw*1000/METRIC_HP,0)).join(' / ')+' hp']];
+  const total=power.reduce((sum,kw)=>sum+kw,0)*1000;
+  if(['piston','turboprop'].includes(state.meta.aircraft[a.aircraft_id||a.id]?.propulsion)&&total>1)
+    rows.push(['Propeller efficiency',fmt(p.engine_force_n[0]*p.speed_kmh/3.6/total*100,1)+'%']);
+  return rows;
+}
+// The model's body axes are forward, up and left (the left wing sits at +z), so the Right column is -z.
+const bodyRight=([forward,up,left])=>[forward,up,-left];
+function controlDeflections(p){
+  // Surface deflection, % of full travel; the server reports + as nose up, roll right and nose right.
+  const d=p.control_deflection_percent;if(!d)return [];
+  const side=(v,plus,minus)=>Math.abs(v)<.05?'0%':`${fmt(Math.abs(v),1)}% ${v>0?plus:minus}`;
+  return [['Elevator',side(d.elevator,'nose up','nose down')],['Ailerons',side(d.ailerons,'right','left')],['Rudder',side(d.rudder,'right','left')]];
+}
 async function inspect(a,p,clicked){
   const sequence=state.inspection=(state.inspection||0)+1;
   if(!p.component_forces&&p.detail_index!=null){
@@ -664,10 +737,11 @@ async function inspect(a,p,clicked){
   }
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`;
-  $('point-status').innerHTML=`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':chartUsable(p)?'Converged & within bounds':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.turn_dps,2)} °/s`;
+  // Only exceptions get a status tag; a normal solved point needs none (Leo, 2026-10-26).
+  $('point-status').innerHTML=clicked?.nearest||!chartUsable(p)?`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`:'';
   const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
-  const note=clicked?`<div class="point-note">Clicked ${where}. ${clicked.nearest?'The details are for the nearest solved point; this server cannot solve the clicked point.':'This state is solved there with the full model.'}</div>`:'';
+  const note=clicked?.nearest?`<div class="point-note">Clicked ${where}. The details are for the nearest solved point; this server cannot solve the clicked point.</div>`:'';
   // A third row entry hides that row on the page; it stays in the markup (Leo, 2026-10-23).
   const dl=rows=>'<dl>'+rows.map(([k,v,hide])=>`<dt${hide?' hidden':''}>${k}</dt><dd${hide?' hidden':''}>${v}</dd>`).join('')+'</dl>';
   if(p.not_evaluated){$('point-content').innerHTML=dl([['Not calculated',escapeText(p.reasons.join(', '))]])+note;return;}
@@ -675,22 +749,20 @@ async function inspect(a,p,clicked){
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
   $('point-content').innerHTML=`<div class="point-grid"><div><h3>FLIGHT & ENERGY</h3>${dl([
-    ['Discrete Ps',fmt(p.ps_mps,2)+' m/s'],['Force-projection Ps',fmt(p.ps_continuous_mps,2)+' m/s'],
+    ['SEP',fmt(p.ps_mps,2)+' m/s'],
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
-    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'°'],['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
-    ['Engine force',fmt(p.engine_force_n[0]/1000,2)+' kN'],
+    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],
+    ['Thrust',fmt(p.engine_force_n[0]/KGF,0)+' kgf'],
     ...(p.propulsion?[
+      ...propellerPower(a,p),
       ['Engine RPM',p.propulsion.engine_rpm.map(v=>fmt(v,0)).join(' / ')],
-      ['Propeller pitch',p.propulsion.propeller_pitch_deg.map(v=>fmt(v,2)+'°').join(' / ')],
+      ['Propeller pitch',p.propulsion.propeller_pitch_deg.map((v,i)=>fmt(v,2)+'°'+(Number.isFinite(p.propulsion.propeller_pitch_percent?.[i])?' / '+fmt(p.propulsion.propeller_pitch_percent[i],0)+'%':'')).join(' · ')],
       ['Propeller control',p.propulsion.controls.automatic.map((auto,i)=>auto?'Automatic':fmt(p.propulsion.controls.commands[i]/255*100,1)+'% manual').join(' / ')],
       ['Compressor stage',(p.propulsion.compressor_stages??p.propulsion.controls.gears).map(v=>v+1).join(' / ')],
-      ['Radiator',fmt(p.propulsion.radiator_percent??0,0)+'%'],['Oil radiator',fmt(p.propulsion.oil_radiator_percent??0,0)+'%'],
       ['RPM limit',p.propulsion.engine_rpm_threshold.map(v=>fmt(v,0)).join(' / ')],
-      ['Over-rev',p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No'],
-      ['Landing gear',p.gear_percent===100?'Fixed · deployed':'Retracted']]:[]),
-    ...(state.meta.aircraft[a.aircraft_id||a.id]?.has_flaps?[['Flaps',fmt(p.flaps_percent??0,0)+'%']]:[]),
+      ['Over-rev',p.overrev?`+${fmt(p.overrev.percent_over,1)}% over ${fmt(p.overrev.rpm_limit,0)} rpm${Number.isFinite(p.overrev.seconds_to_stop)?` · engine quits after ${fmt(p.overrev.seconds_to_stop,1)} s`:''}`:p.propulsion.rpm_threshold_exceeded_engines.length?'Engine '+p.propulsion.rpm_threshold_exceeded_engines.map(i=>i+1).join(' / '):'No']]:[]),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}</div><div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
@@ -711,7 +783,7 @@ async function inspect(a,p,clicked){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kN</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${v.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${p.force_n.map(x=>`<td>${fmt(x/1000,2)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
+    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',flightModeLabel(resultConditions(a))],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;
@@ -729,7 +801,7 @@ async function poll(id){
     $('progress-label').textContent=job.status==='stopping'?'Stopping calculation and retaining partial results…':job.status==='exporting'?(job.partial_result?'Preparing partial results…':'Preparing diagram and result data…'):
       p.phase?`${p.phase}${name?' · '+name:''}`:name?`Solving ${name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`:'Queued for calculation…';
     const percent=p.total?Math.min(99,100*p.done/p.total):0;
-    $('progress-fill').style.width=percent+'%';$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
+    $('progress-fill').style.width=percent+'%';$('calculate').style.setProperty('--progress',percent+'%');$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
     setTimeout(()=>poll(id),900);
   }catch(e){
     if(state.activeJob!==id)return;
@@ -764,8 +836,15 @@ function fetchLoadouts(aircraft,vehicle){
 }
 const cachedLoadouts=(aircraft,vehicle)=>loadoutCache.get(loadoutKey(aircraft,vehicle))?.value;
 const optionOf=(editor,tier,id)=>editor?.tiers.find(t=>t.tier===+tier)?.options.find(o=>o.id===id);
+// Without stores the loadout is either the default ammunition and countermeasures (default) or clean: nothing aboard
+// (Leo, 2026-10-26; this replaces the "Include default ammunition" switch). Stores always come with the ammunition.
+const BARE_LOADOUTS={'':'Ammunition and countermeasures only',__clean:'Clean'};
+function ammunitionText(aircraft,vehicle){
+  const a=ammunitionFor(aircraft,vehicle);
+  return a?.supported?[a.gun_rounds?`${fmt(a.gun_rounds,0)} rounds`:'',a.countermeasures?`${fmt(a.countermeasures,0)} countermeasures`:'',`${fmt(a.mass_kg,0)} kg`].filter(Boolean).join(' · '):'';
+}
 function loadoutText(c,info){
-  if(!c.loadout)return 'Clean · guns only';
+  if(!c.loadout)return BARE_LOADOUTS[c.default_ammunition?'':'__clean'];
   if(typeof c.loadout==='string')return info?.presets.find(p=>p.id===c.loadout)?.label||c.loadout;
   const tiers=Object.entries(c.loadout.tiers||{});
   if(!tiers.length)return 'Custom · all pylons empty';
@@ -786,17 +865,18 @@ async function showLoadout(){
   $('loadout-field').hidden=!entry;
   if(!entry)return;
   const aircraft=state.meta.aircraft[entry.aircraft_id],c=state.conditions[entry.id];
-  const available=!!aircraft.loadouts?.supported;
-  $('loadout-edit').disabled=!available;
+  const available=!!aircraft.loadouts?.supported,ammunition=!!ammunitionFor(aircraft,c.ammunition_vehicle)?.supported;
+  // Without stores the choice is still between ammunition only and clean.
+  $('loadout-edit').disabled=!available&&!ammunition;
   $('loadout-summary').textContent=loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle));
-  $('loadout-detail').textContent=available?(c.loadout?'':'Stores, pylons and drop tanks the aircraft can carry.'):(aircraft.loadouts?.reason||'Loadouts are unavailable for this aircraft.');
+  $('loadout-detail').textContent=c.loadout?'':c.default_ammunition?ammunitionText(aircraft,c.ammunition_vehicle):
+    available||ammunition?'Nothing aboard':(aircraft.loadouts?.reason||'Loadouts are unavailable for this aircraft.');
   if(!available||!c.loadout)return;
   try{
     const info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);
     if(state.editing!==entry.id)return;
     $('loadout-summary').textContent=loadoutText(c,info);
     $('loadout-detail').textContent=loadoutFigures(loadoutTotals(c.loadout,info))+(c.stores_released?' · stores released, racks stay':'');
-    refreshEntrySummaries();
   }catch(cause){$('loadout-detail').textContent='Could not load loadouts: '+cause.message;}
 }
 const loadoutDialog={entry:null,info:null,draft:null,pylon:null,notes:[]};
@@ -810,11 +890,13 @@ async function openLoadoutEditor(){
   $('loadout-custom').hidden=true;$('loadout-apply').disabled=true;
   $('loadout-released').checked=!!c.stores_released;
   $('loadout-dialog').showModal();
-  try{d.info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);}
+  const aircraft=state.meta.aircraft[entry.aircraft_id];
+  d.ammunition=ammunitionText(aircraft,c.ammunition_vehicle);
+  try{d.info=aircraft.loadouts?.supported?await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle):{presets:[],editor:null};}
   catch(cause){$('loadout-preset-list').innerHTML=`<p class="hint">${escapeText('Could not load loadouts: '+cause.message)}</p>`;return;}
   if(d.entry!==entry.id)return;
   const loadout=c.loadout;
-  if(!loadout)d.draft={preset:'',tiers:{}};
+  if(!loadout)d.draft={preset:c.default_ammunition?'':'__clean',tiers:{}};
   else if(typeof loadout==='string')d.draft={preset:loadout,tiers:{...(d.info.presets.find(p=>p.id===loadout)?.tiers||{})}};
   else d.draft={preset:null,tiers:{...loadout.tiers}};
   renderLoadoutEditor();
@@ -871,8 +953,10 @@ function choosePylon(tier,id){
 function renderLoadoutEditor(){
   const d=loadoutDialog,info=d.info,editor=info.editor;
   const preset=(id,label,figures,extra='',disabled=false,title='')=>`<button type="button" class="loadout-preset" data-preset="${escapeText(id)}" aria-pressed="${d.draft.preset===id}" ${disabled?'disabled':''} title="${escapeText(title)}"><strong>${escapeText(label)}${extra}</strong><span>${escapeText(figures)}</span></button>`;
-  $('loadout-preset-list').innerHTML=preset('','Clean','Guns and countermeasures only')+
-    info.presets.map(p=>preset(p.id,p.label,p.error?'Unavailable':loadoutFigures({mass:p.mass_kg,drag:p.drag_area_m2}),
+  // The game's own preset with no stores (e.g. "Empty") is the same as ammunition only, so it is not listed twice.
+  $('loadout-preset-list').innerHTML=preset('',BARE_LOADOUTS[''],d.ammunition||'No ammunition data for this aircraft','',!d.ammunition)+
+    preset('__clean',BARE_LOADOUTS.__clean,'Nothing aboard')+
+    info.presets.filter(p=>p.error||p.mass_kg||p.drag_area_m2).map(p=>preset(p.id,p.label,p.error?'Unavailable':loadoutFigures({mass:p.mass_kg,drag:p.drag_area_m2}),
       '',!!p.error,p.error||'')).join('')+
     (editor?`<button type="button" class="loadout-preset" data-preset="__custom" aria-pressed="${d.draft.preset===null}"><strong>Custom</strong><span>${escapeText(d.draft.preset===null?loadoutFigures(loadoutTotals({tiers:d.draft.tiers},info)):'Start from the selected preset')}</span></button>`:'');
   $('loadout-custom').hidden=!editor;
@@ -899,9 +983,10 @@ function renderLoadoutEditor(){
   }
   $('loadout-notes').classList.toggle('problem',problems.length>0);
   $('loadout-notes').textContent=[...problems,...d.notes].join(' ')||(editor?'Limits follow the in-game loadout editor. Drop tanks are carried full.':'Drop tanks are carried full.');
-  const totals=d.draft.preset===''?{mass:0,drag:0}:loadoutTotals(d.draft.preset===null?{tiers:d.draft.tiers}:d.draft.preset,info);
-  $('loadout-total').textContent=d.draft.preset===''?'Clean':loadoutFigures(totals);
-  $('loadout-released').disabled=d.draft.preset==='';
+  const bare=d.draft.preset in BARE_LOADOUTS;
+  $('loadout-total').textContent=d.draft.preset===''?d.ammunition:d.draft.preset==='__clean'?'Nothing aboard':
+    loadoutFigures(loadoutTotals(d.draft.preset===null?{tiers:d.draft.tiers}:d.draft.preset,info));
+  $('loadout-released').disabled=bare;
   $('loadout-apply').disabled=problems.length>0;
 }
 $('loadout-edit').addEventListener('click',openLoadoutEditor);
@@ -922,11 +1007,13 @@ $('loadout-options').addEventListener('click',event=>{
 });
 $('loadout-apply').addEventListener('click',()=>{
   const d=loadoutDialog,c=state.conditions[d.entry];if(!c||!d.draft)return;
-  c.loadout=d.draft.preset===''?'':d.draft.preset!==null?d.draft.preset:{tiers:{...d.draft.tiers}};
+  c.loadout=d.draft.preset in BARE_LOADOUTS?'':d.draft.preset!==null?d.draft.preset:{tiers:{...d.draft.tiers}};
+  c.default_ammunition=d.draft.preset!=='__clean'&&!!d.ammunition;
   c.stores_released=!!c.loadout&&$('loadout-released').checked;
+  if(state.editing===d.entry)$('default-ammunition').checked=c.default_ammunition;
   $('loadout-dialog').close();
   if(state.editing===d.entry)showLoadout();
-  refreshEntrySummaries();syncLabels();
+  syncLabels();
 });
 function formChanged(e){
   if(e.target.id==='aircraft-search')return;
@@ -981,3 +1068,28 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
     $('footer-status').textContent='Calculations run on the server.';
   }
 }catch(e){error('Could not load the plotter: '+e.message);}})();
+// Header calculator menus (Leo, 2026-10-25): each group opens on hover, on a click of its name or with the down
+// arrow, and closes on a choice, Escape, leaving it or a click elsewhere. missiles.js switches the calculators.
+(()=>{
+  const groups=[...document.querySelectorAll('.nav-group')],hover=matchMedia('(hover: hover)');
+  const set=(group,open)=>{group.classList.toggle('open',open);group.querySelector('.nav-top').setAttribute('aria-expanded',String(open));};
+  const closeAll=except=>groups.forEach(g=>{if(g!==except)set(g,false);});
+  for(const group of groups){
+    const top=group.querySelector('.nav-top'),items=[...group.querySelectorAll('.nav-item')];
+    group.addEventListener('mouseenter',()=>{if(hover.matches){closeAll(group);set(group,true);}});
+    group.addEventListener('mouseleave',()=>{if(hover.matches)set(group,false);});
+    // With a mouse the menu is already open under the pointer; a tap toggles it.
+    top.addEventListener('click',()=>{const open=hover.matches||!group.classList.contains('open');closeAll(group);set(group,open);});
+    for(const item of items)item.addEventListener('click',()=>set(group,false));
+    group.addEventListener('keydown',event=>{
+      const at=items.indexOf(document.activeElement);
+      if(event.key==='Escape'){set(group,false);top.focus();}
+      else if(event.key==='ArrowDown'){set(group,true);items[at<0?0:Math.min(at+1,items.length-1)].focus();}
+      else if(event.key==='ArrowUp'&&at>=0)(at===0?top:items[at-1]).focus();
+      else return;
+      event.preventDefault();
+    });
+    group.addEventListener('focusout',event=>{if(!group.contains(event.relatedTarget))set(group,false);});
+  }
+  document.addEventListener('click',event=>{if(!event.target.closest('.nav-group'))closeAll();});
+})();

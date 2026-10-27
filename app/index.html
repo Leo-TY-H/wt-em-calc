@@ -5,27 +5,24 @@
 // The interface needs the local server for both assets and calculation APIs.
 if (window.location.protocol === 'file:') window.location.replace('http://127.0.0.1:8765/');
 </script>
-<title>neothunderism · Flight tools</title><meta name="description" content="neothunderism — War Thunder energy–maneuverability diagrams, experimental 3D missile engagements and launch envelopes.">
+<title>NeoThunderism</title><meta name="description" content="NeoThunderism — War Thunder energy–maneuverability diagrams, experimental 3D missile engagements and launch envelopes.">
 <link rel="icon" type="image/png" sizes="16x16" href="./icons/neothunderism-16.png?v=4">
 <link rel="icon" type="image/png" sizes="32x32" href="./icons/neothunderism-32.png?v=4">
 <link rel="apple-touch-icon" sizes="180x180" href="./icons/neothunderism-180.png?v=3">
 <link rel="preload" href="./fonts/wt-symbols.ttf" as="font" type="font/ttf" crossorigin><link rel="stylesheet" href="./styles.css">
 <script src="./config.js"></script><script defer src="./vendor/plotly.min.js"></script><script defer src="./app.js"></script><script defer src="./release-links.js"></script><link rel="stylesheet" href="./release-links.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="./"><img class="brand-icon" src="./icons/neothunderism-192.png?v=3" width="64" height="40" alt=""><span>neothunderism</span></a><nav class="tool-tabs" role="tablist" aria-label="Flight tools"><button id="em-tab" type="button" role="tab" aria-selected="true" aria-controls="em-workspace">EM diagram</button><button id="missile-tab" type="button" role="tab" aria-selected="false" aria-controls="missile-workspace" tabindex="-1">Missile simulator</button><button id="envelope-tab" type="button" role="tab" aria-selected="false" aria-controls="envelope-workspace" tabindex="-1">Launch envelope</button></nav><span id="runtime-label" class="local" hidden></span><nav id="release-links" class="release-links" aria-label="Website"></nav></header>
-<div class="workspace" id="em-workspace" role="tabpanel" aria-labelledby="em-tab">
+<header class="topbar"><a class="brand" href="./" aria-label="NeoThunderism"><img class="brand-icon" src="./icons/neothunderism-mark.png?v=2" width="56" height="28" alt=""></a><nav class="site-nav" aria-label="Calculators"><div class="nav-group current"><button type="button" class="nav-top" aria-haspopup="true" aria-expanded="false" aria-controls="nav-fm">Flight Model Calculator<span class="nav-caret" aria-hidden="true"></span></button><div class="nav-menu" id="nav-fm"><button id="em-tab" type="button" class="nav-item" aria-controls="em-workspace" aria-current="page">EM diagram</button></div></div><div class="nav-group"><button type="button" class="nav-top" aria-haspopup="true" aria-expanded="false" aria-controls="nav-missile">Missile Simulator<span class="nav-caret" aria-hidden="true"></span></button><div class="nav-menu" id="nav-missile"><button id="missile-tab" type="button" class="nav-item" aria-controls="missile-workspace">Trajectory simulation</button><button id="envelope-tab" type="button" class="nav-item" aria-controls="envelope-workspace">Launch envelope</button></div></div></nav><span id="runtime-label" class="local" hidden></span><nav id="release-links" class="release-links" aria-label="Website"></nav></header>
+<div class="workspace" id="em-workspace" role="region" aria-labelledby="em-tab">
 <aside class="sidebar"><form id="scenario">
-<div class="section-heading"><span class="eyebrow">FLIGHT CONDITION</span><button type="button" class="text-button" id="reset">Reset</button></div>
-<fieldset id="aircraft-picker"><legend>Add aircraft <small>Up to eight entries</small></legend>
+<fieldset id="aircraft-picker"><legend class="visually-hidden">Add aircraft</legend>
 <input id="aircraft-search" type="search" placeholder="Search aircraft…" aria-label="Search aircraft">
 <div id="aircraft-list" class="aircraft-list"></div>
 <p id="search-empty" class="hint" hidden>No aircraft match your search.</p>
-<p id="catalog-status" class="hint"></p>
 </fieldset>
-<div class="section-heading"><span class="eyebrow">ADDED AIRCRAFT</span><span id="entry-count" class="hint">0 / 8</span></div>
-<p id="entries-empty" class="hint">No aircraft added.</p>
 <div id="selected-aircraft" aria-label="Added aircraft"></div>
 
+<dialog id="entry-dialog" class="entry-dialog" aria-labelledby="entry-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="entry-dialog-title"></h2></div><button type="button" id="entry-dialog-close" class="text-button" aria-label="Close settings">✕</button></header><div id="entry-dialog-body" class="entry-dialog-body"></div></dialog>
 <div id="condition-home" hidden><fieldset id="aircraft-condition" disabled>
 <div id="sweep-field" hidden><label class="field">Wing sweep <output id="sweep-label">0%</output><input id="sweep" type="range" min="0" max="100" step="1" value="0"></label></div>
 <label class="field">Altitude <div class="input-unit"><input id="altitude" type="number" min="0" max="18000" step="1" value="0" required><span>m</span></div></label>
@@ -59,18 +56,19 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <div class="divider"></div>
 
 <div class="field">Flight mode<div class="mode-switch" role="radiogroup" aria-label="Flight mode"><label><input id="flight-mode-rb" type="radio" name="flight-mode" value="rb" checked><span>RB</span></label><label><input id="flight-mode-sb" type="radio" name="flight-mode" value="sb"><span>SB</span></label></div></div>
+<div class="field">Turn<div class="mode-switch" role="radiogroup" aria-label="Turn direction"><label><input id="turn-left" type="radio" name="turn-direction" value="left" checked><span>Left</span></label><label><input id="turn-right" type="radio" name="turn-direction" value="right"><span>Right</span></label></div></div>
 
 
 <div class="divider"></div>
-<details><summary>Additional settings</summary>
+<div class="extra-settings">
 <div class="ammunition-setting">
-<label class="check-row"><input id="default-ammunition" type="checkbox" checked aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
+<div hidden><label class="check-row"><input id="default-ammunition" type="checkbox" checked aria-describedby="ammunition-help ammunition-status"><span>Include default ammunition</span></label>
 <small id="ammunition-help">Standard gun belts and countermeasures.</small>
-<small id="ammunition-status" role="status" aria-live="polite"></small>
+<small id="ammunition-status" role="status" aria-live="polite"></small></div>
 <label id="ammunition-vehicle-field" class="field" hidden>Armament variant<select id="ammunition-vehicle"></select></label>
 </div>
 <label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="any" value="0"><span>kg</span></div></label>
-</details>
+</div>
 <details id="legacy-modes" hidden><summary>Legacy modes</summary>
 <div class="field">Flutter<div class="mode-switch" role="radiogroup" aria-label="Flutter"><label><input id="flutter-on" type="radio" name="flutter" value="on" checked><span>On</span></label><label><input id="flutter-off" type="radio" name="flutter" value="off"><span>Off</span></label></div><small>The fixed search region always respects the selected aircraft’s structural load and speed limits. Off applies only to diagnostics with that search region disabled.</small></div>
 </details>
@@ -83,25 +81,24 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 
 <div hidden><label class="check-row"><input id="enable-exports" type="checkbox" aria-describedby="exports-help" checked><span>Enable exports</span></label>
 <small id="exports-help">Off skips export preparation. You can enable downloads after calculation without recalculating.</small></div>
-<div class="sidebar-actions"><button id="calculate" class="primary-button" type="submit">Calculate diagram <span>↗</span></button><button id="cancel" type="button" class="secondary-button" title="Stop calculation and retain partial results" hidden>Stop</button></div>
+<div class="sidebar-actions"><div class="action-row"><button id="calculate" class="primary-button" type="submit">Calculate</button><button type="button" class="secondary-button reset-button" id="reset">Reset</button></div><button id="cancel" type="button" class="secondary-button" title="Stop calculation and retain partial results" hidden>Stop</button></div>
 
 </form></aside>
 <main>
 <div id="hosting-notice" class="hosting-notice" hidden><strong>Public preview</strong><span>The interface and aircraft catalog are online. Calculations still require the local application while a compute backend is being prepared.</span></div>
 <div id="error" class="error" role="alert" hidden></div>
 <div id="progress" class="progress-panel" aria-live="polite" hidden><div><span class="spinner"></span><strong id="progress-label">Preparing calculation…</strong><span id="progress-count"></span></div><div class="progress-track"><div id="progress-fill"></div></div></div>
-<div id="stale" class="notice" hidden>Settings have changed. Calculate to update the diagram.</div>
 <div id="over-rev-status" class="notice" role="status" hidden></div>
 <section class="chart-card">
 <div class="chart-toolbar"><div id="chart-tabs" class="tabs" role="group" aria-label="Chart view" hidden><button type="button" data-view="compare" class="active">Compare</button></div><div class="chart-actions"><label hidden><input id="show-samples" type="checkbox"> Samples</label><label hidden><input id="show-rejected" type="checkbox"> Rejected</label><div class="exports" hidden><a data-export="diagram.svg" aria-disabled="true">Diagram · SVG</a><a data-export="diagram.png" aria-disabled="true">Diagram · PNG</a><a data-export="diagram.pdf" aria-disabled="true">Diagram · PDF</a><a data-export="samples.csv" aria-disabled="true">Samples · CSV</a><a data-export="data.json" aria-disabled="true">Full result · JSON</a></div></div></div>
-<div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Ready to calculate</h2></div></div>
+<div id="chart" aria-label="Energy maneuverability diagram"><div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div></div>
 </section>
-<section id="inspector" class="inspector" hidden><div class="inspector-heading"><div><span class="eyebrow">OPERATING POINT</span><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
+<section id="inspector" class="inspector" hidden><div class="inspector-heading"><div><h2 id="point-title">Select a point on the diagram</h2></div><span id="point-status"></span></div><div id="point-content"></div></section>
 
 <footer><span id="runtime-footer"></span><span id="footer-status">All calculations run on this computer.</span></footer>
 </main></div>
-<section id="missile-workspace" role="tabpanel" aria-labelledby="missile-tab" hidden></section>
-<section id="envelope-workspace" role="tabpanel" aria-labelledby="envelope-tab" hidden></section>
+<section id="missile-workspace" role="region" aria-labelledby="missile-tab" hidden></section>
+<section id="envelope-workspace" role="region" aria-labelledby="envelope-tab" hidden></section>
 <dialog id="loadout-dialog" class="loadout-dialog" aria-labelledby="loadout-title">
 <form id="loadout-form" method="dialog">
 <header class="loadout-header"><div><span class="eyebrow">LOADOUT</span><h2 id="loadout-title">Aircraft</h2></div><button type="submit" value="cancel" class="text-button" aria-label="Close loadout editor">✕</button></header>
