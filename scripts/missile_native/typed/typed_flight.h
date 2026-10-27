@@ -121,7 +121,7 @@ inline void validate_flight_numbers(const Session& S, int family) {
 // optical_point_flight.update (engine_kernels.flight_result) + family guidance.
 inline void flight_update(const FlightProps& P, Session& S, const TargetPoint& new_target, const LaunchState& launch, double dt_in) {
     float dt = (float)dt_in;
-    if (!std::isfinite(dt) || dt <= 0.f) bail("ValueError: Positive finite caller interval required");
+    if (!finite(dt) || dt <= 0.f) bail("ValueError: Positive finite caller interval required");
     if (P.precision <= 0) bail("ValueError: Positive body substep count required");
     Packet old = packet(S.body);
     if (S.body.water || S.body.immersion != 0.f) bail("NotImplementedError: Pure-air composition only");

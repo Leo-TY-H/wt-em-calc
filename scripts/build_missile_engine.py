@@ -135,6 +135,13 @@ def build(generate_only=False, jobs=4):
         flags = manifest['compiler_flags']
     else:
         flags = ['-std=c++17', '-O2', '-ffp-contract=off', '-fno-fast-math', '-pthread']
+    # The typed engine never reads or changes the floating-point environment.
+    # MSVC's /fp:precise keeps every /fp:strict value there (source order and
+    # rounding, no contraction, IEEE special values) without strict's float to
+    # double to float round trip after each binary32 operation.
+    typed_flags = [('/fp:precise' if f == '/fp:strict' else f) for f in flags]
+    def flags_for(path):
+        return typed_flags if path.name == 'engine_typed.cpp' else flags
     objects = DIRECTORY / 'objects'; objects.mkdir(exist_ok=True)
     sources_cpp = [SOURCE / 'runtime.cpp', SOURCE / 'engine_stdlib.cpp', SOURCE / 'engine_kernels.cpp',
                    SOURCE / 'engine_typed.cpp', SOURCE / 'engine_main.cpp', *generated_files]
@@ -147,7 +154,7 @@ def build(generate_only=False, jobs=4):
     def dependencies(path):
         return [*headers, *(typed_headers if path.name == 'engine_typed.cpp' else [])]
     settings_path = DIRECTORY / 'compile-settings.json'
-    settings = dict(flags=flags, compiler_options=getattr(compiler, 'compile_options', []))
+    settings = dict(flags=flags, typed_flags=typed_flags, compiler_options=getattr(compiler, 'compile_options', []))
     force = not settings_path.exists() or json.loads(settings_path.read_text()) != settings
     for index, path in enumerate(sources_cpp):
         object_path = Path(compiler.object_filenames([str(path)], output_dir=str(objects))[0])
@@ -159,7 +166,7 @@ def build(generate_only=False, jobs=4):
         index, path = entry
         print('COMPILE %d/%d %s' % (index + 1, len(sources_cpp), path.name), flush=True)
         compiler.compile([str(path)], output_dir=str(objects), include_dirs=[str(SOURCE), str(generated)],
-                         depends=list(map(str, dependencies(path))), extra_postargs=flags)
+                         depends=list(map(str, dependencies(path))), extra_postargs=flags_for(path))
         retained = sum(p.stat().st_size for p in DIRECTORY.rglob('*') if p.is_file())
         if retained > budget.limits['total']:
             raise RuntimeError('Native build exceeded declared workstream storage cap')
