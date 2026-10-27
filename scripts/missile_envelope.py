@@ -35,7 +35,11 @@ another ray is added where one hits and the other does not, down to the edge
 step, and where their gaps between hits differ or their boundaries bend, down to
 the detail step. Boundary changes are judged against the envelope's own size, so the
 outline is resolved where it bends or ends while directions without hits, and
-scattered hits close to the target, cost little.
+scattered hits close to the target, cost little. Close-range miss bands (gaps())
+are judged at their own range instead: a band on one neighbour only, or one that
+moves, also adds a ray, and new rays probe inside their neighbours' bands. Along
+a ray, sharp flight-time drops between hits and dense sampling near the inner
+boundaries find bands that no coarse sample touches (Ray.search).
 
 No-escape zone (Leo, 2026-10-26): with config['escape'] a second, independent
 search runs against a target that breaks away at launch (missile_worker.
@@ -67,6 +71,17 @@ RANGE_CAP_M = 195000.
 COARSE_RATIO = 1.6
 SHAPE = 5.
 MATCH = 2.5
+# Two neighbouring hits whose flight time drops by more than this much towards
+# the farther one (s, plus s per metre between them) are bisected like a
+# transition: see Ray.search.
+DROP_S = 2.
+DROP_RATE = 2e-3
+GAP_WIDTHS = 3.     # interior misses at least this many local tolerances wide count as gaps
+# Around a ray's inner boundaries (minimum range, close-range miss bands) up to
+# CLOSE_M, ranges within a factor ZONE of them are sampled at a ratio of
+# 1 + GAP_WIDTHS tolerances: see Ray.search.
+CLOSE_M = 10000.
+ZONE = 1.4
 MAX_LAYERS = 25
 ESCAPE_DEFAULT_G = 9.               # default escape load factor (Leo, 2026-10-26)
 QUALITY = dict(quick=dict(azimuth_step_deg=30., detail_step_deg=3.75, edge_step_deg=1., tolerance=.03, tolerance_m=50.),
@@ -519,14 +534,47 @@ class Ray:
         # Resolve every detected transition at its own range tolerance. Using the
         # farthest hit's tolerance can leave short-range gap edges hundreds of
         # metres wide even when the requested local tolerance is only 15 metres.
+        # A sharp drop in flight time from one hit to the next farther one
+        # separates two engagements, typically a late turn-back hit at close
+        # range off the nose and a direct hit beyond it; the misses between
+        # them need not touch any sample, so such pairs are bisected as well.
+        # Near the inner boundaries a miss band can also lie between hits of one
+        # kind (a seeker that loses the target during the turn), which nothing
+        # about the hits reveals; there the ranges next to hits are sampled
+        # densely enough to find bands GAP_WIDTHS local tolerances wide, and
+        # whatever this finds widens the zone and is resolved in turn.
+        dense = 1 + GAP_WIDTHS * self.tolerance
         while True:
             rs = sorted(self.samples)
+            zone = self.zone(rs)
             batch = [_middle(a, b) for a, b in zip(rs, rs[1:])
-                     if self.samples[a]['hit'] != self.samples[b]['hit']
+                     if (self.samples[a]['hit'] != self.samples[b]['hit'] or self.drop(a, b)
+                         or (zone and b > zone[0] and a < zone[1] and b > a * dense
+                             and (self.samples[a]['hit'] or self.samples[b]['hit'])))
                      and b - a > self.width((a + b) / 2)]
             if not batch: break
             yield from run(batch)
         return self.finish()
+
+    def zone(self, rs):
+        """Ranges [low, high] sampled densely: within ZONE of the transitions below the
+        farthest one (which ends the envelope) and of the flight-time drops, below
+        CLOSE_M; or None."""
+        cuts = [(a + b) / 2 for a, b in zip(rs, rs[1:]) if self.samples[a]['hit'] != self.samples[b]['hit']]
+        if cuts and not self.samples[rs[-1]]['hit']: cuts.pop()
+        cuts = sorted(c for c in cuts + [(a + b) / 2 for a, b in zip(rs, rs[1:]) if self.drop(a, b)] if c <= CLOSE_M)
+        return (cuts[0] / ZONE, min(cuts[-1] * ZONE, CLOSE_M)) if cuts else None
+
+    def drop(self, a, b):
+        """Whether the hits at ranges a < b reach the target at sharply decreasing times.
+
+        For one kind of engagement the time to hit grows with range or falls only
+        slowly (a turn-back hit gets shorter as its turn does); a fall of seconds
+        over a short range step means that the two hits fly differently.
+        """
+        x, y = self.samples[a], self.samples[b]
+        if not (x['hit'] and y['hit']) or x.get('time_s') is None or y.get('time_s') is None: return False
+        return x['time_s'] - y['time_s'] > DROP_S + DROP_RATE * (b - a)
 
     def finish(self):
         rs = sorted(self.samples)
@@ -695,6 +743,13 @@ class Grid:
         parents = [list(self.rays[k].key) for k in self.parents[key].values() if k is not None]
         # Inside a region without hits the range grid is searched more sparsely.
         if not estimates: return dict(source='empty', parents=parents) if parents else None
+        # A miss band of the nearest neighbours usually continues here; probe its middle.
+        extra = []
+        for name in ('chain', 'layer'):
+            cell = self.parents[key].get(name)
+            if p.get(name) and cell is not None:
+                near = self.rays[cell]
+                extra += [_middle(a, b) for a, b in gaps(near.result, near.tolerance, near.tolerance_m)]
         lows = sorted(e[0] for e in estimates); highs = sorted(e[1] for e in estimates)
         median = lambda xs: (xs[(len(xs) - 1) // 2] + xs[len(xs) // 2]) / 2
         base = min(e[3] for e in estimates)
@@ -702,7 +757,7 @@ class Grid:
         spread_low = max(base + .04, (lows[-1] - lows[0]) / 2 + .04)
         limits = sum(e[2] for e in estimates)
         return dict(low=_unlog(median(lows)), high=_unlog(median(highs)), at_limit=limits * 2 > len(estimates),
-                    spread=min(spread, .3), spread_low=min(spread_low, .5), source='neighbours', parents=parents)
+                    spread=min(spread, .3), spread_low=min(spread_low, .5), extra=extra, source='neighbours', parents=parents)
 
 
 class Planner:
@@ -785,8 +840,16 @@ class Planner:
         scale = self.scale(*results)
         x, y, z = [structure(r, SHAPE * self.config['tolerance'] * scale) for r in results]
         limit = MATCH * self.config['tolerance'] * scale
+        # Close-range miss bands are compared at their own range tolerance.
+        u, v, w = [self.bands(r) for r in results]
+        if not len(u) == len(v) == len(w): return False
+        if any(abs(m[k] - (p[k] + q[k]) / 2) > MATCH * self.width(m[k]) for p, q, m in zip(u, v, w) for k in (0, 1)): return False
         return len(x) == len(y) == len(z) and all(abs(c[0] - (a[0] + b[0]) / 2) <= limit and abs(c[1] - (a[1] + b[1]) / 2) <= limit
                                                     for a, b, c in zip(x, y, z))
+
+    def bands(self, result): return gaps(result, self.config['tolerance'], self.config['tolerance_m'])
+
+    def width(self, r): return max(self.config['tolerance_m'], self.config['tolerance'] * r)
 
     def scale(self, *results):
         """Comparison length: the farthest boundary among the rays compared.
@@ -834,9 +897,12 @@ class Planner:
         if not (x and y): return True
         if gap <= c['detail_step_deg'] * (1 + 1e-9): return False
         if len(x) != len(y): return True
+        u, v = self.bands(a), self.bands(b)
+        if len(u) != len(v): return True
         if smooth is not None: return not smooth
         limit = SHAPE * c['tolerance'] * scale
-        return any(abs(p[0] - q[0]) > limit or abs(p[1] - q[1]) > limit for p, q in zip(x, y))
+        return (any(abs(p[0] - q[0]) > limit or abs(p[1] - q[1]) > limit for p, q in zip(x, y))
+                or any(abs(p[k] - q[k]) > SHAPE * self.width((p[k] + q[k]) / 2) for p, q in zip(u, v) for k in (0, 1)))
 
     def between(self, left, right):
         """Seed for the ray halfway between two finished neighbours."""
@@ -846,20 +912,36 @@ class Planner:
         live = [s for s in (x, y) if s]
         limited = [s[0][0] <= _log(left.low) * (1 + 1e-12) for s in live]
         parents = [list(left.key), list(right.key)]
+        bands = [_middle(a, b) for ray in (left, right) for a, b in gaps(ray.result, ray.tolerance, ray.tolerance_m)]
         if len(live) == 2 and len(x) == len(y):
             # Interpolate; the probes bracket the prediction by a quarter of the neighbours' difference.
             spread = min(.3, max(.45 * tolerance, abs(x[-1][1] - y[-1][1]) / 4))
             spread_low = min(.5, max(.45 * tolerance, abs(x[0][0] - y[0][0]) / 4))
-            gaps = [_unlog((p[1] + q[1] + p2[0] + q2[0]) / 4) for p, p2, q, q2 in zip(x, x[1:], y, y[1:])]
+            inner = [_unlog((p[1] + q[1] + p2[0] + q2[0]) / 4) for p, p2, q, q2 in zip(x, x[1:], y, y[1:])]
             return dict(low=_unlog((x[0][0] + y[0][0]) / 2), high=_unlog((x[-1][1] + y[-1][1]) / 2), at_limit=all(limited),
                         spread=spread, spread_low=spread_low, step=max(2 * spread, 2 * tolerance),
-                        step_low=max(2 * spread_low, 2 * tolerance), extra=gaps, source='between', parents=parents)
+                        step_low=max(2 * spread_low, 2 * tolerance), extra=inner + bands, source='between', parents=parents)
         # An edge (one side has no hit) or a change in the gaps: start from the live
         # neighbours' outer bounds and probe inside each of their gaps.
-        gaps = [_unlog((p[1] + q[0]) / 2) for s in live for p, q in zip(s, s[1:])]
+        inner = [_unlog((p[1] + q[0]) / 2) for s in live for p, q in zip(s, s[1:])]
         return dict(low=_unlog(min(s[0][0] for s in live)), high=_unlog(max(s[-1][1] for s in live)), at_limit=any(limited),
-                    spread=.06, spread_low=.1, edge=len(live) == 1, extra=gaps, source='edge' if len(live) == 1 else 'gaps',
+                    spread=.06, spread_low=.1, edge=len(live) == 1, extra=inner + bands, source='edge' if len(live) == 1 else 'gaps',
                     parents=parents)
+
+
+def gaps(result, tolerance, tolerance_m):
+    """Interior miss intervals [start, end] (m) of a finished ray, at their own range tolerance.
+
+    structure() judges the envelope at the scale of its farthest boundary, at
+    which a close-range miss band disappears; these are the bands at least
+    GAP_WIDTHS local tolerances wide, as neighbouring rays probe and compare them.
+    """
+    items = result['intervals']
+    out = []
+    for p, q in zip(items, items[1:]):
+        a, b = p['end_m'], q['start_m']
+        if b - a >= GAP_WIDTHS * max(tolerance_m, tolerance * (a + b) / 2): out.append([a, b])
+    return out
 
 
 def structure(result, merge):
