@@ -174,6 +174,28 @@ def pitch_percent(point,solver):
                                            enumerate(zip(propulsion['propeller_pitch_deg'],propellers))]
 
 
+def control_percent(point,inverted):
+    """Point report only: each surface's deflection (% of full travel) in the pilot's sense, elevator + nose up,
+    ailerons + roll right, rudder + nose right. The solver's commands (aileron, elevator, rudder) are + roll right,
+    + nose left, and + nose up unless the aircraft's elevator is inverted (the canard aircraft)."""
+    commands=point.get('commands')
+    if not commands or len(commands)!=3:return point
+    aileron,elevator,rudder=commands
+    return dict(point,control_deflection_percent=dict(elevator=(-elevator if inverted else elevator)*100.,
+                                                      ailerons=aileron*100.,rudder=-rudder*100.))
+
+
+@lru_cache(maxsize=64)
+def elevator_inverted(key,entry):
+    """InvertElevator of a chart entry's aircraft; None when it cannot be told (no deflections are then reported)."""
+    from aircraft_catalog import load
+    try:
+        aircraft=next((a for a in named_data(key)['aircraft'] if a['id']==entry),None)
+        return bool(load(aircraft.get('aircraft_id',aircraft['id']) if aircraft else
+                         entry.removesuffix('__instructor_on').removesuffix('__instructor_off'))['InvertElevator'])
+    except (OSError,KeyError,ValueError):return None
+
+
 def solve_point(key,entry,speed_kmh,load_g):
     """Full-model state at a clicked position of a stored chart, seeded from the nearest admitted sample."""
     for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Load',load_g,1.,64.)):
@@ -197,6 +219,7 @@ def solve_point(key,entry,speed_kmh,load_g):
             point=dict(speed_kmh=speed_kmh,load_g=load_g,status='unresolved',valid=False,chart_usable=False,
                        reasons=['stationary search unresolved'],search_unresolved=str(error))
         pitch_percent(point,solver)
+        point=control_percent(point,solver.controls['invert_elevator'])
     def public(value):
         if isinstance(value,dict):return {k:public(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
         if isinstance(value,(list,tuple)):return [public(v) for v in value]
@@ -442,7 +465,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     with LOCK:result=RESULTS.get(key)
                     if result is None:raise FileNotFoundError('Result expired')
-                    return self.respond(result['points'][aircraft][int(index)])
+                    point=result['points'][aircraft][int(index)];inverted=elevator_inverted(key,aircraft) if point.get('commands') else None
+                    return self.respond(point if inverted is None else control_percent(point,inverted))
                 except (OSError,IndexError,ValueError,KeyError):return self.respond(dict(error='Point not found'),404)
             if len(parts)==6 and parts[4]=='solve':
                 # The full-model state at a clicked chart position: ?speed_kmh=&load_g=
