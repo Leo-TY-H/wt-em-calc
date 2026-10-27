@@ -610,12 +610,14 @@
     const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#dce5f0',size:11},height,
       margin:{l:70,r:18,t:16,b:50},xaxis:{title:'Time after release · s',gridcolor:grid,range:[0,totalTime()],anchor:lanes?'y'+(lanes>1?lanes:''):'y'},
       showlegend:false,hovermode:'x unified',shapes:timeCursor(),uirevision:flightRevision+':'+telemetryPicks.join(','),dragmode:'pan',
-      modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
+      modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},annotations:[]};
     const traces=[];
     telemetryPicks.forEach((key,lane)=>{
       const q=QUANTITIES[key],axis=lane?`yaxis${lane+1}`:'yaxis',ref=lane?`y${lane+1}`:'y';
-      const top=1-lane/lanes,bottom=1-(lane+1)/lanes;
-      layout[axis]={title:{text:quantityName(q),font:{size:10}},gridcolor:grid,domain:[bottom+(lane<lanes-1?gap/2:0),top-(lane?gap/2:0)],anchor:'x',zeroline:false};
+      const top=1-lane/lanes,bottom=1-(lane+1)/lanes,domain=[bottom+(lane<lanes-1?gap/2:0),top-(lane?gap/2:0)];
+      // The lane's name above it (long names overlap as vertical axis titles); the axis keeps the unit.
+      layout[axis]={title:{text:q.unit,font:{size:10}},gridcolor:grid,domain,anchor:'x',zeroline:false};
+      layout.annotations.push({xref:'paper',yref:'paper',x:0,y:domain[1],xanchor:'left',yanchor:'bottom',showarrow:false,text:escapeHtml(q.label),font:{size:11,color:'#f0f0fa'}});
       flights.forEach((flight,i)=>traces.push({type:'scatter',mode:'lines',xaxis:'x',yaxis:ref,name:`${i+1} · ${missileName(flight.scenario.missile)}`,
         x:flight.trajectory.map(r=>r.time_s),y:quantityValues(flight,key),customdata:flight.trajectory.map(r=>[i,r.time_s]),connectgaps:false,
         line:{color:resultColors[i],width:2},hovertemplate:`${escapeHtml(q.label)}: %{y:.3f}${q.unit?' '+q.unit:''}<extra>${i+1}</extra>`}));
