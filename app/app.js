@@ -64,7 +64,7 @@ const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'e
 const fixedSolverConditions={trim_solver_mode:'stationary',mach_curve_mode:'auto',experimental_instantaneous_aero:false,experimental_lateral_trim:'full',timestep_hz:48};
 const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolverConditions),'throttle','afterburner','trim_mode','trim_limit',
   'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
-const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#79a7fa','#cfb296'];
+const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 // Catalog names end in the internal id ("Bf 109 F-4 [bf-109f-4]"): the page shows it apart, hover text keeps it.
 const cleanName=n=>String(n).replace(/\s*\[[^\]]*\]/,'');
@@ -654,7 +654,7 @@ function renderChart(){
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
-    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#eff7ff',size:12}},
+    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
     xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
     yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:5,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
