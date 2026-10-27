@@ -31,6 +31,7 @@
 !/app/icons/neothunderism-32.png
 !/app/icons/neothunderism-512.png
 !/app/icons/neothunderism-favicon-source.png
+!/app/icons/neothunderism-mark.png
 !/app/icons/neothunderism-source.png
 !/app/index.html
 !/app/missiles.css
@@ -46,6 +47,7 @@
 !/requirements.txt
 !/references/
 !/references/aircraft-exclusions.json
+!/references/collision-fuel-tanks.json
 !/scripts/advanced_mass.py
 !/scripts/aero_helpers.py
 !/scripts/air_state.py
@@ -70,6 +72,7 @@
 !/scripts/body_dynamics.py
 !/scripts/bootstrap_runtime.py
 !/scripts/build_em_backend.py
+!/scripts/build_fuel_layout.py
 !/scripts/build_missile_backend.py
 !/scripts/build_missile_native.py
 !/scripts/build_missile_engine.py
@@ -172,6 +175,7 @@
 !/scripts/engine_supply.py
 !/scripts/flap_model.py
 !/scripts/fm_loader.py
+!/scripts/fuel_layout.py
 !/scripts/fuel_loading.py
 !/scripts/game_input_sources.py
 !/scripts/instructor_aoa.py
@@ -517,6 +521,7 @@
 !/scripts/missile_telemetry.py
 !/scripts/missile_tracking.py
 !/scripts/missile_worker.py
+!/scripts/overrev.py
 !/scripts/piston_compressor.py
 !/scripts/piston_general.py
 !/scripts/piston_model.py
@@ -553,3 +558,10 @@
 !/scripts/wing_model.py
 !/scripts/wing_stages.py
 !/scripts/wing_sweep.py
+
+# Projectile property generation and independent native regression inputs.
+!/scripts/missile_profile_loading.py
+!/scripts/regenerate_missile_profiles.py
+!/scripts/test_missile_profile_loading.py
+!/scripts/test_missile_envelope_search.py
+!/references/missile-profile-native-259087.json

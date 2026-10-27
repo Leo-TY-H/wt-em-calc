@@ -329,6 +329,12 @@ cdef class PointSolver:
             self.eng.fin.chain = NULL
             self.eng.t_point += s5_now()-t0
         sid = self.result(speed_kmh, load, candidates, attempts, recovery_records, started)
+        if (self.eng.wide_slide & 16 and self.eng.sliding and self.eng.is_prop and not self.eng.st[sid].valid
+                and not self.eng.physical(sid) and self.eng.st[sid].has_coords):
+            # overrev follow-up: no regular state closes; next to a blade-polar jump that blocks the shaft's torque balance,
+            # the sliding state (Bf 109 F-4 RB at 65% pitch, 650-656 km/h at 1-2 g: a jump at about 4,072 rpm)
+            q = self.slide_retry(sid, speed_kmh, load)
+            if q >= 0:sid = q
         if self.eng.brake and self.eng.brakes(sid):
             # S10: the representative state brakes: the prescribed-load correction from it with coarser governor pitch
             # (MarchEngine.brake_reseed) for the pulling state of this speed and load (S11: else the braking state stays)
@@ -338,6 +344,33 @@ cdef class PointSolver:
                 if self.eng.s11:self.eng.st[q].alt = sid
                 return q
         return sid
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    cdef int slide_retry(self, int sid, double speed_kmh, double load) except -2:
+        """Overrev follow-up: the prescribed-load correction from the unresolved representative state ``sid`` with the
+        shafts sliding on the blade-polar jump that blocks their torque balance (within slide_width of its shaft speed,
+        then within SLIDE_WIDE). The admitted state, or -1."""
+        cdef SlideSpec spec
+        cdef double sol[5]
+        cdef double wide
+        cdef int p, i
+        for wide in (0., SLIDE_WIDE):
+            self.eng.slide_candidate(sid, &spec, self.eng.st[sid].sol[0], self.eng.st[sid].sol[1], load, True, speed_kmh,
+                                     self.eng.st[sid].slide.n > 0, wide)
+            if spec.n == 0:continue
+            for i in range(5):sol[i] = self.eng.st[sid].sol[i]
+            self.eng.slide_override = spec;self.eng.use_override = True
+            try:
+                p = self.eng.correct(sid, sol, load, True, FIX_LOAD, load, 0, 0, 0, ROBUST_NFEV, ROBUST_EVALS, 2e-6, speed_kmh,
+                                     NULL, NULL)
+            finally:
+                self.eng.use_override = False
+            self.eng.flush_counts()
+            if p >= 0 and self.eng.st[p].valid:
+                self.eng.stats['overrev_point_slides'] = self.eng.stats.get('overrev_point_slides', 0)+1
+                return p
+        return -1
 
     @cython.boundscheck(True)
     @cython.wraparound(True)

@@ -140,6 +140,63 @@ def point_solver(key,entry):
     return solver
 
 
+def pitch_percent(point,solver):
+    """Clicked-point report only: the in-game prop pitch control value (%) of each propeller.
+
+    Manual control reports its own setting. Under automatic control it is the manual setting that
+    holds the same state, by the game's control law: blade-angle props (governor 6/8)
+    pitch = pitch_max - % x (pitch_max - pitch_min); RPM-governor props (1/2)
+    target RPM = min + % x (max - min), max = boost RPM while WEP is on. Fixed pitch: none.
+    """
+    from em_manual_controls import manual_rpm_governor
+    propulsion=point.get('propulsion')
+    properties=getattr(getattr(solver,'engine',None),'properties',None) if propulsion else None
+    propellers=(properties or {}).get('propellers')
+    if not propellers or len(propellers)!=len(propulsion.get('propeller_pitch_deg') or ()):return
+    controls=propulsion.get('controls') or {}
+    automatic,commands=controls.get('automatic') or (),controls.get('commands') or ()
+    targets=(propulsion.get('stationarity') or {}).get('shaft_target_rpm') or ()
+    shaft={link['index']:t for t,transmission in enumerate(properties.get('transmissions') or ())
+           for link in transmission['propellers']}
+    rpm=lambda omega:omega*60./(2.*math.pi)
+    def percent(i,deg,pp):
+        if not pp['governor']:return None
+        if i<len(automatic) and not automatic[i] and i<len(commands):return commands[i]/255.*100.
+        if manual_rpm_governor(pp):
+            t=shaft.get(i)
+            target=(targets[t] if t is not None and t<len(targets) and targets[t] is not None else
+                    (propulsion.get('engine_rpm') or [None])[min(t or 0,len(propulsion.get('engine_rpm') or [0])-1)])
+            low,high=rpm(pp['min_omega']),rpm(pp['boost_omega'] if controls.get('afterburner') else pp['max_omega'])
+            return min(100.,max(0.,(target-low)/(high-low)*100.)) if target is not None and high>low else None
+        low,high=pp['pitch_min'],pp['pitch_max']
+        return min(100.,max(0.,(high-math.radians(deg))/(high-low)*100.)) if high>low else None
+    propulsion['propeller_pitch_percent']=[percent(i,deg,q['properties']) for i,(deg,q) in
+                                           enumerate(zip(propulsion['propeller_pitch_deg'],propellers))]
+
+
+def control_percent(point,inverted):
+    """Point report only: each surface's deflection (% of full travel) in the pilot's sense, elevator + nose up,
+    ailerons + roll right, rudder + nose right. The solver's commands (aileron, elevator, rudder) are + roll right,
+    + nose right (body z points left: the rudder's force goes to +z), and + nose up unless the aircraft's elevator
+    is inverted (the canard aircraft). Propeller torque confirms it: Merlin aircraft need + aileron and + rudder."""
+    commands=point.get('commands')
+    if not commands or len(commands)!=3:return point
+    aileron,elevator,rudder=commands
+    return dict(point,control_deflection_percent=dict(elevator=(-elevator if inverted else elevator)*100.,
+                                                      ailerons=aileron*100.,rudder=rudder*100.))
+
+
+@lru_cache(maxsize=64)
+def elevator_inverted(key,entry):
+    """InvertElevator of a chart entry's aircraft; None when it cannot be told (no deflections are then reported)."""
+    from aircraft_catalog import load
+    try:
+        aircraft=next((a for a in named_data(key)['aircraft'] if a['id']==entry),None)
+        return bool(load(aircraft.get('aircraft_id',aircraft['id']) if aircraft else
+                         entry.removesuffix('__instructor_on').removesuffix('__instructor_off'))['InvertElevator'])
+    except (OSError,KeyError,ValueError):return None
+
+
 def solve_point(key,entry,speed_kmh,load_g):
     """Full-model state at a clicked position of a stored chart, seeded from the nearest admitted sample."""
     for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Load',load_g,1.,64.)):
@@ -162,11 +219,14 @@ def solve_point(key,entry,speed_kmh,load_g):
             # No candidate established: a gap at this state, not an absence proof.
             point=dict(speed_kmh=speed_kmh,load_g=load_g,status='unresolved',valid=False,chart_usable=False,
                        reasons=['stationary search unresolved'],search_unresolved=str(error))
+        pitch_percent(point,solver)
+        point=control_percent(point,solver.controls['invert_elevator'])
     def public(value):
         if isinstance(value,dict):return {k:public(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
         if isinstance(value,(list,tuple)):return [public(v) for v in value]
         return value
-    return dict(public(point),solved_at_request=True)
+    from overrev import annotate
+    return annotate(dict(public(point),solved_at_request=True))
 
 
 def fingerprint():
@@ -406,7 +466,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     with LOCK:result=RESULTS.get(key)
                     if result is None:raise FileNotFoundError('Result expired')
-                    return self.respond(result['points'][aircraft][int(index)])
+                    point=result['points'][aircraft][int(index)];inverted=elevator_inverted(key,aircraft) if point.get('commands') else None
+                    return self.respond(point if inverted is None else control_percent(point,inverted))
                 except (OSError,IndexError,ValueError,KeyError):return self.respond(dict(error='Point not found'),404)
             if len(parts)==6 and parts[4]=='solve':
                 # The full-model state at a clicked chart position: ?speed_kmh=&load_g=

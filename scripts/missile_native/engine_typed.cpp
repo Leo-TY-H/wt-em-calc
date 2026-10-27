@@ -17,7 +17,9 @@ namespace nt { double reference_pow(double,double); }
 #ifdef _WIN32
 #undef pow
 #endif
-#include "typed/typed_flight.h"
+#include "typed/typed_prelaunch.h"
+#include "typed/typed_launch.h"
+#include "reference_norm.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -216,6 +218,13 @@ Axis load_axis(const V& v, bool designation) {
     else a.initial = num_at(v, "initial");
     return a;
 }
+DesignationProps load_designation(const V& v) {
+    DesignationProps d;
+    d.shared = load_shared(field(v, "shared"));
+    d.distance = load_axis(field(v, "distance"), true); d.doppler = load_axis(field(v, "doppler"), true);
+    d.use_target_id = flag_at(v, "use_target_id"); d.doppler_to_distance = num_at(v, "doppler_to_distance");
+    return d;
+}
 void load_radar_props(const V& g, RadarProps& o) {
     V m = field(g, "manager");
     RadarManagerProps& p = o.manager;
@@ -236,12 +245,7 @@ void load_radar_props(const V& g, RadarProps& o) {
     md.distance = load_axis(field(modes, "distance"), false); md.doppler = load_axis(field(modes, "doppler"), false);
     md.prolongation = num_at(modes, "prolongation"); md.reset_time = num_at(modes, "reset_time");
     md.arret_angles = vec_at<2>(modes, "arret_angles"); md.use_target_id = flag_at(modes, "use_target_id");
-    V designation = field(modes, "designation");
-    md.designation.shared = load_shared(field(designation, "shared"));
-    md.designation.distance = load_axis(field(designation, "distance"), true);
-    md.designation.doppler = load_axis(field(designation, "doppler"), true);
-    md.designation.use_target_id = flag_at(designation, "use_target_id");
-    md.designation.doppler_to_distance = num_at(designation, "doppler_to_distance");
+    md.designation = load_designation(field(modes, "designation"));
     // missile_support.supported_radar_step prepares these designation axes.
     for (int k = 0; k < 2; ++k) {
         Axis& axis = k == 0 ? md.designation.distance : md.designation.doppler;
@@ -259,6 +263,25 @@ void load_radar_props(const V& g, RadarProps& o) {
     V in = field(g, "inertial");
     o.inertial = {num_at(in, "drift_speed"), int_at(in, "gnss"), int_at(in, "datalink"), int_at(in, "reconnect"),
                   int_at(in, "channels_max"), int_at(in, "keep_channels_for_last")};
+}
+// missile_initialization.radar_reset's launcher properties, already prepared
+// for the website policy (radar_activation and radar_prelaunch inputs).
+void load_radar_launcher(const V& p, RadarLauncherProps& L) {
+    L.permanent = flag_at(p, "permanent"); L.lock_after_launch = flag_at(p, "lock_after_launch");
+    L.primary_mask = int_at(p, "primary_mask"); L.fallback_mask = int_at(p, "fallback_mask");
+    L.seeker = load_designation(field(p, "seeker"));
+    L.warm_up = num_at(p, "warm_up"); L.work_time = num_at(p, "work_time");
+    L.uncage = flag_at(p, "uncage"); L.inertial = flag_at(p, "inertial"); L.designation_required = flag_at(p, "designation_required");
+    V m = field(p, "modes");
+    RadarModesProps& md = L.modes;
+    md.shared = load_shared(field(m, "shared"));
+    md.distance = load_axis(field(m, "distance"), false); md.doppler = load_axis(field(m, "doppler"), false);
+    md.prolongation = num_at(m, "prolongation"); md.reset_time = num_at(m, "reset_time");
+    md.arret_angles = vec_at<2>(m, "arret_angles"); md.use_target_id = flag_at(m, "use_target_id");
+    md.designation = load_designation(field(m, "designation"));
+    md.use_source_frame = false; md.beam_cosine = md.scan_half_sector = md.range_search_half = md.closure_search_half = 0.;   // mode 7 only
+    L.los_check_timeout = num_at(p, "los_check_timeout");
+    L.authored_rate = flag_at(p, "authored_rate"); L.include_gap_after_reject = flag_at(p, "include_gap_after_reject");
 }
 void load_flight_props(const V& p, const V& serialized_rocket, const V& session_props, FlightProps& F) {
     load_body_props(field(p, "body"), F.body);
@@ -313,6 +336,19 @@ void load_controllers(const V& g, Controllers& c) {
     for (int i = 0; i < 4; ++i) c.propulsion.stages[i] = ival(stages[i]);
     auto pid = vec_at<8>(pr, "pid"); for (int i = 0; i < 8; ++i) c.propulsion.pid[i] = (float)pid[i];
 }
+void load_optical_seeker(const V& seeker, OpticalSeekerState& s, Opaque& opaque) {
+    expect_keys(seeker, 2);
+    V st = field(seeker, "state"); expect_keys(st, 8);
+    s.angles = vec_at<2>(st, "angles"); s.direction = vec_at<3>(st, "direction"); s.angular_rate = vec_at<3>(st, "angular_rate");
+    s.widths = vec_at<2>(st, "widths"); s.gap = num_at(st, "gap"); s.distance = num_at(st, "distance");
+    s.los_check_time = num_at(st, "los_check_time"); s.los_cache_valid = flag_at(st, "los_cache_valid");
+    Args raw = iter(field(seeker, "opaque_state"));
+    if (raw.size() != 32) bail("ValueError: opaque_state requires 32 bytes");
+    for (int i = 0; i < 32; ++i) {
+        if (raw[i].kind() != Kind::Int || raw[i].as_int() < 0 || raw[i].as_int() > 255) bail("ValueError: opaque_state requires 32 bytes");
+        opaque[i] = raw[i].as_int();
+    }
+}
 void load_optical_state(const V& g, OpticalGuidance& o) {
     expect_keys(g, 5);
     V m = field(g, "manager"); expect_keys(m, 23);
@@ -327,18 +363,9 @@ void load_optical_state(const V& g, OpticalGuidance& o) {
     s.auxiliary = vec_at<3>(m, "auxiliary"); s.direction = vec_at<3>(m, "direction"); s.seeker_direction = vec_at<3>(m, "seeker_direction");
     s.inertial_point = vec_at<3>(m, "inertial_point"); s.inertial_offset = vec_at<3>(m, "inertial_offset");
     load_controllers(g, o.controllers);
-    V seeker = field(g, "seeker"); expect_keys(seeker, 2);
-    V st = field(seeker, "state"); expect_keys(st, 8);
-    o.seeker.angles = vec_at<2>(st, "angles"); o.seeker.direction = vec_at<3>(st, "direction"); o.seeker.angular_rate = vec_at<3>(st, "angular_rate");
-    o.seeker.widths = vec_at<2>(st, "widths"); o.seeker.gap = num_at(st, "gap"); o.seeker.distance = num_at(st, "distance");
-    o.seeker.los_check_time = num_at(st, "los_check_time"); o.seeker.los_cache_valid = flag_at(st, "los_cache_valid");
-    Args raw = iter(field(seeker, "opaque_state"));
-    if (raw.size() != 32) bail("ValueError: opaque_state requires 32 bytes");
-    for (int i = 0; i < 32; ++i) {
-        if (raw[i].kind() != Kind::Int || raw[i].as_int() < 0 || raw[i].as_int() > 255) bail("ValueError: opaque_state requires 32 bytes");
-        o.opaque[i] = raw[i].as_int();
-    }
+    load_optical_seeker(field(g, "seeker"), o.seeker, o.opaque);
 }
+void load_radar_seeker(const V& ss, RadarSeekerState& r);
 void load_radar_state(const V& g, RadarGuidance& o) {
     expect_keys(g, 5);
     V m = field(g, "manager"); expect_keys(m, 29);
@@ -358,8 +385,10 @@ void load_radar_state(const V& g, RadarGuidance& o) {
     for (int i = 0; i < 6; ++i) s.inertial_padding[i] = ival(padding[i]);
     s.inertial_velocity = vec_at<3>(m, "inertial_velocity");
     load_controllers(g, o.controllers);
-    V ss = field(g, "seeker"); expect_keys(ss, 20);
-    RadarSeekerState& r = o.seeker;
+    load_radar_seeker(field(g, "seeker"), o.seeker);
+}
+void load_radar_seeker(const V& ss, RadarSeekerState& r) {
+    expect_keys(ss, 20);
     Args pad = iter(field(ss, "padding"));
     if (pad.size() != 7) bail("typed loader: seeker padding");
     for (int i = 0; i < 7; ++i) r.padding[i] = ival(pad[i]);
@@ -535,18 +564,30 @@ void prepare_full(const V& missile, const V& launcher, const V& target, const V&
     V session_frame = attr(session, "frame"), session_flight = attr(session_frame, "flight");
     load_flight_props(attr(session_flight, "properties"), item(attr(session_flight, "serialized_properties"), V("rocket")), session_props, out.props);
     load_session(session, out.props.family, out.session);
+    validate_flight_numbers(out.session, out.props.family);
 }
 
 // One immutable profile per worker. All properties still pass the translated
 // FlightSession constructor, digest/motor checks and radar configuration once.
-// Geometry-dependent construction, prelaunch acquisition and release use the
-// same translated native functions on every sample. No state is shared between
-// flights. Keeping the source value alive makes the identity key unambiguous.
+// Release construction, launch spread, seeker reset, prelaunch acquisition and
+// launch initialization are computed for every sample: on typed state once the
+// typed setup has reproduced the translated one (see typed), otherwise with the
+// translated native functions. No state is shared between flights. Keeping the
+// source value alive makes the identity key unambiguous.
 struct ProfileSetup {
     V source, profile, properties, rocket, release, launch_properties;
     V proximity, distance_limit, family;
     FlightProps typed_props;
     std::vector<double> burn_end;
+    // Typed setup: per-profile inputs of the release, spread and reset, and the
+    // first sample's launched guidance, whose sample-dependent fields are replaced
+    // for every later sample. Enabled on this thread only after the typed setup
+    // reproduced a complete translated setup bit for bit.
+    int typed = 0;   // 0 not checked, 1 enabled, -1 disabled
+    LaunchProps launch{};
+    OpticalSeekerState optical_initial{}; Opaque optical_initial_raw{};
+    RadarLauncherProps radar_launcher{}; RadarSeekerState radar_template{};
+    OpticalGuidance launched_optical{}; RadarGuidance launched_radar{};
 };
 thread_local std::unique_ptr<ProfileSetup> profile_setup;
 ProfileSetup& prepared_profile(const V& w, const V& source, bool& hit) {
@@ -570,35 +611,164 @@ ProfileSetup& prepared_profile(const V& w, const V& source, bool& hit) {
     profile_setup = std::move(c);  // Publish only after complete validation.
     return *profile_setup;
 }
+// body_launch.initialize inputs for launch mode 2 (missile_worker.launch_body).
+void load_launch_props(const ProfileSetup& c, LaunchProps& L) {
+    const V& r = c.rocket;
+    L.max_delta_angle = num_at(r, "maxDeltaAngle"); L.advanced_spread = num(get_or(r, "advancedSpread", V(0.)));
+    L.start_speed = num_at(r, "startSpeed"); L.use_start_speed = truth(field(r, "useStartSpeed"));
+    L.vel_spread = num(get_or(r, "velSpread", V(1.))); L.distance_fuse = truth(get_or(r, "distanceFuse", V(true)));
+    L.time_life = num(get_or(r, "timeLife", V(-1.))); L.distance_limit = num(c.distance_limit);
+    Args motors = iter(invoke_fn("kernels", "motor_properties", {r}));
+    L.propulsion_count = (int64_t)motors.size(); L.first_delay = motors.empty() ? 0. : num(attr(motors[0], "delay"));
+    L.table.clear();
+    for (V row : iter(attr(import_module("body_launch"), "TABLE"))) L.table.push_back(vec<2>(row));
+}
+// The translated setup keeps the constructed and launched bodies and the seeker
+// reset of the last launcher state (seeds are fixed). Each sample receives its
+// own copy of the constructed body; the ready functions copy the reset state.
+struct LaunchSetup {
+    V source; d3 position{}, velocity{}, angles{};
+    V quaternion, body, launched, reset;
+};
+thread_local std::unique_ptr<LaunchSetup> launch_setup;
+bool same_bits(const d3& a, const d3& b) { return std::memcmp(a.data(), b.data(), sizeof(a)) == 0; }
+bool same_bits(const d4& a, const d4& b) { return std::memcmp(a.data(), b.data(), sizeof(a)) == 0; }
+LaunchSetup& launched_body(const V& w, const V& source, const ProfileSetup& c, const V& launcher) {
+    d3 position = vec_at<3>(launcher, "position"), velocity = vec_at<3>(launcher, "velocity"), angles = vec_at<3>(launcher, "angles");
+    if (launch_setup && launch_setup->source.node() == source.node() && same_bits(launch_setup->position, position)
+        && same_bits(launch_setup->velocity, velocity) && same_bits(launch_setup->angles, angles)) return *launch_setup;
+    auto s = std::make_unique<LaunchSetup>();
+    s->source = source; s->position = position; s->velocity = velocity; s->angles = angles;
+    s->quaternion = call(attr(w, "quaternion"), {item(launcher, "angles")});
+    V record = make_dict({{"position", item(launcher, "position")}, {"velocity", item(launcher, "velocity")},
+        {"quaternion", s->quaternion}, {"omega", make_list({0., 0., 0.})}, {"time", 0.}});
+    s->body = call(attr(w, "construct"), {record});
+    s->launched = call(attr(w, "launch_body"), {c.rocket, deepcopy(s->body), 123, 0x12345678},
+        {{"launch_time", 0.}, {"clock_time", 0.}, {"launch_mode", 2}, {"distance_limit", c.distance_limit}});
+    launch_setup = std::move(s);
+    return *launch_setup;
+}
+// constructed_guidance and guidance_launch.initialize for an acquired seeker: only
+// the seeker block and the manager fields that alias it depend on the sample.
+OpticalGuidance launched_optical_guidance(const OpticalGuidance& launched, const OpticalAcquired& a) {
+    OpticalGuidance g = launched;
+    g.seeker = a.state; g.seeker.los_check_time = 0.; g.seeker.los_cache_valid = false;
+    g.opaque = a.raw;
+    for (int i = 16; i < 20; ++i) g.opaque[i] = 255;
+    g.opaque[20] = 0;
+    if (g.opaque[0] == 1) bail("Optical point launch uses the translated setup");
+    g.manager.seeker_direction = g.seeker.direction; g.manager.seeker_distance = g.seeker.distance;
+    g.manager.seeker_point_valid = g.opaque[0] != 0;
+    return g;
+}
+// The whole per-sample setup on typed state: missile_worker.quaternion, construct,
+// launch_body, optical_reset/radar_reset, optical_ready/radar_ready and
+// launch_guidance. Writes the launched body and guidance into S.
+struct TypedLaunch { double lifetime; d3 origin; d4 launcher_q; };
+TypedLaunch typed_setup(const ProfileSetup& c, const FlightProps& P, const d3& position, const d3& velocity, const d3& angles,
+                        const TargetMotion& motion, Session& S) {
+    d4 launcher_q = angles_quaternion(angles);
+    wtm_body body = construct_body(position, launcher_q, velocity);
+    LaunchedBody launched = launch_body(c.launch, body);
+    d3 body_position = dv(body.position), body_velocity = dv(body.velocity); d4 body_q = dq(body.quaternion);
+    if (P.family == 0) {
+        auto none = [](const OpticalSeekerState&) -> OpticalObservation { bail("Optical reset observes nothing"); };
+        OpticalModesResult reset = optical_modes_update(P.optical.seeker, c.optical_initial, body_q, -2 * STEP, -STEP, none, 0,
+                                                        c.optical_initial_raw, true, true, false, -1.);
+        S.optical = launched_optical_guidance(c.launched_optical, optical_prelaunch_acquire(P.optical, reset.state, reset.opaque, body_q,
+                                                                                            body_position, motion.position));
+    } else {
+        RadarSeekerState reset = radar_reset_state(c.radar_launcher, c.radar_template, body_position, body_q, body_velocity);
+        S.radar = c.launched_radar;
+        radar_handoff(S.radar, c.launched_radar.seeker, radar_prelaunch(c.radar_launcher, P.radar.seeker, reset, body_position, body_q,
+                                                                        body_velocity, motion));
+    }
+    S.body = launched.body;
+    return {launched.lifetime, body_position, launcher_q};
+}
+// math.dist as the translated runtime computes it.
+double reference_dist(const d3& a, const d3& b) {
+    double d[3], maximum = 0.; int nan = 0;
+    for (int i = 0; i < 3; ++i) { d[i] = std::fabs(a[i] - b[i]); if (d[i] > maximum) maximum = d[i]; nan |= std::isnan(d[i]); }
+    return vector_norm(3, d, maximum, nan);
+}
+bool same_state(const Session& a, const Session& b, int family) {
+    Snapshot x = snapshot(a, family), y = snapshot(b, family);
+    if (x.size() != y.size()) return false;
+    for (size_t i = 0; i < x.size(); ++i) if (x[i].first != y[i].first || bits(x[i].second) != bits(y[i].second)) return false;
+    return true;
+}
+bool typed_log();
+void diagnostic(const V& value);
+// Keep the first sample's translated setup and enable the typed setup only if
+// it reproduces that sample bit for bit.
+void enable_typed_setup(ProfileSetup& c, const LaunchSetup& ls, const FlightProps& P, const Session& S, double lifetime, const d3& origin,
+                        const d4& launcher_q, const V& launcher, const V& target, const TargetMotion& motion) {
+    c.typed = -1;
+    try {
+        load_launch_props(c, c.launch);
+        if (P.family == 0) {
+            load_optical_seeker(field(invoke_fn("optical_prelaunch", "initial"), "seeker"), c.optical_initial, c.optical_initial_raw);
+            c.launched_optical = S.optical;
+        } else {
+            load_radar_launcher(item(ls.reset, 0), c.radar_launcher);
+            load_radar_seeker(field(item(c.release, "constructed_guidance"), "seeker"), c.radar_template);
+            c.launched_radar = S.radar;
+        }
+        Session check = S;
+        TargetMotion typed_motion = motion;
+        typed_motion.quaternion = angles_quaternion(vec_at<3>(target, "angles"));
+        TypedLaunch t = typed_setup(c, P, vec_at<3>(launcher, "position"), vec_at<3>(launcher, "velocity"), vec_at<3>(launcher, "angles"),
+                                    typed_motion, check);
+        if (same_state(check, S, P.family) && bits(t.lifetime) == bits(lifetime) && same_bits(t.origin, origin)
+            && same_bits(t.launcher_q, launcher_q) && same_bits(typed_motion.quaternion, motion.quaternion)) c.typed = 1;
+    } catch (const Bail&) {} catch (const PyError&) {}
+}
 void prepare_cached(const V& missile, const V& launcher, const V& target, const V& early_exit, const V& reach_m, Prepared& out) {
     V w = invoke_fn("missile_envelope", "_missile_worker");
     V source = invoke_fn("missile_envelope", "_profile", {missile});
     auto& c = prepared_profile(w, source, out.cache_hit);
     out.props = c.typed_props; out.family = c.family; out.distance_limit = c.distance_limit;
-    V quaternion = call(attr(w, "quaternion"), {item(launcher, "angles")});
-    V record = make_dict({{"position", item(launcher, "position")}, {"velocity", item(launcher, "velocity")},
-        {"quaternion", quaternion}, {"omega", make_list({0., 0., 0.})}, {"time", 0.}});
-    V body = call(attr(w, "construct"), {record});
-    V target_quaternion = call(attr(w, "quaternion"), {item(target, "angles")});
-    V templ = item(c.release, "constructed_guidance"), initialized;
-    if (out.props.family == 0) {
-        initialized = call(attr(w, "optical_ready"), {c.rocket, item(c.properties, "guidance"), templ, body, target});
-    } else {
-        V target_body = deepcopy(target);
-        dict_set(target_body, "quaternion", target_quaternion);
-        initialized = call(attr(w, "radar_ready"), {item(c.profile, "asset"), item(c.properties, "guidance"), templ, body, target_body});
-    }
-    V guidance = call(attr(w, "launch_guidance"), {c.launch_properties, item(initialized, 0), body, 123});
-    V launched = call(attr(w, "launch_body"), {c.rocket, body, 123, 0x12345678},
-        {{"launch_time", 0.}, {"clock_time", 0.}, {"launch_mode", 2}, {"distance_limit", c.distance_limit}});
+    d3 position = vec_at<3>(launcher, "position"), velocity = vec_at<3>(launcher, "velocity");
+    TargetMotion motion{vec_at<3>(target, "position"), vec_at<3>(target, "velocity"), {}};
     Session& S = out.session;
-    load_body(item(launched, "body"), S.body);
-    if (out.props.family == 0) load_optical_state(item(guidance, "state"), S.optical);
-    else load_radar_state(item(guidance, "state"), S.radar);
+    double lifetime; d3 origin; d4 launcher_q;
+    if (c.typed == 1) {
+        motion.quaternion = angles_quaternion(vec_at<3>(target, "angles"));
+        TypedLaunch t = typed_setup(c, out.props, position, velocity, vec_at<3>(launcher, "angles"), motion, S);
+        lifetime = t.lifetime; origin = t.origin; launcher_q = t.launcher_q;
+        out.lifetime = V(lifetime);
+    } else {
+        LaunchSetup& ls = launched_body(w, source, c, launcher);
+        V target_quaternion = call(attr(w, "quaternion"), {item(target, "angles")});
+        motion.quaternion = vec<4>(target_quaternion);
+        V body = deepcopy(ls.body);
+        V templ = item(c.release, "constructed_guidance"), initialized;
+        if (out.props.family == 0) {
+            if (ls.reset.is_none())
+                ls.reset = invoke_fn("missile_initialization", "optical_reset", {c.rocket, item(c.properties, "guidance"), item(ls.body, "quaternion")});
+            initialized = call(attr(w, "optical_ready"), {c.rocket, item(c.properties, "guidance"), templ, body, target}, {{"reset", ls.reset}});
+        } else {
+            if (ls.reset.is_none()) ls.reset = invoke_fn("missile_initialization", "radar_reset", {item(c.profile, "asset"), templ, ls.body});
+            V target_body = deepcopy(target);
+            dict_set(target_body, "quaternion", target_quaternion);
+            initialized = call(attr(w, "radar_ready"), {item(c.profile, "asset"), item(c.properties, "guidance"), templ, body, target_body},
+                               {{"reset", ls.reset}});
+        }
+        V guidance = call(attr(w, "launch_guidance"), {c.launch_properties, item(initialized, 0), body, 123});
+        load_body(item(ls.launched, "body"), S.body);
+        if (out.props.family == 0) load_optical_state(item(guidance, "state"), S.optical);
+        else load_radar_state(item(guidance, "state"), S.radar);
+        out.lifetime = item(ls.launched, "lifetime"); lifetime = num(out.lifetime);
+        origin = vec_at<3>(ls.body, "position"); launcher_q = vec<4>(ls.quaternion);
+        if (c.typed == 0) {
+            enable_typed_setup(c, ls, out.props, S, lifetime, origin, launcher_q, launcher, target, motion);
+            if (typed_log()) diagnostic(make_dict({{"type", "typed_setup"}, {"missile", missile}, {"enabled", V(c.typed == 1)}}));
+        }
+    }
     S.controls = vec<8>(item(c.release, "controls"));
-    out.lifetime = item(launched, "lifetime");
-    S.lifetime = num(out.lifetime); S.distance_limit = num(c.distance_limit);
-    S.origin = vec_at<3>(body, "position");
+    S.lifetime = lifetime; S.distance_limit = num(c.distance_limit);
+    S.origin = origin;
     S.proximity_origin = {S.body.position.x, S.body.position.y, S.body.position.z};
     S.proximity_enabled = reach_m.is_none(); S.offsets = {typed::f32(-.05), typed::f32(0.)};
     validate_flight_numbers(S, out.props.family);
@@ -616,11 +786,11 @@ void prepare_cached(const V& missile, const V& launcher, const V& target, const 
         E.radius = (truth(radius) ? num(radius) : 0.) + 30.;
     }
     E.burn_end = c.burn_end;
-    E.best_distance = num(call(attr(import_module("math"), "dist"), {item(item(launched, "body"), "position"), item(target, "position")}));
-    E.motion = {vec_at<3>(target, "position"), vec_at<3>(target, "velocity"), vec<4>(target_quaternion)};
+    E.best_distance = reference_dist({S.body.position.x, S.body.position.y, S.body.position.z}, motion.position);
+    E.motion = motion;
     finite_or_bail(E.motion.position); finite_or_bail(E.motion.velocity);
     E.target_velocity_raw = E.motion.velocity;
-    E.launch = {vec_at<3>(launcher, "position"), vec_at<3>(launcher, "velocity"), vec<4>(quaternion)};
+    E.launch = {position, velocity, launcher_q};
 }
 bool cached_setup() {
     static const bool enabled = [] { const char* v = std::getenv("WT_TYPED_SETUP"); return !v || std::string(v) != "0"; }();
@@ -692,6 +862,107 @@ void install_reference_trace() {
     }));
 }
 
+// missile_worker.escape_motion as computed by the translated function, so the
+// path constants are the reference's; typed target_at evaluates it per time.
+void load_escape(const V& m, EvaluateSetup& E) {
+    if (field(m, "kind").as_string() != "escape") bail("typed loader: escape motion expected");
+    TargetMotion& t = E.motion;
+    t.position = vec_at<3>(m, "position"); t.velocity = vec_at<3>(m, "velocity"); t.quaternion = vec_at<4>(m, "quaternion");
+    t.escape = true;
+    t.start = num_at(m, "start"); t.end = num_at(m, "end"); t.heading = num_at(m, "heading");
+    t.sine = num_at(m, "sine"); t.cosine = num_at(m, "cosine"); t.rate = num_at(m, "rate"); t.radius = num_at(m, "radius");
+    t.speed = num_at(m, "speed"); t.roll = num_at(m, "roll");
+    t.turn_point = vec_at<3>(m, "turn_point"); t.exit_point = vec_at<3>(m, "exit_point"); t.run = vec_at<3>(m, "run");
+    t.run_quaternion = vec_at<4>(m, "run_quaternion");
+    for (double x : {t.start, t.end, t.heading, t.sine, t.cosine, t.rate, t.radius, t.speed, t.roll}) finite_or_bail(x);
+    finite_or_bail(t.position); finite_or_bail(t.velocity); finite_or_bail(t.quaternion);
+    finite_or_bail(t.turn_point); finite_or_bail(t.exit_point); finite_or_bail(t.run); finite_or_bail(t.run_quaternion);
+    E.target_velocity_raw = t.run; E.straight_from = t.end;
+}
+
+// missile_worker.escape_motion itself: the same expressions in the same order,
+// with the runtime's math functions (std::fmod, atan2, sin, cos, sqrt, acos;
+// degrees as x * (180 / pi)). Input it does not accept bails, and the
+// translated function then raises its error.
+void escape_setup(const V& target, const V& escape, const V& origin_value, EvaluateSetup& E) {
+    constexpr double PI = 3.141592653589793238462643383279502884, DEGREES = 180.0 / PI;
+    V worker = import_module("missile_worker");
+    double gravity = num(field(worker, "ESCAPE_GRAVITY"));
+    auto load_range = vec<2>(field(worker, "ESCAPE_LOAD_G")), delay_range = vec<2>(field(worker, "ESCAPE_DELAY_S"));
+    d3 position = vec_at<3>(target, "position"), velocity = vec_at<3>(target, "velocity"), origin = vec<3>(origin_value);
+    d3 angles = vec_at<3>(target, "angles");
+    double delay = num_at(escape, "delay_s"), load = num_at(escape, "load_g");
+    finite_or_bail(position); finite_or_bail(velocity); finite_or_bail(origin); finite_or_bail(angles);
+    if (velocity[1] != 0) bail("typed escape: target not level");
+    if (!(delay_range[0] <= delay && delay <= delay_range[1]) || !(load_range[0] <= load && load <= load_range[1]))
+        bail("typed escape: load or delay out of range");
+    auto wrapped = [&](double angle) {   // (-pi, pi]
+        angle = std::fmod(angle, 2 * PI);
+        if (std::isnan(angle)) bail("typed escape: math domain");
+        if (angle > PI) angle -= 2 * PI;
+        if (angle <= -PI) angle += 2 * PI;
+        return angle;
+    };
+    double speed = std::sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2]);
+    d3 turn_point;
+    for (int i = 0; i < 3; ++i) turn_point[i] = position[i] + velocity[i] * delay;
+    double heading = std::atan2(velocity[2], velocity[0]);
+    double turn = wrapped(std::atan2(turn_point[2] - origin[2], turn_point[0] - origin[0]) - heading);
+    double sine = std::sin(heading), cosine = std::cos(heading);
+    double rate = 0., radius = 0., end = delay, exit_heading = heading;
+    d3 exit_point = turn_point, run = velocity;
+    if (speed > 0 && turn != 0) {
+        rate = std::copysign(gravity * std::sqrt(load * load - 1.) / speed, turn);
+        radius = speed / rate;
+        double sign = std::copysign(1., turn);
+        auto ahead = [&](double tau) {
+            double h = heading + rate * tau;
+            double x = turn_point[0] + radius * (std::sin(h) - sine), z = turn_point[2] - radius * (std::cos(h) - cosine);
+            return sign * wrapped(std::atan2(z - origin[2], x - origin[0]) - h);
+        };
+        double step = PI / 180. / std::fabs(rate);
+        double duration = turn / rate, previous = ahead(0.);
+        for (int k = 1; k < 361; ++k) {
+            double value = ahead(k * step);
+            if (value <= 0. && previous < PI / 2) {
+                double low = (k - 1) * step, high = k * step;
+                for (int i = 0; i < 60; ++i) {
+                    double middle = (low + high) / 2;
+                    if (ahead(middle) > 0.) low = middle; else high = middle;
+                }
+                duration = high;
+                break;
+            }
+            previous = value;
+        }
+        end = delay + duration;
+        exit_heading = heading + rate * (end - delay);
+        exit_point = {turn_point[0] + radius * (std::sin(exit_heading) - sine), turn_point[1],
+                      turn_point[2] - radius * (std::cos(exit_heading) - cosine)};
+        run = {speed * std::cos(exit_heading), 0., speed * std::sin(exit_heading)};
+    }
+    TargetMotion& t = E.motion;
+    t = TargetMotion{};
+    t.position = position; t.velocity = velocity; t.quaternion = angles_quaternion(angles);
+    t.escape = true;
+    t.start = delay; t.end = end; t.heading = heading; t.sine = sine; t.cosine = cosine; t.rate = rate; t.radius = radius;
+    t.speed = speed; t.roll = std::copysign(std::acos(1. / load) * DEGREES, turn);
+    t.turn_point = turn_point; t.exit_point = exit_point; t.run = run;
+    t.run_quaternion = angles_quaternion({exit_heading * DEGREES, 0., 0.});
+    for (double x : {t.start, t.end, t.heading, t.sine, t.cosine, t.rate, t.radius, t.speed, t.roll}) finite_or_bail(x);
+    finite_or_bail(t.turn_point); finite_or_bail(t.exit_point); finite_or_bail(t.run);
+    finite_or_bail(t.quaternion); finite_or_bail(t.run_quaternion);
+    E.target_velocity_raw = t.run; E.straight_from = t.end;
+}
+bool same_motion(const TargetMotion& a, const TargetMotion& b) {
+    auto eq = [](double x, double y) { return bits(x) == bits(y); };
+    auto eqv = [&](const auto& x, const auto& y) { for (size_t i = 0; i < x.size(); ++i) if (!eq(x[i], y[i])) return false; return true; };
+    return a.escape == b.escape && eq(a.start, b.start) && eq(a.end, b.end) && eq(a.heading, b.heading) && eq(a.sine, b.sine)
+        && eq(a.cosine, b.cosine) && eq(a.rate, b.rate) && eq(a.radius, b.radius) && eq(a.speed, b.speed) && eq(a.roll, b.roll)
+        && eqv(a.position, b.position) && eqv(a.velocity, b.velocity) && eqv(a.quaternion, b.quaternion)
+        && eqv(a.turn_point, b.turn_point) && eqv(a.exit_point, b.exit_point) && eqv(a.run, b.run) && eqv(a.run_quaternion, b.run_quaternion);
+}
+
 V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Mode mode = typed_mode();
     if (mode == Mode::Off) return call(reference, args, kwargs);
@@ -711,10 +982,24 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Comparison comparison{&p};
     int64_t typed_steps = 0;
     const char* declined = nullptr;
-    V typed_result;
+    V typed_result, escape_equal;
     try {
         auto began = std::chrono::steady_clock::now();
-        (cached_setup() ? prepare_cached : prepare_full)(a[0], a[1], a[2], a[3], a[4], p);
+        // An escaping target (no-escape zone) is set up from its release state,
+        // as missile_envelope.evaluate does.
+        V target = a[2], escape = dict_get(a[2], V("escape"), V());
+        if (!escape.is_none())
+            target = make_dict({{"position", item(a[2], V("position"))}, {"velocity", item(a[2], V("velocity"))},
+                                {"angles", item(a[2], V("angles"))}});
+        (cached_setup() ? prepare_cached : prepare_full)(a[0], a[1], target, a[3], a[4], p);
+        if (!escape.is_none()) {
+            escape_setup(target, escape, item(a[1], V("position")), p.setup);
+            if (mode == Mode::Compare) {
+                EvaluateSetup reference_escape;
+                load_escape(invoke_fn("missile_worker", "escape_motion", {target, escape, item(a[1], V("position"))}), reference_escape);
+                escape_equal = V(same_motion(p.setup.motion, reference_escape.motion));
+            }
+        }
         auto prepared = std::chrono::steady_clock::now();
         if (mode == Mode::Compare) comparison.state = p.session;
         EvaluateResult r = evaluate_loop(p.props, p.session, p.setup);
@@ -739,6 +1024,7 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Kw report{{"type", "typed_compare"}, {"missile", a[0]}, {"declined", declined ? V(std::string(declined)) : V()}};
     report.emplace_back("cache_hit", V(p.cache_hit));
     report.emplace_back("setup_cached", V(cached_setup()));
+    report.emplace_back("escape_equal", escape_equal);
     bool same = !declined && json_dump(expected, true) == json_dump(typed_result, true);
     report.emplace_back("result_equal", V(same));
     if (!declined && !same) { report.emplace_back("expected", expected); report.emplace_back("typed", typed_result); }
@@ -756,12 +1042,344 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     diagnostic(make_dict(report));
     return expected;
 }
+
+// ---------------------------------------------------------- simulate entry
+// missile_worker.simulate on typed state. The translated simulation_setup and
+// simulation_document supply the release, seeker initialization and the result
+// description; the step loop, samples, tracking descriptions, telemetry, closest
+// approach and early-miss test reproduce the reference expressions. Legacy
+// post-release requests, and anything the typed port declines, run the
+// translated function from scratch.
+
+// math.hypot as the translated runtime computes it.
+double runtime_hypot(const double* v, int n) {
+    double d[4], maximum = 0.; int nan = 0;
+    for (int i = 0; i < n; ++i) { d[i] = std::fabs(v[i]); if (d[i] > maximum) maximum = d[i]; nan |= std::isnan(d[i]); }
+    return vector_norm((size_t)n, d, maximum, nan);
+}
+
+// missile_tracking.describe
+struct TrackingStatus {
+    bool tracking = false; int available = -1;   // observation_available: -1 None
+    bool has_reason = false; std::string reason, state;
+    bool operator==(const TrackingStatus& o) const {
+        return tracking == o.tracking && available == o.available && has_reason == o.has_reason && reason == o.reason && state == o.state;
+    }
+};
+const char* loss_name(int reason) {
+    switch (reason) {
+        case LOSS_NO_TARGET: return "no_target"; case LOSS_BEHIND: return "behind"; case LOSS_MINIMUM_DISTANCE: return "minimum_distance";
+        case LOSS_HORIZON: return "horizon"; case LOSS_FIELD_OF_VIEW: return "field_of_view";
+        case LOSS_OBSERVATION_CONE: return "observation_cone"; case LOSS_SENSOR_GEOMETRY: return "sensor_geometry";
+        default: return nullptr;
+    }
+}
+TrackingStatus describe_step(int family, const Session& S, bool inertial_enabled, const ObservationLog& log) {
+    TrackingStatus t;
+    bool inertial_valid; int64_t mode;
+    if (family == 0) { t.tracking = S.optical.manager.tracking; inertial_valid = S.optical.manager.inertial_valid; mode = S.optical.manager.mode; }
+    else { t.tracking = S.radar.manager.tracking != 0; inertial_valid = S.radar.manager.inertial_valid != 0; mode = S.radar.manager.mode; }
+    if (log.count) {
+        t.available = log.any ? 1 : 0;
+        if (const char* name = loss_name(log.last)) { t.has_reason = true; t.reason = name; }
+    }
+    if (t.tracking) t.state = t.available == 1 ? "observed" : "coasting";
+    else if (inertial_enabled && inertial_valid && (mode == 0 || mode == 4)) t.state = "inertial";
+    else t.state = "acquiring";
+    return t;
+}
+TrackingStatus tracking_from(const V& d) {
+    TrackingStatus t;
+    t.tracking = truth(at_key(d, "tracking"));
+    V available = at_key(d, "observation_available"), reason = at_key(d, "loss_reason");
+    t.available = available.is_none() ? -1 : truth(available) ? 1 : 0;
+    if (!reason.is_none()) { t.has_reason = true; t.reason = reason.as_string(); }
+    t.state = at_key(d, "tracking_state").as_string();
+    return t;
+}
+void put_tracking(Kw& kw, const TrackingStatus& t) {
+    kw.emplace_back("tracking", V(t.tracking));
+    kw.emplace_back("observation_available", t.available < 0 ? V() : V(t.available == 1));
+    kw.emplace_back("tracking_state", V(t.state));
+    kw.emplace_back("loss_reason", t.has_reason ? V(t.reason) : V());
+}
+
+V list3(const d3& v) { return make_list({V(v[0]), V(v[1]), V(v[2])}); }
+V list4(const d4& v) { return make_list({V(v[0]), V(v[1]), V(v[2]), V(v[3])}); }
+
+// missile_telemetry.completed: the final substep's force evaluation again.
+struct Telemetry { double force_time, thrust, mass, propellant, drag, lift, cd, aoa, pressure, acceleration; };
+Telemetry completed_telemetry(const FlightProps& P, const StepCapture& k, const std::array<double,8>& controls) {
+    const wtm_body& b = k.force_input;
+    double sub_dt = div(STEP, (double)P.precision);
+    wtm_forces f;
+    aero_forces(&P.body, b.position.y, b.velocity, b.quaternion, b.omega, (float)controls[0], (float)controls[1], (float)sub_dt,
+                k.propulsion.world_force, k.propulsion.body_torque, k.propulsion.mass_lost, 0.0f, b.body_random, &f);
+    check_kernel();
+    double scale = std::fabs((double)perturbation_coefficients(0.0f, b.body_random).force_scale);
+    double world[3] = {k.propulsion.world_force.x, k.propulsion.world_force.y, k.propulsion.world_force.z};
+    double drag[3] = {f.baseline.drag.x, f.baseline.drag.y, f.baseline.drag.z};
+    double lift[3] = {f.baseline.lift.x, f.baseline.lift.y, f.baseline.lift.z};
+    double cosine = mx(-1., mn(1., (double)f.baseline.cosine));
+    return {(double)b.time, runtime_hypot(world, 3), (double)f.effective_mass, (double)k.propulsion.mass_lost,
+            runtime_hypot(drag, 3) * scale, runtime_hypot(lift, 3) * scale, (double)f.baseline.cd,
+            std::acos(cosine) * (180.0 / 3.141592653589793238462643383279502884), (double)f.pressure,
+            runtime_hypot(k.acceleration, 3)};
+}
+// missile_telemetry.controls from the step's ControlCapture, the fins flown during
+// the step (controls before it) and the motor state after it.
+struct ControlTelemetry {
+    bool accel = false; double fin[2]{}, cmd[2]{}, actual[2]{}, p[2]{}, i[2]{}, d[2]{};
+    bool tvc = false; double tvc_deg[2]{};
+    bool cruise = false; double cruise_factor = 0.;
+};
+ControlTelemetry control_telemetry(const FlightProps& P, const ControlCapture& c, const std::array<double,8>& applied, const Session& S) {
+    ControlTelemetry t;
+    if (c.accel) {
+        t.accel = true;
+        for (int k = 0; k < 2; ++k) {
+            const float* s = c.pid + 8 * k;
+            t.fin[k] = c.fins[k]; t.cmd[k] = c.limited[k]; t.actual[k] = c.actual[k];
+            t.p[k] = mul(s[0], s[6]); t.i[k] = s[3]; t.d[k] = mul(s[7], s[4]);
+        }
+    }
+    const wtm_motors& motors = P.family == 0 ? P.optical.controls.motors : P.radar.controls.motors;
+    wtm_motor_scalar scalar = ::motor_scalar(&motors, S.body.clocks);
+    check_kernel();
+    if (scalar.thrust > 0 && scalar.vectoring != 0) {
+        t.tvc = true;
+        for (int k = 0; k < 2; ++k)   // math.degrees(math.asin(max(-1., min(1., mul(fin, vectoring)))))
+            t.tvc_deg[k] = std::asin(mx(-1., mn(1., mul(applied[k], scalar.vectoring)))) * (180.0 / 3.141592653589793238462643383279502884);
+    }
+    t.cruise = c.cruise; t.cruise_factor = c.cruise_factor;
+    return t;
+}
+V telemetry_value(const Telemetry& t, const ControlTelemetry& c) {
+    auto value = [](bool present, double x) { return present ? V(x) : V(); };
+    return make_dict({{"force_time_s", V(t.force_time)}, {"thrust_n", V(t.thrust)}, {"mass_kg", V(t.mass)},
+                      {"propellant_used_kg", V(t.propellant)}, {"drag_n", V(t.drag)}, {"lift_n", V(t.lift)},
+                      {"drag_coefficient", V(t.cd)}, {"aoa_deg", V(t.aoa)}, {"dynamic_pressure_pa", V(t.pressure)},
+                      {"acceleration_mps2", V(t.acceleration)},
+                      {"fin_h", value(c.accel, c.fin[0])}, {"fin_v", value(c.accel, c.fin[1])},
+                      {"accel_cmd_h_mps2", value(c.accel, c.cmd[0])}, {"accel_cmd_v_mps2", value(c.accel, c.cmd[1])},
+                      {"accel_h_mps2", value(c.accel, c.actual[0])}, {"accel_v_mps2", value(c.accel, c.actual[1])},
+                      {"pid_p_h", value(c.accel, c.p[0])}, {"pid_i_h", value(c.accel, c.i[0])}, {"pid_d_h", value(c.accel, c.d[0])},
+                      {"pid_p_v", value(c.accel, c.p[1])}, {"pid_i_v", value(c.accel, c.i[1])}, {"pid_d_v", value(c.accel, c.d[1])},
+                      {"tvc_h_deg", value(c.tvc, c.tvc_deg[0])}, {"tvc_v_deg", value(c.tvc, c.tvc_deg[1])},
+                      {"cruise_pid", value(c.cruise, c.cruise_factor)}});
+}
+
+// missile_worker.simulate's sample()
+struct Sample {
+    double time = 0.; d3 missile{}, target{}, velocity{}; double speed = 0.; d4 quaternion{}; double mach = 0., traveled = 0.;
+    TrackingStatus tracking; bool has_telemetry = false; Telemetry telemetry{}; ControlTelemetry control{};
+};
+Sample take_sample(const Session& S, const TargetMotion& motion, double traveled, const TrackingStatus& tracking) {
+    Sample s; const wtm_body& b = S.body;
+    s.time = b.time; s.missile = {b.position.x, b.position.y, b.position.z};
+    s.target = target_at(motion, s.time).position;
+    s.velocity = {b.velocity.x, b.velocity.y, b.velocity.z};
+    double total = 0.; for (double v : s.velocity) total = total + v * v;
+    s.speed = py_sqrt(total);
+    s.quaternion = dq(b.quaternion);
+    wtm_air air = ::atmosphere((float)s.missile[1]); check_kernel();
+    s.mach = runtime_hypot(s.velocity.data(), 3) / (double)air.sound_speed;
+    s.traveled = traveled; s.tracking = tracking;
+    return s;
+}
+V sample_value(const Sample& s, const V* telemetry = nullptr) {
+    Kw kw{{"time_s", V(s.time)}, {"missile", list3(s.missile)}, {"target", list3(s.target)}, {"velocity", list3(s.velocity)},
+          {"speed_mps", V(s.speed)}, {"quaternion", list4(s.quaternion)}, {"mach", V(s.mach)}, {"traveled_distance_m", V(s.traveled)}};
+    put_tracking(kw, s.tracking);
+    if (telemetry) kw.emplace_back("telemetry", *telemetry);
+    else if (s.has_telemetry) kw.emplace_back("telemetry", telemetry_value(s.telemetry, s.control));
+    return make_dict(kw);
+}
+// missile_worker.proximity_endpoint
+struct Endpoint { double time; d3 missile, target; double traveled; };
+V endpoint_value(const Endpoint& e) {
+    return make_dict({{"kind", V("proximity_event")}, {"time_s", V(e.time)}, {"missile", list3(e.missile)}, {"target", list3(e.target)},
+                      {"velocity", V()}, {"speed_mps", V()}, {"quaternion", V()}, {"tracking", V()}, {"observation_available", V()},
+                      {"tracking_state", V("event")}, {"loss_reason", V()}, {"mach", V()}, {"telemetry", V()},
+                      {"traveled_distance_m", V(e.traveled)}});
+}
+
+V simulate_loop(const V& request, const V& progress) {
+    V w = import_module("missile_worker");
+    V config = call(attr(w, "validate"), {request});
+    if (!has(config, "launcher")) bail("Legacy post-release launch uses the translated simulator");
+    V setup = call(attr(w, "simulation_setup"), {config});
+    V session = at_key(setup, "session"), frame = at_key(setup, "frame");
+    V session_flight = attr(attr(session, "frame"), "flight");
+    std::string family_name = attr(session_flight, "family").as_string();
+    FlightProps P;
+    P.family = family_name == "optical" ? 0 : family_name == "radar" ? 1 : -1;
+    if (P.family < 0) bail("Unsupported guidance family");
+    load_flight_props(attr(session_flight, "properties"), item(attr(session_flight, "serialized_properties"), V("rocket")),
+                      attr(session, "props"), P);
+    Session S;
+    load_session(session, P.family, S);
+    validate_flight_numbers(S, P.family);
+    V motion_value = at_key(setup, "target_motion");
+    TargetMotion motion;
+    if (field(motion_value, "kind").as_string() == "escape") {
+        EvaluateSetup E; load_escape(motion_value, E); motion = E.motion;
+    } else {
+        motion.position = vec_at<3>(motion_value, "position"); motion.velocity = vec_at<3>(motion_value, "velocity");
+        motion.quaternion = vec_at<4>(motion_value, "quaternion");
+        finite_or_bail(motion.position); finite_or_bail(motion.velocity);
+    }
+    V launch_value = at_key(setup, "launch");
+    LaunchState launch{vec_at<3>(launch_value, "position"), vec_at<3>(launch_value, "velocity"),
+                       vec<4>(call(attr(w, "quaternion"), {at_key(launch_value, "angles")}))};
+    bool inertial_enabled = truth(at_key(setup, "inertial_enabled"));
+    bool early_exit = truth(at_key(config, "early_exit"));
+    double straight_from = num(at_key(setup, "straight_from"));
+    d3 straight_velocity = vec_at<3>(setup, "straight_velocity");
+    std::vector<double> burn_end; for (V end : iter(at_key(setup, "burn_end"))) burn_end.push_back(num(end));
+    double deadline = num(at_key(setup, "deadline")), reach_radius = num(at_key(setup, "reach_radius"));
+    double duration = num(at_key(config, "duration"));
+    V initialization = at_key(setup, "initialization");
+    V describe = attr(import_module("missile_tracking"), "describe");
+    V session_state = attr(session_flight, "state");
+    TrackingStatus tracking = tracking_from(call(describe, {V(family_name), item(item(session_state, V("guidance")), V("manager")),
+                                                           V(inertial_enabled)}, {{"initialization", initialization}}));
+
+    Args rows, transitions, seeker_transitions;
+    double traveled = 0.;
+    auto seeker_entry = [](double time, const TrackingStatus& t) {
+        Kw kw{{"time_s", V(time)}}; put_tracking(kw, t); return make_dict(kw);
+    };
+    seeker_transitions.push_back(seeker_entry(0., tracking));
+    V target_value = at_key(config, "target");
+    double best_distance = reference_dist(vec_at<3>(attr(frame, "website_release"), "position"), vec_at<3>(target_value, "position"));
+    double best_time = 0.;
+    bool tracked_before = truth(at_key(initialization, "tracking"));
+    if (tracked_before) transitions.push_back(make_dict({{"time_s", V(0.)}, {"tracking", V(true)}}));
+    V initial_telemetry = call(attr(import_module("missile_telemetry"), "initial"), {attr(attr(frame, "flight"), "properties")});
+    Sample first = take_sample(S, motion, traveled, tracking);
+    rows.push_back(sample_value(first, &initial_telemetry));
+    const char* code = "time_limit"; const char* label = "Time limit reached \xe2\x80\x94 unresolved";
+    bool outcome_event = false; Event event_value{};
+    double count_value = std::ceil(duration / STEP);
+    if (!std::isfinite(count_value) || count_value < 0 || count_value > 1e9) bail("Unsupported step count");
+    int64_t count = (int64_t)count_value;
+    Sample last_new; bool have_new = false;
+    for (int64_t i = 0; i < count; ++i) {
+        Sample old = take_sample(S, motion, traveled, tracking);
+        double now = add(old.time, STEP);
+        std::array<double,8> controls = S.controls;
+        ObservationLog log; StepCapture capture; ControlCapture controlled;
+        observation_log = &log; step_capture = &capture; control_capture = &controlled;
+        Expiry expiry;
+        try { expiry = interaction_advance(P, S, motion, launch, now, STEP, now); }
+        catch (...) { observation_log = nullptr; step_capture = nullptr; control_capture = nullptr; throw; }
+        observation_log = nullptr; step_capture = nullptr; control_capture = nullptr;
+        if (capture.updates != 1) bail("Simulator step made other than one flight update");
+        TrackingStatus previous = tracking;
+        tracking = describe_step(P.family, S, inertial_enabled, log);
+        Sample now_sample = take_sample(S, motion, traveled, tracking);
+        bool event = S.has_event;
+        // endpoint: the proximity event, or the new sample itself (aliased)
+        Endpoint end{};
+        if (event) {
+            if (!(old.time <= S.event.time && S.event.time <= now_sample.time)) bail("ValueError: proximity time outside the step");
+            end.time = S.event.time; end.missile = S.event.position; end.target = target_at(motion, end.time).position;
+        } else { end.time = now_sample.time; end.missile = now_sample.missile; end.target = now_sample.target; }
+        traveled = traveled + reference_dist(old.missile, end.missile);
+        if (event) end.traveled = traveled; else now_sample.traveled = traveled;
+        auto seg = closest_segment(old.missile, end.missile, old.target, end.target);
+        if (seg.first < best_distance) { best_distance = seg.first; best_time = old.time + seg.second * (end.time - old.time); }
+        if (!event && now_sample.tracking.tracking != tracked_before) {
+            transitions.push_back(make_dict({{"time_s", V(now_sample.time)}, {"tracking", V(now_sample.tracking.tracking)}}));
+            tracked_before = now_sample.tracking.tracking;
+        }
+        bool terminal = false;
+        if (event) { code = "proximity_event"; label = "Target proximity event"; outcome_event = true; event_value = S.event; terminal = true; }
+        else if (now_sample.missile[1] <= 0) { code = "ground"; label = "Missile reached ground"; terminal = true; }
+        else if (now_sample.target[1] <= 0) { code = "target_ground"; label = "Target reached ground \xe2\x80\x94 scenario ended"; terminal = true; }
+        else if (S.expiry_flag) {
+            if (expiry.time_expired) { code = "lifetime"; label = "Missile lifetime expired"; }
+            else if (expiry.distance_expired) { code = "distance_limit"; label = "Missile distance limit reached"; }
+            else { code = "tracking_timeout"; label = "Geometric tracking timeout"; }
+            terminal = true;
+        } else if (early_exit && i % 6 == 5 && now_sample.time >= straight_from) {
+            bool burned = true;
+            size_t n = burn_end.size() < 4 ? burn_end.size() : 4;
+            for (size_t k = 0; k < n; ++k) if (!((double)S.body.clocks[k] >= burn_end[k] + 1e-3)) { burned = false; break; }
+            if (burned && unreachable(now_sample.missile, now_sample.speed, now_sample.target, straight_velocity,
+                                      deadline - now_sample.time + 2 * STEP, reach_radius, S.origin, S.distance_limit)) {
+                code = "unreachable"; label = "Miss \xe2\x80\x94 target is unreachable"; terminal = true;
+            }
+        }
+        if (event) {
+            seeker_transitions.push_back(make_dict({{"time_s", V(end.time)}, {"tracking", V()}, {"observation_available", V()},
+                                                    {"tracking_state", V("event")}, {"loss_reason", V()}}));
+        } else if (!(tracking == previous)) seeker_transitions.push_back(seeker_entry(now_sample.time, tracking));
+        if (i % 3 == 2 || terminal || i == count - 1) {
+            now_sample.telemetry = completed_telemetry(P, capture, controls); now_sample.has_telemetry = true;
+            now_sample.control = control_telemetry(P, controlled, controls, S);
+            if (event) {
+                now_sample.traveled = old.traveled + reference_dist(old.missile, now_sample.missile);
+                V last = rows.back();
+                bool same_time = num(at_key(last, "time_s")) == end.time;
+                if (same_time) rows.back() = endpoint_value(end); else rows.push_back(endpoint_value(end));
+            } else rows.push_back(sample_value(now_sample));
+        }
+        if (i % 24 == 23) call(progress, {make_dict({{"time_s", V(now)}, {"duration_s", V(duration)}, {"fraction", V(mn(1., now / duration))}})});
+        last_new = now_sample; have_new = true;
+        if (terminal) break;
+    }
+    if (!have_new) bail("No simulator step");
+    Kw outcome{{"code", V(code)}, {"label", V(label)}};
+    if (outcome_event) outcome.emplace_back("event", make_dict({{"position", list3(event_value.position)},
+                                                                {"direction", list3(event_value.direction)}, {"time", V(event_value.time)}}));
+    V best = make_dict({{"distance_m", V(best_distance)}, {"time_s", V(best_time)}});
+    return call(attr(w, "simulation_document"), {config, setup, make_list(rows), make_list(transitions), make_list(seeker_transitions),
+                                                 best, make_dict(outcome), sample_value(last_new)});
+}
+
+V typed_simulate(const V& reference, const Args& args, const Kw& kwargs) {
+    Mode mode = typed_mode();
+    if (mode == Mode::Off || args.empty() || args.size() > 2 || !kwargs.empty()) return call(reference, args, kwargs);
+    V progress = args.size() > 1 ? args[1] : builtin("progress", [](const Args&, const Kw&) { return V(); });
+    const char* declined = nullptr; V typed_result;
+    try { typed_result = simulate_loop(args[0], progress); }
+    catch (const Bail& b) { declined = b.reason; }
+    catch (const PyError&) { declined = "setup raised"; }
+    if (declined && typed_log())
+        diagnostic(make_dict({{"type", "typed_simulate_fallback"}, {"reason", V(std::string(declined))}}));
+    if (mode == Mode::On) return declined ? call(reference, args, kwargs) : typed_result;
+    V expected = call(reference, args, kwargs);
+    bool same = !declined && json_dump(expected, true) == json_dump(typed_result, true);
+    Kw report{{"type", "typed_simulate_compare"}, {"declined", declined ? V(std::string(declined)) : V()}, {"result_equal", V(same)}};
+    if (!declined && !same) {
+        // First differing trajectory row, for diagnosis.
+        Args a = iter(item(expected, V("trajectory"))), b = iter(item(typed_result, V("trajectory")));
+        report.emplace_back("rows_reference", V((int64_t)a.size())); report.emplace_back("rows_typed", V((int64_t)b.size()));
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+            if (json_dump(a[i], true) != json_dump(b[i], true)) {
+                report.emplace_back("first_row", V((int64_t)i)); report.emplace_back("reference", a[i]); report.emplace_back("typed", b[i]); break;
+            }
+        for (const char* key : {"outcome", "closest_approach", "tracking_transitions", "seeker_transitions", "final_body_sample"})
+            if (json_dump(item(expected, V(key)), true) != json_dump(item(typed_result, V(key)), true)) report.emplace_back(std::string("differs_") + key, V(true));
+    }
+    diagnostic(make_dict(report));
+    return expected;
+}
 }  // namespace
 
 void install_typed_evaluate(E env) {
     V reference = get(env, "evaluate");
     set(env, "evaluate", builtin("evaluate", [reference](const Args& args, const Kw& kwargs) {
         return typed_evaluate(reference, args, kwargs);
+    }));
+}
+
+void install_typed_simulate(E env) {
+    V reference = get(env, "simulate");
+    set(env, "simulate", builtin("simulate", [reference](const Args& args, const Kw& kwargs) {
+        return typed_simulate(reference, args, kwargs);
     }));
 }
 }  // namespace nt

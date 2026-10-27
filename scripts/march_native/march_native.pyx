@@ -154,7 +154,7 @@ cdef class Model:
     cdef double inertia[3]
     cdef double dt, altitude, throttle, flaps, gear, ground_length, cockpit_door_cd, attachment_drag_area, ext_thrust_base
     cdef bint convert_aoa, roll_leveling, torque_gyro, optimized, cfg_default_trim
-    cdef double trim_limit
+    cdef double trim_limit, turn
     cdef double fixed_trim[3]
     cdef double strength_force[2]
     cdef double strength_ias, strength_mach
@@ -221,6 +221,7 @@ cdef class Model:
         from body_dynamics import G
         self.G = float(G)
         self.dt = solver.dt;self.altitude = cfg['altitude_m'];self.throttle = cfg['throttle']
+        self.turn = -1. if cfg.get('turn_direction', 'left') == 'right' else 1.
         self.flaps = solver.flaps;self.gear = solver.gear
         self.ground_length = fm['Length'];self.cockpit_door_cd = fm['Aerodynamics'].get('CockpitDoorCd', 0.)
         self.attachment_drag_area = model.get('attachment_drag_area', 0.)
@@ -488,11 +489,11 @@ cdef class Model:
         e.completed = False
         e.speed = speed; e.load = load
         for i in range(7):e.x[i] = x[i]
-        turn_quaternion(x[0], x[1], e.geom.quaternion)
+        turn_quaternion(x[0], self.turn*x[1], e.geom.quaternion)
         world_to_body_air(e.geom.quaternion, speed, vel)
         for i in range(3):e.velocity[i] = vel[i]
         air_cache(vel, self.altitude, &e.air)
-        turn_geometry(x[0], x[1], speed, load, self.dt, e.air.ias_u, self.G, &e.geom)
+        turn_geometry(x[0], x[1], speed, load, self.dt, e.air.ias_u, self.G, self.turn, &e.geom)
         ci = self.condition(e.air.mach);e.cond = ci
         authority_ranges(&self.primary, e.air.ias_u, ranges)
         command_allocation(&self.primary, &x[2], ranges, True, 1., zero3, &canonical)

@@ -176,13 +176,14 @@ inline RadarObservation geometric_measure(const RadarSeekerProps& p, const Radar
     if (p.frame.active && !illumination.present) bail("ValueError: Geometric radar policy requires an explicit illumination frame");
     RadarObservation out;
     out.measurement = {1., 0., 0.}; out.has_effects = true;
-    if (!target) return out;
+    if (!target) { log_observation(false, LOSS_NO_TARGET); return out; }
     d3 axis = {frame[0], frame[1], frame[2]};
-    if (!admitted(target->position, nw.position, axis, p.query_cosine, 0., BOUND, 0.)) return out;
+    if (!admitted(target->position, nw.position, axis, p.query_cosine, 0., BOUND, 0.)) { log_observation(false, LOSS_OBSERVATION_CONE); return out; }
     const Frame12& transmitter = p.frame.active ? illumination.frame : frame;
     const d3& transmitter_velocity = p.frame.active ? illumination.velocity : nw.velocity;
     ReturnValues values = return_response(p.frame, target->position, target->velocity, transmitter, frame, transmitter_velocity, nw.velocity);
-    if (!values.accepted) return out;
+    if (!values.accepted) { log_observation(false, LOSS_SENSOR_GEOMETRY); return out; }
+    log_observation(true, LOSS_NONE);
     d4 q = nw.quaternion; q[3] = -q[3];
     out.accepted_effects = true; out.target_value = values.range;
     out.los_check_time = state.los_cache_valid ? state.los_check_time : f32(nw.time);
@@ -196,7 +197,15 @@ constexpr double UNBOUNDED = BOUND;
 inline std::pair<double,double> coefficients(const Axis& p, double interval) {
     double n = mn(mul(48., interval), 10.);
     if (n <= 0.) return {1., 1.};
-    return {sub(1., f32(py_pow(sub(1., p.alpha), n))), sub(1., f32(py_pow(sub(1., p.beta), mul(n, n))))};
+    // A tracking filter sees the same interval step after step; pow is a pure
+    // function, so the last results for the same inputs are reused.
+    struct Memo { double alpha, beta, n; std::pair<double,double> value; };
+    static thread_local Memo memo[2] = {{NAN, NAN, NAN, {}}, {NAN, NAN, NAN, {}}};
+    static thread_local int next = 0;
+    for (const Memo& m : memo) if (m.alpha == p.alpha && m.beta == p.beta && m.n == n) return m.value;
+    std::pair<double,double> value = {sub(1., f32(py_pow(sub(1., p.alpha), n))), sub(1., f32(py_pow(sub(1., p.beta), mul(n, n))))};
+    memo[next] = {p.alpha, p.beta, n, value}; next ^= 1;
+    return value;
 }
 inline double clamp_channel(double value, const Axis& p) {
     double half = mul(p.width, .5);
@@ -652,20 +661,19 @@ inline RadarSeekerResult geometric_radar_update(const RadarSeekerProps& p, const
     if (!(sub(nw.time, old.time) <= 1.)) bail("ValueError: Geometric radar step exceeds supported interval");
     if (!(0. <= limit_age && limit_age < 1e6)) bail("ValueError: Geometric radar flight age outside supported envelope");
     check_radar_state(state);
+    // !(|x| < 1e7) is true exactly for |x| >= 1e7 and for non-finite x.
+    auto outside = [](const double* x, size_t n) { bool bad = false; for (size_t i = 0; i < n; ++i) bad |= !(std::fabs(x[i]) < 1e7); return bad; };
     for (const RFrame* frame : {&old, &nw}) {
         double s = sum_squares(frame->quaternion);
         if (!(.99 < s && s < 1.01)) bail("ValueError: Near-unit body quaternion required");
-        for (double x : frame->position) if (!finite(x) || std::fabs(x) >= 1e7) bail("ValueError: Body state outside geometric radar envelope");
-        for (double x : frame->velocity) if (!finite(x) || std::fabs(x) >= 1e7) bail("ValueError: Body state outside geometric radar envelope");
+        if (outside(frame->position.data(), 3) || outside(frame->velocity.data(), 3)) bail("ValueError: Body state outside geometric radar envelope");
     }
-    if (target) {
-        for (double x : target->position) if (!finite(x) || std::fabs(x) >= 1e7) bail("ValueError: Target outside geometric radar envelope");
-        for (double x : target->velocity) if (!finite(x) || std::fabs(x) >= 1e7) bail("ValueError: Target outside geometric radar envelope");
-    }
+    if (target && (outside(target->position.data(), 3) || outside(target->velocity.data(), 3)))
+        bail("ValueError: Target outside geometric radar envelope");
     if (p.modes.shared.gate_rate != BOUND) bail("ValueError: Configure the geometric radar policy first");
     if (!illumination.present && p.frame.active) bail("ValueError: Semi-active geometric flight requires supplied illumination");
-    for (double x : illumination.frame) if (!finite(x) || std::fabs(x) >= 1e7) bail("ValueError: Illumination outside geometric radar envelope");
-    for (double x : illumination.velocity) if (!finite(x) || std::fabs(x) >= 1e7) bail("ValueError: Illumination outside geometric radar envelope");
+    if (outside(illumination.frame.data(), 12) || outside(illumination.velocity.data(), 3))
+        bail("ValueError: Illumination outside geometric radar envelope");
     // radar_point_modes.update
     int64_t mode = mode_in & 0xffffffffLL;
     double dt = sub(nw.time, old.time);
