@@ -61,7 +61,19 @@ static inline double dsqrt(double x) {
     if (x < 0.0) { wtm_fail(WTM_DOMAIN, "math domain error (sqrt)"); return 0.0; }
     return sqrt(x);
 }
-static inline float copysignf_(float magnitude, float sign) { return (float)copysign((double)magnitude, (double)sign); }
+/* isfinite, signbit, copysign and frexp's exponent as bit operations: the same
+ * results, inline (MSVC calls library routines for the C forms). */
+static inline uint32_t wtm_fbits(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
+static inline uint64_t wtm_dbits(double x) { uint64_t b; memcpy(&b, &x, 8); return b; }
+static inline int finite_f(float x) { return (wtm_fbits(x) & 0x7f800000u) != 0x7f800000u; }
+static inline int negative_f(float x) { return (int)(wtm_fbits(x) >> 31); }
+static inline double copysign_d(double magnitude, double sign) {
+    uint64_t b = (wtm_dbits(magnitude) & 0x7fffffffffffffffull) | (wtm_dbits(sign) & 0x8000000000000000ull);
+    double x; memcpy(&x, &b, 8); return x;
+}
+/* frexp(x)'s exponent for a finite, nonzero, normal x. */
+static inline int exponent_d(double x) { return (int)((wtm_dbits(x) >> 52) & 0x7ff) - 1022; }
+static inline float copysignf_(float magnitude, float sign) { return (float)copysign_d((double)magnitude, (double)sign); }
 
 /* ------------------------------------------------------------------ vectors */
 typedef struct { float x, y, z; } v3;
@@ -109,21 +121,21 @@ static inline float drag_mach(float m) {
 /* ---------------------------------------------------------- native atan2f */
 /* native_atan2f.atan2f: client CRT atan2f with double intermediates. */
 static inline float atan2f_native(float y, float x) {
-    if (!isfinite(y) || !isfinite(x)) { wtm_fail(WTM_UNSUPPORTED, "Only finite atan2f inputs are reconstructed"); return F(0.0); }
-    int negative_x = signbit(x) != 0, negative_y = signbit(y) != 0;
+    if (!finite_f(y) || !finite_f(x)) { wtm_fail(WTM_UNSUPPORTED, "Only finite atan2f inputs are reconstructed"); return F(0.0); }
+    int negative_x = negative_f(x), negative_y = negative_f(y);
     double ax = fabs((double)x), ay = fabs((double)y);
-    if (ay == 0.0) return negative_x ? (float)copysign((double)(float)PI_D, (double)y) : y;
-    if (ax == 0.0) return (float)copysign((double)(float)(PI_D / 2), (double)y);
-    int ey, ex; frexp(ay, &ey); frexp(ax, &ex);
-    int delta = ey - ex;
-    if (delta > 26) return (float)copysign((double)(float)(PI_D / 2), (double)y);
+    if (ay == 0.0) return negative_x ? (float)copysign_d((double)(float)PI_D, (double)y) : y;
+    if (ax == 0.0) return (float)copysign_d((double)(float)(PI_D / 2), (double)y);
+    /* Nonzero binary32 values are normal in binary64. */
+    int delta = exponent_d(ay) - exponent_d(ax);
+    if (delta > 26) return (float)copysign_d((double)(float)(PI_D / 2), (double)y);
     if (delta < -13 && !negative_x) return (float)((double)y / (double)x);
-    if (delta < -26 && negative_x) return (float)copysign((double)(float)PI_D, (double)y);
+    if (delta < -26 && negative_x) return (float)copysign_d((double)(float)PI_D, (double)y);
     int swapped = ay > ax;
     if (swapped) { double t = ay; ay = ax; ax = t; }
     double ratio = ay / ax, angle;
     if (ratio > 0.0625) {
-        long long index = (long long)trunc(ratio * 256.0 + 0.5);
+        long long index = (long long)(ratio * 256.0 + 0.5);   /* positive: truncation */
         double residual = (ay * 256.0 - (double)index * ax) / ((double)index * ay + ax * 256.0);
         angle = residual + ATAN2F_TABLE[index - 16];
         angle -= ((residual * residual) * residual) * 0.33333333333224097;
@@ -256,9 +268,10 @@ typedef struct { float sine, cosine; long long quadrant; float reduced; } wtm_tr
 static inline wtm_trig half_angle_trig(float increment) {
     wtm_trig out;
     float h = fmul(-increment, F(0.5));
-    float quadrant_input = fsub((float)copysign(0.5, (double)h), fmul(increment, F(0.31830987334251404)));
-    double qt = trunc((double)quadrant_input);
-    if (!(qt >= -2147483648.0 && qt < 2147483648.0)) { wtm_fail(WTM_VALUE, "Outside audited finite quadrant-conversion domain"); qt = 0.0; }
+    float quadrant_input = fsub((float)copysign_d(0.5, (double)h), fmul(increment, F(0.31830987334251404)));
+    /* trunc(q) lies in [-2^31, 2^31) exactly when q lies in (-2^31 - 1, 2^31). */
+    double qt = (double)quadrant_input;
+    if (!(qt > -2147483649.0 && qt < 2147483648.0)) { wtm_fail(WTM_VALUE, "Outside audited finite quadrant-conversion domain"); qt = 0.0; }
     long long quadrant = (long long)qt;
     float t = fadd(fmul((float)quadrant, -F(1.5707963705062866)), h);
     float t2 = fmul(t, t);

@@ -70,20 +70,23 @@ inline double py_pow(double x, double y) {
     if (std::isnan(r) || (std::isinf(r) && std::isfinite(x) && std::isfinite(y))) bail("pow outside the finite domain");
     return r;
 }
+// The conversion truncates; both are exact inside the integer domain (and the
+// comparison is false for NaN and infinities).
 inline int64_t py_trunc(double x) {
-    if (!std::isfinite(x) || std::fabs(x) >= 9.0e18) bail("trunc outside the integer domain");
-    return (int64_t)std::trunc(x);
+    if (!(std::fabs(x) < 9.0e18)) bail("trunc outside the integer domain");
+    return (int64_t)x;
 }
 inline int64_t py_floor(double x) {
-    if (!std::isfinite(x) || std::fabs(x) >= 9.0e18) bail("floor outside the integer domain");
-    return (int64_t)std::floor(x);
+    if (!(std::fabs(x) < 9.0e18)) bail("floor outside the integer domain");
+    int64_t t = (int64_t)x;
+    return (double)t > x ? t - 1 : t;
 }
 inline double py_fmod(double x, double y) {
     double r = std::fmod(x, y);
     if (std::isnan(r)) bail("ValueError: math domain error (fmod)");
     return r;
 }
-inline bool finite(double x) { return std::isfinite(x); }
+inline bool finite(double x) { uint64_t b; std::memcpy(&b, &x, 8); return (b & 0x7ff0000000000000ull) != 0x7ff0000000000000ull; }
 
 // Verified C kernels report failures through wtm_fail.
 inline void check_kernel() {

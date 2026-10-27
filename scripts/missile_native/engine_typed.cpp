@@ -880,6 +880,89 @@ void load_escape(const V& m, EvaluateSetup& E) {
     E.target_velocity_raw = t.run; E.straight_from = t.end;
 }
 
+// missile_worker.escape_motion itself: the same expressions in the same order,
+// with the runtime's math functions (std::fmod, atan2, sin, cos, sqrt, acos;
+// degrees as x * (180 / pi)). Input it does not accept bails, and the
+// translated function then raises its error.
+void escape_setup(const V& target, const V& escape, const V& origin_value, EvaluateSetup& E) {
+    constexpr double PI = 3.141592653589793238462643383279502884, DEGREES = 180.0 / PI;
+    V worker = import_module("missile_worker");
+    double gravity = num(field(worker, "ESCAPE_GRAVITY"));
+    auto load_range = vec<2>(field(worker, "ESCAPE_LOAD_G")), delay_range = vec<2>(field(worker, "ESCAPE_DELAY_S"));
+    d3 position = vec_at<3>(target, "position"), velocity = vec_at<3>(target, "velocity"), origin = vec<3>(origin_value);
+    d3 angles = vec_at<3>(target, "angles");
+    double delay = num_at(escape, "delay_s"), load = num_at(escape, "load_g");
+    finite_or_bail(position); finite_or_bail(velocity); finite_or_bail(origin); finite_or_bail(angles);
+    if (velocity[1] != 0) bail("typed escape: target not level");
+    if (!(delay_range[0] <= delay && delay <= delay_range[1]) || !(load_range[0] <= load && load <= load_range[1]))
+        bail("typed escape: load or delay out of range");
+    auto wrapped = [&](double angle) {   // (-pi, pi]
+        angle = std::fmod(angle, 2 * PI);
+        if (std::isnan(angle)) bail("typed escape: math domain");
+        if (angle > PI) angle -= 2 * PI;
+        if (angle <= -PI) angle += 2 * PI;
+        return angle;
+    };
+    double speed = std::sqrt(velocity[0] * velocity[0] + velocity[2] * velocity[2]);
+    d3 turn_point;
+    for (int i = 0; i < 3; ++i) turn_point[i] = position[i] + velocity[i] * delay;
+    double heading = std::atan2(velocity[2], velocity[0]);
+    double turn = wrapped(std::atan2(turn_point[2] - origin[2], turn_point[0] - origin[0]) - heading);
+    double sine = std::sin(heading), cosine = std::cos(heading);
+    double rate = 0., radius = 0., end = delay, exit_heading = heading;
+    d3 exit_point = turn_point, run = velocity;
+    if (speed > 0 && turn != 0) {
+        rate = std::copysign(gravity * std::sqrt(load * load - 1.) / speed, turn);
+        radius = speed / rate;
+        double sign = std::copysign(1., turn);
+        auto ahead = [&](double tau) {
+            double h = heading + rate * tau;
+            double x = turn_point[0] + radius * (std::sin(h) - sine), z = turn_point[2] - radius * (std::cos(h) - cosine);
+            return sign * wrapped(std::atan2(z - origin[2], x - origin[0]) - h);
+        };
+        double step = PI / 180. / std::fabs(rate);
+        double duration = turn / rate, previous = ahead(0.);
+        for (int k = 1; k < 361; ++k) {
+            double value = ahead(k * step);
+            if (value <= 0. && previous < PI / 2) {
+                double low = (k - 1) * step, high = k * step;
+                for (int i = 0; i < 60; ++i) {
+                    double middle = (low + high) / 2;
+                    if (ahead(middle) > 0.) low = middle; else high = middle;
+                }
+                duration = high;
+                break;
+            }
+            previous = value;
+        }
+        end = delay + duration;
+        exit_heading = heading + rate * (end - delay);
+        exit_point = {turn_point[0] + radius * (std::sin(exit_heading) - sine), turn_point[1],
+                      turn_point[2] - radius * (std::cos(exit_heading) - cosine)};
+        run = {speed * std::cos(exit_heading), 0., speed * std::sin(exit_heading)};
+    }
+    TargetMotion& t = E.motion;
+    t = TargetMotion{};
+    t.position = position; t.velocity = velocity; t.quaternion = angles_quaternion(angles);
+    t.escape = true;
+    t.start = delay; t.end = end; t.heading = heading; t.sine = sine; t.cosine = cosine; t.rate = rate; t.radius = radius;
+    t.speed = speed; t.roll = std::copysign(std::acos(1. / load) * DEGREES, turn);
+    t.turn_point = turn_point; t.exit_point = exit_point; t.run = run;
+    t.run_quaternion = angles_quaternion({exit_heading * DEGREES, 0., 0.});
+    for (double x : {t.start, t.end, t.heading, t.sine, t.cosine, t.rate, t.radius, t.speed, t.roll}) finite_or_bail(x);
+    finite_or_bail(t.turn_point); finite_or_bail(t.exit_point); finite_or_bail(t.run);
+    finite_or_bail(t.quaternion); finite_or_bail(t.run_quaternion);
+    E.target_velocity_raw = t.run; E.straight_from = t.end;
+}
+bool same_motion(const TargetMotion& a, const TargetMotion& b) {
+    auto eq = [](double x, double y) { return bits(x) == bits(y); };
+    auto eqv = [&](const auto& x, const auto& y) { for (size_t i = 0; i < x.size(); ++i) if (!eq(x[i], y[i])) return false; return true; };
+    return a.escape == b.escape && eq(a.start, b.start) && eq(a.end, b.end) && eq(a.heading, b.heading) && eq(a.sine, b.sine)
+        && eq(a.cosine, b.cosine) && eq(a.rate, b.rate) && eq(a.radius, b.radius) && eq(a.speed, b.speed) && eq(a.roll, b.roll)
+        && eqv(a.position, b.position) && eqv(a.velocity, b.velocity) && eqv(a.quaternion, b.quaternion)
+        && eqv(a.turn_point, b.turn_point) && eqv(a.exit_point, b.exit_point) && eqv(a.run, b.run) && eqv(a.run_quaternion, b.run_quaternion);
+}
+
 V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Mode mode = typed_mode();
     if (mode == Mode::Off) return call(reference, args, kwargs);
@@ -899,7 +982,7 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Comparison comparison{&p};
     int64_t typed_steps = 0;
     const char* declined = nullptr;
-    V typed_result;
+    V typed_result, escape_equal;
     try {
         auto began = std::chrono::steady_clock::now();
         // An escaping target (no-escape zone) is set up from its release state,
@@ -909,8 +992,14 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
             target = make_dict({{"position", item(a[2], V("position"))}, {"velocity", item(a[2], V("velocity"))},
                                 {"angles", item(a[2], V("angles"))}});
         (cached_setup() ? prepare_cached : prepare_full)(a[0], a[1], target, a[3], a[4], p);
-        if (!escape.is_none())
-            load_escape(invoke_fn("missile_worker", "escape_motion", {target, escape, item(a[1], V("position"))}), p.setup);
+        if (!escape.is_none()) {
+            escape_setup(target, escape, item(a[1], V("position")), p.setup);
+            if (mode == Mode::Compare) {
+                EvaluateSetup reference_escape;
+                load_escape(invoke_fn("missile_worker", "escape_motion", {target, escape, item(a[1], V("position"))}), reference_escape);
+                escape_equal = V(same_motion(p.setup.motion, reference_escape.motion));
+            }
+        }
         auto prepared = std::chrono::steady_clock::now();
         if (mode == Mode::Compare) comparison.state = p.session;
         EvaluateResult r = evaluate_loop(p.props, p.session, p.setup);
@@ -935,6 +1024,7 @@ V typed_evaluate(const V& reference, const Args& args, const Kw& kwargs) {
     Kw report{{"type", "typed_compare"}, {"missile", a[0]}, {"declined", declined ? V(std::string(declined)) : V()}};
     report.emplace_back("cache_hit", V(p.cache_hit));
     report.emplace_back("setup_cached", V(cached_setup()));
+    report.emplace_back("escape_equal", escape_equal);
     bool same = !declined && json_dump(expected, true) == json_dump(typed_result, true);
     report.emplace_back("result_equal", V(same));
     if (!declined && !same) { report.emplace_back("expected", expected); report.emplace_back("typed", typed_result); }
