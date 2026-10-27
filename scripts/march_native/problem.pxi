@@ -282,7 +282,7 @@ cdef class CurveProblem(NativeCorrector):
         cdef double quat[4]
         cdef double vel[3]
         cdef Air air
-        turn_quaternion(x[0], x[1], quat)
+        turn_quaternion(x[0], self.model.turn*x[1], quat)
         world_to_body_air(quat, self.speed_kmh/3.6, vel)
         air_cache(vel, self.model.altitude, &air)
         return air.mach

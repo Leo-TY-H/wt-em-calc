@@ -67,7 +67,7 @@ class TrimCurve:
         pass
 
 
-        from em_solver import turn_geometry
+        from em_solver import turn_geometry, turn_direction
         from air_state import cache, world_to_body_air
         from component_assembly import f32
         x, load = self.decode(z)
@@ -92,7 +92,7 @@ class TrimCurve:
             if not self.inside(q):
                 continue
             geometry = turn_geometry(trial_x[0], trial_x[1], speed, load, self.solver.dt,
-                air['ias_u'], self.solver.sideslip_attitude_deg)
+                air['ias_u'], self.solver.sideslip_attitude_deg, turn_direction(self.solver.config))
             velocity = world_to_body_air(geometry['quaternion'], [speed, 0., 0.])
             if cache(velocity, self.solver.config['altitude_m'])['mach'] == mach:
                 return q

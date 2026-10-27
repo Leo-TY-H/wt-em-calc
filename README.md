@@ -70,6 +70,13 @@ This follows the assistance setting independently of manual trim, torque/gyro
 and Flutter. Aircraft using advanced mass or an explicit full-payload CG rule
 retain their native mass behavior.
 
+**Turn** selects a left or right turn per entry (`turn_direction`, default
+`"left"`). The model's body axes are forward, up and left, and a left turn
+lowers the left wing; a right turn is its mirror. Bank is reported into the
+turn. With torque/gyro (SB) the two differ: propeller torque, slipstream and
+gyroscopic precession act differently, so a clockwise propeller pitches the
+nose up in left turns and down in right turns. Left charts are unchanged.
+
 The diagnostic API still accepts explicit solver/model settings.
 `trim_solver_mode="nested"` selects the original nested correction algorithm
 with current propulsion conventions, retained history and full trim.
