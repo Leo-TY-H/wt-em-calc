@@ -39,7 +39,9 @@ scattered hits close to the target, cost little. Close-range miss bands (gaps())
 are judged at their own range instead: a band on one neighbour only, or one that
 moves, also adds a ray, and new rays probe inside their neighbours' bands. Along
 a ray, sharp flight-time drops between hits and dense sampling near the inner
-boundaries find bands that no coarse sample touches (Ray.search).
+boundaries find bands that no coarse sample touches (Ray.search). Where hits
+and misses alternate beyond the range up to which every launch hits (a ragged
+far edge, Ray.fringe), the envelope ends at that range (Leo, 2026-10-27).
 
 No-escape zone (Leo, 2026-10-26): with config['escape'] a second, independent
 search runs against a target that breaks away at launch (missile_worker.
@@ -82,6 +84,20 @@ GAP_WIDTHS = 3.     # interior misses at least this many local tolerances wide c
 # 1 + GAP_WIDTHS tolerances: see Ray.search.
 CLOSE_M = 10000.
 ZONE = 1.4
+# Ragged far edge (Leo, 2026-10-27): near its energy limit a missile can pass the
+# target just outside its fuze radius, and hits and misses then alternate over
+# kilometres beyond the range up to which every launch hits. A far edge with a
+# near miss beyond it (within FRINGE_FUZE fuze radii), a miss shortly inside it,
+# or a neighbouring ray with such a band is checked on a grid two local
+# tolerances apart: a fraction FRINGE_RUN of the range inside the innermost miss
+# (within a factor FRINGE_SPAN of the farthest hit) and FRINGE_REACH beyond the
+# farthest hit. Once a miss lies inside the farthest hit, that band is sampled
+# half a tolerance apart. The hit intervals end at the band's innermost miss:
+# scattered hits beyond it are unlikely and not part of the envelope.
+FRINGE_FUZE = 15.
+FRINGE_RUN = .04
+FRINGE_REACH = .05
+FRINGE_SPAN = 1.25
 MAX_LAYERS = 25
 ESCAPE_DEFAULT_G = 9.               # default escape load factor (Leo, 2026-10-26)
 QUALITY = dict(quick=dict(azimuth_step_deg=30., detail_step_deg=3.75, edge_step_deg=1., tolerance=.03, tolerance_m=50.),
@@ -434,8 +450,9 @@ def _middle(a, b):
 class Ray:
     """Search one horizontal ray for its hit intervals; a generator of range batches."""
 
-    def __init__(self, key, layer, azimuth, low, high, tolerance, tolerance_m, level=0, escape=False):
+    def __init__(self, key, layer, azimuth, low, high, tolerance, tolerance_m, level=0, escape=False, fuze_m=0.):
         self.key, self.layer, self.azimuth = key, layer, azimuth
+        self.fuze_m = fuze_m   # proximity fuze radius: what counts as a near miss at the far edge
         self.low, self.high = low, high
         self.tolerance, self.tolerance_m = tolerance, tolerance_m
         self.level = level
@@ -448,6 +465,7 @@ class Ray:
         self.started = self.finished = None
         self.seed_source = None
         self.blocked = False   # outside the launch zone: no launch, nothing to simulate
+        self.hint = False      # a neighbouring ray found a ragged far edge
 
     def width(self, r): return max(self.tolerance_m, self.tolerance * r)
 
@@ -472,6 +490,7 @@ class Ray:
                 outcomes = yield values
                 self.samples.update(zip(values, outcomes))
         if self.blocked: return self.finish()
+        self.hint = bool(seed and seed.get('ragged'))
         hits = lambda: sorted(r for r, o in self.samples.items() if o['hit'])
         out = inward = down = up = .1
         descend = ascend = bottom = None   # inner probes of the predicted maximum and minimum
@@ -543,27 +562,71 @@ class Ray:
         # about the hits reveals; there the ranges next to hits are sampled
         # densely enough to find bands GAP_WIDTHS local tolerances wide, and
         # whatever this finds widens the zone and is resolved in turn.
+        # A ragged far edge (FRINGE_FUZE) is sampled at the local tolerance throughout.
         dense = 1 + GAP_WIDTHS * self.tolerance
         while True:
             rs = sorted(self.samples)
-            zone = self.zone(rs)
+            ragged = self.fringe(rs)
+            zone = self.zone(rs, ragged)
             batch = [_middle(a, b) for a, b in zip(rs, rs[1:])
                      if (self.samples[a]['hit'] != self.samples[b]['hit'] or self.drop(a, b)
                          or (zone and b > zone[0] and a < zone[1] and b > a * dense
                              and (self.samples[a]['hit'] or self.samples[b]['hit'])))
                      and b - a > self.width((a + b) / 2)]
+            if ragged:
+                # A fixed grid (powers of 1 + half the tolerance), so later rounds reuse
+                # earlier points; every fourth point until this ray or a neighbour has
+                # found a band. Inside the
+                # band the outcome follows where the last integration step falls, so
+                # each point is moved by a fixed pseudo-random fraction of a step:
+                # a regular grid would see the same few step phases.
+                step = math.log(1 + self.tolerance / 2)
+                stride = 1 if ragged[2] < ragged[3] or self.hint else 4
+                k = stride * math.ceil(math.log(ragged[0]) / step / stride)
+                while math.exp(k * step) <= ragged[1]:
+                    batch.append(math.exp((k + (k * 2654435761 % 1000) / 1000 * .6 - .3) * step)); k += stride
+            batch = self.fresh(batch)
             if not batch: break
             yield from run(batch)
         return self.finish()
 
-    def zone(self, rs):
+    def zone(self, rs, ragged=None):
         """Ranges [low, high] sampled densely: within ZONE of the transitions below the
-        farthest one (which ends the envelope) and of the flight-time drops, below
-        CLOSE_M; or None."""
+        farthest one (which ends the envelope, as does a ragged far edge) and of the
+        flight-time drops, below CLOSE_M; or None."""
         cuts = [(a + b) / 2 for a, b in zip(rs, rs[1:]) if self.samples[a]['hit'] != self.samples[b]['hit']]
-        if cuts and not self.samples[rs[-1]]['hit']: cuts.pop()
+        if ragged: cuts = [c for c in cuts if c < (rs[ragged[2] - 1] + rs[ragged[2]]) / 2]
+        elif cuts and not self.samples[rs[-1]]['hit']: cuts.pop()
         cuts = sorted(c for c in cuts + [(a + b) / 2 for a, b in zip(rs, rs[1:]) if self.drop(a, b)] if c <= CLOSE_M)
         return (cuts[0] / ZONE, min(cuts[-1] * ZONE, CLOSE_M)) if cuts else None
+
+    def ragged(self, r):
+        """Whether the sample at r is a miss that passed within FRINGE_FUZE fuze radii."""
+        o = self.samples[r]
+        return not o['hit'] and o.get('closest_m') is not None and o['closest_m'] <= FRINGE_FUZE * self.fuze_m
+
+    def fringe(self, rs):
+        """The ragged far edge of the sorted samples rs, or None.
+
+        Returns (low, high, inner, last, solid): the ranges sampled on the
+        tolerance grid, the indices of the band's innermost miss (the miss beyond
+        the farthest hit when there is none inside) and of the farthest hit, and
+        whether hits fill a fraction FRINGE_RUN of the range inside that miss.
+        """
+        hit = lambda i: self.samples[rs[i]]['hit']
+        hits = [i for i in range(len(rs)) if hit(i)]
+        if not self.fuze_m or not hits or hits[-1] + 1 == len(rs): return None
+        last = hits[-1]
+        floor = rs[last] / FRINGE_SPAN
+        if not (self.hint or self.ragged(rs[last + 1]) or any(not hit(i) and rs[i] >= floor for i in range(last))): return None
+        inner, i, solid = last + 1, last, False
+        while i >= 0 and rs[i] >= floor:
+            if not hit(i): inner = i
+            elif rs[i] <= rs[inner] * (1 - FRINGE_RUN): solid = True; break
+            i -= 1
+        low = max(floor, rs[inner] * (1 - FRINGE_RUN))
+        high = min(self.high, rs[last] * (1 + FRINGE_REACH))
+        return low, high, inner, last, solid
 
     def drop(self, a, b):
         """Whether the hits at ranges a < b reach the target at sharply decreasing times.
@@ -578,9 +641,12 @@ class Ray:
 
     def finish(self):
         rs = sorted(self.samples)
+        ragged = self.fringe(rs)
+        # A ragged edge needs a run of hits inside it and a hit beyond its first miss.
+        band = ragged if ragged and ragged[4] and ragged[2] < ragged[3] else None
         intervals = []
         for i, r in enumerate(rs):
-            if not self.samples[r]['hit']: continue
+            if not self.samples[r]['hit'] or (band and i >= band[2]): continue
             start = (rs[i - 1] + r) / 2 if i else r
             if intervals and intervals[-1]['last'] == rs[i - 1]:
                 intervals[-1].update(last=r); continue
@@ -604,6 +670,8 @@ class Ray:
                                max_time_s=self.samples[last['last']]['time_s'], min_time_s=self.samples[first['first']]['time_s'])
         else:
             self.result.update(min_range_m=None, max_range_m=None)
+        # Hits and misses alternate beyond max_range_m (scattered hits not in the intervals).
+        self.result['ragged_edge'] = bool(band and intervals)
         if self.blocked: self.result['blocked'] = True
         return self.result
 
@@ -632,7 +700,7 @@ def plan(config, limits, escape=False):
         high = min(config['max_range_m'], math.sqrt(max(slant * slant - dh * dh, 0.)))
         for ai, azimuth in enumerate(azimuths(config)):
             ray = Ray((li, round(azimuth / unit)), layer, azimuth, low, max(high, low), config['tolerance'], config['tolerance_m'],
-                      escape=escape)
+                      escape=escape, fuze_m=limits['fuze_radius_m'])
             ray.cell = (li, ai)
             ray.blocked = outside(yaw_limit, azimuth)
             rays.append(ray)
@@ -756,8 +824,9 @@ class Grid:
         spread = max(base, (highs[-1] - highs[0]) / 2 + .02)
         spread_low = max(base + .04, (lows[-1] - lows[0]) / 2 + .04)
         limits = sum(e[2] for e in estimates)
+        ragged = any(self.rays[cell].result.get('ragged_edge') for cell in self.parents[key].values() if cell is not None)
         return dict(low=_unlog(median(lows)), high=_unlog(median(highs)), at_limit=limits * 2 > len(estimates),
-                    spread=min(spread, .3), spread_low=min(spread_low, .5), extra=extra, source='neighbours', parents=parents)
+                    spread=min(spread, .3), spread_low=min(spread_low, .5), extra=extra, ragged=ragged, source='neighbours', parents=parents)
 
 
 class Planner:
@@ -868,7 +937,7 @@ class Planner:
         layer = left.key[0]
         key = (layer, position)
         ray = Ray(key, left.layer, position * self.unit, left.low, left.high, left.tolerance, left.tolerance_m,
-                  level=max(left.level, right.level) + 1, escape=self.escape)
+                  level=max(left.level, right.level) + 1, escape=self.escape, fuze_m=left.fuze_m)
         ray.blocked = outside(self.yaw_limit, ray.azimuth)
         line = self.lines[layer]
         index = 0
@@ -899,6 +968,8 @@ class Planner:
         if len(x) != len(y): return True
         u, v = self.bands(a), self.bands(b)
         if len(u) != len(v): return True
+        # A ragged far edge on one side only (the other may have sampled none of it).
+        if bool(a.get('ragged_edge')) != bool(b.get('ragged_edge')): return True
         if smooth is not None: return not smooth
         limit = SHAPE * c['tolerance'] * scale
         return (any(abs(p[0] - q[0]) > limit or abs(p[1] - q[1]) > limit for p, q in zip(x, y))
@@ -913,6 +984,7 @@ class Planner:
         limited = [s[0][0] <= _log(left.low) * (1 + 1e-12) for s in live]
         parents = [list(left.key), list(right.key)]
         bands = [_middle(a, b) for ray in (left, right) for a, b in gaps(ray.result, ray.tolerance, ray.tolerance_m)]
+        ragged = bool(left.result.get('ragged_edge') or right.result.get('ragged_edge'))
         if len(live) == 2 and len(x) == len(y):
             # Interpolate; the probes bracket the prediction by a quarter of the neighbours' difference.
             spread = min(.3, max(.45 * tolerance, abs(x[-1][1] - y[-1][1]) / 4))
@@ -920,12 +992,12 @@ class Planner:
             inner = [_unlog((p[1] + q[1] + p2[0] + q2[0]) / 4) for p, p2, q, q2 in zip(x, x[1:], y, y[1:])]
             return dict(low=_unlog((x[0][0] + y[0][0]) / 2), high=_unlog((x[-1][1] + y[-1][1]) / 2), at_limit=all(limited),
                         spread=spread, spread_low=spread_low, step=max(2 * spread, 2 * tolerance),
-                        step_low=max(2 * spread_low, 2 * tolerance), extra=inner + bands, source='between', parents=parents)
+                        step_low=max(2 * spread_low, 2 * tolerance), extra=inner + bands, ragged=ragged, source='between', parents=parents)
         # An edge (one side has no hit) or a change in the gaps: start from the live
         # neighbours' outer bounds and probe inside each of their gaps.
         inner = [_unlog((p[1] + q[0]) / 2) for s in live for p, q in zip(s, s[1:])]
         return dict(low=_unlog(min(s[0][0] for s in live)), high=_unlog(max(s[-1][1] for s in live)), at_limit=any(limited),
-                    spread=.06, spread_low=.1, edge=len(live) == 1, extra=inner + bands, source='edge' if len(live) == 1 else 'gaps',
+                    spread=.06, spread_low=.1, edge=len(live) == 1, extra=inner + bands, ragged=ragged, source='edge' if len(live) == 1 else 'gaps',
                     parents=parents)
 
 
