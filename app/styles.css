@@ -99,10 +99,9 @@ body .action-row>.reset-button{flex:0 0 auto;width:auto;margin-top:0;min-height:
 #em-workspace .chart-card,#em-workspace .inspector{background:none;border:0;border-radius:0}
 #em-workspace .chart-toolbar{padding:0 0 12px;border-bottom:0}
 #em-workspace .inspector{padding:10px 0 0}
-/* Three visible columns (Leo, 2026-10-27): flight + attitude and controls, forces + engine, component forces. */
-.point-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.3fr);gap:32px}
-.point-grid section+section{margin-top:22px}
-@media(max-width:1150px){.point-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.point-grid>div:last-child{grid-column:1/-1}}
+/* Four sections side by side (Leo, 2026-10-27): flight, attitude and controls, forces, engine. */
+.point-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:32px}
+@media(max-width:1150px){.point-grid{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:22px}}
 @media(max-width:760px){.point-grid{grid-template-columns:minmax(0,1fr)}}
 
 /* Weapon loadout: summary in the aircraft settings and the pylon editor dialog. */
