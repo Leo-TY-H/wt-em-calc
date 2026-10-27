@@ -491,7 +491,8 @@
     if(el('missile-view').value==='3d'&&flightBounds&&el('missile-chart').data&&el('missile-chart').clientWidth)
       Plotly.relayout(el('missile-chart'),{'scene.aspectratio':sceneFit(flightBounds).aspectratio});
   }).observe(el('missile-chart'));
-  const trackingLabels={observed:'Target observed',coasting:'Coasting on the previous track',inertial:'Inertial guidance · seeker not tracking',acquiring:'Acquiring / searching for target'};
+  // Seeker states as short codes (Leo, 2026-10-27): tracking (observed or coasting on the track), inertial guidance, acquiring.
+  const trackingLabels={observed:'TRK',coasting:'TRK',inertial:'IOG',acquiring:'ACQ'};
   const formatValue=(value,unit='',digits=1)=>Number.isFinite(value)?`${value.toLocaleString(undefined,{maximumFractionDigits:digits,minimumFractionDigits:digits})}${unit?' '+unit:''}`:'Unavailable';
   function flightHover(row,role='missile',flight=result) {
     const range=Math.hypot(...row.missile.map((v,i)=>v-row.target[i]));
@@ -610,7 +611,7 @@
     if(!result)return;const time=timeline[index],rows=flights.map(f=>f.trajectory[indexAt(f.trajectory,time)]),row=rows[focusIndex];
     el('missile-time').value=index;playbackTime=time;el('missile-time-label').textContent=time.toFixed(2)+' s';
     const finished=time>=result.elapsed_s;
-    el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':`Sample ${row.time_s.toFixed(2)} s · ${(row.speed_mps*3.6).toFixed(1)} km/h · ${trackingLabels[row.tracking_state]||'Tracking unavailable'}`);
+    el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':`${row.time_s.toFixed(2)} s · ${trackingLabels[row.tracking_state]||'—'}`);
     const targetPosition=result.scenario.target.position.map((v,i)=>v+result.scenario.target.velocity[i]*time);
     const positions=[...rows.map(r=>r.missile),targetPosition];
     const projected=Object.fromEntries(Object.entries(projectedPositions(positions)).map(([axis,values])=>[axis,values.map(v=>[v])]));
