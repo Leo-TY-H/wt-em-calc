@@ -9,7 +9,6 @@
   if (!root) return;
   const MAX = 8, PROPS = ['piston', 'turboprop', 'mixed'];
   const defaults = {altitude: 1000, speed: 300, axis: 'altitude', quantity: 'power'};
-  const REMOVE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
   // y: the plotted value of a sweep row (engine or propeller 1 where there are several; the details list them all).
   const QUANTITIES = {
     power: {label: 'Power', title: 'Shaft power (hp)', y: r => r.power_hp, digits: 0, unit: ' hp', props: true},
@@ -44,9 +43,12 @@
     <section class="chart-card"><div class="chart-toolbar">${radios('engine-quantity', QUANTITIES, defaults.quantity, 'Plotted quantity')}</div>
       <div id="engine-chart" aria-label="Engine performance"><div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div></div></section>
     <section id="engine-inspector" class="inspector" hidden><div class="inspector-heading"><h2 id="engine-point-title"></h2></div><div id="engine-point"></div></section>
-  </main>`;
+  </main>
+  <dialog id="engine-dialog" class="entry-dialog" aria-labelledby="engine-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="engine-dialog-title"></h2></div><button type="button" id="engine-dialog-close" class="text-button" aria-label="Close settings">✕</button></header>
+    <div class="entry-dialog-body"><label class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
+      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></dialog>`;
 
-  let entries = [], nextEntry = 1, results = new Map(), running = false, shown = null;
+  let entries = [], nextEntry = 1, results = new Map(), running = false, shown = null, editing = null;
   const catalog = () => (typeof state !== 'undefined' && state.meta) ? state.meta.aircraft : null;
   const showError = text => { el('engine-error').textContent = text; el('engine-error').hidden = !text; };
   const value = id => Number(el(id).value);
@@ -74,30 +76,55 @@
     }
     el('engine-search-empty').hidden = visible > 0;
   }
-  const pitchOptions = current => ['auto', ...Array.from({length: 21}, (_, i) => String(100 - 5 * i))].map(v =>
-    `<option value="${v}"${v === current ? ' selected' : ''}>${v === 'auto' ? 'Auto pitch' : v + '% pitch'}</option>`).join('');
+  // Cards as on the EM page (Leo, 2026-10-28): edit, duplicate and remove icons; edit opens the settings popup, which
+  // holds only what changes engine output: the propeller control (the only per-aircraft input of the propulsion here).
   function renderEntries() {
     el('engine-selected').innerHTML = entries.map((e, i) => {
-      // One row as the missile cards; aircraft with a propeller pitch choice put it under the name.
-      const a = aircraftOf(e), name = a?.name || e.aircraft_id;
-      return `<article class="aircraft-entry${pitchable(a) ? '' : ' missile-entry'}" data-entry="${e.id}" style="--entry-color:${entryColors[i]}">
+      const a = aircraftOf(e), name = a?.name || e.aircraft_id, off = running ? ' disabled' : '';
+      return `<article class="aircraft-entry ${e.id === editing ? 'active' : ''}" data-entry="${e.id}" style="--entry-color:${entryColors[i]}">
         <div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeText(cleanName(name))}</strong><code>${escapeText(nameCode(name) || e.aircraft_id)}</code></div>
-        <div class="entry-actions">${pitchable(a) ? `<select class="engine-pitch" data-pitch aria-label="Propeller pitch of entry ${i + 1}" title="Propeller pitch"${running ? ' disabled' : ''}>${pitchOptions(e.pitch)}</select>` : ''}<button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i + 1}" title="Remove"${running ? ' disabled' : ''}>${REMOVE}</button></div></article>`;
+        <div class="entry-actions">${pitchable(a) ? `<button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i + 1}" title="Edit settings"${off}>${EDIT_ICON}</button>` : ''}
+        <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i + 1}" title="Duplicate"${entries.length >= MAX || running ? ' disabled' : ''}>${COPY_ICON}</button>
+        <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i + 1}" title="Remove"${off}>${REMOVE_ICON}</button></div></article>`;
     }).join('');
   }
+  const addEntry = (aircraft_id, pitch = 'auto') => {
+    if (entries.length >= MAX) return;
+    entries.push({id: `engine_${nextEntry++}`, aircraft_id, pitch}); renderEntries(); filter(); updateForm();
+  };
   el('engine-list').addEventListener('click', event => {
-    const button = event.target.closest('[data-add]'); if (!button || button.disabled || entries.length >= MAX) return;
-    entries.push({id: `engine_${nextEntry++}`, aircraft_id: button.dataset.add, pitch: 'auto'}); renderEntries(); filter(); updateForm();
+    const button = event.target.closest('[data-add]'); if (button && !button.disabled) addEntry(button.dataset.add);
   });
   el('engine-selected').addEventListener('click', event => {
-    const button = event.target.closest('[data-action=remove]'); if (!button || running) return;
-    entries = entries.filter(e => e.id !== button.closest('[data-entry]').dataset.entry);
-    renderEntries(); filter(); updateForm(); render();
+    const button = event.target.closest('[data-action]'); if (!button || button.disabled || running) return;
+    const index = entries.findIndex(e => e.id === button.closest('[data-entry]').dataset.entry), entry = entries[index];
+    if (button.dataset.action === 'duplicate') return addEntry(entry.aircraft_id, entry.pitch);
+    if (button.dataset.action === 'remove') { entries.splice(index, 1); renderEntries(); filter(); updateForm(); render(); return; }
+    editing = entry.id; showSettings(); renderEntries();
+    el('engine-dialog-title').textContent = `${index + 1} · ${cleanName(aircraftOf(entry)?.name || entry.aircraft_id)}`;
+    el('engine-dialog').style.setProperty('--entry-color', entryColors[index]);
+    el('engine-dialog').showModal();
   });
-  el('engine-selected').addEventListener('change', event => {
-    if (!event.target.matches('[data-pitch]')) return;
-    entries.find(e => e.id === event.target.closest('[data-entry]').dataset.entry).pitch = event.target.value;
+
+  // ---- Settings popup: applies as it changes; ✕, Escape or a click outside puts it away ------
+  function showSettings() {
+    const entry = entries.find(e => e.id === editing), kind = aircraftOf(entry)?.manual_controls?.pitch_kind;
+    el('engine-pitch-auto').checked = entry.pitch === 'auto';
+    if (entry.pitch !== 'auto') el('engine-pitch').value = entry.pitch;
+    el('engine-pitch-name').textContent = kind === 'RPM governor' ? 'Propeller RPM setting' : kind === 'Blade angle' ? 'Propeller blade-angle setting' : 'Propeller control';
+    syncSettings();
+  }
+  function syncSettings() {
+    const auto = el('engine-pitch-auto').checked;
+    el('engine-pitch').disabled = auto; el('engine-pitch-label').textContent = auto ? 'Automatic' : el('engine-pitch').value + '%';
+  }
+  for (const id of ['engine-pitch-auto', 'engine-pitch']) el(id).addEventListener('input', () => {
+    syncSettings();
+    const entry = entries.find(e => e.id === editing); if (entry) entry.pitch = el('engine-pitch-auto').checked ? 'auto' : el('engine-pitch').value;
   });
+  el('engine-dialog-close').addEventListener('click', () => el('engine-dialog').close());
+  el('engine-dialog').addEventListener('click', event => { if (event.target === el('engine-dialog')) el('engine-dialog').close(); });
+  el('engine-dialog').addEventListener('close', () => { editing = null; renderEntries(); });
   el('engine-search').addEventListener('input', filter);
   el('engine-search').addEventListener('keydown', event => { if (event.key === 'Enter') event.preventDefault(); });
 
