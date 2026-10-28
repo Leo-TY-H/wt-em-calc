@@ -192,7 +192,7 @@ cdef class Finisher:
         self.invert_elevator = bool(solver.controls['invert_elevator'])
         self.roll_leveling = bool(solver.fm.get('RollLeveling', True))
         self.structural = bool(cfg['structural_limits']);self.has_sweep = bool(solver.has_sweep)
-        self.instructor_enabled = bool(cfg['instructor'])
+        self.instructor_enabled = bool(cfg['autotrim'])     # autotrim authority (and the Instructor's AoA limit when on)
         self.flaps_available = bool(solver.flap_profile['available']) and cfg['flaps_percent'] > 0
         self.flaps_percent = cfg['flaps_percent']
         self.constants = dict(description=description(cfg), revision=REVISION, stable_revision=STABLE_POLAR_REVISION,

@@ -228,7 +228,7 @@ cdef class Model:
         self.ext_thrust_base = fm.get('ExtThrustBaseMult', 1.)
         self.convert_aoa = bool(fm.get('ConvertAoa', False));self.roll_leveling = bool(fm.get('RollLeveling', True))
         self.torque_gyro = bool(cfg['torque_gyro'])
-        self.instructor = bool(cfg['instructor'])
+        self.instructor = bool(cfg['autotrim'])
         self.optimized = cfg['trim_mode'] == 'optimized';self.trim_limit = cfg['trim_limit']
         for i in range(3):self.fixed_trim[i] = cfg['fixed_trim'][i]
         self.cfg_default_trim = cfg['trim_mode'] == 'optimized' and cfg['trim_limit'] == 1.

@@ -320,7 +320,7 @@ class Curve:
             for side in (0,1):
                 def control(v,axis=axis,side=side):
                     bounds=(self._solver_at(v,s).instructor_at(v,v.get('speed',self.speed/3.6),v['equilibrium_load_g'])['control_bounds']
-                            if s.config['instructor'] else v['allocation']['bounds'])
+                            if s.config['autotrim'] else v['allocation']['bounds'])
                     return (1. if side==0 else -1.)*(v['allocation']['commands'][axis]-bounds[axis][side])-3e-5
                 commands=point.get('commands')
                 bounds=(point.get('instructor') or {}).get('control_bounds',point.get('control_bounds'))
@@ -336,7 +336,7 @@ class Curve:
             # can manufacture a tiny apparent load maximum. Retain the actual
             # reached face; finish_edge still checks the preceding branch.
             if (kind=='control' and point.get('valid') and point.get('converged') and
-                    not self.solver.config['instructor']):
+                    not self.solver.config['autotrim']):
                 commands=point.get('commands');bounds=point.get('control_bounds')
                 if (commands is not None and bounds is not None and
                         commands[axis-2] in bounds[axis-2]):

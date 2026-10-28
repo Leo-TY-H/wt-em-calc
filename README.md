@@ -64,11 +64,22 @@ with supported ammunition data and can still be unchecked. It includes the
 standard gun belts and countermeasures in the mass model. **Additional settings**
 retains ammunition, armament variant and additional mass controls.
 
-Instructor assistance applies the game's authored payload multiplier when
-calculating centre of gravity and inertia; total payload mass is unchanged.
-This follows the assistance setting independently of manual trim, torque/gyro
-and Flutter. Aircraft using advanced mass or an explicit full-payload CG rule
-retain their native mass behavior.
+**Instructor** and **Autotrim** follow the game's control modes. Autotrim
+(`autotrim`) is on in every control mode except full real and off in SB: it
+holds the trim at the one-g level-flight value for the current speed and
+locks out manual trim, so the stick and pedals deflect around that trim. The
+Instructor (`instructor`, mouse aim and simplified controls) adds its AoA
+limit and needs autotrim. Instructor and autotrim on is the former RB,
+autotrim only is RB realistic controls, and both off is full real or SB, where
+the pilot trims freely. Torque/gyro follows autotrim in the browser (on exactly
+when autotrim is off); the API keeps `torque_gyro` independent. Settings
+without `autotrim` follow `instructor`.
+
+Autotrim applies the game's authored payload multiplier when calculating
+centre of gravity and inertia; total payload mass is unchanged. This follows
+the autotrim setting independently of the Instructor, torque/gyro and Flutter.
+Aircraft using advanced mass or an explicit full-payload CG rule retain their
+native mass behavior.
 
 **Turn** selects a left or right turn per entry (`turn_direction`, default
 `"left"`). The model's body axes are forward, up and left, and a left turn

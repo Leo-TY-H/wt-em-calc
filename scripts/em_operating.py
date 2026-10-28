@@ -200,7 +200,7 @@ def operating_point(self, speed, load, x, propulsion_override=None,canonical_pro
                 propulsion_phase_frames=len(phases) if phases[0] is not None else 0,
 
 
-                phase_results=[dict(air=p['air'],history=p['history']) for p in phase_results] if self.config['instructor'] else [],
+                phase_results=[dict(air=p['air'],history=p['history']) for p in phase_results] if self.config['autotrim'] else [],
                 maximum_wing_load_ratios=wing_ratios,
                 allocation=allocation,velocity=velocity,stall_margin=stall_margin,
                 negative_stall_margin=negative_stall_margin,flaps=flaps,gear=self.gear,instructor=None,propulsion=propulsion,

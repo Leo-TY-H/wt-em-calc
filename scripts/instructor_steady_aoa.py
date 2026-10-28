@@ -31,7 +31,8 @@ def controller_limits(solver, value, speed=None):
     result['adjusted_wing_angles_deg'] = [
         min(min(item['adjusted_wing_angles_deg']) for item in results),
         max(max(item['adjusted_wing_angles_deg']) for item in results)]
-    result.update(model='Steady effective AoA schedule (approximation)',
+    result.update(model='Steady effective AoA schedule (approximation)' if solver.config.get('instructor', True)
+                  else 'Autotrim authority (Instructor off)',
                   model_revision=REVISION, pitch_predictor_recheck=False)
     from instructor_trim_equilibrium import REVISION as authority_revision
     result['authority_revision'] = authority_revision

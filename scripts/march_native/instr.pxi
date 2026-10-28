@@ -447,6 +447,7 @@ cdef class Instructor:
     cdef Primary sel           # selected_properties(fm) for the Instructor authority ranges
     cdef Primary alloc_props   # solver.controls with the retained-trim availability
     cdef bint quasi_steady, direct_mode, rudder_trim_needed
+    cdef bint aoa_limit       # the Instructor's AoA limit (off: autotrim authority only, realistic controls)
     cdef double rudder_incidence
     cdef Polar vstab0
     cdef public dict trim_cache
@@ -486,6 +487,7 @@ cdef class Instructor:
         self.authority_revision = authority_revision
         self.authority_mode = cfg.get('instructor_authority_mode', 'native')
         self.direct_mode = cfg.get('instructor_authority_mode') == 'direct'
+        self.aoa_limit = bool(cfg.get('instructor', True))
         tp = aircraft_secondary_properties(fm, {})
         flaps = solver.flaps
         self.flaps_value = flaps
@@ -1200,6 +1202,7 @@ cdef class Instructor:
                          tail_angle_bounds_deg=[self.tail_bounds[0], self.tail_bounds[1]], flow_angle_deg=r.bal[i].flow,
                          direct_predictor=bool(r.bal[i].direct)) for i in range(2)]
         success = r.success
+        if not self.aoa_limit:demands = None;balances = []
         return dict(converged=success or r.independent, margin=pmin(angle_margin, mechanical), margins=margins,
             authority_mode=self.authority_mode,
             envelope_margin=angle_margin, pitch_margin=angle_margin, angle_margin=angle_margin,
@@ -1208,7 +1211,7 @@ cdef class Instructor:
             sticks=[r.sticks[0], r.sticks[1], r.sticks[2]] if success else None, static_trim=self.autos[r.auto_index],
             control_authority_trim_independent=r.independent,
             delivered_pitch=delivered_pitch,
-            required_pitch=delivered_pitch, angle_limits_deg=[r.low, r.high],
+            required_pitch=delivered_pitch, angle_limits_deg=[r.low, r.high] if self.aoa_limit else None,
             effective_angle_limits_deg=[r.effective[0], r.effective[1]], adjusted_wing_angles_deg=[r.adjusted[0], r.adjusted[1]],
             native_angle_rate_rad_s=r.rate, model='effective AoA schedule with reduced moment balance',
             rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
@@ -1219,7 +1222,7 @@ cdef class Instructor:
         result = self.effective_dict(r, delivered_pitch)
         a = result['adjusted_wing_angles_deg']
         result['adjusted_wing_angles_deg'] = [min(a), max(a)]
-        result.update(model='Steady effective AoA schedule (approximation)',
+        result.update(model='Steady effective AoA schedule (approximation)' if self.aoa_limit else 'Autotrim authority (Instructor off)',
                       model_revision='steady-effective-aoa-fixed-autotrim-v9', pitch_predictor_recheck=False)
         result['authority_revision'] = self.authority_revision
         return result
@@ -1309,12 +1312,19 @@ cdef class Instructor:
         demand_angle[1] = pmin(upper, high);demand_acc[1] = S(M(-pmin(S(high, upper), 10.), kpd), damping)
         kp = self.reference_speed/pmax(5., tas)
         zero2[0] = zero2[1] = 0.
-        for i in range(2):
-            self.pack_inputs(ip, 1, demand_angle[i], demand_acc[i], pitch_rate, self.tail_bounds, quaternion, world_velocity,
-                             tas, speed_squared, mach, wash, force, moment, gear_fraction)
-            self.required_acceleration(ip, delivered[1], &bal[i])
-        margins_angle[0] = (demand_acc[0]-bal[0].acceleration)/kp
-        margins_angle[1] = (bal[1].acceleration-demand_acc[1])/kp
+        if self.aoa_limit:
+            for i in range(2):
+                self.pack_inputs(ip, 1, demand_angle[i], demand_acc[i], pitch_rate, self.tail_bounds, quaternion, world_velocity,
+                                 tas, speed_squared, mach, wash, force, moment, gear_fraction)
+                self.required_acceleration(ip, delivered[1], &bal[i])
+            margins_angle[0] = (demand_acc[0]-bal[0].acceleration)/kp
+            margins_angle[1] = (bal[1].acceleration-demand_acc[1])/kp
+        else:
+            # autotrim without the Instructor (instructor_aoa.controller_limits): no AoA limit
+            for i in range(2):
+                bal[i].acceleration = bal[i].tail_force = bal[i].zero_force = bal[i].tail_angle = bal[i].flow = float('nan')
+                bal[i].direct = False
+            margins_angle[0] = margins_angle[1] = 1e30     # instructor_aoa.NO_INSTRUCTOR_MARGIN
         independent = True
         for i in range(3):
             if self.alloc_props.trim_available[i] and not (ranges[2*i] == -1. and ranges[2*i+1] == 1.):
@@ -1414,7 +1424,7 @@ cdef class Instructor:
         result['adjusted_wing_angles_deg'] = [
             min(min(item['adjusted_wing_angles_deg']) for item in results),
             max(max(item['adjusted_wing_angles_deg']) for item in results)]
-        result.update(model='Steady effective AoA schedule (approximation)',
+        result.update(model='Steady effective AoA schedule (approximation)' if self.aoa_limit else 'Autotrim authority (Instructor off)',
                       model_revision='steady-effective-aoa-fixed-autotrim-v9', pitch_predictor_recheck=False)
         result['authority_revision'] = self.authority_revision
         value['instructor'] = result
