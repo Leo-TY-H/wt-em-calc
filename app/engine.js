@@ -96,7 +96,9 @@
       row.hidden = !normalize(row.dataset.search).includes(query); if (!row.hidden) visible++;
       row.querySelector('button').disabled = row.dataset.supported !== 'true' || entries.length >= MAX || running;
     }
-    el('engine-search-empty').hidden = visible > 0;
+    // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
+    el('engine-list').hidden = !query;
+    el('engine-search-empty').hidden = !query || visible > 0;
   }
   // Cards as on the EM page (Leo, 2026-10-28): edit, duplicate and remove icons; edit opens the settings popup, which
   // holds only what changes engine output: the throttle (as the EM page's slider) and the propeller control.
@@ -104,7 +106,7 @@
     el('engine-selected').innerHTML = entries.map((e, i) => {
       const a = aircraftOf(e), name = a?.name || e.aircraft_id, off = running ? ' disabled' : '';
       return `<article class="aircraft-entry ${e.id === editing ? 'active' : ''}" data-entry="${e.id}" style="--entry-color:${entryColors[i]}">
-        <div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeText(cleanName(name))}</strong><code>${escapeText(nameCode(name) || e.aircraft_id)}</code></div>
+        <div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeText(cleanName(name))}</strong></div>
         <div class="entry-actions"><button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i + 1}" title="Edit settings"${off}>${EDIT_ICON}</button>
         <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i + 1}" title="Duplicate"${entries.length >= MAX || running ? ' disabled' : ''}>${COPY_ICON}</button>
         <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i + 1}" title="Remove"${off}>${REMOVE_ICON}</button></div></article>`;

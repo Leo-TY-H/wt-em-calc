@@ -157,7 +157,9 @@
       row.hidden=!normalizeMissileSearch(row.dataset.search).includes(query);
       if(!row.hidden)visible++;
     }
-    el('missile-search-empty').hidden=!meta||visible>0;
+    // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
+    el('missile-list').hidden=!query;
+    el('missile-search-empty').hidden=!meta||!query||visible>0;
     updateAddButton();
   }
   function updateAddButton() {
@@ -170,7 +172,7 @@
   function renderSelected() {
     el('missile-selected').replaceChildren(...selectedMissiles.map((id,i)=>{
       const card=document.createElement('article');card.className='aircraft-entry missile-entry';card.style.setProperty('--entry-color',flightColors[i]);
-      card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong><code>${escapeHtml(id)}</code></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
+      card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
       const remove=card.querySelector('button');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+missileLabel(id));
       remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);renderSelected();filterMissiles();changed();busy(false);});
       return card;
