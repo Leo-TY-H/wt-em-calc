@@ -149,8 +149,9 @@ def refined(rows, at, x, step):
 
 
 @lru_cache(maxsize=32)
-def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None):
-    """Both sweeps at a throttle setting (%). pitch: manual propeller control (%) or None for automatic control."""
+def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None):
+    """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m) or None for both.
+    pitch: manual propeller control (%) or None for automatic control."""
     entry = AIRCRAFT[name]
     if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
     if entry['propulsion'] == 'rocket':raise ValueError('Rocket aircraft have no engine performance page')
@@ -168,9 +169,10 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None)
         level = solver(name, altitude_m, throttle, pitch)
         up = lambda h:row(solver(name, h, throttle, pitch), h, speed_kmh)
         along = lambda v:row(level, altitude_m, v)
-        modes = [dict(key='throttle', label=f'{throttle:g}%',
-                      altitude=refined([up(h) for h in altitudes], up, lambda r:r['altitude_m'], 10.),
-                      speed=refined([along(v) for v in speeds], along, lambda r:r['speed_kmh'], 1. if prop else 2.))]
+        mode = dict(key='throttle', label=f'{throttle:g}%')
+        if sweep in (None, 'altitude'):mode['altitude'] = refined([up(h) for h in altitudes], up, lambda r:r['altitude_m'], 10.)
+        if sweep in (None, 'speed'):mode['speed'] = refined([along(v) for v in speeds], along, lambda r:r['speed_kmh'], 1. if prop else 2.)
+        modes = [mode]
     engines = level.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
                 speed_kmh=speed_kmh, throttle_percent=throttle, pitch_percent=pitch, modes=modes,
