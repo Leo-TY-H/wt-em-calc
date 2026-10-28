@@ -186,7 +186,7 @@ def sample_with_history(worker,task,history):
         if isinstance(p,dict) and p.get('_low_speed_cap_anchor')] if isinstance(task[3],list) else []
     solver._sideslip_solvers={}
     solver.instructor_boundaries={}
-    solver.instructor_trim_entries=dict(history) if solver.config['instructor'] else {}
+    solver.instructor_trim_entries=dict(history) if solver.config['autotrim'] else {}
     for key in ('_trim_predictor','_minimum_instructor_speed','_static_instructor_trim_cache'):
         solver.__dict__.pop(key,None)
     from numbers import Real
@@ -222,7 +222,7 @@ def sample_with_history(worker,task,history):
         column['stationary_boundary_evidence']=retained
     from em_load_limits import annotate
     from em_mach_events import annotate as annotate_mach
-    return annotate_mach(solver,annotate(solver,column)),solver.instructor_trim_entries if solver.config['instructor'] else {}
+    return annotate_mach(solver,annotate(solver,column)),solver.instructor_trim_entries if solver.config['autotrim'] else {}
 
 
 def boundary_prediction(columns,speed):
@@ -521,7 +521,7 @@ def _sample_boundary_column(task):
                         hint=high
                 point=solver.boundary(speed,low,hint,continuation=False,scalar_fallback=False,
                     candidate_kinds={left['envelope_limit']['kind']},max_iterations=8,trial_cycle_seconds=20.)
-                if point and (solver.is_prop or solver.config['instructor'] or abs(point['solution'][3]-guess[3])<.3):
+                if point and (solver.is_prop or solver.config['autotrim'] or abs(point['solution'][3]-guess[3])<.3):
                     return dict(speed_kmh=speed,points=[low,point],boundary=point,lower_boundary=low,
                         sustained=[],load_checks=[],boundary_bracket_g=None,
                         boundary_reason=point['envelope_limit']['kind'],boundary_status='verified limit',
@@ -775,7 +775,7 @@ def _sample_column(task,boundary_only=False):
                 if correction:p=correction
 
 
-            if (cfg['instructor'] and boundary and bottom and bottom['load_g']<n<boundary['load_g']
+            if (cfg['autotrim'] and boundary and bottom and bottom['load_g']<n<boundary['load_g']
                     and p['reasons'] and set(p['reasons'])<={'control authority','Instructor pitch limit'}
                     and p['authority_margin']>-.001 and (p.get('instructor') or {}).get('envelope_margin',0.)>-.001):
                 p=solver.solve(speed,n,p['solution'],exhaustive=True,refine=True)

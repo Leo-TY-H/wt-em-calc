@@ -23,11 +23,11 @@ def refine(solver,speed,low,high):
                  zip(prop.get('engine_rpm',()),prop.get('engine_rpm_threshold',()))]
             if rpm:result['engine RPM']=min(rpm)
         if solver.config['structural_limits']:result['wing force']=1.-max(point['wing_load_ratios'])
-        if solver.config['instructor']:
+        if solver.config['autotrim']:
             ctl=point.get('instructor')
             if ctl is not None:
                 if not ctl['converged']:return None
-                result['Instructor pitch']=ctl['envelope_margin']
+                if solver.config['instructor']:result['Instructor pitch']=ctl['envelope_margin']
                 result['control']=ctl['margins']['control authority with auto trim']
             elif not set(point['reasons'])&(PHYSICAL_REASONS-{'Instructor pitch limit'}):return None
         return result

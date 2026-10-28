@@ -63,7 +63,7 @@ const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'e
 // Fixed browser model; diagnostic API settings remain independently available.
 const fixedSolverConditions={trim_solver_mode:'stationary',mach_curve_mode:'auto',experimental_instantaneous_aero:false,experimental_lateral_trim:'full',timestep_hz:48};
 const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolverConditions),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
+  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','autotrim','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296'];
 const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
 // Catalog names end in the internal id ("Bf 109 F-4 [bf-109f-4]"): the page shows it apart, hover text keeps it.
@@ -74,7 +74,9 @@ const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??({exper
 const requestConditions=c=>{const values={...c,...fixedSolverConditions};delete values.mach_curve_mode;return values;};
 // Preserve actual result settings for display and stale-result comparisons.
 // Editing or copying settings applies the fixed browser model to every entry.
-const modeConditions=c=>{const values=conditionsFrom(c);return {...values,...fixedSolverConditions,instructor_model:'steady',engine_control_mode:'quasi_steady',aircraft_trim_mode:'discrete',instructor_authority_mode:'direct',turn_response_mode:'settled',torque_gyro:!values.instructor};};
+// Autotrim defaults to the Instructor setting (settings saved before the switch); torque/gyro follows
+// autotrim as in the game, where both are set by the control mode (on exactly in full real).
+const modeConditions=c=>{const values=conditionsFrom(c);const autotrim=values.instructor||(values.autotrim??values.instructor);return {...values,...fixedSolverConditions,instructor_model:'steady',engine_control_mode:'quasi_steady',aircraft_trim_mode:'discrete',instructor_authority_mode:'direct',turn_response_mode:'settled',...('autotrim' in state.meta.defaults?{autotrim}:{}),torque_gyro:!autotrim};};
 const engineModelLabel=c=>c.engine_control_mode==='quasi_steady'?(c.controls?.automatic?.some(auto=>!auto)||c.manual_engine_controls&&!c.propeller_pitch_auto?'Quasi-steady · manual pitch':'Quasi-steady · ideal governor'):'Dynamic propulsion';
 const aircraftModelLabel=c=>c.aircraft_trim_mode==='quasi_steady'?'Quasi-steady aircraft trim':'Discrete aircraft trim';
 const experimentLabel=p=>{const e=p.model_experiments;return e?`${e.instantaneous_aerodynamics?'Instantaneous aerodynamics':'Retained aerodynamic history'} · ${{full:'Full trim',zero_sideslip:'Zero sideslip, full roll/yaw balance',symmetric:'Ideal symmetric, pitch trim only'}[e.lateral_trim]}`:'Retained model';};
@@ -90,8 +92,8 @@ function normalizeManualControls(values,aircraft){
   return values;
 }
 const aircraftConditions=(name,c)=>{const values=modeConditions(c);const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
-const flightModeLabel=c=>c.instructor!==c.torque_gyro?(c.instructor?'RB':'SB'):
-  `Instructor ${c.instructor?'on':'off'} · torque/gyro ${c.torque_gyro?'on':'off'}`;
+const flightModeLabel=c=>{const autotrim=c.autotrim??c.instructor;const mode=c.instructor?'Instructor + autotrim':autotrim?'Autotrim':'Manual trim';
+  return c.torque_gyro===autotrim?`${mode} · torque/gyro ${c.torque_gyro?'on':'off'}`:mode;};
 const resultConditions=a=>({torque_gyro:true,...(a.settings||{...state.data.settings,...state.data.settings.aircraft_settings?.[a.id]})});
 const instructorEvidence=a=>resultConditions(a).instructor?
   a.instructor_approximation?.capability_status||'Experimental Instructor boundary; see the calculation method.':'';
@@ -103,7 +105,8 @@ function saveCondition(){
     manual_engine_controls:$('manual-engine-controls').checked,propeller_pitch_auto:$('propeller-pitch-auto').checked,
     ...fixedSolverConditions,structural_limits:$('flutter-on').checked,
     throttle:+$('throttle').value/100,afterburner:+$('throttle').value>100,
-    instructor:$('flight-mode-rb').checked,torque_gyro:$('flight-mode-sb').checked,
+    instructor:$('instructor-on').checked,torque_gyro:$('autotrim-off').checked,
+    ...('autotrim' in state.meta.defaults?{autotrim:$('autotrim-on').checked}:{}),
     // A server without the turn setting (older release) gets no turn_direction and calculates left turns.
     ...('turn_direction' in state.meta.defaults?{turn_direction:$('turn-right').checked?'right':'left'}:{})};
   if(!state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id].has_flaps)state.conditions[state.editing].flaps_percent=0;
@@ -124,7 +127,10 @@ function showCondition(id){
   showAmmunition(aircraft);
   showLoadout();
   $('throttle').value=c.throttle*100;
-  $('flight-mode-rb').checked=c.instructor;$('flight-mode-sb').checked=!c.instructor;
+  const autotrim=c.instructor||(c.autotrim??c.instructor);
+  $('instructor-on').checked=c.instructor;$('instructor-off').checked=!c.instructor;
+  $('autotrim-on').checked=autotrim;$('autotrim-off').checked=!autotrim;
+  $('autotrim-on').closest('.field').hidden=!('autotrim' in state.meta.defaults);
   $('turn-left').checked=c.turn_direction!=='right';$('turn-right').checked=c.turn_direction==='right';
   $('turn-left').closest('.field').hidden=!('turn_direction' in state.meta.defaults);
   $('flutter-on').checked=c.structural_limits!==false;$('flutter-off').checked=c.structural_limits===false;
@@ -145,7 +151,7 @@ function configEntries(c){
   if(c.entries)return c.entries.map(e=>({...e,settings:{torque_gyro:true,...e.settings}}));
   const entries=c.aircraft.map((name,i)=>({id:`entry_${i+1}`,aircraft_id:name,
     settings:conditionsFrom({engine_control_mode:'automatic',torque_gyro:true,...c,...c.aircraft_settings?.[name]})}));
-  if(c.compare_instructor&&entries.length===1)return [false,true].map((enabled,i)=>({...entries[0],id:`entry_${i+1}`,settings:{...entries[0].settings,instructor:enabled}}));
+  if(c.compare_instructor&&entries.length===1)return [false,true].map((enabled,i)=>({...entries[0],id:`entry_${i+1}`,settings:{...entries[0].settings,instructor:enabled,...('autotrim' in state.meta.defaults?{autotrim:enabled}:{})}}));
   return entries;
 }
 const COPY_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8"/><path d="M10.5 5.5v-3h-8v8h3"/></svg>';
@@ -312,6 +318,9 @@ $('selected-aircraft').addEventListener('click',event=>{
 $('entry-dialog-close').addEventListener('click',()=>$('entry-dialog').close());
 $('entry-dialog').addEventListener('click',event=>{if(event.target===$('entry-dialog'))$('entry-dialog').close();});
 $('entry-dialog').addEventListener('close',()=>{saveCondition();showCondition(null);renderEntries();syncLabels();});
+// The Instructor needs autotrim: turning the Instructor on turns autotrim on, and autotrim off turns the Instructor off.
+$('instructor-on').addEventListener('change',()=>{$('autotrim-on').checked=true;});
+$('autotrim-off').addEventListener('change',()=>{$('instructor-off').checked=true;});
 $('apply-settings-to-all').addEventListener('click',()=>{
   if(!state.editing||state.entries.length<2)return;
   saveCondition();

@@ -351,7 +351,7 @@ cdef class MarchEngine:
         self.P.instr_event = instructor_event
         if self.fin.instructor is not None:(<Instructor>self.fin.instructor).loop_stats = loop.stats
         cfg = solver.config
-        self.instructor = bool(cfg['instructor']);self.structural = bool(cfg['structural_limits'])
+        self.instructor = bool(cfg['autotrim']);self.structural = bool(cfg['structural_limits'])
         self.native_instructor = self.instructor and self.cc.finisher is not None and self.cc.finisher.instructor is not None
         self.is_prop = bool(solver.is_prop);self.roll_leveling = bool(solver.fm.get('RollLeveling', True))
         self.sep_tol = cfg['sep_tolerance_mps']

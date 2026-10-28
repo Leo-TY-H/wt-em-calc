@@ -46,7 +46,7 @@ def level_stall_edge(solver,low_speed,column,low_point=None,kind=None):
                  for side,bound in enumerate(bounds)]
         _,control_axis,side=min(choices);control_sign=1. if side else -1.
     def control_margin(v):
-        bounds=(solver.instructor_at(v,v['speed'],1.)['control_bounds'] if solver.config['instructor']
+        bounds=(solver.instructor_at(v,v['speed'],1.)['control_bounds'] if solver.config['autotrim']
                 else v['allocation']['bounds'])
 
 
@@ -206,7 +206,7 @@ def near_level_boundary(solver,speed_kmh,low,high,candidate_kinds=None,max_nfev=
                 elif kind=='Instructor pitch':margin=instructor_limits(solver,v)['envelope_margin']-2e-6
                 elif kind=='pitch response':margin=pitch_response(solver,v)['margin']-2e-6
                 else:
-                    bounds=solver.instructor_at(v,speed_kmh/3.6,load)['control_bounds'] if solver.config['instructor'] else v['allocation']['bounds']
+                    bounds=solver.instructor_at(v,speed_kmh/3.6,load)['control_bounds'] if solver.config['autotrim'] else v['allocation']['bounds']
                     margin=z[3]-(bounds[1][1 if target>0 else 0]-target*3e-5)
                 memo[key]=(v,np.append(v['residual'],margin))
             return memo[key]
