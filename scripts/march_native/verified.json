@@ -110,7 +110,13 @@
    "a6m2_zero:sb",
    "ki_61_1a_otsu:rb",
    "f_14a_early:rb",
-   "bf-109f-4:real"
+   "bf-109f-4:real",
+   "ki_61_1a_ko:sb",
+   "bf-109f-4:rb",
+   "he51a1:sb",
+   "a6m5hei:rb",
+   "bf-109f-4:sb-right",
+   "a6m2_zero:sb-right"
   ],
   "checks": {
    "bi:sb": {
@@ -615,9 +621,276 @@
      "worst": {},
      "examples": []
     }
+   },
+   "ki_61_1a_ko:sb": {
+    "operating_point": {
+     "checked": 139,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "bf-109f-4:rb": {
+    "instructor": {
+     "checked": 1080,
+     "mismatched": 696,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 7.716050021144838e-15
+     },
+     "examples": [
+      {
+       "speed": 219.4434580078125,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5282995478699951",
+         "-0.5282995478699958"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.042368600916958314",
+         "-0.04236860091695815"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.08789894270519732",
+         "-0.08789894270519741"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 12.016790992049447,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5284643567992462",
+         "-0.5284643567992475"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04233593835202933",
+         "-0.04233593835202886"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.08795902796218497",
+         "-0.08795902796218524"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 12.016790992049447,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5284643567992462",
+         "-0.5284643567992475"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04233593835202933",
+         "-0.04233593835202886"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.08795902796218497",
+         "-0.08795902796218524"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 4.055640688430951,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5282778372531747",
+         "-0.5282778372531729"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04237316967245887",
+         "-0.04237316967245856"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0878907350086076",
+         "-0.08789073500860763"
+        ]
+       ]
+      },
+      {
+       "speed": 219.4434580078125,
+       "load": 4.055640688430951,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-0.5282778372531747",
+         "-0.5282778372531729"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.04237316967245887",
+         "-0.04237316967245856"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0878907350086076",
+         "-0.08789073500860763"
+        ]
+       ]
+      }
+     ]
+    },
+    "operating_point": {
+     "checked": 30,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "he51a1:sb": {
+    "operating_point": {
+     "checked": 238,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "a6m5hei:rb": {
+    "instructor": {
+     "checked": 1115,
+     "mismatched": 815,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 1.1546319456101628e-14
+     },
+     "examples": [
+      {
+       "speed": 215.83234350585937,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501450066507625",
+         "-1.350145006650761"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858583918272881",
+         "-0.03858583918272867"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 13.88845735268559,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501856045384264",
+         "-1.350185604538427"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858306717509192",
+         "-0.038583067175092196"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761623668801372",
+         "-0.12761623668801353"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 13.88845735268559,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501856045384264",
+         "-1.350185604538427"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858306717509192",
+         "-0.038583067175092196"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761623668801372",
+         "-0.12761623668801353"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501450066507625",
+         "-1.350145006650761"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858583918272881",
+         "-0.03858583918272867"
+        ]
+       ]
+      },
+      {
+       "speed": 215.83234350585937,
+       "load": 11.499601940439035,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "-1.3501743110611204",
+         "-1.3501743110611195"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "-0.03858384686900265",
+         "-0.038583846869002014"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12761387311823225",
+         "-0.1276138731182324"
+        ]
+       ]
+      }
+     ]
+    }
+   },
+   "bf-109f-4:sb-right": {
+    "operating_point": {
+     "checked": 63,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "a6m2_zero:sb-right": {
+    "operating_point": {
+     "checked": 57,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
    }
   },
-  "finish_rows": 5107,
+  "finish_rows": 8206,
   "method": "scripts/verify_march_native.py"
  }
 }
