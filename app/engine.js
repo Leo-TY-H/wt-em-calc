@@ -1,5 +1,5 @@
 // Engine performance (Leo, 2026-10-28): shaft power, thrust, propeller efficiency, RPM, blade pitch and manifold
-// pressure over altitude or true airspeed, at 100% throttle and WEP, for up to eight aircraft. Straight flight with
+// pressure over altitude or true airspeed, at each aircraft's throttle setting, for up to eight aircraft. Straight flight with
 // the nose on the flight path, fully upgraded (GET /api/engine/<aircraft>, scripts/engine_performance.py). Laid out
 // like the EM page; uses app.js's catalog (state.meta), api() and name helpers.
 (() => {
@@ -45,8 +45,9 @@
     <section id="engine-inspector" class="inspector" hidden><div class="inspector-heading"><h2 id="engine-point-title"></h2></div><div id="engine-point"></div></section>
   </main>
   <dialog id="engine-dialog" class="entry-dialog" aria-labelledby="engine-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="engine-dialog-title"></h2></div><button type="button" id="engine-dialog-close" class="text-button" aria-label="Close settings">✕</button></header>
-    <div class="entry-dialog-body"><label class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
-      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></dialog>`;
+    <div class="entry-dialog-body"><label class="field">Throttle <output id="engine-throttle-label">110%</output><input id="engine-throttle" type="range" min="0" max="110" step="1" value="110"></label>
+      <div id="engine-pitch-field"><label class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
+      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></div></dialog>`;
 
   let entries = [], nextEntry = 1, results = new Map(), running = false, shown = null, editing = null;
   const catalog = () => (typeof state !== 'undefined' && state.meta) ? state.meta.aircraft : null;
@@ -56,7 +57,7 @@
   const propeller = a => PROPS.includes(a?.propulsion);
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
-  const key = (entry, altitude, speed) => `${entry.aircraft_id}|${altitude}|${speed}|${entry.pitch}`;
+  const key = (entry, altitude, speed) => `${entry.aircraft_id}|${altitude}|${speed}|${entry.throttle}|${entry.pitch}`;
 
   // ---- Aircraft list and cards ----------------------------------------------------------
   function populate() {
@@ -77,20 +78,20 @@
     el('engine-search-empty').hidden = visible > 0;
   }
   // Cards as on the EM page (Leo, 2026-10-28): edit, duplicate and remove icons; edit opens the settings popup, which
-  // holds only what changes engine output: the propeller control (the only per-aircraft input of the propulsion here).
+  // holds only what changes engine output: the throttle (as the EM page's slider) and the propeller control.
   function renderEntries() {
     el('engine-selected').innerHTML = entries.map((e, i) => {
       const a = aircraftOf(e), name = a?.name || e.aircraft_id, off = running ? ' disabled' : '';
       return `<article class="aircraft-entry ${e.id === editing ? 'active' : ''}" data-entry="${e.id}" style="--entry-color:${entryColors[i]}">
         <div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeText(cleanName(name))}</strong><code>${escapeText(nameCode(name) || e.aircraft_id)}</code></div>
-        <div class="entry-actions">${pitchable(a) ? `<button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i + 1}" title="Edit settings"${off}>${EDIT_ICON}</button>` : ''}
+        <div class="entry-actions"><button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i + 1}" title="Edit settings"${off}>${EDIT_ICON}</button>
         <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i + 1}" title="Duplicate"${entries.length >= MAX || running ? ' disabled' : ''}>${COPY_ICON}</button>
         <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i + 1}" title="Remove"${off}>${REMOVE_ICON}</button></div></article>`;
     }).join('');
   }
-  const addEntry = (aircraft_id, pitch = 'auto') => {
+  const addEntry = (aircraft_id, throttle = '110', pitch = 'auto') => {
     if (entries.length >= MAX) return;
-    entries.push({id: `engine_${nextEntry++}`, aircraft_id, pitch}); renderEntries(); filter(); updateForm();
+    entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, pitch}); renderEntries(); filter(); updateForm();
   };
   el('engine-list').addEventListener('click', event => {
     const button = event.target.closest('[data-add]'); if (button && !button.disabled) addEntry(button.dataset.add);
@@ -98,7 +99,7 @@
   el('engine-selected').addEventListener('click', event => {
     const button = event.target.closest('[data-action]'); if (!button || button.disabled || running) return;
     const index = entries.findIndex(e => e.id === button.closest('[data-entry]').dataset.entry), entry = entries[index];
-    if (button.dataset.action === 'duplicate') return addEntry(entry.aircraft_id, entry.pitch);
+    if (button.dataset.action === 'duplicate') return addEntry(entry.aircraft_id, entry.throttle, entry.pitch);
     if (button.dataset.action === 'remove') { entries.splice(index, 1); renderEntries(); filter(); updateForm(); render(); return; }
     editing = entry.id; showSettings(); renderEntries();
     el('engine-dialog-title').textContent = `${index + 1} · ${cleanName(aircraftOf(entry)?.name || entry.aircraft_id)}`;
@@ -109,6 +110,8 @@
   // ---- Settings popup: applies as it changes; ✕, Escape or a click outside puts it away ------
   function showSettings() {
     const entry = entries.find(e => e.id === editing), kind = aircraftOf(entry)?.manual_controls?.pitch_kind;
+    el('engine-throttle').value = entry.throttle;
+    el('engine-pitch-field').hidden = !pitchable(aircraftOf(entry));
     el('engine-pitch-auto').checked = entry.pitch === 'auto';
     if (entry.pitch !== 'auto') el('engine-pitch').value = entry.pitch;
     el('engine-pitch-name').textContent = kind === 'RPM governor' ? 'Propeller RPM setting' : kind === 'Blade angle' ? 'Propeller blade-angle setting' : 'Propeller control';
@@ -116,11 +119,14 @@
   }
   function syncSettings() {
     const auto = el('engine-pitch-auto').checked;
+    el('engine-throttle-label').textContent = el('engine-throttle').value + '%';
     el('engine-pitch').disabled = auto; el('engine-pitch-label').textContent = auto ? 'Automatic' : el('engine-pitch').value + '%';
   }
-  for (const id of ['engine-pitch-auto', 'engine-pitch']) el(id).addEventListener('input', () => {
+  for (const id of ['engine-throttle', 'engine-pitch-auto', 'engine-pitch']) el(id).addEventListener('input', () => {
     syncSettings();
-    const entry = entries.find(e => e.id === editing); if (entry) entry.pitch = el('engine-pitch-auto').checked ? 'auto' : el('engine-pitch').value;
+    const entry = entries.find(e => e.id === editing); if (!entry) return;
+    entry.throttle = el('engine-throttle').value;
+    if (pitchable(aircraftOf(entry))) entry.pitch = el('engine-pitch-auto').checked ? 'auto' : el('engine-pitch').value;
   });
   el('engine-dialog-close').addEventListener('click', () => el('engine-dialog').close());
   el('engine-dialog').addEventListener('click', event => { if (event.target === el('engine-dialog')) el('engine-dialog').close(); });
@@ -148,7 +154,7 @@
     el('engine-speed').value = defaults.speed; el('engine-altitude').value = defaults.altitude;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
     root.querySelector(`input[name=engine-quantity][value=${defaults.quantity}]`).checked = true;
-    for (const e of entries) e.pitch = 'auto';
+    for (const e of entries) { e.throttle = '110'; e.pitch = 'auto'; }
     el('engine-search').value = ''; axisControls(); renderEntries(); filter(); updateForm(); render();
   });
 
@@ -166,7 +172,7 @@
     try {
       for (const [i, entry] of wanted.entries()) {
         const id = key(entry, altitude, speed);
-        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?altitude_m=${altitude}&speed_kmh=${speed}&pitch=${entry.pitch}`));
+        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?altitude_m=${altitude}&speed_kmh=${speed}&throttle=${entry.throttle}&pitch=${entry.pitch}`));
         el('engine-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
       shown = {altitude, speed, entries: wanted.map(e => ({...e}))};
@@ -186,7 +192,8 @@
   }
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
     (!QUANTITIES[q].piston || d.result.stages.length) && d.result.modes.some(m => m.altitude.some(r => Number.isFinite(QUANTITIES[q].y(r)))));
-  const entryName = d => `${cleanName(d.result.name)} · ${d.index + 1}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
+  // Legend: aircraft · number, then the settings that differ from the defaults (110% throttle, automatic pitch).
+  const entryName = d => `${cleanName(d.result.name)} · ${d.index + 1}${d.entry.throttle !== '110' ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
   function render() {
     const list = displayed(), chart = el('engine-chart');
     for (const input of root.querySelectorAll('input[name=engine-quantity]')) input.disabled = !!list.length && !available(input.value, list);
@@ -205,8 +212,7 @@
         // An entry without this quantity (a jet's power) draws nothing and takes no legend row.
         if (!y.some(Number.isFinite)) continue;
         traces.push({type: 'scatter', mode: 'lines', x: rows.map(x.x), y,
-          name: entryName(d) + (modes.length > 1 ? ' · ' + mode.label : ''), meta: {entry: d.entry.id, mode: mode.key},
-          line: {color: d.color, width: 2.4, dash: mode.key === 'military' && modes.length > 1 ? 'dash' : 'solid'}, connectgaps: false,
+          name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, line: {color: d.color, width: 2.4}, connectgaps: false,
           hoverlabel: {bordercolor: d.color}, customdata: rows.map(() => mode.label),
           hovertemplate: `%{customdata}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         // Supercharger gear changes over altitude: a mark where each new gear starts.

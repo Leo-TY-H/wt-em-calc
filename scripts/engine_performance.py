@@ -1,11 +1,12 @@
 """Engine and propeller performance for the website's Engine performance page (report only; no solver changes).
 
 Straight flight with the body x axis on the flight path (angle of attack 0, no rotation) at a true airspeed and
-altitude, fully upgraded (the catalog applies every modification), at 100% throttle and at WEP (110% with the boost).
+altitude, fully upgraded (the catalog applies every modification), at one throttle setting (as the EM page's: above
+100% with the boost requested).
 Propeller aircraft: the chart's own shaft/governor/wake closure (em_stationary.JointProblem.seed_propulsion, the cold
 start of a chart point) on every governed-request branch, the first closed and admitted state kept. Jets: the chart's
-nominal jet thrust (EngineUnit.nominal) at the altitude's density, through the nozzles. Two sweeps per throttle: power
-and the rest over altitude at one speed, and over speed at one altitude.
+nominal jet thrust (EngineUnit.nominal) at the altitude's density, through the nozzles. Two sweeps: power and the rest
+over altitude at one speed, and over speed at one altitude.
 """
 import copy
 import itertools
@@ -22,7 +23,6 @@ from em_solver import AIRCRAFT, TrimSolver, settings
 
 METRIC_HP = 735.49875
 KGF = 9.80665
-MODES = (('wep', 'WEP', dict(throttle=1.1, afterburner=True)), ('military', '100%', dict(throttle=1., afterburner=False)))
 LOCK = threading.Lock()
 
 
@@ -34,8 +34,9 @@ def sweeps(propulsion):
 
 
 @lru_cache(maxsize=24)
-def solver(name, mode, pitch):
-    extra = dict(next(c for k, _, c in MODES if k == mode))
+def solver(name, throttle, pitch):
+    # The EM page's throttle slider: the setting / 100, the boost requested above 100%.
+    extra = dict(throttle=throttle / 100., afterburner=throttle > 100.)
     if pitch is not None:extra.update(manual_engine_controls=True, propeller_pitch_auto=False, propeller_pitch_percent=pitch)
     return TrimSolver(name, settings(dict(aircraft=[name], **extra)))
 
@@ -132,8 +133,8 @@ def jet_row(base, height, speed_kmh):
 
 
 @lru_cache(maxsize=32)
-def compute(name, altitude_m, speed_kmh, pitch=None, report=None):
-    """Both sweeps at 100% and WEP. pitch: manual propeller control (%) or None for the chart's automatic control."""
+def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None):
+    """Both sweeps at a throttle setting (%). pitch: manual propeller control (%) or None for automatic control."""
     entry = AIRCRAFT[name]
     if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
     if entry['propulsion'] == 'rocket':raise ValueError('Rocket aircraft have no engine performance page')
@@ -142,27 +143,20 @@ def compute(name, altitude_m, speed_kmh, pitch=None, report=None):
         raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
     started = time.perf_counter()
     altitudes, speeds = sweeps(entry['propulsion'])
-    modes = []
     with LOCK:
-        for key, label, _ in MODES:
-            base = solver(name, key, pitch)
-            def row(height, speed, warm):
-                try:
-                    value = (propeller_row(at_altitude(base, height), speed, report, warm) if prop else
-                             jet_row(base, height, speed))
-                except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
-                return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
-            up, along = {}, {}
-            modes.append(dict(key=key, label=label, altitude=[row(h, speed_kmh, up) for h in altitudes],
-                              speed=[row(altitude_m, v, along) for v in speeds]))
-        properties = base.engine.properties if prop else None
-    # Without a boost (no throttle boost, no afterburner) WEP is the 100% state: show it once.
-    same = lambda a, b:all(x.get('thrust_kgf') == y.get('thrust_kgf') and x.get('rpm') == y.get('rpm') for x, y in zip(a, b))
-    if same(modes[0]['altitude'], modes[1]['altitude']) and same(modes[0]['speed'], modes[1]['speed']):
-        modes = [dict(modes[1], key='military', label='100%')]
-    engines = properties['engines'] if prop else []
+        base = solver(name, throttle, pitch)
+        def row(height, speed, warm):
+            try:
+                value = (propeller_row(at_altitude(base, height), speed, report, warm) if prop else
+                         jet_row(base, height, speed))
+            except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
+            return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
+        up, along = {}, {}
+        modes = [dict(key='throttle', label=f'{throttle:g}%', altitude=[row(h, speed_kmh, up) for h in altitudes],
+                      speed=[row(altitude_m, v, along) for v in speeds])]
+    engines = base.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
-                speed_kmh=speed_kmh, pitch_percent=pitch, modes=modes,
+                speed_kmh=speed_kmh, throttle_percent=throttle, pitch_percent=pitch, modes=modes,
                 engine_count=len(engines) if prop else len(base.engine.units),
                 stages=[len(e['properties']['stages']) for e in engines if e['family'] in (0, 1)],
                 rpm_limit=([e['properties']['omega_limit'] * 30 / math.pi for e in engines] if prop else
