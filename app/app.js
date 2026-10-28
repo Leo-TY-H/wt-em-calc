@@ -298,7 +298,7 @@ function syncAircraftMenu(){
     row.querySelector('button').disabled=row.dataset.supported!=='true'||state.entries.length>=8;
   }
   // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
-  $('aircraft-list').hidden=!query;
+  $('aircraft-list').hidden=!query||!visible;
   $('search-empty').hidden=!query||visible>0;
 }
 function populateAircraft(){

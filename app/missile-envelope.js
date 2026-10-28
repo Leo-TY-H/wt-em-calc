@@ -170,7 +170,7 @@
     const query = normalize(el('envelope-search').value); let visible = 0;
     for (const row of el('envelope-list').children) { row.hidden = !normalize(row.dataset.search).includes(query); if (!row.hidden) visible++; }
     // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
-    el('envelope-list').hidden = !query;
+    el('envelope-list').hidden = !query || !visible;
     el('envelope-search-empty').hidden = !meta || !query || visible > 0;
     for (const button of el('envelope-list').querySelectorAll('[data-pick]')) {
       const added = selected.includes(button.dataset.pick);

@@ -97,7 +97,7 @@
       row.querySelector('button').disabled = row.dataset.supported !== 'true' || entries.length >= MAX || running;
     }
     // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
-    el('engine-list').hidden = !query;
+    el('engine-list').hidden = !query || !visible;
     el('engine-search-empty').hidden = !query || visible > 0;
   }
   // Cards as on the EM page (Leo, 2026-10-28): edit, duplicate and remove icons; edit opens the settings popup, which

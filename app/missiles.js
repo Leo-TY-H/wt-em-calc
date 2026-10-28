@@ -158,7 +158,7 @@
       if(!row.hidden)visible++;
     }
     // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
-    el('missile-list').hidden=!query;
+    el('missile-list').hidden=!query||!visible;
     el('missile-search-empty').hidden=!meta||!query||visible>0;
     updateAddButton();
   }
