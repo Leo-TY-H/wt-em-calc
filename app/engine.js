@@ -16,7 +16,10 @@
     efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
     rpm: {label: 'RPM', title: 'Engine RPM', y: r => r.rpm?.[0], digits: 0, unit: ' rpm'},
     pitch: {label: 'Blade pitch', title: 'Blade angle (°)', y: r => r.pitch_deg?.[0], digits: 1, unit: '°', props: true},
-    manifold: {label: 'Manifold', title: 'Manifold pressure (ata)', y: r => r.manifold_ata?.[0], digits: 2, unit: ' ata', piston: true}};
+    manifold: {label: 'Manifold', title: 'Manifold pressure (ata)', y: r => r.manifold_ata?.[0], digits: 2, unit: ' ata', piston: true},
+    // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
+    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true},
+    acceleration: {label: 'Acceleration', title: 'Acceleration in level flight (m/s²)', y: r => r.accel_mps2, digits: 3, unit: ' m/s²', level: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
     speed: {label: 'Speed', x: r => r.speed_kmh, title: 'True airspeed (km/h)', unit: ' km/h'}};
   const GOVERNOR = {'target RPM': 'Holding RPM', 'minimum pitch': 'Fine pitch stop', 'maximum pitch': 'Coarse pitch stop',
@@ -60,7 +63,8 @@
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
-  const key = (entry, axis, altitude, speed) => `${entry.aircraft_id}|${axis}|${axis === 'altitude' ? speed : altitude}|${entry.throttle}|${entry.pitch}`;
+  const key = (entry, axis, level, altitude, speed) => `${entry.aircraft_id}|${axis}|${level}|${axis === 'altitude' ? speed : altitude}|${entry.throttle}|${entry.pitch}`;
+  const levelPlot = () => !!QUANTITIES[el('engine-quantity').value].level;
 
   // ---- Aircraft list and cards ----------------------------------------------------------
   function populate() {
@@ -171,7 +175,8 @@
   }
   // The x axis takes effect at the next Calculate; the plotted quantity redraws at once from the calculated sweep.
   root.querySelectorAll('input[name=engine-axis]').forEach(input => input.addEventListener('change', axisControls));
-  el('engine-quantity').addEventListener('change', render);
+  // Engine quantities share one calculation, as do SEP and acceleration; across the two the plot waits for Calculate.
+  el('engine-quantity').addEventListener('change', () => { if (shown && levelPlot() === shown.level) render(); });
   el('engine-form').addEventListener('input', event => { if (event.target.type === 'number') updateForm(); });
   el('engine-reset').addEventListener('click', () => {
     if (running) return;
@@ -191,15 +196,15 @@
   }
   el('engine-form').addEventListener('submit', async event => {
     event.preventDefault(); if (running || !entries.length) return;
-    const axis = checked('engine-axis'), altitude = value('engine-altitude'), speed = value('engine-speed'), wanted = [...entries];
+    const axis = checked('engine-axis'), level = levelPlot(), altitude = value('engine-altitude'), speed = value('engine-speed'), wanted = [...entries];
     showError(''); busy(true);
     try {
       for (const [i, entry] of wanted.entries()) {
-        const id = key(entry, axis, altitude, speed);
-        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?sweep=${axis}&altitude_m=${altitude}&speed_kmh=${speed}&throttle=${entry.throttle}&pitch=${entry.pitch}`));
+        const id = key(entry, axis, level, altitude, speed);
+        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?sweep=${axis}&level=${level ? 1 : 0}&altitude_m=${altitude}&speed_kmh=${speed}&throttle=${entry.throttle}&pitch=${entry.pitch}`));
         el('engine-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
-      shown = {axis, altitude, speed, entries: wanted.map(e => ({...e}))};
+      shown = {axis, level, altitude, speed, entries: wanted.map(e => ({...e}))};
       el('engine-inspector').hidden = true; render();
     } catch (error) { showError(error.message); }
     finally { busy(false); }
@@ -211,7 +216,7 @@
     if (!shown) return [];
     return shown.entries.map(e => {
       const index = entries.findIndex(x => x.id === e.id);
-      return index < 0 ? null : {entry: e, index, color: entryColors[index], result: results.get(key(e, shown.axis, shown.altitude, shown.speed))};
+      return index < 0 ? null : {entry: e, index, color: entryColors[index], result: results.get(key(e, shown.axis, shown.level, shown.altitude, shown.speed))};
     }).filter(d => d?.result);
   }
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
@@ -226,7 +231,7 @@
       el('engine-inspector').hidden = true; return;
     }
     let q = el('engine-quantity').value;
-    if (!available(q, list)) { q = 'thrust'; el('engine-quantity').value = q; }
+    if (!available(q, list)) { q = shown.level ? 'sep' : 'thrust'; el('engine-quantity').value = q; }
     const axis = shown.axis, quantity = QUANTITIES[q], x = AXES[axis], traces = [];
     for (const d of list) {
       const modes = d.result.modes;
@@ -257,7 +262,7 @@
       margin: {l: 64, r: 22, t: Math.max(40, Math.ceil(traces.filter(t => t.showlegend !== false).length / 2) * 22), b: 54}, hovermode: 'closest',
       hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
       xaxis: {...axisStyle, title: {text: `${x.title} · ${fixed}`, standoff: 8, font: {size: 13}}, rangemode: 'tozero'},
-      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: q === 'efficiency' || q === 'pitch' ? 'normal' : 'tozero'},
+      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'pitch', 'sep', 'acceleration'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
       uirevision: `${axis}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
     if (!chart.classList.contains('js-plotly-plot')) chart.innerHTML = '';
@@ -281,6 +286,13 @@
     const prop = propeller(aircraftOf(d.entry));
     el('engine-inspector').hidden = false;
     el('engine-point-title').textContent = `${cleanName(result.name)} · ${mode.label} · ${fmt(r.altitude_m, 0)} m · ${fmt(r.speed_kmh, 0)} km/h`;
+    if (mode.level) {
+      el('engine-point').innerHTML = `<div class="point-grid">${section('LEVEL FLIGHT', [
+        ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Acceleration', fmt(r.accel_mps2, 3) + ' m/s²'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
+        ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
+        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)]])}</div>`;
+      return;
+    }
     el('engine-point').innerHTML = `<div class="point-grid">${section('FLIGHT', [
       ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
       ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
@@ -297,7 +309,7 @@
   function download(kind) {
     const list = displayed(); if (!list.length) return;
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
-    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
+    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'accel_mps2', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
     const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) :
       [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed'].filter(sweep => m[sweep]).flatMap(sweep =>
         m[sweep].filter(r => r.solved).map(r => [d.index + 1, d.result.aircraft_id, d.entry.pitch, m.label, sweep, ...columns.map(c => join(r[c]))].join(',')))))].join('\n');
