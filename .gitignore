@@ -22,6 +22,8 @@
 !/app/altitude_surface.js
 !/app/app.js
 !/app/config.js
+!/app/engine.css
+!/app/engine.js
 !/app/engagement-research.css
 !/app/engagement-research.html
 !/app/engagement-research.js
@@ -171,6 +173,7 @@
 !/scripts/em_trim_work.py
 !/scripts/em_uncorrected.py
 !/scripts/em_workers.py
+!/scripts/engine_performance.py
 !/scripts/engine_commands.py
 !/scripts/engine_supply.py
 !/scripts/flap_model.py
