@@ -4,7 +4,8 @@
 #engine-workspace .sidebar-actions .hint{margin:0 0 8px;color:#f08070}
 /* Settings popup: styles.css's .entry-dialog, as on the EM page. */
 #engine-dialog{overflow-x:hidden}
-#engine-dialog .check-row{margin:14px 0 4px;font-size:12px;align-items:center;cursor:pointer}
+#engine-manual-field{margin:14px 0}#engine-manual-settings{padding-top:4px}
+#engine-dialog .check-row{margin:8px 0;font-size:12px;align-items:center;cursor:pointer}
 #engine-dialog input:disabled{opacity:.45}
 /* Quantity picker above the plot. */
 #engine-workspace .chart-toolbar{padding:0 0 10px;border-bottom:0;justify-content:flex-start}

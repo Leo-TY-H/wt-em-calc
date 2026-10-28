@@ -46,8 +46,9 @@
   </main>
   <dialog id="engine-dialog" class="entry-dialog" aria-labelledby="engine-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="engine-dialog-title"></h2></div><button type="button" id="engine-dialog-close" class="text-button" aria-label="Close settings">✕</button></header>
     <div class="entry-dialog-body"><label class="field">Throttle <output id="engine-throttle-label">110%</output><input id="engine-throttle" type="range" min="0" max="110" step="1" value="110"></label>
-      <div id="engine-pitch-field"><label class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
-      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></div></dialog>`;
+      <div id="engine-manual-field"><label class="check-row"><input id="engine-manual" type="checkbox"> Manual engine controls</label>
+      <div id="engine-manual-settings"><label id="engine-pitch-auto-field" class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
+      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></div></div></dialog>`;
 
   let entries = [], nextEntry = 1, results = new Map(), running = false, shown = null, editing = null;
   const catalog = () => (typeof state !== 'undefined' && state.meta) ? state.meta.aircraft : null;
@@ -89,9 +90,13 @@
         <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i + 1}" title="Remove"${off}>${REMOVE_ICON}</button></div></article>`;
     }).join('');
   }
-  const addEntry = (aircraft_id, throttle = '110', pitch = 'auto') => {
+  // The EM page's engine settings: throttle (%), Manual engine controls, Automatic propeller control and the propeller
+  // setting (%); pitch is what they request: 'auto', or the manual setting.
+  const FRESH = {throttle: '110', manual: false, auto: true, setting: '50', pitch: 'auto'};
+  const addEntry = (aircraft_id, from = FRESH) => {
     if (entries.length >= MAX) return;
-    entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, pitch}); renderEntries(); filter(); updateForm();
+    const {throttle, manual, auto, setting, pitch} = from;
+    entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, manual, auto, setting, pitch}); renderEntries(); filter(); updateForm();
   };
   el('engine-list').addEventListener('click', event => {
     const button = event.target.closest('[data-add]'); if (button && !button.disabled) addEntry(button.dataset.add);
@@ -99,7 +104,7 @@
   el('engine-selected').addEventListener('click', event => {
     const button = event.target.closest('[data-action]'); if (!button || button.disabled || running) return;
     const index = entries.findIndex(e => e.id === button.closest('[data-entry]').dataset.entry), entry = entries[index];
-    if (button.dataset.action === 'duplicate') return addEntry(entry.aircraft_id, entry.throttle, entry.pitch);
+    if (button.dataset.action === 'duplicate') return addEntry(entry.aircraft_id, entry);
     if (button.dataset.action === 'remove') { entries.splice(index, 1); renderEntries(); filter(); updateForm(); render(); return; }
     editing = entry.id; showSettings(); renderEntries();
     el('engine-dialog-title').textContent = `${index + 1} · ${cleanName(aircraftOf(entry)?.name || entry.aircraft_id)}`;
@@ -108,25 +113,29 @@
   });
 
   // ---- Settings popup: applies as it changes; ✕, Escape or a click outside puts it away ------
+  // The EM page's rules (app.js syncLabels, normalizeManualControls); radiators are left out (drag only).
   function showSettings() {
     const entry = entries.find(e => e.id === editing), kind = aircraftOf(entry)?.manual_controls?.pitch_kind;
-    el('engine-throttle').value = entry.throttle;
-    el('engine-pitch-field').hidden = !pitchable(aircraftOf(entry));
-    el('engine-pitch-auto').checked = entry.pitch === 'auto';
-    if (entry.pitch !== 'auto') el('engine-pitch').value = entry.pitch;
+    el('engine-throttle').value = entry.throttle; el('engine-manual').checked = entry.manual;
+    el('engine-pitch-auto').checked = entry.auto; el('engine-pitch').value = entry.setting;
     el('engine-pitch-name').textContent = kind === 'RPM governor' ? 'Propeller RPM setting' : kind === 'Blade angle' ? 'Propeller blade-angle setting' : 'Propeller control';
     syncSettings();
   }
   function syncSettings() {
-    const auto = el('engine-pitch-auto').checked;
+    const caps = aircraftOf(entries.find(e => e.id === editing))?.manual_controls || {};
     el('engine-throttle-label').textContent = el('engine-throttle').value + '%';
+    el('engine-manual-field').hidden = !caps.propeller_pitch;
+    el('engine-manual-settings').hidden = !el('engine-manual').checked;
+    el('engine-pitch-auto-field').hidden = !caps.propeller_auto;
+    if (caps.propeller_pitch && !caps.propeller_auto && el('engine-manual').checked) el('engine-pitch-auto').checked = false;
+    const auto = el('engine-pitch-auto').checked;
     el('engine-pitch').disabled = auto; el('engine-pitch-label').textContent = auto ? 'Automatic' : el('engine-pitch').value + '%';
   }
-  for (const id of ['engine-throttle', 'engine-pitch-auto', 'engine-pitch']) el(id).addEventListener('input', () => {
+  for (const id of ['engine-throttle', 'engine-manual', 'engine-pitch-auto', 'engine-pitch']) el(id).addEventListener('input', () => {
     syncSettings();
     const entry = entries.find(e => e.id === editing); if (!entry) return;
-    entry.throttle = el('engine-throttle').value;
-    if (pitchable(aircraftOf(entry))) entry.pitch = el('engine-pitch-auto').checked ? 'auto' : el('engine-pitch').value;
+    Object.assign(entry, {throttle: el('engine-throttle').value, manual: el('engine-manual').checked, auto: el('engine-pitch-auto').checked, setting: el('engine-pitch').value});
+    entry.pitch = pitchable(aircraftOf(entry)) && entry.manual && !entry.auto ? entry.setting : 'auto';
   });
   el('engine-dialog-close').addEventListener('click', () => el('engine-dialog').close());
   el('engine-dialog').addEventListener('click', event => { if (event.target === el('engine-dialog')) el('engine-dialog').close(); });
@@ -154,7 +163,7 @@
     el('engine-speed').value = defaults.speed; el('engine-altitude').value = defaults.altitude;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
     root.querySelector(`input[name=engine-quantity][value=${defaults.quantity}]`).checked = true;
-    for (const e of entries) { e.throttle = '110'; e.pitch = 'auto'; }
+    for (const e of entries) Object.assign(e, FRESH);
     el('engine-search').value = ''; axisControls(); renderEntries(); filter(); updateForm(); render();
   });
 
