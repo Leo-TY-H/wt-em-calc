@@ -83,7 +83,7 @@
   const showError = text => {el('missile-error').textContent=text;el('missile-error').hidden=!text;};
   const playButton=(icon,label)=>{const button=el('missile-play');button.innerHTML=icon;button.setAttribute('aria-label',label);button.title=label;};
   const pause = () => {playing=false;playButton(PLAY_ICON,'Play');};
-  const toolTabs=[['em','em-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
+  const toolTabs=[['em','em-tab','em-workspace'],['engine','engine-tab','engine-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';
     for(const [key,tab,panel] of toolTabs) {

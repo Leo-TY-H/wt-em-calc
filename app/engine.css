@@ -1,0 +1,14 @@
+/* Engine performance page: the EM page's layout; styles.css shares its sidebar, list and unboxed chart rules. */
+#engine-picker{min-width:0;margin:0 0 6px}
+#engine-selected{width:100%;margin:10px 0 4px}
+#engine-workspace .sidebar-actions .hint{margin:0 0 8px;color:#f08070}
+#engine-workspace .entry-actions{align-items:center}
+#engine-workspace .entry-heading+.entry-actions{margin-top:8px}
+.engine-pitch{width:auto;height:26px;padding:0 24px 0 6px;font-size:11px}
+/* Quantity picker above the plot. */
+#engine-workspace .chart-toolbar{padding:0 0 10px;border-bottom:0;justify-content:flex-start}
+#engine-workspace .chart-toolbar .mode-switch{margin-top:0;flex-wrap:wrap}
+#engine-workspace .chart-toolbar .mode-switch span{padding:6px 12px;white-space:nowrap}
+#engine-workspace .mode-switch input:disabled+span{opacity:.4;cursor:default}
+#engine-chart{height:max(520px,calc(100vh - var(--header) - 84px));width:100%}
+@media(max-width:760px){#engine-chart{height:440px}}
