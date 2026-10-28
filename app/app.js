@@ -96,9 +96,9 @@ function normalizeManualControls(values,aircraft){
 }
 const aircraftConditions=(name,c)=>{const values=modeConditions(c);const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
 // One control mode switch (Leo, 2026-10-28), set as in the game (aces.exe 0x141b81440): the Instructor in Mouse aim and
-// Simplified, autotrim in every mode but Full real, torque/gyro only in Full real. Both Instructor modes use the same
-// steady Instructor here, so their charts match; the entry keeps its mode (control_mode, page only) for its name.
-const CONTROL_MODES={mouse_aim:{label:'Mouse aim',instructor:true,autotrim:true},simplified:{label:'Simplified',instructor:true,autotrim:true},
+// Simplified (one option: both use the same steady Instructor here), autotrim in every mode but Full real, torque/gyro
+// only in Full real. The entry keeps its mode (control_mode, page only) for its name.
+const CONTROL_MODES={mouse_aim:{label:'Mouse aim / Simplified',instructor:true,autotrim:true},
   realistic:{label:'Realistic',instructor:false,autotrim:true},full_real:{label:'Full real',instructor:false,autotrim:false}};
 const controlMode=c=>{const autotrim=!!(c.instructor||(c.autotrim??c.instructor)),m=CONTROL_MODES[c.control_mode];
   return m&&m.instructor===!!c.instructor&&m.autotrim===autotrim?c.control_mode:c.instructor?'mouse_aim':autotrim?'realistic':'full_real';};
