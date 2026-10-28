@@ -199,6 +199,8 @@ body .loadout-pylon[aria-expanded=true]{border-color:var(--text);background:#111
 body .missile-presets button[aria-pressed=true]>span{color:var(--text)}
 body .mode-switch{background:none;border-color:var(--line)}
 body .mode-switch input:checked+span{background:var(--text);color:#000}
+/* Four control modes in one row (Leo, 2026-10-28). */
+.control-mode-switch span{padding:7px 2px;white-space:nowrap}
 body .text-button:hover{color:var(--text)}
 /* Lists, cards and badges */
 body :is(#aircraft-list,#missile-list,#envelope-list){background:#000;border-color:var(--line)}
