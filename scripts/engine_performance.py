@@ -105,6 +105,46 @@ def jet_row(chart, speed_kmh):
                 mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
+CURVES = (lambda r:r.get('thrust_kgf'), lambda r:r.get('power_hp'), lambda r:r.get('efficiency'),
+          lambda r:(r.get('rpm') or [None])[0], lambda r:(r.get('pitch_deg') or [None])[0],
+          lambda r:(r.get('manifold_ata') or [None])[0])
+TOLERANCE = .002   # of each plotted quantity's range over the sweep: the largest straight-line midpoint error kept
+EXTRA = 400        # most refinement points added to one sweep
+
+
+def refined(rows, at, x, step):
+    """The sweep with points added where a straight line between neighbours misrepresents it (Leo, 2026-10-28: the
+    fixed grid cut corners). An interval is split where its ends differ in kind (solved, supercharger gear, governor
+    state) or where the base grid bends there (second difference above the tolerance); a split keeps halving while
+    the midpoint is off the chord or the kind changes inside, down to `step` (a kind change is then located to `step`)."""
+    def kind(r):return r['solved'], tuple(r.get('gear') or ()), tuple(r.get('governor') or ())
+    values = [[f(r) for r in rows] for f in CURVES]
+    # A flat quantity (RPM held by the governor, manifold below critical altitude) varies only by float32 noise: its
+    # scale is at least 1% of its size.
+    scale = [TOLERANCE * max(max(f) - min(f), .01 * max(map(abs, f))) if len(f := [v for v in vs if v is not None and math.isfinite(v)]) > 1
+             else 0. for vs in values]
+    def bent(a, m, b):
+        for f, s in zip(CURVES, scale):
+            ya, ym, yb = f(a), f(m), f(b)
+            if s > 0. and None not in (ya, ym, yb) and abs(ym - .5 * (ya + yb)) > s:return True
+        return False
+    def candidate(i):
+        if kind(rows[i]) != kind(rows[i + 1]):return True
+        return any(0 < j < len(rows) - 1 and bent(rows[j - 1], rows[j], rows[j + 1]) for j in (i, i + 1))
+    budget = [EXTRA]
+    def fill(a, b):
+        if x(b) - x(a) <= step or budget[0] <= 0:return []
+        budget[0] -= 1
+        m = at(.5 * (x(a) + x(b)))
+        if kind(a) == kind(m) == kind(b) and not bent(a, m, b):return [m]
+        return fill(a, m) + [m] + fill(m, b)
+    out = [rows[0]]
+    for i in range(len(rows) - 1):
+        if candidate(i):out += fill(rows[i], rows[i + 1])
+        out.append(rows[i + 1])
+    return out
+
+
 @lru_cache(maxsize=32)
 def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None):
     """Both sweeps at a throttle setting (%). pitch: manual propeller control (%) or None for automatic control."""
@@ -123,9 +163,11 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None)
         return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
     with LOCK:
         level = solver(name, altitude_m, throttle, pitch)
+        up = lambda h:row(solver(name, h, throttle, pitch), h, speed_kmh)
+        along = lambda v:row(level, altitude_m, v)
         modes = [dict(key='throttle', label=f'{throttle:g}%',
-                      altitude=[row(solver(name, h, throttle, pitch), h, speed_kmh) for h in altitudes],
-                      speed=[row(level, altitude_m, v) for v in speeds])]
+                      altitude=refined([up(h) for h in altitudes], up, lambda r:r['altitude_m'], 10.),
+                      speed=refined([along(v) for v in speeds], along, lambda r:r['speed_kmh'], 1. if prop else 2.))]
     engines = level.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
                 speed_kmh=speed_kmh, throttle_percent=throttle, pitch_percent=pitch, modes=modes,
