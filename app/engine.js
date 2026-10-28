@@ -1,22 +1,20 @@
-// Engine performance (Leo, 2026-10-28): shaft power, thrust, propeller efficiency, RPM, blade pitch and manifold
-// pressure over altitude or true airspeed, at each aircraft's throttle setting, for up to eight aircraft. Straight flight with
-// the nose on the flight path, fully upgraded (GET /api/engine/<aircraft>, scripts/engine_performance.py). Laid out
-// like the EM page; uses app.js's catalog (state.meta), api() and name helpers.
+// Engine performance (Leo, 2026-10-28): shaft power, thrust and propeller efficiency (nose on the flight path) and SEP
+// (1 g level flight) over altitude or true airspeed, at each aircraft's EM-page settings, for up to eight aircraft, fully
+// upgraded (POST /api/engine, scripts/engine_performance.py). Laid out like the EM page; uses app.js's catalog
+// (state.meta), api(), name helpers and loadout editor.
 (() => {
   'use strict';
   const el = id => document.getElementById(id);
   const root = el('engine-workspace');
   if (!root) return;
   const MAX = 8, PROPS = ['piston', 'turboprop', 'mixed'];
-  const defaults = {altitude: 1000, speed: 300, axis: 'altitude', quantity: 'power'};
+  // Ranges (Leo, 2026-10-28): true airspeed 0-800 km/h for propeller aircraft, 0-1,300 with a jet added; altitude 0-10 km.
+  const defaults = {altitude: 1000, speed: 300, axis: 'altitude', quantity: 'power', altitudes: [0, 10000]};
   // y: the plotted value of a sweep row (engine or propeller 1 where there are several; the details list them all).
   const QUANTITIES = {
     power: {label: 'Power', title: 'Shaft power (hp)', y: r => r.power_hp, digits: 0, unit: ' hp', props: true},
     thrust: {label: 'Thrust', title: 'Thrust (kgf)', y: r => r.thrust_kgf, digits: 0, unit: ' kgf'},
     efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
-    rpm: {label: 'RPM', title: 'Engine RPM', y: r => r.rpm?.[0], digits: 0, unit: ' rpm'},
-    pitch: {label: 'Blade pitch', title: 'Blade angle (°)', y: r => r.pitch_deg?.[0], digits: 1, unit: '°', props: true},
-    manifold: {label: 'Manifold', title: 'Manifold pressure (ata)', y: r => r.manifold_ata?.[0], digits: 2, unit: ' ata', piston: true},
     // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
     sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
@@ -24,6 +22,8 @@
   const GOVERNOR = {'target RPM': 'Holding RPM', 'minimum pitch': 'Fine pitch stop', 'maximum pitch': 'Coarse pitch stop',
     'fixed pitch': 'Fixed pitch', 'manual blade pitch': 'Manual blade angle'};
   const field = (id, label, unit, value, min, max) => `<label class="field" id="${id}-field">${label}<div class="input-unit"><input id="${id}" type="number" min="${min}" max="${max}" step="any" value="${value}" required aria-label="${label}"><span>${unit}</span></div></label>`;
+  // Two inputs as the EM page's speed range: minimum → maximum.
+  const range = (id, label, unit, name, [lo, hi], max) => `<div class="field" id="${id}-field"><div class="field-label">${label} <span>${unit}</span></div><div class="two-inputs"><input id="${id}-min" aria-label="Minimum ${name}" type="number" min="0" max="${max}" step="any" value="${lo}" required><span>→</span><input id="${id}-max" aria-label="Maximum ${name}" type="number" min="0" max="${max}" step="any" value="${hi}" required></div></div>`;
   const radios = (name, items, checked, label) => `<div class="mode-switch" role="radiogroup" aria-label="${label}">${Object.entries(items).map(([k, q]) =>
     `<label><input type="radio" name="${name}" value="${k}"${k === checked ? ' checked' : ''}><span>${q.label}</span></label>`).join('')}</div>`;
 
@@ -37,7 +37,9 @@
     <label class="field">Plot<select id="engine-quantity">${Object.entries(QUANTITIES).map(([k, q]) => `<option value="${k}"${k === defaults.quantity ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="field">X axis${radios('engine-axis', AXES, defaults.axis, 'X axis')}</div>
     ${field('engine-speed', 'True airspeed', 'km/h', defaults.speed, 5, 1600)}
+    ${range('engine-altitude-range', 'Altitude range', 'm', 'altitude', defaults.altitudes, 18000)}
     ${field('engine-altitude', 'Altitude', 'm', defaults.altitude, 0, 18000)}
+    ${range('engine-speed-range', 'True airspeed range', 'km/h', 'true airspeed', [0, 800], 1600)}
     <div class="sidebar-actions"><p id="engine-ready" class="hint" hidden></p>
       <div class="action-row"><button id="engine-run" class="primary-button" type="submit" disabled>Calculate</button><button id="engine-reset" class="secondary-button reset-button" type="button">Reset</button></div></div>
   </form></aside>
@@ -71,9 +73,11 @@
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
-  const body = (entry, axis, level, altitude, speed) => ({aircraft: entry.aircraft_id, sweep: axis, level, altitude_m: altitude, speed_kmh: speed,
+  // run: {axis, level, altitude, speed, range}; the fixed value not used by the axis stays out of the cache key.
+  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, altitude_m: run.altitude, speed_kmh: run.speed,
+    [run.axis === 'altitude' ? 'altitude_range' : 'speed_range']: run.range,
     throttle: +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
-  const key = (entry, axis, level, altitude, speed) => JSON.stringify(body(entry, axis, level, axis === 'altitude' ? 0 : altitude, axis === 'speed' ? 0 : speed));
+  const key = (entry, run) => JSON.stringify(body(entry, {...run, altitude: run.axis === 'altitude' ? 0 : run.altitude, speed: run.axis === 'speed' ? 0 : run.speed}));
   const levelPlot = () => !!QUANTITIES[el('engine-quantity').value].level;
 
   // ---- Aircraft list and cards ----------------------------------------------------------
@@ -239,20 +243,26 @@
   function axisControls() {
     // Over altitude the sweep holds one speed; over speed, one altitude.
     const axis = checked('engine-axis');
-    el('engine-speed-field').hidden = axis !== 'altitude'; el('engine-altitude-field').hidden = axis !== 'speed';
+    el('engine-speed-field').hidden = el('engine-altitude-range-field').hidden = axis !== 'altitude';
+    el('engine-altitude-field').hidden = el('engine-speed-range-field').hidden = axis !== 'speed';
   }
-  // Plot choices no added aircraft has (power and the propeller quantities need a propeller, manifold a piston engine).
+  let speedRangeEdited = false;
+  const defaultTopSpeed = () => entries.some(e => !propeller(aircraftOf(e))) ? 1300 : 800;
+  const rangeOf = id => [value(id + '-min'), value(id + '-max')];
+  // Plot choices no added aircraft has (power and efficiency need a propeller).
   function plotOptions() {
     const kinds = entries.map(e => aircraftOf(e)?.propulsion);
-    for (const option of el('engine-quantity').options) {
-      const q = QUANTITIES[option.value];
-      option.disabled = !!entries.length && (q.piston ? !kinds.some(k => ['piston', 'mixed'].includes(k)) : q.props ? !kinds.some(k => PROPS.includes(k)) : false);
-    }
+    for (const option of el('engine-quantity').options)
+      option.disabled = !!entries.length && !!QUANTITIES[option.value].props && !kinds.some(k => PROPS.includes(k));
     if (el('engine-quantity').selectedOptions[0]?.disabled) el('engine-quantity').value = 'thrust';
   }
   function updateForm() {
     plotOptions();
-    const invalid = ['engine-speed', 'engine-altitude'].map(el).find(input => !input.checkValidity());
+    if (!speedRangeEdited) el('engine-speed-range-max').value = defaultTopSpeed();
+    for (const id of ['engine-altitude-range', 'engine-speed-range'])
+      el(id + '-max').setCustomValidity(value(id + '-max') > value(id + '-min') ? '' : 'must exceed the minimum');
+    const invalid = ['engine-speed', 'engine-altitude', 'engine-altitude-range-min', 'engine-altitude-range-max', 'engine-speed-range-min', 'engine-speed-range-max']
+      .map(el).find(input => !input.closest('[hidden]') && !input.checkValidity());
     el('engine-ready').textContent = invalid && entries.length ? `${invalid.getAttribute('aria-label')}: ${invalid.validationMessage}` : '';
     el('engine-ready').hidden = !el('engine-ready').textContent;
     el('engine-run').disabled = running || !catalog() || !entries.length || !!invalid;
@@ -261,10 +271,15 @@
   root.querySelectorAll('input[name=engine-axis]').forEach(input => input.addEventListener('change', axisControls));
   // Engine quantities share one calculation; SEP is another (level flight), so switching to or from it waits for Calculate.
   el('engine-quantity').addEventListener('change', () => { if (shown && levelPlot() === shown.level) render(); });
-  el('engine-form').addEventListener('input', event => { if (event.target.type === 'number') updateForm(); });
+  el('engine-form').addEventListener('input', event => {
+    if (event.target.id.startsWith('engine-speed-range'))speedRangeEdited = true;
+    if (event.target.type === 'number') updateForm();
+  });
   el('engine-reset').addEventListener('click', () => {
     if (running) return;
     el('engine-speed').value = defaults.speed; el('engine-altitude').value = defaults.altitude;
+    [el('engine-altitude-range-min').value, el('engine-altitude-range-max').value] = defaults.altitudes;
+    el('engine-speed-range-min').value = 0; speedRangeEdited = false;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
     el('engine-quantity').value = defaults.quantity;
     for (const e of entries) Object.assign(e, FRESH, {throttle: full(e.aircraft_id), c: massSettings(e.aircraft_id)});
@@ -280,16 +295,17 @@
   }
   el('engine-form').addEventListener('submit', async event => {
     event.preventDefault(); if (running || !entries.length) return;
-    const axis = checked('engine-axis'), level = levelPlot(), altitude = value('engine-altitude'), speed = value('engine-speed'), wanted = [...entries];
+    const axis = checked('engine-axis'), wanted = [...entries];
+    const run = {axis, level: levelPlot(), altitude: value('engine-altitude'), speed: value('engine-speed'), range: rangeOf(axis === 'altitude' ? 'engine-altitude-range' : 'engine-speed-range')};
     showError(''); busy(true);
     try {
       for (const [i, entry] of wanted.entries()) {
-        const id = key(entry, axis, level, altitude, speed);
+        const id = key(entry, run);
         if (!results.has(id)) results.set(id, await api('/api/engine', {method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body(entry, axis, level, altitude, speed))}));
+          body: JSON.stringify(body(entry, run))}));
         el('engine-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
-      shown = {axis, level, altitude, speed, entries: wanted.map(e => structuredClone(e))};
+      shown = {...run, entries: wanted.map(e => structuredClone(e))};
       el('engine-inspector').hidden = true; render();
     } catch (error) { showError(error.message); }
     finally { busy(false); }
@@ -301,11 +317,11 @@
     if (!shown) return [];
     return shown.entries.map(e => {
       const index = entries.findIndex(x => x.id === e.id);
-      return index < 0 ? null : {entry: e, index, color: entryColors[index], result: results.get(key(e, shown.axis, shown.level, shown.altitude, shown.speed))};
+      return index < 0 ? null : {entry: e, index, color: entryColors[index], result: results.get(key(e, shown))};
     }).filter(d => d?.result);
   }
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
-    (!QUANTITIES[q].piston || d.result.stages.length) && d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r)))));
+    d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r)))));
   // Legend: aircraft · number, then the settings that differ from the defaults (full throttle, automatic pitch).
   const entryName = d => `${cleanName(d.result.name)} · ${d.index + 1}${d.entry.throttle !== full(d.entry.aircraft_id) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
   function render() {
@@ -337,17 +353,14 @@
             hovertemplate: `%{customdata}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         }
       }
-      if (q === 'rpm') traces.push({type: 'scatter', mode: 'lines', x: [Math.min(...d.result.modes[0][axis].map(x.x)), Math.max(...d.result.modes[0][axis].map(x.x))],
-        y: [d.result.rpm_limit[0], d.result.rpm_limit[0]], showlegend: false, hoverlabel: {bordercolor: d.color},
-        line: {color: rgba(d.color, .5), width: 1.2, dash: 'dot'}, hovertemplate: `RPM limit ${fmt(d.result.rpm_limit[0], 0)}<extra></extra>`});
     }
     const fixed = axis === 'altitude' ? `${fmt(shown.speed, 0)} km/h TAS` : `${fmt(shown.altitude, 0)} m`;
     const axisStyle = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, tickfont: {size: 12}, separatethousands: true};
     const layout = {paper_bgcolor: '#000', plot_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
       margin: {l: 64, r: 22, t: Math.max(40, Math.ceil(traces.filter(t => t.showlegend !== false).length / 2) * 22), b: 54}, hovermode: 'closest',
       hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
-      xaxis: {...axisStyle, title: {text: `${x.title} · ${fixed}`, standoff: 8, font: {size: 13}}, rangemode: 'tozero'},
-      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'pitch', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
+      xaxis: {...axisStyle, title: {text: `${x.title} · ${fixed}`, standoff: 8, font: {size: 13}}, range: shown.range},
+      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
       uirevision: `${axis}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
     if (!chart.classList.contains('js-plotly-plot')) chart.innerHTML = '';

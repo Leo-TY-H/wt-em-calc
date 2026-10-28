@@ -24,11 +24,22 @@ KGF = 9.80665
 LOCK = threading.Lock()
 
 
-def sweeps(propulsion):
-    """Altitudes (m) and true airspeeds (km/h) of the two sweeps. A propeller needs inflow: its first speed is 5 km/h."""
-    if propulsion in ('jet', 'rocket'):
-        return [250. * i for i in range(65)], [20. * i for i in range(81)]
-    return [200. * i for i in range(61)], [5.] + [10. * i for i in range(1, 91)]
+# Default ranges (Leo, 2026-10-28): true airspeed 0-800 km/h for propeller aircraft, 0-1,300 for jets; altitude 0-10 km.
+SPEEDS = {'jet': (0., 1300.)}
+ALTITUDES = (0., 10000.)
+
+
+def sweeps(propulsion, altitudes=None, speeds=None):
+    """Altitudes (m) and true airspeeds (km/h) of the two sweeps' base grids: every 200 m and 10 km/h for propeller
+    aircraft, 250 m and 20 km/h for jets, at most 160 steps over the range. A propeller needs inflow: no speed below 5 km/h."""
+    jet = propulsion in ('jet', 'rocket')
+    def grid(lo, hi, step):
+        n = min(160, max(1, math.ceil((hi - lo) / step - 1e-9)))
+        return [lo + (hi - lo) * i / n for i in range(n + 1)]
+    altitudes = grid(*(altitudes or ALTITUDES), 250. if jet else 200.)
+    speeds = grid(*(speeds or SPEEDS.get(propulsion, (0., 800.))), 20. if jet else 10.)
+    if not jet:speeds = sorted({max(v, 5.) for v in speeds})
+    return altitudes, speeds
 
 
 @lru_cache(maxsize=1)
@@ -156,9 +167,8 @@ def level_sweep(xs, solve_at, starts):
     return [rows[x] for x in xs], at
 
 
-CURVES = (lambda r:r.get('thrust_kgf'), lambda r:r.get('power_hp'), lambda r:r.get('efficiency'),
-          lambda r:(r.get('rpm') or [None])[0], lambda r:(r.get('pitch_deg') or [None])[0],
-          lambda r:(r.get('manifold_ata') or [None])[0], lambda r:r.get('ps_mps'))
+# The plotted quantities (Leo, 2026-10-28: power, thrust, efficiency, SEP; RPM, blade pitch and manifold only in details).
+CURVES = (lambda r:r.get('thrust_kgf'), lambda r:r.get('power_hp'), lambda r:r.get('efficiency'), lambda r:r.get('ps_mps'))
 TOLERANCE = .002   # of each plotted quantity's range over the sweep: the largest straight-line midpoint error kept
 EXTRA = 400        # most refinement points added to one sweep
 
@@ -197,10 +207,12 @@ def refined(rows, at, x, step):
 
 
 @lru_cache(maxsize=32)
-def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False, mass='{}'):
+def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False, mass='{}',
+            altitudes=None, speeds=None):
     """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m) or None for both.
     pitch: manual propeller control (%) or None for automatic control. level: SEP in 1 g level flight instead of the
-    engine at angle of attack 0. mass: JSON of the MASS settings (EM defaults where left out)."""
+    engine at angle of attack 0. mass: JSON of the MASS settings (EM defaults where left out). altitudes, speeds: the
+    sweep ranges (min, max), defaults SPEEDS / ALTITUDES."""
     entry = AIRCRAFT[name]
     if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
     if entry['propulsion'] == 'rocket':raise ValueError('Rocket aircraft have no engine performance page')
@@ -209,7 +221,7 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
         raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
     if throttle > 100. and name in without_wep():raise ValueError(entry['name'] + ' has no WEP: its throttle stops at 100%')
     started = time.perf_counter()
-    altitudes, speeds = sweeps(entry['propulsion'])
+    altitudes, speeds = sweeps(entry['propulsion'], altitudes, speeds)
     def row(chart, height, speed):
         try:value = propeller_row(chart, speed, report) if prop else jet_row(chart, speed)
         except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
@@ -248,7 +260,7 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
 def request(body, report=None):
     """POST /api/engine: {aircraft, sweep: altitude|speed, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
     mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle}}."""
-    known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass'}
+    known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass', 'altitude_range', 'speed_range'}
     if set(body) - known:raise ValueError('Unknown field: ' + ', '.join(sorted(set(body) - known)))
     name = body.get('aircraft')
     if not isinstance(name, str) or name not in AIRCRAFT:raise ValueError('Unknown aircraft')
@@ -262,8 +274,15 @@ def request(body, report=None):
     sweep = body.get('sweep', 'both')
     if sweep not in ('altitude', 'speed', 'both'):raise ValueError('Unknown sweep')
     if not isinstance(body.get('level', False), bool):raise ValueError('level must be true or false')
+    def span(key, high):
+        r = body.get(key)
+        if r is None:return None
+        if (not isinstance(r, list) or len(r) != 2 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in r)
+                or not 0 <= r[0] < r[1] <= high):raise ValueError(key + ' must be two increasing values from 0 to ' + str(int(high)))
+        return float(r[0]), float(r[1])
+    altitudes, speeds = span('altitude_range', 18000.), span('speed_range', 1600.)
     mass = body.get('mass', {})
     if not isinstance(mass, dict) or set(mass) - set(MASS):raise ValueError('Unknown mass setting')
     # settings() checks every value when the solver is built; the text is canonical so equal settings share a result.
     return compute(name, float(altitude), float(speed), float(throttle), None if pitch is None else float(pitch), report,
-                   None if sweep == 'both' else sweep, body.get('level', False), json.dumps(mass, sort_keys=True))
+                   None if sweep == 'both' else sweep, body.get('level', False), json.dumps(mass, sort_keys=True), altitudes, speeds)
