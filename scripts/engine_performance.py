@@ -108,9 +108,53 @@ def jet_row(chart, speed_kmh):
                 mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
+def level_solver(name, altitude, throttle, pitch):
+    """The EM plotter's point solver (em_server.point_solver for a march chart): soft admission, compiled loop."""
+    import em_march_native
+    chart = solver(name, altitude, throttle, pitch)
+    chart.soft_admission = True;em_march_native.attach(chart)
+    return chart
+
+
+def level_row(chart, speed_kmh, near):
+    """SEP and acceleration in 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve at 1 g, seeded from a
+    nearby solved point as em_server.solve_point seeds a clicked one; shown when the chart admits it and no engine
+    over-revs. Acceleration along the path in level flight: dV/dt = g SEP / V. Returns (row, point)."""
+    from body_dynamics import G
+    from em_sampling import continuation_initial
+    try:p = chart.solve(speed_kmh, 1., continuation_initial(chart, near, list(near['solution'])) if near is not None else None)
+    except ValueError:return None, None
+    prop = p.get('propulsion') or {}
+    if not p.get('valid') or any(r > l * (1 + 1e-6) for r, l in zip(prop.get('engine_rpm') or (), prop.get('engine_rpm_threshold') or ())):
+        return None, None
+    v, a, f = speed_kmh / 3.6, math.radians(p['alpha_deg']), p['engine_force_n']
+    return dict(ps_mps=p['ps_mps'], accel_mps2=p['ps_mps'] * float(G) / v, alpha_deg=p['alpha_deg'],
+                ias_kmh=p['ias_kmh'], mach=p['mach'], thrust_kgf=(f[0] * math.cos(a) - f[1] * math.sin(a)) / KGF,
+                power_hp=sum(prop['shaft_power_kw']) * 1000. / METRIC_HP if prop.get('shaft_power_kw') else None,
+                rpm=prop.get('engine_rpm')), p
+
+
+def level_sweep(xs, solve_at, starts):
+    """A level-flight sweep: solve at a start that converges cold, march outward seeding every point from the nearest
+    solved one, then refine. solve_at(x, near) -> (row, point)."""
+    seeds, rows = {}, {}
+    def at(x):
+        row, point = solve_at(x, seeds[min(seeds, key=lambda s:abs(s - x))] if seeds else None)
+        if point is not None:seeds[x] = point
+        return row
+    start = 0
+    for s in starts:
+        start = min(range(len(xs)), key=lambda i:abs(xs[i] - s))
+        if xs[start] not in rows:rows[xs[start]] = at(xs[start])
+        if rows[xs[start]]['solved']:break
+    for i in list(range(start + 1, len(xs))) + list(range(start - 1, -1, -1)):
+        if xs[i] not in rows:rows[xs[i]] = at(xs[i])
+    return [rows[x] for x in xs], at
+
+
 CURVES = (lambda r:r.get('thrust_kgf'), lambda r:r.get('power_hp'), lambda r:r.get('efficiency'),
           lambda r:(r.get('rpm') or [None])[0], lambda r:(r.get('pitch_deg') or [None])[0],
-          lambda r:(r.get('manifold_ata') or [None])[0])
+          lambda r:(r.get('manifold_ata') or [None])[0], lambda r:r.get('ps_mps'), lambda r:r.get('accel_mps2'))
 TOLERANCE = .002   # of each plotted quantity's range over the sweep: the largest straight-line midpoint error kept
 EXTRA = 400        # most refinement points added to one sweep
 
@@ -149,9 +193,10 @@ def refined(rows, at, x, step):
 
 
 @lru_cache(maxsize=32)
-def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None):
+def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False):
     """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m) or None for both.
-    pitch: manual propeller control (%) or None for automatic control."""
+    pitch: manual propeller control (%) or None for automatic control. level: SEP and acceleration in 1 g level flight
+    instead of the engine at angle of attack 0."""
     entry = AIRCRAFT[name]
     if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
     if entry['propulsion'] == 'rocket':raise ValueError('Rocket aircraft have no engine performance page')
@@ -165,19 +210,32 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
         try:value = propeller_row(chart, speed, report) if prop else jet_row(chart, speed)
         except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
         return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
+    def flight(chart, height, speed, near):
+        try:value, point = level_row(chart, speed, near)
+        except (ArithmeticError, np.linalg.LinAlgError):value = point = None
+        return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None), point
     with LOCK:
-        level = solver(name, altitude_m, throttle, pitch)
-        up = lambda h:row(solver(name, h, throttle, pitch), h, speed_kmh)
-        along = lambda v:row(level, altitude_m, v)
-        mode = dict(key='throttle', label=f'{throttle:g}%')
-        if sweep in (None, 'altitude'):mode['altitude'] = refined([up(h) for h in altitudes], up, lambda r:r['altitude_m'], 10.)
-        if sweep in (None, 'speed'):mode['speed'] = refined([along(v) for v in speeds], along, lambda r:r['speed_kmh'], 1. if prop else 2.)
+        chart = solver(name, altitude_m, throttle, pitch)
+        mode = dict(key='throttle', label=f'{throttle:g}%', level=bool(level))
+        if level:
+            fixed = level_solver(name, altitude_m, throttle, pitch)
+            if sweep in (None, 'altitude'):
+                base, at = level_sweep(altitudes, lambda h, near:flight(level_solver(name, h, throttle, pitch), h, speed_kmh, near), (0., 3000., 6000.))
+                mode['altitude'] = refined(base, at, lambda r:r['altitude_m'], 10.)
+            if sweep in (None, 'speed'):
+                base, at = level_sweep(speeds, lambda v, near:flight(fixed, altitude_m, v, near), (400., 300., 500., 250.) if prop else (800., 600., 1000., 450.))
+                mode['speed'] = refined(base, at, lambda r:r['speed_kmh'], 1. if prop else 2.)
+        else:
+            up = lambda h:row(solver(name, h, throttle, pitch), h, speed_kmh)
+            along = lambda v:row(chart, altitude_m, v)
+            if sweep in (None, 'altitude'):mode['altitude'] = refined([up(h) for h in altitudes], up, lambda r:r['altitude_m'], 10.)
+            if sweep in (None, 'speed'):mode['speed'] = refined([along(v) for v in speeds], along, lambda r:r['speed_kmh'], 1. if prop else 2.)
         modes = [mode]
-    engines = level.engine.properties['engines'] if prop else []
+    engines = chart.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
                 speed_kmh=speed_kmh, throttle_percent=throttle, pitch_percent=pitch, modes=modes,
-                engine_count=len(engines) if prop else len(level.engine.units),
+                engine_count=len(engines) if prop else len(chart.engine.units),
                 stages=[len(e['properties']['stages']) for e in engines if e['family'] in (0, 1)],
                 rpm_limit=([e['properties']['omega_limit'] * 30 / math.pi for e in engines] if prop else
-                           [u.ep['omega_limit'] * 30 / math.pi for u in level.engine.units]),
+                           [u.ep['omega_limit'] * 30 / math.pi for u in chart.engine.units]),
                 elapsed_s=time.perf_counter() - started)
