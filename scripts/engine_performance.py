@@ -66,10 +66,13 @@ def propeller_row(chart, speed_kmh, report):
     attitude = [0.] * 5;v = speed_kmh / 3.6
     prop = chart.operating_point(v, 1., attitude)['propulsion']
     if not prop.get('converged'):return None
+    p, state = chart.engine.properties, prop['state']
+    # Over-rev states are not shown (Leo, 2026-10-28): an engine above RPMMaxAllowed, the chart's 'engine RPM limit' test.
+    if any(e['omega'] > p['engines'][i]['properties']['omega_limit'] * (1 + 1e-6) for i, e in enumerate(state['engines'])):
+        return None
     velocity, _, geometry, _ = flight_condition(chart, v, 1., attitude)
     velocity, rates = tuple(map(f32, velocity)), tuple(map(f32, geometry['omega']))
     air, sound = fixed_air(velocity, chart.config['altitude_m'])
-    p, state = chart.engine.properties, prop['state']
     tips = [None] * len(p['propellers'])
     for i, shaft in enumerate(p['transmissions']):
         for link in shaft['propellers']:
