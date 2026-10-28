@@ -924,12 +924,19 @@ async function showLoadout(){
     $('loadout-detail').textContent=loadoutFigures(loadoutTotals(c.loadout,info))+(c.stores_released?' · stores released, racks stay':'');
   }catch(cause){$('loadout-detail').textContent='Could not load loadouts: '+cause.message;}
 }
-const loadoutDialog={entry:null,info:null,draft:null,pylon:null,notes:[]};
-async function openLoadoutEditor(){
-  const entry=state.entries.find(e=>e.id===state.editing);if(!entry)return;
-  saveCondition();
-  const c=state.conditions[entry.id],d=loadoutDialog;
-  d.entry=entry.id;d.info=null;d.pylon=null;d.notes=[];
+const loadoutDialog={entry:null,target:null,info:null,draft:null,pylon:null,notes:[]};
+// target: the settings being edited, {id, aircraft_id, c (conditions), applied()}; the open EM entry by default.
+// The engine performance page passes its own (engine.js).
+async function openLoadoutEditor(target){
+  if(!target){
+    const entry=state.entries.find(e=>e.id===state.editing);if(!entry)return;
+    saveCondition();
+    target={id:entry.id,aircraft_id:entry.aircraft_id,c:state.conditions[entry.id],applied(){
+      if(state.editing===entry.id){$('default-ammunition').checked=this.c.default_ammunition;showLoadout();}
+      syncLabels();}};
+  }
+  const entry={id:target.id,aircraft_id:target.aircraft_id},c=target.c,d=loadoutDialog;
+  d.entry=entry.id;d.target=target;d.info=null;d.pylon=null;d.notes=[];
   $('loadout-title').textContent=cleanName(state.meta.aircraft[entry.aircraft_id].name);
   $('loadout-preset-list').innerHTML='<p class="hint">Loading loadouts…</p>';
   $('loadout-custom').hidden=true;$('loadout-apply').disabled=true;
@@ -1034,7 +1041,7 @@ function renderLoadoutEditor(){
   $('loadout-released').disabled=bare;
   $('loadout-apply').disabled=problems.length>0;
 }
-$('loadout-edit').addEventListener('click',openLoadoutEditor);
+$('loadout-edit').addEventListener('click',()=>openLoadoutEditor());
 $('loadout-preset-list').addEventListener('click',event=>{
   const button=event.target.closest('[data-preset]');if(!button||button.disabled||!loadoutDialog.info)return;
   const d=loadoutDialog,id=button.dataset.preset;d.notes=[];
@@ -1051,14 +1058,12 @@ $('loadout-options').addEventListener('click',event=>{
   choosePylon(loadoutDialog.pylon,button.dataset.option);
 });
 $('loadout-apply').addEventListener('click',()=>{
-  const d=loadoutDialog,c=state.conditions[d.entry];if(!c||!d.draft)return;
+  const d=loadoutDialog,c=d.target?.c;if(!c||!d.draft)return;
   c.loadout=d.draft.preset in BARE_LOADOUTS?'':d.draft.preset!==null?d.draft.preset:{tiers:{...d.draft.tiers}};
   c.default_ammunition=d.draft.preset!=='__clean'&&!!d.ammunition;
   c.stores_released=!!c.loadout&&$('loadout-released').checked;
-  if(state.editing===d.entry)$('default-ammunition').checked=c.default_ammunition;
   $('loadout-dialog').close();
-  if(state.editing===d.entry)showLoadout();
-  syncLabels();
+  d.target.applied();
 });
 function formChanged(e){
   if(e.target.id==='aircraft-search')return;

@@ -8,6 +8,7 @@ BaselineSolver.operating_point at 1 g, angle of attack, bank and controls 0), ke
 chart's propeller admission. Jets: the chart's engine force (EngineEnsemble.vectors). Two sweeps: power and the rest
 over altitude at one true airspeed, and over true airspeed at one altitude.
 """
+import json
 import math
 import threading
 import time
@@ -50,10 +51,14 @@ def without_wep():
     return sorted(out)
 
 
-def solver(name, altitude, throttle, pitch):
+# The EM page's mass settings the popup carries (Leo, 2026-10-28), as JSON text so results can be cached.
+MASS = ('fuel_percent', 'extra_mass_kg', 'flaps_percent', 'loadout', 'stores_released', 'default_ammunition', 'ammunition_vehicle')
+
+
+def solver(name, altitude, throttle, pitch, mass='{}'):
     """The EM chart's solver for these settings (built per altitude: the catalog caches the aircraft, so this is cheap)."""
     from em_stationary_baseline import BaselineSolver
-    extra = dict(altitude_m=float(altitude), throttle=throttle / 100., afterburner=throttle > 100.)
+    extra = dict(json.loads(mass), altitude_m=float(altitude), throttle=throttle / 100., afterburner=throttle > 100.)
     if pitch is not None:extra.update(manual_engine_controls=True, propeller_pitch_auto=False, propeller_pitch_percent=pitch)
     return BaselineSolver(name, settings(dict(aircraft=[name], sideslip_recovery=False, **extra)))
 
@@ -108,19 +113,18 @@ def jet_row(chart, speed_kmh):
                 mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
-def level_solver(name, altitude, throttle, pitch):
+def level_solver(name, altitude, throttle, pitch, mass='{}'):
     """The EM plotter's point solver (em_server.point_solver for a march chart): soft admission, compiled loop."""
     import em_march_native
-    chart = solver(name, altitude, throttle, pitch)
+    chart = solver(name, altitude, throttle, pitch, mass)
     chart.soft_admission = True;em_march_native.attach(chart)
     return chart
 
 
 def level_row(chart, speed_kmh, near):
-    """SEP and acceleration in 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve at 1 g, seeded from a
-    nearby solved point as em_server.solve_point seeds a clicked one; shown when the chart admits it and no engine
-    over-revs. Acceleration along the path in level flight: dV/dt = g SEP / V. Returns (row, point)."""
-    from body_dynamics import G
+    """SEP in 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve at 1 g, seeded from a nearby solved point
+    as em_server.solve_point seeds a clicked one; shown when the chart admits it and no engine over-revs. Returns
+    (row, point)."""
     from em_sampling import continuation_initial
     try:p = chart.solve(speed_kmh, 1., continuation_initial(chart, near, list(near['solution'])) if near is not None else None)
     except ValueError:return None, None
@@ -128,7 +132,7 @@ def level_row(chart, speed_kmh, near):
     if not p.get('valid') or any(r > l * (1 + 1e-6) for r, l in zip(prop.get('engine_rpm') or (), prop.get('engine_rpm_threshold') or ())):
         return None, None
     v, a, f = speed_kmh / 3.6, math.radians(p['alpha_deg']), p['engine_force_n']
-    return dict(ps_mps=p['ps_mps'], accel_mps2=p['ps_mps'] * float(G) / v, alpha_deg=p['alpha_deg'],
+    return dict(ps_mps=p['ps_mps'], alpha_deg=p['alpha_deg'],
                 ias_kmh=p['ias_kmh'], mach=p['mach'], thrust_kgf=(f[0] * math.cos(a) - f[1] * math.sin(a)) / KGF,
                 power_hp=sum(prop['shaft_power_kw']) * 1000. / METRIC_HP if prop.get('shaft_power_kw') else None,
                 rpm=prop.get('engine_rpm')), p
@@ -154,7 +158,7 @@ def level_sweep(xs, solve_at, starts):
 
 CURVES = (lambda r:r.get('thrust_kgf'), lambda r:r.get('power_hp'), lambda r:r.get('efficiency'),
           lambda r:(r.get('rpm') or [None])[0], lambda r:(r.get('pitch_deg') or [None])[0],
-          lambda r:(r.get('manifold_ata') or [None])[0], lambda r:r.get('ps_mps'), lambda r:r.get('accel_mps2'))
+          lambda r:(r.get('manifold_ata') or [None])[0], lambda r:r.get('ps_mps'))
 TOLERANCE = .002   # of each plotted quantity's range over the sweep: the largest straight-line midpoint error kept
 EXTRA = 400        # most refinement points added to one sweep
 
@@ -193,10 +197,10 @@ def refined(rows, at, x, step):
 
 
 @lru_cache(maxsize=32)
-def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False):
+def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False, mass='{}'):
     """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m) or None for both.
-    pitch: manual propeller control (%) or None for automatic control. level: SEP and acceleration in 1 g level flight
-    instead of the engine at angle of attack 0."""
+    pitch: manual propeller control (%) or None for automatic control. level: SEP in 1 g level flight instead of the
+    engine at angle of attack 0. mass: JSON of the MASS settings (EM defaults where left out)."""
     entry = AIRCRAFT[name]
     if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
     if entry['propulsion'] == 'rocket':raise ValueError('Rocket aircraft have no engine performance page')
@@ -215,18 +219,18 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
         except (ArithmeticError, np.linalg.LinAlgError):value = point = None
         return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None), point
     with LOCK:
-        chart = solver(name, altitude_m, throttle, pitch)
+        chart = solver(name, altitude_m, throttle, pitch, mass)
         mode = dict(key='throttle', label=f'{throttle:g}%', level=bool(level))
         if level:
-            fixed = level_solver(name, altitude_m, throttle, pitch)
+            fixed = level_solver(name, altitude_m, throttle, pitch, mass)
             if sweep in (None, 'altitude'):
-                base, at = level_sweep(altitudes, lambda h, near:flight(level_solver(name, h, throttle, pitch), h, speed_kmh, near), (0., 3000., 6000.))
+                base, at = level_sweep(altitudes, lambda h, near:flight(level_solver(name, h, throttle, pitch, mass), h, speed_kmh, near), (0., 3000., 6000.))
                 mode['altitude'] = refined(base, at, lambda r:r['altitude_m'], 10.)
             if sweep in (None, 'speed'):
                 base, at = level_sweep(speeds, lambda v, near:flight(fixed, altitude_m, v, near), (400., 300., 500., 250.) if prop else (800., 600., 1000., 450.))
                 mode['speed'] = refined(base, at, lambda r:r['speed_kmh'], 1. if prop else 2.)
         else:
-            up = lambda h:row(solver(name, h, throttle, pitch), h, speed_kmh)
+            up = lambda h:row(solver(name, h, throttle, pitch, mass), h, speed_kmh)
             along = lambda v:row(chart, altitude_m, v)
             if sweep in (None, 'altitude'):mode['altitude'] = refined([up(h) for h in altitudes], up, lambda r:r['altitude_m'], 10.)
             if sweep in (None, 'speed'):mode['speed'] = refined([along(v) for v in speeds], along, lambda r:r['speed_kmh'], 1. if prop else 2.)
@@ -239,3 +243,27 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
                 rpm_limit=([e['properties']['omega_limit'] * 30 / math.pi for e in engines] if prop else
                            [u.ep['omega_limit'] * 30 / math.pi for u in chart.engine.units]),
                 elapsed_s=time.perf_counter() - started)
+
+
+def request(body, report=None):
+    """POST /api/engine: {aircraft, sweep: altitude|speed, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
+    mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle}}."""
+    known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass'}
+    if set(body) - known:raise ValueError('Unknown field: ' + ', '.join(sorted(set(body) - known)))
+    name = body.get('aircraft')
+    if not isinstance(name, str) or name not in AIRCRAFT:raise ValueError('Unknown aircraft')
+    def number(key, default, low, high):
+        v = body.get(key, default)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not low <= v <= high:
+            raise ValueError(key + ' out of range')
+        return v
+    altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 5., 1600.), number('throttle', 110., 0., 110.)
+    pitch = body.get('pitch', 'auto');pitch = None if pitch == 'auto' else number('pitch', None, 0., 100.)
+    sweep = body.get('sweep', 'both')
+    if sweep not in ('altitude', 'speed', 'both'):raise ValueError('Unknown sweep')
+    if not isinstance(body.get('level', False), bool):raise ValueError('level must be true or false')
+    mass = body.get('mass', {})
+    if not isinstance(mass, dict) or set(mass) - set(MASS):raise ValueError('Unknown mass setting')
+    # settings() checks every value when the solver is built; the text is canonical so equal settings share a result.
+    return compute(name, float(altitude), float(speed), float(throttle), None if pitch is None else float(pitch), report,
+                   None if sweep == 'both' else sweep, body.get('level', False), json.dumps(mass, sort_keys=True))

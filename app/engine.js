@@ -18,8 +18,7 @@
     pitch: {label: 'Blade pitch', title: 'Blade angle (°)', y: r => r.pitch_deg?.[0], digits: 1, unit: '°', props: true},
     manifold: {label: 'Manifold', title: 'Manifold pressure (ata)', y: r => r.manifold_ata?.[0], digits: 2, unit: ' ata', piston: true},
     // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
-    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true},
-    acceleration: {label: 'Acceleration', title: 'Acceleration in level flight (m/s²)', y: r => r.accel_mps2, digits: 3, unit: ' m/s²', level: true}};
+    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
     speed: {label: 'Speed', x: r => r.speed_kmh, title: 'True airspeed (km/h)', unit: ' km/h'}};
   const GOVERNOR = {'target RPM': 'Holding RPM', 'minimum pitch': 'Fine pitch stop', 'maximum pitch': 'Coarse pitch stop',
@@ -49,10 +48,19 @@
     <section id="engine-inspector" class="inspector" hidden><div class="inspector-heading"><h2 id="engine-point-title"></h2></div><div id="engine-point"></div></section>
   </main>
   <dialog id="engine-dialog" class="entry-dialog" aria-labelledby="engine-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="engine-dialog-title"></h2></div><button type="button" id="engine-dialog-close" class="text-button" aria-label="Close settings">✕</button></header>
-    <div class="entry-dialog-body"><label class="field">Throttle <output id="engine-throttle-label">110%</output><input id="engine-throttle" type="range" min="0" max="110" step="1" value="110"></label>
+    <div class="entry-dialog-body"><label class="field">Fuel load <output id="engine-fuel-label">30%</output><input id="engine-fuel" type="range" min="1" max="100" step="1" value="30"></label>
+      <label class="field">Throttle <output id="engine-throttle-label">110%</output><input id="engine-throttle" type="range" min="0" max="110" step="1" value="110"></label>
       <div id="engine-manual-field"><label class="check-row"><input id="engine-manual" type="checkbox"> Manual engine controls</label>
       <div id="engine-manual-settings"><label id="engine-pitch-auto-field" class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
-      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></div></div></dialog>`;
+      <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></div>
+      <div id="engine-flaps-field" class="field"><label for="engine-flaps">Flaps</label> <output id="engine-flaps-label">0%</output><input id="engine-flaps" type="range" min="0" max="100" step="1" value="0">
+        <div id="engine-flap-modes" class="flap-modes" role="group" aria-label="Flap positions"><button type="button" data-flap-mode="combat" aria-pressed="false">Combat</button><button type="button" data-flap-mode="takeoff" aria-pressed="false">Takeoff</button><button type="button" data-flap-mode="landing" aria-pressed="false">Landing</button></div></div>
+      <div class="field loadout-field"><div class="loadout-field-heading"><span>Loadout</span><button type="button" id="engine-loadout-edit" class="text-button">Change…</button></div>
+        <div id="engine-loadout-summary" class="loadout-summary"></div><small id="engine-loadout-detail"></small></div>
+      <label id="engine-vehicle-field" class="field" hidden>Armament variant<select id="engine-vehicle"></select></label>
+      <label class="field">Additional mass at CG<div class="input-unit"><input id="engine-mass" type="number" min="0" max="5000" step="any" value="0" aria-label="Additional mass at CG"><span>kg</span></div></label>
+      <div class="divider"></div>
+      <div class="apply-settings"><button id="engine-apply-all" type="button">Apply these settings to all added aircraft</button><span id="engine-apply-status" class="hint" role="status" aria-live="polite"></span></div></div></dialog>`;
 
   let entries = [], nextEntry = 1, results = new Map(), running = false, shown = null, editing = null;
   const catalog = () => (typeof state !== 'undefined' && state.meta) ? state.meta.aircraft : null;
@@ -63,7 +71,9 @@
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
-  const key = (entry, axis, level, altitude, speed) => `${entry.aircraft_id}|${axis}|${level}|${axis === 'altitude' ? speed : altitude}|${entry.throttle}|${entry.pitch}`;
+  const body = (entry, axis, level, altitude, speed) => ({aircraft: entry.aircraft_id, sweep: axis, level, altitude_m: altitude, speed_kmh: speed,
+    throttle: +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
+  const key = (entry, axis, level, altitude, speed) => JSON.stringify(body(entry, axis, level, axis === 'altitude' ? 0 : altitude, axis === 'speed' ? 0 : speed));
   const levelPlot = () => !!QUANTITIES[el('engine-quantity').value].level;
 
   // ---- Aircraft list and cards ----------------------------------------------------------
@@ -99,12 +109,24 @@
   // The EM page's engine settings: throttle (%), Manual engine controls, Automatic propeller control and the propeller
   // setting (%); pitch is what they request: 'auto', or the manual setting. Full throttle is 110%, or 100% for aircraft
   // without WEP (app.js noWep: the game's throttle stops there).
-  const FRESH = {throttle: null, manual: false, auto: true, setting: '50', pitch: 'auto'};
+  // c: the EM page's mass settings (fuel, flaps, loadout, ammunition, additional mass), normalized as app.js
+  // aircraftConditions does: ammunition only where the aircraft has it, flaps 0 without flaps, loadouts per aircraft.
+  const FRESH = {throttle: null, manual: false, auto: true, setting: '50', pitch: 'auto', c: null};
   const full = aircraft_id => noWep(aircraft_id) ? '100' : '110';
+  function massSettings(aircraft_id, from) {
+    const a = catalog()[aircraft_id], d = state.meta.defaults, c = {fuel_percent: d.fuel_percent, extra_mass_kg: d.extra_mass_kg, flaps_percent: 0,
+      loadout: '', stores_released: false, default_ammunition: d.default_ammunition, ammunition_vehicle: '', ...(from || {})};
+    if (!a.ammunition?.variants?.[c.ammunition_vehicle]) c.ammunition_vehicle = a.ammunition?.vehicle_id || '';
+    if (!ammunitionFor(a, c.ammunition_vehicle)?.supported) c.default_ammunition = false;
+    c.flaps_percent = a.has_flaps ? Math.max(0, Math.min(100, Math.round(c.flaps_percent || 0))) : 0;
+    if (!a.loadouts?.supported || !c.loadout) { c.loadout = ''; c.stores_released = false; }
+    return c;
+  }
   const addEntry = (aircraft_id, from = FRESH) => {
     if (entries.length >= MAX) return;
     const {manual, auto, setting, pitch} = from, throttle = from.throttle ?? full(aircraft_id);
-    entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, manual, auto, setting, pitch}); renderEntries(); filter(); updateForm();
+    entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, manual, auto, setting, pitch, c: massSettings(aircraft_id, from.c && structuredClone(from.c))});
+    renderEntries(); filter(); updateForm();
   };
   el('engine-list').addEventListener('click', event => {
     const button = event.target.closest('[data-add]'); if (button && !button.disabled) addEntry(button.dataset.add);
@@ -123,15 +145,27 @@
   // ---- Settings popup: applies as it changes; ✕, Escape or a click outside puts it away ------
   // The EM page's rules (app.js syncLabels, normalizeManualControls); radiators are left out (drag only).
   function showSettings() {
-    const entry = entries.find(e => e.id === editing), kind = aircraftOf(entry)?.manual_controls?.pitch_kind;
+    const entry = entries.find(e => e.id === editing), a = aircraftOf(entry), kind = a?.manual_controls?.pitch_kind, variants = a?.ammunition?.variants;
+    el('engine-fuel').value = entry.c.fuel_percent; el('engine-flaps').value = entry.c.flaps_percent; el('engine-mass').value = entry.c.extra_mass_kg;
+    el('engine-vehicle-field').hidden = !variants || Object.keys(variants).length < 2;
+    el('engine-vehicle').innerHTML = variants ? Object.keys(variants).map(v => `<option value="${escapeText(v)}">${escapeText(a.vehicle_names?.find(n => n.vehicle_id === v)?.display_name || v)}</option>`).join('') : '';
+    if (variants) el('engine-vehicle').value = entry.c.ammunition_vehicle;
+    el('engine-apply-all').disabled = entries.length < 2; el('engine-apply-status').textContent = '';
+    showLoadoutSummary(entry);
     el('engine-throttle').max = full(entry.aircraft_id); el('engine-throttle').value = entry.throttle; el('engine-manual').checked = entry.manual;
     el('engine-pitch-auto').checked = entry.auto; el('engine-pitch').value = entry.setting;
     el('engine-pitch-name').textContent = kind === 'RPM governor' ? 'Propeller RPM setting' : kind === 'Blade angle' ? 'Propeller blade-angle setting' : 'Propeller control';
     syncSettings();
   }
   function syncSettings() {
-    const caps = aircraftOf(entries.find(e => e.id === editing))?.manual_controls || {};
+    const a = aircraftOf(entries.find(e => e.id === editing)), caps = a?.manual_controls || {};
+    el('engine-fuel-label').textContent = el('engine-fuel').value + '%';
     el('engine-throttle-label').textContent = el('engine-throttle').value + '%';
+    el('engine-flaps-field').hidden = !a?.has_flaps; el('engine-flaps-label').textContent = el('engine-flaps').value + '%';
+    for (const button of el('engine-flap-modes').children) {
+      const percent = a?.flaps?.modes[button.dataset.flapMode];
+      button.disabled = percent == null; button.setAttribute('aria-pressed', String(!button.disabled && +el('engine-flaps').value === Math.round(percent)));
+    }
     el('engine-manual-field').hidden = !caps.propeller_pitch;
     el('engine-manual-settings').hidden = !el('engine-manual').checked;
     el('engine-pitch-auto-field').hidden = !caps.propeller_auto;
@@ -139,11 +173,61 @@
     const auto = el('engine-pitch-auto').checked;
     el('engine-pitch').disabled = auto; el('engine-pitch-label').textContent = auto ? 'Automatic' : el('engine-pitch').value + '%';
   }
-  for (const id of ['engine-throttle', 'engine-manual', 'engine-pitch-auto', 'engine-pitch']) el(id).addEventListener('input', () => {
+  function saveSettings() {
     syncSettings();
     const entry = entries.find(e => e.id === editing); if (!entry) return;
     Object.assign(entry, {throttle: el('engine-throttle').value, manual: el('engine-manual').checked, auto: el('engine-pitch-auto').checked, setting: el('engine-pitch').value});
     entry.pitch = pitchable(aircraftOf(entry)) && entry.manual && !entry.auto ? entry.setting : 'auto';
+    const mass = Number(el('engine-mass').value);
+    Object.assign(entry.c, {fuel_percent: Number(el('engine-fuel').value), flaps_percent: Number(el('engine-flaps').value),
+      extra_mass_kg: el('engine-mass').checkValidity() && Number.isFinite(mass) ? mass : entry.c.extra_mass_kg});
+    el('engine-apply-status').textContent = '';
+  }
+  for (const id of ['engine-fuel', 'engine-throttle', 'engine-manual', 'engine-pitch-auto', 'engine-pitch', 'engine-flaps', 'engine-mass']) el(id).addEventListener('input', saveSettings);
+  el('engine-flap-modes').addEventListener('click', event => {
+    const button = event.target.closest('[data-flap-mode]'), entry = entries.find(e => e.id === editing);
+    if (!button || button.disabled || !entry) return;
+    el('engine-flaps').value = Math.round(aircraftOf(entry).flaps.modes[button.dataset.flapMode]); saveSettings();
+  });
+  el('engine-vehicle').addEventListener('change', () => {
+    // Each armament variant has its own pylons and presets (as the EM page).
+    const entry = entries.find(e => e.id === editing); if (!entry) return;
+    entry.c = massSettings(entry.aircraft_id, {...entry.c, ammunition_vehicle: el('engine-vehicle').value, loadout: '', stores_released: false});
+    showLoadoutSummary(entry);
+  });
+  // Loadout: the EM page's summary and editor (app.js openLoadoutEditor with this entry's settings).
+  async function showLoadoutSummary(entry) {
+    const a = aircraftOf(entry), c = entry.c;
+    const available = !!a.loadouts?.supported, ammunition = !!ammunitionFor(a, c.ammunition_vehicle)?.supported;
+    el('engine-loadout-edit').disabled = !available && !ammunition;
+    el('engine-loadout-summary').textContent = loadoutText(c, cachedLoadouts(entry.aircraft_id, c.ammunition_vehicle));
+    el('engine-loadout-detail').textContent = c.loadout ? '' : c.default_ammunition ? ammunitionText(a, c.ammunition_vehicle) :
+      available || ammunition ? 'Nothing aboard' : (a.loadouts?.reason || 'Loadouts are unavailable for this aircraft.');
+    if (!available || !c.loadout) return;
+    try {
+      const info = await fetchLoadouts(entry.aircraft_id, c.ammunition_vehicle);
+      if (editing !== entry.id) return;
+      el('engine-loadout-summary').textContent = loadoutText(c, info);
+      el('engine-loadout-detail').textContent = loadoutFigures(loadoutTotals(c.loadout, info)) + (c.stores_released ? ' · stores released, racks stay' : '');
+    } catch (cause) { el('engine-loadout-detail').textContent = 'Could not load loadouts: ' + cause.message; }
+  }
+  el('engine-loadout-edit').addEventListener('click', () => {
+    const entry = entries.find(e => e.id === editing); if (!entry) return;
+    openLoadoutEditor({id: entry.id, aircraft_id: entry.aircraft_id, c: entry.c, applied() { if (editing === entry.id) showLoadoutSummary(entry); }});
+  });
+  el('engine-apply-all').addEventListener('click', () => {
+    // As the EM page: every setting to every entry; a loadout and armament variant only to the same aircraft.
+    const source = entries.find(e => e.id === editing); if (!source || entries.length < 2) return;
+    saveSettings();
+    for (const entry of entries) {
+      if (entry === source) continue;
+      const same = entry.aircraft_id === source.aircraft_id;
+      entry.c = massSettings(entry.aircraft_id, same ? structuredClone(source.c) : {...source.c, loadout: '', stores_released: false, ammunition_vehicle: ''});
+      entry.throttle = String(Math.min(+source.throttle, +full(entry.aircraft_id)));
+      Object.assign(entry, {manual: source.manual, auto: source.auto, setting: source.setting});
+      entry.pitch = pitchable(aircraftOf(entry)) && entry.manual && !entry.auto ? entry.setting : 'auto';
+    }
+    el('engine-apply-status').textContent = `Applied to all ${entries.length} aircraft.`;
   });
   el('engine-dialog-close').addEventListener('click', () => el('engine-dialog').close());
   el('engine-dialog').addEventListener('click', event => { if (event.target === el('engine-dialog')) el('engine-dialog').close(); });
@@ -175,7 +259,7 @@
   }
   // The x axis takes effect at the next Calculate; the plotted quantity redraws at once from the calculated sweep.
   root.querySelectorAll('input[name=engine-axis]').forEach(input => input.addEventListener('change', axisControls));
-  // Engine quantities share one calculation, as do SEP and acceleration; across the two the plot waits for Calculate.
+  // Engine quantities share one calculation; SEP is another (level flight), so switching to or from it waits for Calculate.
   el('engine-quantity').addEventListener('change', () => { if (shown && levelPlot() === shown.level) render(); });
   el('engine-form').addEventListener('input', event => { if (event.target.type === 'number') updateForm(); });
   el('engine-reset').addEventListener('click', () => {
@@ -183,7 +267,7 @@
     el('engine-speed').value = defaults.speed; el('engine-altitude').value = defaults.altitude;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
     el('engine-quantity').value = defaults.quantity;
-    for (const e of entries) Object.assign(e, FRESH, {throttle: full(e.aircraft_id)});
+    for (const e of entries) Object.assign(e, FRESH, {throttle: full(e.aircraft_id), c: massSettings(e.aircraft_id)});
     el('engine-search').value = ''; axisControls(); renderEntries(); filter(); updateForm(); render();
   });
 
@@ -201,10 +285,11 @@
     try {
       for (const [i, entry] of wanted.entries()) {
         const id = key(entry, axis, level, altitude, speed);
-        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?sweep=${axis}&level=${level ? 1 : 0}&altitude_m=${altitude}&speed_kmh=${speed}&throttle=${entry.throttle}&pitch=${entry.pitch}`));
+        if (!results.has(id)) results.set(id, await api('/api/engine', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body(entry, axis, level, altitude, speed))}));
         el('engine-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
-      shown = {axis, level, altitude, speed, entries: wanted.map(e => ({...e}))};
+      shown = {axis, level, altitude, speed, entries: wanted.map(e => structuredClone(e))};
       el('engine-inspector').hidden = true; render();
     } catch (error) { showError(error.message); }
     finally { busy(false); }
@@ -262,7 +347,7 @@
       margin: {l: 64, r: 22, t: Math.max(40, Math.ceil(traces.filter(t => t.showlegend !== false).length / 2) * 22), b: 54}, hovermode: 'closest',
       hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
       xaxis: {...axisStyle, title: {text: `${x.title} · ${fixed}`, standoff: 8, font: {size: 13}}, rangemode: 'tozero'},
-      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'pitch', 'sep', 'acceleration'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
+      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'pitch', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
       uirevision: `${axis}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
     if (!chart.classList.contains('js-plotly-plot')) chart.innerHTML = '';
@@ -288,7 +373,7 @@
     el('engine-point-title').textContent = `${cleanName(result.name)} · ${mode.label} · ${fmt(r.altitude_m, 0)} m · ${fmt(r.speed_kmh, 0)} km/h`;
     if (mode.level) {
       el('engine-point').innerHTML = `<div class="point-grid">${section('LEVEL FLIGHT', [
-        ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Acceleration', fmt(r.accel_mps2, 3) + ' m/s²'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
+        ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
         ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
         ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)]])}</div>`;
       return;
@@ -309,7 +394,7 @@
   function download(kind) {
     const list = displayed(); if (!list.length) return;
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
-    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'accel_mps2', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
+    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
     const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) :
       [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed'].filter(sweep => m[sweep]).flatMap(sweep =>
         m[sweep].filter(r => r.solved).map(r => [d.index + 1, d.result.aircraft_id, d.entry.pitch, m.label, sweep, ...columns.map(c => join(r[c]))].join(',')))))].join('\n');

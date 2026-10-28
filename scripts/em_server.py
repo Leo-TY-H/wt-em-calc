@@ -579,6 +579,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(dict(cancelled=cancel_envelope(path.split('/')[4])))
             if path=='/api/jobs':
                 key=start_job(body);return self.respond(dict(id=key),202)
+            if path=='/api/engine':
+                # Engine performance page with the popup's mass settings (engine_performance.request).
+                from engine_performance import request as engine_request
+                return self.respond(engine_request(body,pitch_percent))
             if path=='/api/trial':
                 from em_uncorrected import request
                 return self.respond(request(body))
