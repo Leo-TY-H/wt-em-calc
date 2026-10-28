@@ -91,11 +91,13 @@
     }).join('');
   }
   // The EM page's engine settings: throttle (%), Manual engine controls, Automatic propeller control and the propeller
-  // setting (%); pitch is what they request: 'auto', or the manual setting.
-  const FRESH = {throttle: '110', manual: false, auto: true, setting: '50', pitch: 'auto'};
+  // setting (%); pitch is what they request: 'auto', or the manual setting. Full throttle is 110%, or 100% for aircraft
+  // without WEP (app.js noWep: the game's throttle stops there).
+  const FRESH = {throttle: null, manual: false, auto: true, setting: '50', pitch: 'auto'};
+  const full = aircraft_id => noWep(aircraft_id) ? '100' : '110';
   const addEntry = (aircraft_id, from = FRESH) => {
     if (entries.length >= MAX) return;
-    const {throttle, manual, auto, setting, pitch} = from;
+    const {manual, auto, setting, pitch} = from, throttle = from.throttle ?? full(aircraft_id);
     entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, manual, auto, setting, pitch}); renderEntries(); filter(); updateForm();
   };
   el('engine-list').addEventListener('click', event => {
@@ -116,7 +118,7 @@
   // The EM page's rules (app.js syncLabels, normalizeManualControls); radiators are left out (drag only).
   function showSettings() {
     const entry = entries.find(e => e.id === editing), kind = aircraftOf(entry)?.manual_controls?.pitch_kind;
-    el('engine-throttle').value = entry.throttle; el('engine-manual').checked = entry.manual;
+    el('engine-throttle').max = full(entry.aircraft_id); el('engine-throttle').value = entry.throttle; el('engine-manual').checked = entry.manual;
     el('engine-pitch-auto').checked = entry.auto; el('engine-pitch').value = entry.setting;
     el('engine-pitch-name').textContent = kind === 'RPM governor' ? 'Propeller RPM setting' : kind === 'Blade angle' ? 'Propeller blade-angle setting' : 'Propeller control';
     syncSettings();
@@ -163,7 +165,7 @@
     el('engine-speed').value = defaults.speed; el('engine-altitude').value = defaults.altitude;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
     root.querySelector(`input[name=engine-quantity][value=${defaults.quantity}]`).checked = true;
-    for (const e of entries) Object.assign(e, FRESH);
+    for (const e of entries) Object.assign(e, FRESH, {throttle: full(e.aircraft_id)});
     el('engine-search').value = ''; axisControls(); renderEntries(); filter(); updateForm(); render();
   });
 
@@ -201,8 +203,8 @@
   }
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
     (!QUANTITIES[q].piston || d.result.stages.length) && d.result.modes.some(m => m.altitude.some(r => Number.isFinite(QUANTITIES[q].y(r)))));
-  // Legend: aircraft · number, then the settings that differ from the defaults (110% throttle, automatic pitch).
-  const entryName = d => `${cleanName(d.result.name)} · ${d.index + 1}${d.entry.throttle !== '110' ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
+  // Legend: aircraft · number, then the settings that differ from the defaults (full throttle, automatic pitch).
+  const entryName = d => `${cleanName(d.result.name)} · ${d.index + 1}${d.entry.throttle !== full(d.entry.aircraft_id) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
   function render() {
     const list = displayed(), chart = el('engine-chart');
     for (const input of root.querySelectorAll('input[name=engine-quantity]')) input.disabled = !!list.length && !available(input.value, list);

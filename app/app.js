@@ -94,7 +94,9 @@ function normalizeManualControls(values,aircraft){
   if(!caps.radiator)values.radiator_percent=0;
   return values;
 }
-const aircraftConditions=(name,c)=>{const values=modeConditions(c);const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
+// Aircraft without WEP (server's no_wep list): the game's throttle stops at 100% (Leo, 2026-10-28).
+const noWep=name=>!!name&&!!state.meta?.no_wep?.includes(name);
+const aircraftConditions=(name,c)=>{const values=modeConditions(c);if(noWep(name)){values.throttle=Math.min(values.throttle,1);values.afterburner=false;}const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
 // One control mode switch (Leo, 2026-10-28), set as in the game (aces.exe 0x141b81440): the Instructor in Mouse aim and
 // Simplified (one option: both use the same steady Instructor here), autotrim in every mode but Full real, torque/gyro
 // only in Full real. The entry keeps its mode (control_mode, page only) for its name.
@@ -138,7 +140,8 @@ function showCondition(id){
   if(variants)$('ammunition-vehicle').value=c.ammunition_vehicle||aircraft.ammunition.vehicle_id;
   showAmmunition(aircraft);
   showLoadout();
-  $('throttle').value=c.throttle*100;
+  // The cap first: a range input clamps a value above its current max.
+  $('throttle').max=noWep(id&&state.entries.find(e=>e.id===id).aircraft_id)?100:110;$('throttle').value=c.throttle*100;
   $('control-'+controlMode(c).replace('_','-')).checked=true;
   // A server without the autotrim setting (older release) has no Realistic mode.
   $('control-realistic').closest('label').hidden=!('autotrim' in state.meta.defaults);
@@ -214,6 +217,7 @@ function populate(c) {
   $('quality').value=selected;showCondition(state.entries[0]?.id);renderEntries();syncLabels();
 }
 function syncLabels(){
+  $('throttle').max=noWep(state.entries.find(e=>e.id===state.editing)?.aircraft_id)?100:110;
   $('fuel-label').textContent=$('fuel').value+'%';$('throttle-label').textContent=fmt(+$('throttle').value,0)+'%';
   $('sweep-label').textContent=$('sweep').value+'%';
   const aircraft=state.meta?.aircraft[state.entries.find(e=>e.id===state.editing)?.aircraft_id];

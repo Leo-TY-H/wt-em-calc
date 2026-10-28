@@ -445,7 +445,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(dict(error='Loading updated calculator.',code='server_restarting'),503)
                     threading.Thread(target=self.server.shutdown,daemon=True).start()
                     return
-            return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,
+            from engine_performance import without_wep
+            return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,no_wep=without_wep(),
                 result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info()))
         if path.startswith('/api/loadouts/'):
             name=unquote(path.removeprefix('/api/loadouts/'))

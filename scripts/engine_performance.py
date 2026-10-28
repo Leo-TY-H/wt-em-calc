@@ -30,6 +30,26 @@ def sweeps(propulsion):
     return [200. * i for i in range(61)], [5.] + [10. * i for i in range(1, 91)]
 
 
+@lru_cache(maxsize=1)
+def without_wep():
+    """Aircraft whose engines have no boost above 100% throttle, so the game's throttle stops at 100% (Leo, 2026-10-28):
+    no WEP the pilot or the engine can engage (the chart's jet rule, engine_commands.afterburner_command) and no
+    ThrottleBoost. The pages cap their throttle sliders at 100% for these; the solver itself is unchanged."""
+    from aircraft_catalog import load
+    from engine_commands import afterburner_command
+    from jet_catalog import engines
+    out = []
+    for name in AIRCRAFT:
+        row = AIRCRAFT[name]
+        if not row.get('supported') or row['propulsion'] == 'rocket':continue
+        try:mains = [e for _, e in engines(load(name)) if e.get('Main', {}).get('Type') != 'Rocket']
+        except (OSError, ValueError, KeyError):continue
+        boost = lambda e:(afterburner_command(True, e.get('Afterburner', {}).get('Type', 0), e.get('Afterburner', {}).get('IsControllable', True))
+                          or e.get('Main', {}).get('ThrottleBoost', 1.) > 1.)
+        if mains and not any(map(boost, mains)):out.append(name)
+    return sorted(out)
+
+
 def solver(name, altitude, throttle, pitch):
     """The EM chart's solver for these settings (built per altitude: the catalog caches the aircraft, so this is cheap)."""
     from em_stationary_baseline import BaselineSolver
@@ -94,6 +114,7 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None)
     prop = entry['propulsion'] not in ('jet', 'rocket')
     if pitch is not None and not (prop and entry.get('manual_controls', {}).get('propeller_pitch')):
         raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
+    if throttle > 100. and name in without_wep():raise ValueError(entry['name'] + ' has no WEP: its throttle stops at 100%')
     started = time.perf_counter()
     altitudes, speeds = sweeps(entry['propulsion'])
     def row(chart, height, speed):
