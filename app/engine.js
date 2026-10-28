@@ -32,6 +32,7 @@
       <p id="engine-search-empty" class="hint" hidden>No aircraft match your search.</p>
     </fieldset>
     <div id="engine-selected" aria-label="Added aircraft"></div>
+    <label class="field">Plot<select id="engine-quantity">${Object.entries(QUANTITIES).map(([k, q]) => `<option value="${k}"${k === defaults.quantity ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="field">X axis${radios('engine-axis', AXES, defaults.axis, 'X axis')}</div>
     ${field('engine-speed', 'True airspeed', 'km/h', defaults.speed, 5, 1600)}
     ${field('engine-altitude', 'Altitude', 'm', defaults.altitude, 0, 18000)}
@@ -40,7 +41,7 @@
   </form></aside>
   <main>
     <div id="engine-error" class="error" role="alert" hidden></div>
-    <section class="chart-card"><div class="chart-toolbar">${radios('engine-quantity', QUANTITIES, defaults.quantity, 'Plotted quantity')}</div>
+    <section class="chart-card">
       <div id="engine-chart" aria-label="Engine performance"><div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div></div></section>
     <section id="engine-inspector" class="inspector" hidden><div class="inspector-heading"><h2 id="engine-point-title"></h2></div><div id="engine-point"></div></section>
   </main>
@@ -58,7 +59,8 @@
   const propeller = a => PROPS.includes(a?.propulsion);
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
-  const key = (entry, altitude, speed) => `${entry.aircraft_id}|${altitude}|${speed}|${entry.throttle}|${entry.pitch}`;
+  // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
+  const key = (entry, axis, altitude, speed) => `${entry.aircraft_id}|${axis}|${axis === 'altitude' ? speed : altitude}|${entry.throttle}|${entry.pitch}`;
 
   // ---- Aircraft list and cards ----------------------------------------------------------
   function populate() {
@@ -151,20 +153,31 @@
     const axis = checked('engine-axis');
     el('engine-speed-field').hidden = axis !== 'altitude'; el('engine-altitude-field').hidden = axis !== 'speed';
   }
+  // Plot choices no added aircraft has (power and the propeller quantities need a propeller, manifold a piston engine).
+  function plotOptions() {
+    const kinds = entries.map(e => aircraftOf(e)?.propulsion);
+    for (const option of el('engine-quantity').options) {
+      const q = QUANTITIES[option.value];
+      option.disabled = !!entries.length && (q.piston ? !kinds.some(k => ['piston', 'mixed'].includes(k)) : q.props ? !kinds.some(k => PROPS.includes(k)) : false);
+    }
+    if (el('engine-quantity').selectedOptions[0]?.disabled) el('engine-quantity').value = 'thrust';
+  }
   function updateForm() {
+    plotOptions();
     const invalid = ['engine-speed', 'engine-altitude'].map(el).find(input => !input.checkValidity());
     el('engine-ready').textContent = invalid && entries.length ? `${invalid.getAttribute('aria-label')}: ${invalid.validationMessage}` : '';
     el('engine-ready').hidden = !el('engine-ready').textContent;
     el('engine-run').disabled = running || !catalog() || !entries.length || !!invalid;
   }
-  root.querySelectorAll('input[name=engine-axis]').forEach(input => input.addEventListener('change', () => { axisControls(); render(); }));
-  root.querySelectorAll('input[name=engine-quantity]').forEach(input => input.addEventListener('change', render));
+  // The x axis takes effect at the next Calculate; the plotted quantity redraws at once from the calculated sweep.
+  root.querySelectorAll('input[name=engine-axis]').forEach(input => input.addEventListener('change', axisControls));
+  el('engine-quantity').addEventListener('change', render);
   el('engine-form').addEventListener('input', event => { if (event.target.type === 'number') updateForm(); });
   el('engine-reset').addEventListener('click', () => {
     if (running) return;
     el('engine-speed').value = defaults.speed; el('engine-altitude').value = defaults.altitude;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
-    root.querySelector(`input[name=engine-quantity][value=${defaults.quantity}]`).checked = true;
+    el('engine-quantity').value = defaults.quantity;
     for (const e of entries) Object.assign(e, FRESH, {throttle: full(e.aircraft_id)});
     el('engine-search').value = ''; axisControls(); renderEntries(); filter(); updateForm(); render();
   });
@@ -178,15 +191,15 @@
   }
   el('engine-form').addEventListener('submit', async event => {
     event.preventDefault(); if (running || !entries.length) return;
-    const altitude = value('engine-altitude'), speed = value('engine-speed'), wanted = [...entries];
+    const axis = checked('engine-axis'), altitude = value('engine-altitude'), speed = value('engine-speed'), wanted = [...entries];
     showError(''); busy(true);
     try {
       for (const [i, entry] of wanted.entries()) {
-        const id = key(entry, altitude, speed);
-        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?altitude_m=${altitude}&speed_kmh=${speed}&throttle=${entry.throttle}&pitch=${entry.pitch}`));
+        const id = key(entry, axis, altitude, speed);
+        if (!results.has(id)) results.set(id, await api(`/api/engine/${encodeURIComponent(entry.aircraft_id)}?sweep=${axis}&altitude_m=${altitude}&speed_kmh=${speed}&throttle=${entry.throttle}&pitch=${entry.pitch}`));
         el('engine-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
-      shown = {altitude, speed, entries: wanted.map(e => ({...e}))};
+      shown = {axis, altitude, speed, entries: wanted.map(e => ({...e}))};
       el('engine-inspector').hidden = true; render();
     } catch (error) { showError(error.message); }
     finally { busy(false); }
@@ -198,24 +211,23 @@
     if (!shown) return [];
     return shown.entries.map(e => {
       const index = entries.findIndex(x => x.id === e.id);
-      return index < 0 ? null : {entry: e, index, color: entryColors[index], result: results.get(key(e, shown.altitude, shown.speed))};
+      return index < 0 ? null : {entry: e, index, color: entryColors[index], result: results.get(key(e, shown.axis, shown.altitude, shown.speed))};
     }).filter(d => d?.result);
   }
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
-    (!QUANTITIES[q].piston || d.result.stages.length) && d.result.modes.some(m => m.altitude.some(r => Number.isFinite(QUANTITIES[q].y(r)))));
+    (!QUANTITIES[q].piston || d.result.stages.length) && d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r)))));
   // Legend: aircraft · number, then the settings that differ from the defaults (full throttle, automatic pitch).
   const entryName = d => `${cleanName(d.result.name)} · ${d.index + 1}${d.entry.throttle !== full(d.entry.aircraft_id) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
   function render() {
     const list = displayed(), chart = el('engine-chart');
-    for (const input of root.querySelectorAll('input[name=engine-quantity]')) input.disabled = !!list.length && !available(input.value, list);
     if (!list.length) {
       if (chart.classList.contains('js-plotly-plot')) Plotly.purge(chart);
       chart.innerHTML = '<div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div>';
       el('engine-inspector').hidden = true; return;
     }
-    let q = checked('engine-quantity');
-    if (!available(q, list)) { q = 'thrust'; root.querySelector('input[name=engine-quantity][value=thrust]').checked = true; }
-    const axis = checked('engine-axis'), quantity = QUANTITIES[q], x = AXES[axis], traces = [];
+    let q = el('engine-quantity').value;
+    if (!available(q, list)) { q = 'thrust'; el('engine-quantity').value = q; }
+    const axis = shown.axis, quantity = QUANTITIES[q], x = AXES[axis], traces = [];
     for (const d of list) {
       const modes = d.result.modes;
       for (const mode of modes) {
@@ -287,7 +299,7 @@
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
     const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
     const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) :
-      [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed'].flatMap(sweep =>
+      [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed'].filter(sweep => m[sweep]).flatMap(sweep =>
         m[sweep].filter(r => r.solved).map(r => [d.index + 1, d.result.aircraft_id, d.entry.pitch, m.label, sweep, ...columns.map(c => join(r[c]))].join(',')))))].join('\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([text], {type: kind === 'json' ? 'application/json' : 'text/csv'}));

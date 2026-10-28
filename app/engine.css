@@ -7,10 +7,6 @@
 #engine-manual-field{margin:14px 0}#engine-manual-settings{padding-top:4px}
 #engine-dialog .check-row{margin:8px 0;font-size:12px;align-items:center;cursor:pointer}
 #engine-dialog input:disabled{opacity:.45}
-/* Quantity picker above the plot. */
-#engine-workspace .chart-toolbar{padding:0 0 10px;border-bottom:0;justify-content:flex-start}
-#engine-workspace .chart-toolbar .mode-switch{margin-top:0;flex-wrap:wrap}
-#engine-workspace .chart-toolbar .mode-switch span{padding:6px 12px;white-space:nowrap}
-#engine-workspace .mode-switch input:disabled+span{opacity:.4;cursor:default}
-#engine-chart{height:max(520px,calc(100vh - var(--header) - 84px));width:100%}
+/* The plot is chosen in the sidebar; the chart takes the page as on the EM page. */
+#engine-chart{height:max(520px,calc(100vh - var(--header) - 36px));width:100%}
 @media(max-width:760px){#engine-chart{height:440px}}

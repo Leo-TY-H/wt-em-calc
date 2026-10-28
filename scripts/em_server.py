@@ -457,7 +457,7 @@ class Handler(BaseHTTPRequestHandler):
             try:return self.respond(loadout_summary(name,vehicle))
             except (OSError,ValueError,KeyError) as error:return self.respond(dict(supported=False,reason=str(error)))
         if path.startswith('/api/engine/'):
-            # Engine performance page: both sweeps of one aircraft. ?altitude_m=&speed_kmh=&throttle=percent&pitch=auto|percent
+            # Engine performance page: one aircraft's sweeps. ?sweep=altitude|speed|both&altitude_m=&speed_kmh=&throttle=percent&pitch=auto|percent
             name=unquote(path.removeprefix('/api/engine/'))
             if name not in AIRCRAFT:return self.respond(dict(error='Unknown aircraft'),404)
             query=parse_qs(urlparse(self.path).query)
@@ -466,10 +466,12 @@ class Handler(BaseHTTPRequestHandler):
                 altitude,speed=float(query.get('altitude_m',['0'])[0]),float(query.get('speed_kmh',['300'])[0])
                 throttle=float(query.get('throttle',['110'])[0])
                 raw=query.get('pitch',['auto'])[0];pitch=None if raw=='auto' else float(raw)
+                sweep=query.get('sweep',['both'])[0]
+                if sweep not in ('altitude','speed','both'):raise ValueError('Unknown sweep')
                 for label,value,low,high in (('Altitude',altitude,0.,18000.),('Speed',speed,5.,1600.),('Throttle',throttle,0.,110.),('Propeller pitch',pitch,0.,100.)):
                     if value is not None and not (math.isfinite(value) and low<=value<=high):raise ValueError(f'{label} out of range')
                 from engine_performance import compute as engine_performance
-                return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent))
+                return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent,None if sweep=='both' else sweep))
             except ValueError as error:return self.respond(dict(error=str(error)),400)
         if path.startswith('/api/jobs/'):
             parts=path.split('/');key=parts[3]
