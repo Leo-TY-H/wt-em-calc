@@ -32,11 +32,13 @@ def sweeps(propulsion):
 
 @lru_cache(maxsize=1)
 def without_wep():
-    """Aircraft whose engines have no boost above 100% throttle, so the game's throttle stops at 100% (Leo, 2026-10-28):
-    no WEP the pilot or the engine can engage (the chart's jet rule, engine_commands.afterburner_command) and no
-    ThrottleBoost. The pages cap their throttle sliders at 100% for these; the solver itself is unchanged."""
+    """Aircraft whose throttle stops at 100% in the game (Leo, 2026-10-28; aces.exe pilot throttle 0x1430afc00: each
+    engine's throttle is capped at 110% when max(override, ThrottleBoost) > 1, else at 100%). The pages cap their
+    throttle sliders at 100% for these; the solver itself is unchanged. (The game's WEP boost flag, 0x142fa0960, is the
+    jet rule engine_commands.afterburner_command; the solver gives props the raw flag, set above 100%. With this cap that
+    changes no result, checked 2026-10-28 on the only props concerned: Wyvern S4 at 110% with the flag on or off, and the
+    Pe-2-205/359, whose WEP boost the game engages at 100%, with the boost on or off.)"""
     from aircraft_catalog import load
-    from engine_commands import afterburner_command
     from jet_catalog import engines
     out = []
     for name in AIRCRAFT:
@@ -44,9 +46,7 @@ def without_wep():
         if not row.get('supported') or row['propulsion'] == 'rocket':continue
         try:mains = [e for _, e in engines(load(name)) if e.get('Main', {}).get('Type') != 'Rocket']
         except (OSError, ValueError, KeyError):continue
-        boost = lambda e:(afterburner_command(True, e.get('Afterburner', {}).get('Type', 0), e.get('Afterburner', {}).get('IsControllable', True))
-                          or e.get('Main', {}).get('ThrottleBoost', 1.) > 1.)
-        if mains and not any(map(boost, mains)):out.append(name)
+        if mains and not any(e.get('Main', {}).get('ThrottleBoost', 1.) > 1. for e in mains):out.append(name)
     return sorted(out)
 
 
