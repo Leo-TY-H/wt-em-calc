@@ -48,8 +48,11 @@ def at_altitude(base, height):
 
 def propeller_state(view, speed_kmh, warm):
     """The closed, admitted propulsion state of the first governed-request branch that has one (None if none). Each
-    branch starts cold, as a chart point does; where that fails, from the sweep's previous state on the branch (warm)."""
+    branch starts cold, as a chart point does; where that fails, from the sweep's previous state on the branch (warm);
+    last, the chart's axial RPM reference (BaselineSolver.operating_point at alpha 0: the whole joint problem with its
+    propeller-branch recovery), slower but closing states the propulsion block alone can miss."""
     from em_stationary import JointProblem, prepare
+    from em_stationary_baseline import BaselineSolver
     from prop_admission import evaluate as admission
     from prop_equilibrium import RESIDUAL_TOLERANCE
     from prop_quasisteady import propeller_condition
@@ -58,6 +61,17 @@ def propeller_state(view, speed_kmh, warm):
     _, requests, velocity, rates = prepare(view, speed_kmh / 3.6, 1., attitude)
     p = view.engine.properties
     air, sound = fixed_air(velocity, view.config['altitude_m'])
+    def admitted(prop):
+        """Blade-tip Mach of each propeller when every propeller passes the chart's admission, else None."""
+        state, checks = prop['state'], []
+        for i, shaft in enumerate(p['transmissions']):
+            for link in shaft['propellers']:
+                pp = p['propellers'][link['index']]['properties'];rotor = state['propellers'][link['index']]
+                checks.append((link['index'], admission(pp, rotor['flow'], rotor['pitch'], state['transmissions'][i]['omega'] * link['ratio'],
+                                                        air['density'], sound, propeller_condition(pp, velocity, rates))))
+        if not all(row['admitted'] for _, row in checks):return None
+        tips = dict((index, max((s['mach'] for r in row['rotors'] for s in r['sections']), default=None)) for index, row in checks)
+        return [tips.get(i) for i in range(len(p['propellers']))]
     for branch in itertools.product(*[range(len(r['candidates'])) if r['governed'] else [0] for r in requests]):
         problem = JointProblem(view, speed_kmh, 1., attitude, branch)
         starts = [problem.initial]
@@ -68,17 +82,14 @@ def propeller_state(view, speed_kmh, warm):
             residual, prop = problem.propulsion_at(q)
             if not (prop['converged'] and np.all(np.isfinite(residual)) and np.max(abs(residual), initial=0.) <= RESIDUAL_TOLERANCE):
                 continue
-            state, checks = prop['state'], []
-            for i, shaft in enumerate(p['transmissions']):
-                for link in shaft['propellers']:
-                    pp = p['propellers'][link['index']]['properties'];rotor = state['propellers'][link['index']]
-                    checks.append((link['index'], admission(pp, rotor['flow'], rotor['pitch'], state['transmissions'][i]['omega'] * link['ratio'],
-                                                            air['density'], sound, propeller_condition(pp, velocity, rates))))
-            if all(row['admitted'] for _, row in checks):
+            tips = admitted(prop)
+            if tips is not None:
                 warm[branch] = q
-                tips = dict((index, max((s['mach'] for r in row['rotors'] for s in r['sections']), default=None)) for index, row in checks)
-                return prop, [tips.get(i) for i in range(len(p['propellers']))], air
-    return None
+                return prop, tips, air
+    chart = copy.copy(view);chart.__class__ = BaselineSolver
+    prop = chart.operating_point(speed_kmh / 3.6, 1., attitude)['propulsion']
+    tips = admitted(prop) if prop.get('converged') else None
+    return None if tips is None else (prop, tips, air)
 
 
 def propeller_row(view, speed_kmh, report, warm):
