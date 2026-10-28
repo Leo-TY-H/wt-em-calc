@@ -175,7 +175,7 @@ function renderEntries(){
   // The single settings editor lives in the settings popup while an entry is open (Leo, 2026-10-26); never clone form IDs.
   const editor=$('aircraft-condition');(state.editing?$('entry-dialog-body'):$('condition-home')).append(editor);
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
-    <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong><code>${escapeText(nameCode(entryName(e))||e.aircraft_id)}</code></div>
+    <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong></div>
     <div class="entry-actions">
     <button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i+1}" title="Edit settings">${EDIT_ICON}</button>
     <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i+1}" title="Duplicate" ${state.entries.length>=8?'disabled':''}>${COPY_ICON}</button>
@@ -297,7 +297,9 @@ function syncAircraftMenu(){
     if(!row.hidden)visible++;
     row.querySelector('button').disabled=row.dataset.supported!=='true'||state.entries.length>=8;
   }
-  $('search-empty').hidden=visible>0;
+  // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
+  $('aircraft-list').hidden=!query;
+  $('search-empty').hidden=!query||visible>0;
 }
 function populateAircraft(){
   // By name, the leading nation symbol ignored, so an aircraft's variants sit together (the one without a symbol first).

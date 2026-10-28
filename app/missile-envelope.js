@@ -169,7 +169,9 @@
   function filter() {
     const query = normalize(el('envelope-search').value); let visible = 0;
     for (const row of el('envelope-list').children) { row.hidden = !normalize(row.dataset.search).includes(query); if (!row.hidden) visible++; }
-    el('envelope-search-empty').hidden = !meta || visible > 0;
+    // Only search results are listed (Leo, 2026-10-28): nothing until something is typed.
+    el('envelope-list').hidden = !query;
+    el('envelope-search-empty').hidden = !meta || !query || visible > 0;
     for (const button of el('envelope-list').querySelectorAll('[data-pick]')) {
       const added = selected.includes(button.dataset.pick);
       button.textContent = added ? 'Added' : 'Add';
@@ -180,7 +182,7 @@
     el('envelope-selected').replaceChildren(...selected.map((id, i) => {
       const item = meta?.missiles.find(m => m.id === id), name = item?.name || id;
       const card = document.createElement('article'); card.className = 'aircraft-entry missile-entry'; card.style.setProperty('--entry-color', COLORS[i]);
-      card.innerHTML = `<div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeHtml(name)}</strong><code>${escapeHtml(id)}</code></div>
+      card.innerHTML = `<div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeHtml(name)}</strong></div>
         <div class="entry-actions"><button type="button" class="entry-icon" data-remove="${escapeHtml(id)}" title="Remove" aria-label="Remove ${escapeHtml(name)}">${REMOVE}</button></div>`;
       card.querySelector('button').disabled = !!job;
       return card;
