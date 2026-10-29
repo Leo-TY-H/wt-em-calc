@@ -456,7 +456,7 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
     engines = chart.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
                 speed_kmh=speed_kmh, throttle_percent=throttle, pitch_percent=pitch, modes=modes,
-                engine_count=len(engines) if prop else len(chart.engine.units),
+                engine_count=len(engines) if prop else len(chart.engine.units), mass_kg=float(chart.mass['mass']),
                 stages=[len(e['properties']['stages']) for e in engines if e['family'] in (0, 1)],
                 rpm_limit=([e['properties']['omega_limit'] * 30 / math.pi for e in engines] if prop else
                            [u.ep['omega_limit'] * 30 / math.pi for u in chart.engine.units] if entry['propulsion'] == 'jet' else []),

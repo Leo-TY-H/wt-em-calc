@@ -10,10 +10,14 @@
   const MAX = 8, PROPS = ['piston', 'turboprop', 'mixed'];
   // Ranges (Leo, 2026-10-28): true airspeed 0-800 km/h for propeller aircraft, 0-1,300 with a jet added; altitude 0-10 km.
   const defaults = {altitude: 1000, speed: 300, axis: 'altitude', quantity: 'power', altitudes: [0, 10000]};
-  // y: the plotted value of a sweep row (engine or propeller 1 where there are several; the details list them all).
+  // y(row, result): the plotted value of a sweep row (engine or propeller 1 where there are several; the details list
+  // them all). base: the sweep a plot is drawn from, when it is another plot's over the aircraft's mass.
   const QUANTITIES = {
     power: {label: 'Power', title: 'Shaft power (hp)', y: r => r.power_hp, digits: 0, unit: ' hp', props: true},
+    // Over the entry's mass at its settings (fuel, loadout, ammunition, additional mass; Leo, 2026-10-29).
+    power_weight: {label: 'Power/weight', title: 'Power/weight (hp/kg)', y: (r, result) => r.power_hp / result.mass_kg, digits: 3, unit: ' hp/kg', props: true, base: 'power'},
     thrust: {label: 'Thrust', title: 'Thrust (kgf)', y: r => r.thrust_kgf, digits: 0, unit: ' kgf'},
+    thrust_weight: {label: 'Thrust/weight', title: 'Thrust/weight', y: (r, result) => r.thrust_kgf / result.mass_kg, digits: 3, unit: '', base: 'thrust'},
     efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
     // The game's fuel demand in the same engine state, all engines (Leo, 2026-10-29); mass flow: litres need a density.
     fuel: {label: 'Fuel flow', title: 'Fuel flow (kg/h)', y: r => r.fuel_kgh, digits: 0, unit: ' kg/h'},
@@ -81,7 +85,7 @@
   // run: {axis, level, altitude, speed, altitudes, speeds}; the fixed value and range the axis does not use stay out of
   // the request and the cache key. quantity: the plot asked for; the server refines only that curve and reuses points it
   // has solved (Leo, 2026-10-29).
-  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, quantity: run.quantity,
+  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, quantity: QUANTITIES[run.quantity].base || run.quantity,
     altitude_m: run.axis === 'speed' ? run.altitude : 0, speed_kmh: run.axis === 'altitude' ? run.speed : 300,
     ...(run.axis === 'altitude' && {altitude_range: run.altitudes}), ...(run.axis === 'speed' && {speed_range: run.speeds}),
     // SFC covers every throttle setting: the entry's own throttle plays no part.
@@ -336,7 +340,7 @@
     }).filter(d => d?.result);
   }
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
-    d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r)))));
+    d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r, d.result)))));
   // Legend: aircraft · number, then the settings that differ from the defaults (full throttle, automatic pitch).
   const entryName = (d, swept) => `${cleanName(d.result.name)} · ${d.index + 1}${!swept && d.entry.throttle !== full(d.entry.aircraft_id) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
   function render() {
@@ -354,7 +358,7 @@
     for (const d of list) {
       const modes = d.result.modes;
       for (const mode of modes) {
-        const rows = mode[axis], y = rows.map(r => r.solved ? quantity.y(r) ?? null : null);
+        const rows = mode[axis], y = rows.map(r => r.solved ? quantity.y(r, d.result) ?? null : null);
         // An entry without this quantity (a jet's power) draws nothing and takes no legend row.
         if (!y.some(Number.isFinite)) continue;
         traces.push({type: 'scatter', mode: 'lines', x: rows.map(x.x), y,
@@ -364,7 +368,7 @@
         // Supercharger gear changes over altitude: a mark where each new gear starts.
         if (axis === 'altitude' && d.result.stages.some(n => n > 1)) {
           const marks = rows.filter((r, i) => r.solved && i && rows[i - 1].solved && String(r.gear) !== String(rows[i - 1].gear));
-          if (marks.length) traces.push({type: 'scatter', mode: 'markers', x: marks.map(x.x), y: marks.map(quantity.y), showlegend: false,
+          if (marks.length) traces.push({type: 'scatter', mode: 'markers', x: marks.map(x.x), y: marks.map(r => quantity.y(r, d.result)), showlegend: false,
             meta: {entry: d.entry.id, mode: mode.key}, marker: {color: d.color, size: 9, symbol: 'diamond-open', line: {width: 2}},
             hoverlabel: {bordercolor: d.color}, customdata: marks.map(r => `${mode.label} · gear ${r.gear.join(' / ')}`),
             hovertemplate: `%{customdata}<br>%{x:,.0f}${x.unit}<extra></extra>`});
@@ -458,13 +462,15 @@
       el('engine-point').innerHTML = `<div class="point-grid">${section('LEVEL FLIGHT', [
         ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
         ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
-        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)]])}</div>`;
+        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)],
+        ['Mass', fmt(result.mass_kg, 0) + ' kg']])}</div>`;
       return;
     }
     el('engine-point').innerHTML = `<div class="point-grid">${section('FLIGHT', [
       ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
       ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
-      ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null],
+      ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null], ['Mass', fmt(result.mass_kg, 0) + ' kg'],
+      ['Power/weight', Number.isFinite(r.power_hp) ? fmt(r.power_hp / result.mass_kg, 3) + ' hp/kg' : null], ['Thrust/weight', fmt(r.thrust_kgf / result.mass_kg, 3)],
       ['BSFC', Number.isFinite(r.bsfc) ? `${fmt(r.bsfc, 4)} kg/hp·h at ${fmt(r.piston_power_hp, 1)} hp` : null],
       [aircraftOf(d.entry)?.propulsion === 'turboprop' ? 'Turbine TSFC' : 'TSFC', Number.isFinite(r.tsfc) ? `${fmt(r.tsfc, 4)} kg/kgf·h at ${fmt(r.turbine_thrust_kgf, 1)} kgf` : null],
       ['Fuel flow', Number.isFinite(r.fuel_kgh) ? fmt(r.fuel_kgh, 0) + ' kg/h' + (r.engine_fuel_kgh?.length > 1 ? ` (${list(r.engine_fuel_kgh, 0)})` : '') : null],
