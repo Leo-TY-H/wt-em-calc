@@ -735,11 +735,12 @@ function renderChart(){
     if(best)inspect(best.a,best.point);
   });
 }
-const KGF=9.80665,METRIC_HP=735.49875;
+// The game engine model's horsepower, 746 W (its piston torque_base = base_hp x 746 / max_omega), for every hp shown.
+const KGF=9.80665,GAME_HP=746;
 function propellerPower(a,p){
-  // Shaft power per engine (metric hp); propeller efficiency = thrust x airspeed / shaft power, for pure propeller aircraft.
+  // Shaft power per engine (game hp); propeller efficiency = thrust x airspeed / shaft power, for pure propeller aircraft.
   const power=p.propulsion.shaft_power_kw;if(!power?.length)return [];
-  const rows=[['Engine power',power.map(kw=>fmt(kw*1000/METRIC_HP,0)).join(' / ')+' hp']];
+  const rows=[['Engine power',power.map(kw=>fmt(kw*1000/GAME_HP,0)).join(' / ')+' hp']];
   const total=power.reduce((sum,kw)=>sum+kw,0)*1000;
   if(['piston','turboprop'].includes(state.meta.aircraft[a.aircraft_id||a.id]?.propulsion)&&total>1)
     rows.push(['Propeller efficiency',fmt(p.engine_force_n[0]*p.speed_kmh/3.6/total*100,1)+'%']);

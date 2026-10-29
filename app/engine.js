@@ -17,9 +17,9 @@
     efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', short: 'Efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
     // The game's fuel demand in the same engine state, all engines (Leo, 2026-10-29); mass flow: litres need a density.
     fuel: {label: 'Fuel flow', title: 'Fuel flow (kg/h)', y: r => r.fuel_kgh, digits: 0, unit: ' kg/h'},
-    // Over every throttle setting at one altitude and true airspeed (Leo, 2026-10-29), in the game engine model's units:
-    // pistons' BSFC against their shaft power, jets' and turboprops' (turbine) TSFC and rockets' fuel flow against throttle.
-    sfc: {label: 'SFC', y: r => r.bsfc ?? r.tsfc, sweep: 'throttle'},
+    // In the game engine model's units, at no particular altitude or speed (Leo, 2026-10-29): pistons' BSFC against their
+    // shaft power, jets' and turboprops' (turbine) TSFC and rockets' fuel flow against throttle.
+    sfc: {label: 'SFC', y: r => r.bsfc ?? r.tsfc, sweep: 'sfc'},
     // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
     sep: {label: 'SEP', title: 'SEP in level flight (m/s)', short: 'SEP (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
@@ -88,10 +88,10 @@
   // the request and the cache key. quantity: the plot asked for; the server refines only that curve and reuses points it
   // has solved (Leo, 2026-10-29).
   const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, quantity: run.quantity,
-    altitude_m: ['speed', 'throttle'].includes(run.axis) ? run.altitude : 0, speed_kmh: ['altitude', 'throttle'].includes(run.axis) ? run.speed : 300,
+    altitude_m: run.axis === 'speed' ? run.altitude : 0, speed_kmh: run.axis === 'altitude' ? run.speed : 300,
     ...(['altitude', 'surface'].includes(run.axis) && {altitude_range: run.altitudes}), ...(['speed', 'surface'].includes(run.axis) && {speed_range: run.speeds}),
-    // A throttle sweep covers every setting: the entry's own throttle plays no part.
-    throttle: run.axis === 'throttle' ? +full(entry.aircraft_id) : +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
+    // SFC covers every throttle setting: the entry's own throttle plays no part.
+    throttle: run.axis === 'sfc' ? +full(entry.aircraft_id) : +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
   const key = (entry, run) => JSON.stringify(body(entry, run));
   const levelPlot = () => !!QUANTITIES[el('engine-quantity').value].level;
   // Plots of one group share a calculation: the engine sweeps, level flight (SEP), the throttle sweep (SFC).
@@ -260,10 +260,10 @@
 
   // ---- Form -----------------------------------------------------------------------------
   function axisControls() {
-    // Over altitude the sweep holds one speed; over speed, one altitude; 3D takes both ranges; SFC holds both.
+    // Over altitude the sweep holds one speed; over speed, one altitude; 3D takes both ranges; SFC needs neither.
     const axis = checked('engine-axis'), sfc = !!QUANTITIES[el('engine-quantity').value].sweep;
     el('engine-axis-field').hidden = sfc;
-    el('engine-speed-field').hidden = !sfc && axis !== 'altitude'; el('engine-altitude-field').hidden = !sfc && axis !== 'speed';
+    el('engine-speed-field').hidden = sfc || axis !== 'altitude'; el('engine-altitude-field').hidden = sfc || axis !== 'speed';
     el('engine-altitude-range-field').hidden = sfc || axis === 'speed'; el('engine-speed-range-field').hidden = sfc || axis === 'altitude';
     el('engine-view-field').hidden = sfc || axis !== 'surface';
   }
@@ -355,7 +355,7 @@
       chart.innerHTML = '<div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div>';
       el('engine-inspector').hidden = true; return;
     }
-    if (shown.axis === 'throttle') return renderSfc(list);
+    if (shown.axis === 'sfc') return renderSfc(list);
     // A plot of another group keeps the one calculated until the next Calculate.
     let q = group(el('engine-quantity').value) === shown.group ? el('engine-quantity').value : shown.quantity;
     if (!available(q, list)) { q = shown.level ? 'sep' : 'thrust'; el('engine-quantity').value = q; }
@@ -446,51 +446,51 @@
       uirevision: 'surface', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
     draw(list, traces, layout, (mode, p) => vertices.get(`${p.data.meta.entry} ${mode.key}`)?.[p.pointNumber]);
   }
-  // SFC: every throttle setting at one altitude and true airspeed, in the game engine model's units (746 W hp, 9.81 N
-  // kgf, as its fuel laws): pistons' BSFC against their shaft power, jets' and turboprops' TSFC (turboprops: turbine
-  // TSFC, the turbine scalar thrust their fuel law multiplies) against throttle, and rockets' fuel flow against throttle
-  // (Leo, 2026-10-29: the rocket law gives it directly, kg/s as FuelConsumptionOnWEP); one panel each, side by side.
+  // SFC, in the game engine model's units (hp of 746 W, kgf of 9.81 N in TSFC, as its fuel laws). None of it depends
+  // on altitude or speed (Leo, 2026-10-29; checked): pistons' BSFC is the game's piston fuel law over shaft power; jets'
+  // and turboprops' TSFC (turboprops: turbine TSFC, the turbine scalar thrust their fuel law multiplies) and rockets'
+  // fuel flow (kg/s, as FuelConsumptionOnWEP) are over every throttle setting. One panel each, side by side.
   const PANELS = {
-    bsfc: {x: r => r.piston_power_game_hp, y: r => r.bsfc, xTitle: 'Shaft power (hp, 746 W)', yTitle: 'BSFC (kg/hp·h)',
-      hover: label => `${label} %{y:.4f} kg/hp·h<br>%{x:,.1f} hp · throttle %{customdata:.2f}%`},
+    bsfc: {x: r => r.shaft_hp, y: r => r.bsfc, xTitle: 'Shaft power (hp)', yTitle: 'BSFC (kg/hp·h)',
+      hover: label => `${label} %{y:.4f} kg/hp·h<br>%{x:,.0f} hp`},
     tsfc: {x: r => r.throttle_percent, y: r => r.tsfc, xTitle: 'Throttle (%)', yTitle: 'TSFC (kg/kgf·h)',
       hover: label => `${label} %{y:.4f} kg/kgf·h<br>throttle %{x:.2f}%`},
-    rocket: {x: r => r.throttle_percent, y: r => r.fuel_kgh / 3600, xTitle: 'Throttle (%)', yTitle: 'Fuel flow (kg/s)',
+    rocket: {x: r => r.throttle_percent, y: r => r.fuel_kgs, xTitle: 'Throttle (%)', yTitle: 'Fuel flow (kg/s)',
       hover: () => 'Fuel flow %{y:.4f} kg/s<br>throttle %{x:.2f}%'}};
   function renderSfc(list) {
-    const panels = {bsfc: [], tsfc: [], rocket: []}, condition = `${fmt(shown.altitude, 0)} m · ${fmt(shown.speed, 0)} km/h TAS`;
+    const panels = {bsfc: [], tsfc: [], rocket: []};
     for (const d of list) for (const mode of d.result.modes) {
-      const rows = mode.throttle, kind = aircraftOf(d.entry)?.propulsion;
-      for (const key of kind === 'rocket' ? ['rocket'] : ['bsfc', 'tsfc']) {
-        const ok = r => r.solved && Number.isFinite(PANELS[key].y(r));
-        if (rows.some(ok)) panels[key].push({d, mode, rows, ok, label: key === 'bsfc' ? 'BSFC' : kind === 'turboprop' ? 'Turbine TSFC' : 'TSFC'});
-      }
+      // The server's curves (engine_performance.sfc_curves), one per distinct engine of each kind; engines that differ
+      // get their numbers in the legend.
+      const turboprop = aircraftOf(d.entry)?.propulsion === 'turboprop';
+      for (const key of Object.keys(panels)) for (const curve of mode.sfc[key]) panels[key].push({d, mode, rows: curve.rows,
+        ok: r => Number.isFinite(PANELS[key].y(r)), label: key === 'bsfc' ? 'BSFC' : turboprop ? 'Turbine TSFC' : 'TSFC',
+        suffix: mode.sfc[key].length > 1 ? ` · engine ${curve.engines.map(i => i + 1).join('/')}` : ''});
     }
     const used = Object.keys(panels).filter(k => panels[k].length), gap = .08, width = (1 - gap * (used.length - 1)) / used.length, traces = [];
     const axisStyle = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, tickfont: {size: 12}, separatethousands: true};
     const title = text => ({text, standoff: 8, font: {size: 13}}), top = Math.max(...list.map(d => +full(d.entry.aircraft_id))), layout = {};
     used.forEach((key, n) => {
-      const panel = PANELS[key], suffix = n ? String(n + 1) : '';
-      for (const {d, mode, rows, ok, label} of panels[key]) traces.push({type: 'scatter', mode: 'lines',
-        x: rows.map(r => ok(r) ? panel.x(r) : null), y: rows.map(r => ok(r) ? panel.y(r) : null), xaxis: 'x' + suffix, yaxis: 'y' + suffix,
-        name: entryName(d, true), legendgroup: d.entry.id, showlegend: !traces.some(t => t.legendgroup === d.entry.id),
+      const panel = PANELS[key], axis = n ? String(n + 1) : '';
+      for (const {d, mode, rows, ok, label, suffix} of panels[key]) traces.push({type: 'scatter', mode: 'lines',
+        x: rows.map(r => ok(r) ? panel.x(r) : null), y: rows.map(r => ok(r) ? panel.y(r) : null), xaxis: 'x' + axis, yaxis: 'y' + axis,
+        name: entryName(d, true) + suffix, legendgroup: d.entry.id + suffix, showlegend: !traces.some(t => t.legendgroup === d.entry.id + suffix),
         meta: {entry: d.entry.id, mode: mode.key, rows}, line: {color: d.color, width: 2.2}, connectgaps: false, hoverlabel: {bordercolor: d.color},
-        customdata: rows.map(r => r.throttle_percent), hovertemplate: `${panel.hover(label)}<extra>${escapeText(entryName(d, true))}</extra>`});
+        hovertemplate: `${panel.hover(label)}<extra>${escapeText(entryName(d, true) + suffix)}</extra>`});
       // Near zero shaft power the fuel law's 5% power floor sends BSFC up without bound: the first view stops at 2.5x the
       // BSFC at the highest power (zoom out or double-click for all of it).
-      const ends = traces.filter(t => t.yaxis === 'y' + suffix).map(t => t.y[t.y.findLastIndex(Number.isFinite)]);
-      layout['xaxis' + suffix] = {...axisStyle, title: title(panel.xTitle), domain: [n * (width + gap), n * (width + gap) + width],
-        ...(n && {anchor: 'y' + suffix}), ...(key === 'bsfc' ? {rangemode: 'tozero'} : {range: [0, top]})};
-      layout['yaxis' + suffix] = {...axisStyle, title: title(panel.yTitle), rangemode: 'tozero', ...(n && {anchor: 'x' + suffix}),
+      const ends = traces.filter(t => t.yaxis === 'y' + axis).map(t => t.y[t.y.findLastIndex(Number.isFinite)]);
+      layout['xaxis' + axis] = {...axisStyle, title: title(panel.xTitle), domain: [n * (width + gap), n * (width + gap) + width],
+        ...(n && {anchor: 'y' + axis}), ...(key === 'bsfc' ? {rangemode: 'tozero'} : {range: [0, top]})};
+      layout['yaxis' + axis] = {...axisStyle, title: title(panel.yTitle), rangemode: 'tozero', ...(n && {anchor: 'x' + axis}),
         ...(key === 'bsfc' && {range: [0, 2.5 * Math.max(...ends)]})};
     });
     Object.assign(layout, {paper_bgcolor: '#000', plot_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
       margin: {l: 64, r: 22, t: Math.max(40, Math.ceil(list.length / 2) * 22), b: 54}, hovermode: 'closest',
       hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
-      // The flight condition once, above the panels' right end.
-      annotations: [{text: condition, xref: 'paper', yref: 'paper', x: 1, y: 1.02, xanchor: 'right', yanchor: 'bottom', showarrow: false, font: {size: 12, color: '#8a8a96'}}],
       uirevision: 'sfc', dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}});
+    // The curves are the fuel laws, not solved states: a click opens no details.
     draw(list, traces, layout, (mode, p) => p.data.meta.rows[p.pointNumber]);
   }
 
@@ -533,7 +533,7 @@
     const section = (title, rows) => rows.some(([, v]) => v != null) ? `<section><h3>${title}</h3>${dl(rows)}</section>` : '';
     const prop = propeller(aircraftOf(d.entry));
     el('engine-inspector').hidden = false;
-    el('engine-point-title').textContent = `${cleanName(result.name)} · ${Number.isFinite(r.throttle_percent) ? fmt(r.throttle_percent, 2) + '%' : mode.label} · ${fmt(r.altitude_m, 0)} m · ${fmt(r.speed_kmh, 0)} km/h`;
+    el('engine-point-title').textContent = `${cleanName(result.name)} · ${mode.label} · ${fmt(r.altitude_m, 0)} m · ${fmt(r.speed_kmh, 0)} km/h`;
     if (mode.level) {
       el('engine-point').innerHTML = `<div class="point-grid">${section('LEVEL FLIGHT', [
         ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
@@ -543,9 +543,9 @@
     }
     el('engine-point').innerHTML = `<div class="point-grid">${section('FLIGHT', [
       ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
-      ['Throttle', Number.isFinite(r.throttle_percent) ? fmt(r.throttle_percent, 2) + '%' : mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
+      ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
       ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null],
-      ['BSFC', Number.isFinite(r.bsfc) ? `${fmt(r.bsfc, 4)} kg/hp·h at ${fmt(r.piston_power_game_hp, 1)} hp (746 W)` : null],
+      ['BSFC', Number.isFinite(r.bsfc) ? `${fmt(r.bsfc, 4)} kg/hp·h at ${fmt(r.piston_power_hp, 1)} hp` : null],
       [aircraftOf(d.entry)?.propulsion === 'turboprop' ? 'Turbine TSFC' : 'TSFC', Number.isFinite(r.tsfc) ? `${fmt(r.tsfc, 4)} kg/kgf·h at ${fmt(r.turbine_thrust_kgf, 1)} kgf` : null],
       ['Fuel flow', Number.isFinite(r.fuel_kgh) ? fmt(r.fuel_kgh, 0) + ' kg/h' + (r.engine_fuel_kgh?.length > 1 ? ` (${list(r.engine_fuel_kgh, 0)})` : '') : null],
       ['RPM', list(r.rpm, 0)], ['RPM limit', list(result.rpm_limit, 0)],
@@ -561,9 +561,13 @@
   function download(kind) {
     const list = displayed(); if (!list.length) return;
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
-    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'fuel_kgh', 'engine_fuel_kgh', 'throttle_percent', 'piston_power_game_hp', 'bsfc', 'turbine_thrust_kgf', 'tsfc', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
-    const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) :
-      [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed', 'surface', 'throttle'].filter(sweep => m[sweep]).flatMap(sweep =>
+    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'fuel_kgh', 'engine_fuel_kgh', 'piston_power_hp', 'bsfc', 'turbine_thrust_kgf', 'tsfc', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
+    // SFC curves: one row per point of each engine's curve.
+    const sfcColumns = ['engines', 'shaft_hp', 'bsfc', 'throttle_percent', 'tsfc', 'fuel_kgs'];
+    const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) : shown.axis === 'sfc' ?
+      [['entry', 'aircraft', 'curve', ...sfcColumns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => Object.entries(m.sfc).flatMap(([curve, items]) => items.flatMap(c =>
+        c.rows.map(r => [d.index + 1, d.result.aircraft_id, curve, ...sfcColumns.map(k => join(k === 'engines' ? c.engines.map(i => i + 1) : r[k]))].join(','))))))].join('\n') :
+      [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed', 'surface'].filter(sweep => m[sweep]).flatMap(sweep =>
         m[sweep].filter(r => r.solved).map(r => [d.index + 1, d.result.aircraft_id, d.entry.pitch, m.label, sweep, ...columns.map(c => join(r[c]))].join(',')))))].join('\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([text], {type: kind === 'json' ? 'application/json' : 'text/csv'}));
