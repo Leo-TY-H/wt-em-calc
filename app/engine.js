@@ -15,6 +15,8 @@
     power: {label: 'Power', title: 'Shaft power (hp)', y: r => r.power_hp, digits: 0, unit: ' hp', props: true},
     thrust: {label: 'Thrust', title: 'Thrust (kgf)', y: r => r.thrust_kgf, digits: 0, unit: ' kgf'},
     efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', short: 'Efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
+    // The game's fuel demand in the same engine state, all engines (Leo, 2026-10-29); mass flow: litres need a density.
+    fuel: {label: 'Fuel flow', title: 'Fuel flow (kg/h)', y: r => r.fuel_kgh, digits: 0, unit: ' kg/h'},
     // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
     sep: {label: 'SEP', title: 'SEP in level flight (m/s)', short: 'SEP (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
@@ -485,7 +487,9 @@
     el('engine-point').innerHTML = `<div class="point-grid">${section('FLIGHT', [
       ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
       ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
-      ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null], ['RPM', list(r.rpm, 0)], ['RPM limit', list(result.rpm_limit, 0)],
+      ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null],
+      ['Fuel flow', Number.isFinite(r.fuel_kgh) ? fmt(r.fuel_kgh, 0) + ' kg/h' + (r.engine_fuel_kgh?.length > 1 ? ` (${list(r.engine_fuel_kgh, 0)})` : '') : null],
+      ['RPM', list(r.rpm, 0)], ['RPM limit', list(result.rpm_limit, 0)],
       ['Manifold pressure', list(r.manifold_ata, 3, ' ata')], ['Supercharger gear', result.stages.some(n => n > 1) ? r.gear.join(' / ') : null]])}${prop ? section('PROPELLER', [
       ['Efficiency', Number.isFinite(r.efficiency) ? fmt(r.efficiency, 1) + '%' : null],
       ['Blade angle', r.pitch_deg.map((v, i) => fmt(v, 2) + '°' + (Number.isFinite(r.pitch_percent?.[i]) ? ' / ' + fmt(r.pitch_percent[i], 0) + '%' : '')).join(' · ')],
@@ -498,7 +502,7 @@
   function download(kind) {
     const list = displayed(); if (!list.length) return;
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
-    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
+    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'fuel_kgh', 'engine_fuel_kgh', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
     const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) :
       [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed', 'surface'].filter(sweep => m[sweep]).flatMap(sweep =>
         m[sweep].filter(r => r.solved).map(r => [d.index + 1, d.result.aircraft_id, d.entry.pitch, m.label, sweep, ...columns.map(c => join(r[c]))].join(',')))))].join('\n');

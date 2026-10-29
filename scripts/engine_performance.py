@@ -5,8 +5,10 @@ settings as an EM chart at that altitude (the EM page's throttle slider: setting
 its manual propeller control; every other setting at the EM defaults, fully upgraded as the catalog applies every
 modification). Propeller aircraft: the EM plotter's axial-flow propulsion state (em_stationary_baseline.AxialReference:
 BaselineSolver.operating_point at 1 g, angle of attack, bank and controls 0), kept when converged and admitted by the
-chart's propeller admission. Jets: the chart's engine force (EngineEnsemble.vectors). Sweeps over altitude at one true
-airspeed, over true airspeed at one altitude, or over both (the 3D view).
+chart's propeller admission. Jets: the chart's engine force (EngineEnsemble.vectors). Fuel flow (Leo, 2026-10-29) is
+the game's consumption of each engine in that same state (FUEL-CONSUMPTION-MODEL.md: the piston power-ratio law, the
+turbine scalar of jets and turboprops), summed. Sweeps over altitude at one true airspeed, over true airspeed at one
+altitude, or over both (the 3D view).
 """
 import json
 import math
@@ -113,8 +115,10 @@ def propeller_row(chart, speed_kmh, report):
                                  propeller_pitch_deg=[math.degrees(q['pitch']) for q in state['propellers']]))
     if report is not None:report(point, chart)
     thrust = float(prop['force'][0])
+    fuel = [3600. * e['consumption'] for e in state['engines']]   # kg/h; mixed aircraft include their jets
     return dict(thrust_kgf=thrust / KGF, power_hp=power / METRIC_HP if power > 0. or pistons else None,
                 engine_power_hp=[e.get('torque', 0.) * e['omega'] / METRIC_HP for e in state['engines']],
+                fuel_kgh=sum(fuel), engine_fuel_kgh=fuel,
                 efficiency=thrust * v / power * 100. if power > 1. and not any(e['family'] == 2 for e in p['engines']) else None,
                 rpm=point['propulsion']['engine_rpm'], pitch_deg=point['propulsion']['propeller_pitch_deg'],
                 pitch_percent=point['propulsion'].get('propeller_pitch_percent'),
@@ -128,8 +132,10 @@ def jet_row(chart, speed_kmh):
     from air_state import cache
     v = speed_kmh / 3.6
     air = cache([f32(v), 0., 0.], chart.config['altitude_m'])
-    return dict(thrust_kgf=float(chart.engine.vectors(v)[0][0]) / KGF, rpm=[u.nominal(v)['omega'] * 30 / math.pi for u in chart.engine.units],
-                mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
+    # The chart's nominal engine state (jet_nominal.evaluate): RPM and the scalar fuel demand, kg/s.
+    nominal = [u.nominal(v) for u in chart.engine.units];fuel = [3600. * n['scalar']['consumption'] for n in nominal]
+    return dict(thrust_kgf=float(chart.engine.vectors(v)[0][0]) / KGF, rpm=[n['omega'] * 30 / math.pi for n in nominal],
+                fuel_kgh=sum(fuel), engine_fuel_kgh=fuel, mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
 def level_solver(name, altitude, throttle, pitch, mass='{}'):
@@ -190,9 +196,10 @@ def march(xs, at, starts, blank):
     return [rows[x] for x in xs]
 
 
-# The plotted quantities (Leo, 2026-10-28: power, thrust, efficiency, SEP; RPM, blade pitch and manifold only in details).
+# The plotted quantities (Leo, 2026-10-28: power, thrust, efficiency, SEP; RPM, blade pitch and manifold only in details;
+# 2026-10-29: fuel flow).
 CURVES = {'power':lambda r:r.get('power_hp'), 'thrust':lambda r:r.get('thrust_kgf'), 'efficiency':lambda r:r.get('efficiency'),
-          'sep':lambda r:r.get('ps_mps')}
+          'fuel':lambda r:r.get('fuel_kgh'), 'sep':lambda r:r.get('ps_mps')}
 TOLERANCE = .0005  # of each plotted quantity's range over the sweep: the largest straight-line midpoint error kept
 EXTRA = 1500       # most refinement points added to one sweep
 
