@@ -74,7 +74,8 @@
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
   // run: {axis, level, altitude, speed, range}; the fixed value not used by the axis stays out of the cache key.
-  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, altitude_m: run.altitude, speed_kmh: run.speed,
+  // quantity: the plot asked for; the server refines only that curve and reuses points it has solved (Leo, 2026-10-29).
+  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, quantity: run.quantity, altitude_m: run.altitude, speed_kmh: run.speed,
     [run.axis === 'altitude' ? 'altitude_range' : 'speed_range']: run.range,
     throttle: +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
   const key = (entry, run) => JSON.stringify(body(entry, {...run, altitude: run.axis === 'altitude' ? 0 : run.altitude, speed: run.axis === 'speed' ? 0 : run.speed}));
@@ -298,7 +299,7 @@
   el('engine-form').addEventListener('submit', async event => {
     event.preventDefault(); if (running || !entries.length) return;
     const axis = checked('engine-axis'), wanted = [...entries];
-    const run = {axis, level: levelPlot(), altitude: value('engine-altitude'), speed: value('engine-speed'), range: rangeOf(axis === 'altitude' ? 'engine-altitude-range' : 'engine-speed-range')};
+    const run = {axis, level: levelPlot(), quantity: el('engine-quantity').value, altitude: value('engine-altitude'), speed: value('engine-speed'), range: rangeOf(axis === 'altitude' ? 'engine-altitude-range' : 'engine-speed-range')};
     showError(''); busy(true);
     try {
       for (const [i, entry] of wanted.entries()) {
@@ -344,8 +345,7 @@
         if (!y.some(Number.isFinite)) continue;
         traces.push({type: 'scatter', mode: 'lines', x: rows.map(x.x), y,
           name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, line: {color: d.color, width: 2.4}, connectgaps: false,
-          // Over-rev states are shown (Leo, 2026-10-29); the hover says how far over the RPM limit.
-          hoverlabel: {bordercolor: d.color}, customdata: rows.map(r => mode.label + (r.overrev_percent ? ` · over-rev +${fmt(r.overrev_percent, 1)}%` : '')),
+          hoverlabel: {bordercolor: d.color}, customdata: rows.map(() => mode.label),
           hovertemplate: `%{customdata}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         // Supercharger gear changes over altitude: a mark where each new gear starts.
         if (axis === 'altitude' && d.result.stages.some(n => n > 1)) {
@@ -391,15 +391,13 @@
       el('engine-point').innerHTML = `<div class="point-grid">${section('LEVEL FLIGHT', [
         ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
         ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
-        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)],
-        ['Over-rev', r.overrev_percent ? `+${fmt(r.overrev_percent, 1)}%` : null]])}</div>`;
+        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)]])}</div>`;
       return;
     }
     el('engine-point').innerHTML = `<div class="point-grid">${section('FLIGHT', [
       ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
       ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
       ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null], ['RPM', list(r.rpm, 0)], ['RPM limit', list(result.rpm_limit, 0)],
-      ['Over-rev', r.overrev_percent ? `+${fmt(r.overrev_percent, 1)}%` : null],
       ['Manifold pressure', list(r.manifold_ata, 3, ' ata')], ['Supercharger gear', result.stages.some(n => n > 1) ? r.gear.join(' / ') : null]])}${prop ? section('PROPELLER', [
       ['Efficiency', Number.isFinite(r.efficiency) ? fmt(r.efficiency, 1) + '%' : null],
       ['Blade angle', r.pitch_deg.map((v, i) => fmt(v, 2) + '°' + (Number.isFinite(r.pitch_percent?.[i]) ? ' / ' + fmt(r.pitch_percent[i], 0) + '%' : '')).join(' · ')],
