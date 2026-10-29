@@ -361,19 +361,19 @@
         const rows = mode[axis], y = rows.map(r => r.solved ? quantity.y(r, d.result) ?? null : null);
         // An entry without this quantity (a jet's power) draws nothing and takes no legend row.
         if (!y.some(Number.isFinite)) continue;
-        // Hover every 1 km/h or 1 m (Leo, 2026-10-29): between solved points the curve's own straight segments, marked ≈
-        // (the refinement keeps them within 0.05% of the plotted range); a click solves the exact point.
-        const hx = [], hy = [], approx = [];
+        // Hover every 1 km/h or 1 m along the drawn curve (Leo, 2026-10-29): between solved points its own straight
+        // segments (the refinement keeps them within 0.05% of the plotted range); a click solves the exact point.
+        const hx = [], hy = [];
         rows.forEach((r, i) => {
           const x0 = x.x(r), x1 = i + 1 < rows.length ? x.x(rows[i + 1]) : x0, y0 = y[i], y1 = y[i + 1];
-          hx.push(x0); hy.push(y0); approx.push('');
+          hx.push(x0); hy.push(y0);
           if (!Number.isFinite(y0) || !Number.isFinite(y1)) return;
-          for (let v = Math.floor(x0) + 1; v < x1; v++) { hx.push(v); hy.push(y0 + (y1 - y0) * (v - x0) / (x1 - x0)); approx.push('≈ '); }
+          for (let v = Math.floor(x0) + 1; v < x1; v++) { hx.push(v); hy.push(y0 + (y1 - y0) * (v - x0) / (x1 - x0)); }
         });
-        traces.push({type: 'scatter', mode: 'lines', x: hx, y: hy, text: approx,
+        traces.push({type: 'scatter', mode: 'lines', x: hx, y: hy,
           name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, line: {color: d.color, width: 2.4}, connectgaps: false,
           hoverlabel: {bordercolor: d.color},
-          hovertemplate: `${escapeText(mode.label)}<br>%{text}%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
+          hovertemplate: `${escapeText(mode.label)}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         // Supercharger gear changes over altitude: a mark where each new gear starts.
         if (axis === 'altitude' && d.result.stages.some(n => n > 1)) {
           const marks = rows.filter((r, i) => r.solved && i && rows[i - 1].solved && String(r.gear) !== String(rows[i - 1].gear));
