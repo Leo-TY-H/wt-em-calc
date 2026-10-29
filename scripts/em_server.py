@@ -259,6 +259,41 @@ def fingerprint():
     return h.hexdigest()
 
 
+@lru_cache(maxsize=1)
+def _watched_outside_scripts():
+    files=[ROOT/'requirements-plotter.txt',*(source(name) for name in AIRCRAFT),*asset_sources()]
+    return sorted({str(p.parent) for p in files}),frozenset(os.path.normcase(str(p)) for p in files)
+
+
+def watched_stamp():
+    """Size and modification time of every file fingerprint() can read (all of scripts/ as a superset), from one
+    directory listing per folder: ~20 ms, where fingerprint() parses and hashes them in ~2.5 s."""
+    h=hashlib.sha256()
+    def listing(folder,keep=None):
+        with os.scandir(folder) as entries:
+            for entry in sorted(entries,key=lambda e:e.name):
+                if entry.is_dir():
+                    if keep is None and entry.name!='__pycache__':listing(entry.path)
+                elif keep is None or os.path.normcase(entry.path) in keep:
+                    st=entry.stat();h.update(f'{entry.path}\0{st.st_size}\0{st.st_mtime_ns}\n'.encode())
+    listing(ROOT/'scripts')
+    folders,keep=_watched_outside_scripts()
+    for folder in folders:listing(folder,keep)
+    return h.hexdigest()
+
+
+def code_changed():
+    """A page load's update check (Leo, 2026-10-29: the search waited ~2.5 s for it on every load): the full
+    fingerprint runs only after a watched file changed; a change that leaves it equal (a touched file) is remembered."""
+    global WATCHED_STAMP
+    stamp=watched_stamp()
+    if stamp==WATCHED_STAMP:return False
+    if fingerprint()!=RUNTIME_FINGERPRINT:return True
+    WATCHED_STAMP=stamp;return False
+
+
+# The stamp is taken first, so an edit made while the fingerprint is computed still counts as a change.
+WATCHED_STAMP=watched_stamp() if current_process().name=='MainProcess' else None
 RUNTIME_FINGERPRINT=fingerprint() if current_process().name=='MainProcess' else None
 
 
@@ -431,7 +466,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/meta':
             # Only a page load opts into edited equations. Running jobs keep
             # their session; Calculate never scans sources or initiates updates.
-            if parse_qs(urlparse(self.path).query).get('refresh')==['1'] and fingerprint()!=RUNTIME_FINGERPRINT:
+            if parse_qs(urlparse(self.path).query).get('refresh')==['1'] and code_changed():
                 with LOCK:
                     busy=any(job.get('status') in ('queued','running','stopping','exporting') for job in JOBS.values())
                     missiles=sys.modules.get('missile_service')
@@ -629,6 +664,8 @@ def main():
             except (OSError,ValueError,KeyError,TypeError):pass
         raise
     print('EM plotter: '+url,flush=True)
+    # The aircraft list's no-WEP set takes ~3.5 s the first time; build it before the first page load asks.
+    threading.Thread(target=lambda:__import__('engine_performance').without_wep(),daemon=True).start()
     if args.open:threading.Timer(.4,lambda:webbrowser.open(url)).start()
     try:server.serve_forever()
     except KeyboardInterrupt:pass
