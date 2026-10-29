@@ -1,5 +1,5 @@
 // Engine performance (Leo, 2026-10-28): shaft power, thrust and propeller efficiency (nose on the flight path) and SEP
-// (1 g level flight) over altitude or true airspeed, at each aircraft's EM-page settings, for up to eight aircraft, fully
+// (1 g level flight) over altitude, true airspeed or both (3D), at each aircraft's EM-page settings, for up to eight aircraft, fully
 // upgraded (POST /api/engine, scripts/engine_performance.py). Laid out like the EM page; uses app.js's catalog
 // (state.meta), api(), name helpers and loadout editor.
 (() => {
@@ -14,11 +14,16 @@
   const QUANTITIES = {
     power: {label: 'Power', title: 'Shaft power (hp)', y: r => r.power_hp, digits: 0, unit: ' hp', props: true},
     thrust: {label: 'Thrust', title: 'Thrust (kgf)', y: r => r.thrust_kgf, digits: 0, unit: ' kgf'},
-    efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
+    efficiency: {label: 'Efficiency', title: 'Propeller efficiency (%)', short: 'Efficiency (%)', y: r => r.efficiency, digits: 1, unit: '%', props: true},
     // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
-    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
+    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', short: 'SEP (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
-    speed: {label: 'Speed', x: r => r.speed_kmh, title: 'True airspeed (km/h)', unit: ' km/h'}};
+    speed: {label: 'Speed', x: r => r.speed_kmh, title: 'True airspeed (km/h)', unit: ' km/h'},
+    // f(speed, altitude) as a shaded surface (Leo, 2026-10-29).
+    surface: {label: '3D'}};
+  // How a 3D result is shown (Leo, 2026-10-29): the surface, or its grid lines side on: the quantity against speed, one
+  // curve per altitude, or against altitude, one curve per speed. Switching redraws without calculating.
+  const VIEWS = {surface: {label: 'Surface'}, speed: {label: 'Speed'}, altitude: {label: 'Altitude'}};
   const GOVERNOR = {'target RPM': 'Holding RPM', 'minimum pitch': 'Fine pitch stop', 'maximum pitch': 'Coarse pitch stop',
     'fixed pitch': 'Fixed pitch', 'manual blade pitch': 'Manual blade angle'};
   const field = (id, label, unit, value, min, max) => `<label class="field" id="${id}-field">${label}<div class="input-unit"><input id="${id}" type="number" min="${min}" max="${max}" step="any" value="${value}" required aria-label="${label}"><span>${unit}</span></div></label>`;
@@ -36,6 +41,7 @@
     <div id="engine-selected" aria-label="Added aircraft"></div>
     <label class="field">Plot<select id="engine-quantity">${Object.entries(QUANTITIES).map(([k, q]) => `<option value="${k}"${k === defaults.quantity ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="field">X axis${radios('engine-axis', AXES, defaults.axis, 'X axis')}</div>
+    <div class="field" id="engine-view-field">View${radios('engine-view', VIEWS, 'surface', 'View')}</div>
     ${field('engine-speed', 'True airspeed', 'km/h', defaults.speed, 5, 1600)}
     ${range('engine-altitude-range', 'Altitude range', 'm', 'altitude', defaults.altitudes, 18000)}
     ${field('engine-altitude', 'Altitude', 'm', defaults.altitude, 0, 18000)}
@@ -73,12 +79,14 @@
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
   const aircraftOf = entry => catalog()?.[entry.aircraft_id];
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
-  // run: {axis, level, altitude, speed, range}; the fixed value not used by the axis stays out of the cache key.
-  // quantity: the plot asked for; the server refines only that curve and reuses points it has solved (Leo, 2026-10-29).
-  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, quantity: run.quantity, altitude_m: run.altitude, speed_kmh: run.speed,
-    [run.axis === 'altitude' ? 'altitude_range' : 'speed_range']: run.range,
+  // run: {axis, level, altitude, speed, altitudes, speeds}; the fixed values and ranges the axis does not use stay out of
+  // the request and the cache key. quantity: the plot asked for; the server refines only that curve and reuses points it
+  // has solved (Leo, 2026-10-29).
+  const body = (entry, run) => ({aircraft: entry.aircraft_id, sweep: run.axis, level: run.level, quantity: run.quantity,
+    altitude_m: run.axis === 'speed' ? run.altitude : 0, speed_kmh: run.axis === 'altitude' ? run.speed : 300,
+    ...(run.axis !== 'speed' && {altitude_range: run.altitudes}), ...(run.axis !== 'altitude' && {speed_range: run.speeds}),
     throttle: +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
-  const key = (entry, run) => JSON.stringify(body(entry, {...run, altitude: run.axis === 'altitude' ? 0 : run.altitude, speed: run.axis === 'speed' ? 0 : run.speed}));
+  const key = (entry, run) => JSON.stringify(body(entry, run));
   const levelPlot = () => !!QUANTITIES[el('engine-quantity').value].level;
 
   // ---- Aircraft list and cards ----------------------------------------------------------
@@ -244,10 +252,11 @@
 
   // ---- Form -----------------------------------------------------------------------------
   function axisControls() {
-    // Over altitude the sweep holds one speed; over speed, one altitude.
+    // Over altitude the sweep holds one speed; over speed, one altitude; 3D takes both ranges.
     const axis = checked('engine-axis');
-    el('engine-speed-field').hidden = el('engine-altitude-range-field').hidden = axis !== 'altitude';
-    el('engine-altitude-field').hidden = el('engine-speed-range-field').hidden = axis !== 'speed';
+    el('engine-speed-field').hidden = axis !== 'altitude'; el('engine-altitude-field').hidden = axis !== 'speed';
+    el('engine-altitude-range-field').hidden = axis === 'speed'; el('engine-speed-range-field').hidden = axis === 'altitude';
+    el('engine-view-field').hidden = axis !== 'surface';
   }
   let speedRangeEdited = false;
   const defaultTopSpeed = () => entries.some(e => !propeller(aircraftOf(e))) ? 1300 : 800;
@@ -274,6 +283,7 @@
   root.querySelectorAll('input[name=engine-axis]').forEach(input => input.addEventListener('change', axisControls));
   // Engine quantities share one calculation; SEP is another (level flight), so switching to or from it waits for Calculate.
   el('engine-quantity').addEventListener('change', () => { if (shown && levelPlot() === shown.level) render(); });
+  root.querySelectorAll('input[name=engine-view]').forEach(input => input.addEventListener('change', () => { if (shown?.axis === 'surface') render(); }));
   el('engine-form').addEventListener('input', event => {
     if (event.target.id.startsWith('engine-speed-range'))speedRangeEdited = true;
     if (event.target.type === 'number') updateForm();
@@ -284,6 +294,7 @@
     [el('engine-altitude-range-min').value, el('engine-altitude-range-max').value] = defaults.altitudes;
     el('engine-speed-range-min').value = 0; speedRangeEdited = false;
     root.querySelector(`input[name=engine-axis][value=${defaults.axis}]`).checked = true;
+    root.querySelector('input[name=engine-view][value=surface]').checked = true;
     el('engine-quantity').value = defaults.quantity;
     for (const e of entries) Object.assign(e, FRESH, {throttle: full(e.aircraft_id), c: massSettings(e.aircraft_id)});
     el('engine-search').value = ''; axisControls(); renderEntries(); filter(); updateForm(); render();
@@ -299,7 +310,8 @@
   el('engine-form').addEventListener('submit', async event => {
     event.preventDefault(); if (running || !entries.length) return;
     const axis = checked('engine-axis'), wanted = [...entries];
-    const run = {axis, level: levelPlot(), quantity: el('engine-quantity').value, altitude: value('engine-altitude'), speed: value('engine-speed'), range: rangeOf(axis === 'altitude' ? 'engine-altitude-range' : 'engine-speed-range')};
+    const run = {axis, level: levelPlot(), quantity: el('engine-quantity').value, altitude: value('engine-altitude'), speed: value('engine-speed'),
+      altitudes: rangeOf('engine-altitude-range'), speeds: rangeOf('engine-speed-range')};
     showError(''); busy(true);
     try {
       for (const [i, entry] of wanted.entries()) {
@@ -336,6 +348,7 @@
     }
     let q = el('engine-quantity').value;
     if (!available(q, list)) { q = shown.level ? 'sep' : 'thrust'; el('engine-quantity').value = q; }
+    if (shown.axis === 'surface') return renderSurface(list, q);
     const axis = shown.axis, quantity = QUANTITIES[q], x = AXES[axis], traces = [];
     for (const d of list) {
       const modes = d.result.modes;
@@ -362,10 +375,15 @@
     const layout = {paper_bgcolor: '#000', plot_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
       margin: {l: 64, r: 22, t: Math.max(40, Math.ceil(traces.filter(t => t.showlegend !== false).length / 2) * 22), b: 54}, hovermode: 'closest',
       hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
-      xaxis: {...axisStyle, title: {text: `${x.title} · ${fixed}`, standoff: 8, font: {size: 13}}, range: shown.range},
+      xaxis: {...axisStyle, title: {text: `${x.title} · ${fixed}`, standoff: 8, font: {size: 13}}, range: axis === 'altitude' ? shown.altitudes : shown.speeds},
       yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
       uirevision: `${axis}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
+    draw(list, traces, layout, (mode, p) => mode[axis].find(r => x.x(r) === p.x));
+  }
+  // find(mode, point): the clicked sweep row.
+  function draw(list, traces, layout, find) {
+    const chart = el('engine-chart');
     if (!chart.classList.contains('js-plotly-plot')) chart.innerHTML = '';
     Plotly.react(chart, traces, layout, {responsive: true, displaylogo: false, scrollZoom: true, modeBarButtonsToRemove: ['select2d', 'lasso2d'],
       toImageButtonOptions: {format: 'png', scale: 2, filename: 'WT-engine-' + list.map(d => d.entry.aircraft_id).join('-vs-')},
@@ -375,8 +393,78 @@
     chart.on('plotly_click', event => {
       const p = event.points?.[0], meta = p?.data.meta; if (!meta) return;
       const d = list.find(item => item.entry.id === meta.entry), mode = d?.result.modes.find(m => m.key === meta.mode);
-      const row = mode?.[axis].find(r => x.x(r) === p.x); if (row?.solved) inspect(d, mode, row);
+      const row = mode && find(mode, p); if (row?.solved) inspect(d, mode, row);
     });
+  }
+
+  // 3D: each entry a surface in its colour, darker where the value is lower (one scale for all entries); the server's
+  // triangles join solved points only, so gaps stay open. Hover and click give the solved point under the cursor.
+  const tint = (hex, t) => '#' + [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).map(c => Math.round(t < 0 ? c * (1 + t) : c + (255 - c) * t)
+    .toString(16).padStart(2, '0')).join('');
+  function renderSurface(list, q) {
+    if (checked('engine-view') !== 'surface') return renderLines(list, q, checked('engine-view'));
+    const quantity = QUANTITIES[q], traces = [], vertices = new Map();
+    for (const d of list) for (const mode of d.result.modes) {
+      const index = new Map(), rows = [], x = [], y = [], z = [], i = [], j = [], k = [];
+      mode.surface.forEach((r, n) => {
+        const v = r.solved ? quantity.y(r) : null;
+        if (Number.isFinite(v)) { index.set(n, x.length); rows.push(r); x.push(r.speed_kmh); y.push(r.altitude_m); z.push(v); }
+      });
+      vertices.set(`${d.entry.id} ${mode.key}`, rows);
+      for (const [a, b, c] of mode.triangles) if (index.has(a) && index.has(b) && index.has(c)) { i.push(index.get(a)); j.push(index.get(b)); k.push(index.get(c)); }
+      if (!i.length) continue;
+      traces.push({type: 'mesh3d', x, y, z, i, j, k, intensity: z, colorscale: [[0, tint(d.color, -.7)], [.5, d.color], [1, tint(d.color, .55)]],
+        showscale: false, showlegend: true, name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, flatshading: false,
+        lighting: {ambient: .65, diffuse: .55, specular: .08, roughness: .9, fresnel: .1},
+        hoverlabel: {bgcolor: '#0c0c0f', bordercolor: d.color, font: {color: '#f4f4fc'}},
+        hovertemplate: `%{z:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f} km/h · %{y:,.0f} m<extra>${escapeText(entryName(d))}</extra>`});
+    }
+    const all = traces.flatMap(t => t.z), low = Math.min(...all), high = Math.max(...all), named = traces.length;
+    for (const t of traces) Object.assign(t, {cmin: low, cmax: high});
+    // SEP: a faint plane at zero, as the 2D plot's zero line.
+    if (quantity.level && low < 0 && high > 0) traces.push({type: 'surface', x: shown.speeds, y: shown.altitudes, z: [[0, 0], [0, 0]], opacity: .16,
+      colorscale: [[0, '#f0f0fa'], [1, '#f0f0fa']], showscale: false, showlegend: false, hoverinfo: 'skip', lighting: {ambient: 1, diffuse: 0, specular: 0}});
+    const axis = (text, range) => ({title: {text, font: {size: 12}}, range, gridcolor: 'rgba(240,240,250,.14)', zerolinecolor: 'rgba(240,240,250,.4)',
+      showbackground: false, tickfont: {size: 11}, separatethousands: true, exponentformat: 'none', showspikes: false, ...(range && {tickformat: ',.0f'})});
+    const layout = {paper_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
+      margin: {l: 0, r: 0, t: Math.max(40, Math.ceil(named / 2) * 22), b: 0},
+      hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
+      legend: {orientation: 'h', x: 0, y: 1, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
+      scene: {bgcolor: '#000', xaxis: axis('True airspeed (km/h)', shown.speeds), yaxis: axis('Altitude (m)', shown.altitudes), zaxis: axis(quantity.short || quantity.title),
+        aspectmode: 'manual', aspectratio: {x: 1.35, y: 1.35, z: .8}, camera: {eye: {x: -1.45, y: -1.65, z: .95}}},
+      uirevision: 'surface', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
+    draw(list, traces, layout, (mode, p) => vertices.get(`${p.data.meta.entry} ${mode.key}`)?.[p.pointNumber]);
+  }
+  // Side views of a 3D result: its grid lines (each a refined sweep) as curves, about ten of them, darker for lower
+  // altitudes or speeds; one aircraft gets each curve's altitude or speed at its end.
+  function renderLines(list, q, along) {
+    const quantity = QUANTITIES[q], x = AXES[along], across = along === 'speed' ? 'altitude' : 'speed', traces = [], annotations = [];
+    const at = r => across === 'altitude' ? r.altitude_m : r.speed_kmh, label = v => across === 'altitude' ? `${fmt(v, 0)} m` : `${fmt(v, 0)} km/h`;
+    for (const d of list) for (const mode of d.result.modes) {
+      const values = mode.grid[across === 'altitude' ? 'altitudes' : 'speeds'], k = Math.max(1, Math.round((values.length - 1) / 10));
+      values.filter((v, n) => n % k === 0 || n === values.length - 1 && n % k > k / 2).forEach((v, n, chosen) => {
+        const rows = mode.surface.filter(r => at(r) === v).sort((a, b) => x.x(a) - x.x(b)), y = rows.map(r => r.solved ? quantity.y(r) ?? null : null);
+        if (!y.some(Number.isFinite)) return;
+        const color = tint(d.color, chosen.length > 1 ? -.45 + .9 * n / (chosen.length - 1) : 0), last = y.findLastIndex(Number.isFinite);
+        traces.push({type: 'scatter', mode: 'lines', x: rows.map(x.x), y, name: entryName(d), legendgroup: d.entry.id, showlegend: !traces.some(t => t.legendgroup === d.entry.id),
+          meta: {entry: d.entry.id, mode: mode.key, rows}, line: {color, width: 1.8}, connectgaps: false, hoverlabel: {bordercolor: d.color},
+          hovertemplate: `${escapeText(label(v))}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra>${escapeText(entryName(d))}</extra>`});
+        if (list.length === 1) annotations.push({x: x.x(rows[last]), y: y[last], text: label(v), showarrow: false, xanchor: 'left', xshift: 4, font: {size: 10, color}});
+      });
+    }
+    // A label that would overlap another (curves ending close together) is left out; the hover names every curve.
+    const ys = traces.flatMap(t => t.y).filter(Number.isFinite), span = along === 'altitude' ? shown.altitudes : shown.speeds, kept = [];
+    const dy = .035 * (Math.max(...ys) - Math.min(...ys)), dx = .04 * (span[1] - span[0]);
+    for (const a of annotations.sort((a, b) => a.y - b.y)) if (!kept.some(b => Math.abs(a.x - b.x) < dx && Math.abs(a.y - b.y) < dy)) kept.push(a);
+    const axisStyle = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, tickfont: {size: 12}, separatethousands: true};
+    const layout = {paper_bgcolor: '#000', plot_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
+      margin: {l: 64, r: list.length === 1 ? 74 : 22, t: Math.max(40, Math.ceil(list.length / 2) * 22), b: 54}, hovermode: 'closest', annotations: kept,
+      hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
+      xaxis: {...axisStyle, title: {text: x.title, standoff: 8, font: {size: 13}}, range: along === 'altitude' ? shown.altitudes : shown.speeds},
+      yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
+      legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
+      uirevision: `lines-${along}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
+    draw(list, traces, layout, (mode, p) => p.data.meta.rows[p.pointNumber]);
   }
 
   // ---- Details of a clicked point -------------------------------------------------------
@@ -412,7 +500,7 @@
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
     const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
     const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) :
-      [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed'].filter(sweep => m[sweep]).flatMap(sweep =>
+      [['entry', 'aircraft', 'propeller_pitch', 'throttle', 'sweep', ...columns].join(','), ...list.flatMap(d => d.result.modes.flatMap(m => ['altitude', 'speed', 'surface'].filter(sweep => m[sweep]).flatMap(sweep =>
         m[sweep].filter(r => r.solved).map(r => [d.index + 1, d.result.aircraft_id, d.entry.pitch, m.label, sweep, ...columns.map(c => join(r[c]))].join(',')))))].join('\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([text], {type: kind === 'json' ? 'application/json' : 'text/csv'}));
