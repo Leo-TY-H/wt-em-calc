@@ -344,7 +344,8 @@
         if (!y.some(Number.isFinite)) continue;
         traces.push({type: 'scatter', mode: 'lines', x: rows.map(x.x), y,
           name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, line: {color: d.color, width: 2.4}, connectgaps: false,
-          hoverlabel: {bordercolor: d.color}, customdata: rows.map(() => mode.label),
+          // Over-rev states are shown (Leo, 2026-10-29); the hover says how far over the RPM limit.
+          hoverlabel: {bordercolor: d.color}, customdata: rows.map(r => mode.label + (r.overrev_percent ? ` · over-rev +${fmt(r.overrev_percent, 1)}%` : '')),
           hovertemplate: `%{customdata}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         // Supercharger gear changes over altitude: a mark where each new gear starts.
         if (axis === 'altitude' && d.result.stages.some(n => n > 1)) {
@@ -390,13 +391,15 @@
       el('engine-point').innerHTML = `<div class="point-grid">${section('LEVEL FLIGHT', [
         ['SEP', fmt(r.ps_mps, 2) + ' m/s'], ['Angle of attack', fmt(r.alpha_deg, 2) + '°']])}${section('FLIGHT', [
         ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
-        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)]])}</div>`;
+        ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'], ['Power', Number.isFinite(r.power_hp) ? fmt(r.power_hp, 0) + ' hp' : null], ['RPM', list(r.rpm, 0)],
+        ['Over-rev', r.overrev_percent ? `+${fmt(r.overrev_percent, 1)}%` : null]])}</div>`;
       return;
     }
     el('engine-point').innerHTML = `<div class="point-grid">${section('FLIGHT', [
       ['Altitude', fmt(r.altitude_m, 0) + ' m'], ['True airspeed', fmt(r.speed_kmh, 0) + ' km/h'], ['IAS', fmt(r.ias_kmh, 0) + ' km/h'], ['Mach', fmt(r.mach, 3)]])}${section('ENGINE', [
       ['Throttle', mode.label], ['Thrust', fmt(r.thrust_kgf, 0) + ' kgf'],
       ['Power', prop ? list(r.engine_power_hp, 0, ' hp') : null], ['RPM', list(r.rpm, 0)], ['RPM limit', list(result.rpm_limit, 0)],
+      ['Over-rev', r.overrev_percent ? `+${fmt(r.overrev_percent, 1)}%` : null],
       ['Manifold pressure', list(r.manifold_ata, 3, ' ata')], ['Supercharger gear', result.stages.some(n => n > 1) ? r.gear.join(' / ') : null]])}${prop ? section('PROPELLER', [
       ['Efficiency', Number.isFinite(r.efficiency) ? fmt(r.efficiency, 1) + '%' : null],
       ['Blade angle', r.pitch_deg.map((v, i) => fmt(v, 2) + '°' + (Number.isFinite(r.pitch_percent?.[i]) ? ' / ' + fmt(r.pitch_percent[i], 0) + '%' : '')).join(' · ')],
