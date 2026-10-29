@@ -7,8 +7,8 @@ modification). Propeller aircraft: the EM plotter's axial-flow propulsion state 
 BaselineSolver.operating_point at 1 g, angle of attack, bank and controls 0), kept when converged and admitted by the
 chart's propeller admission. Jets: the chart's engine force (EngineEnsemble.vectors). Fuel flow (Leo, 2026-10-29) is
 the game's consumption of each engine in that same state (FUEL-CONSUMPTION-MODEL.md: the piston power-ratio law, the
-turbine scalar of jets and turboprops), summed. Sweeps over altitude at one true airspeed, over true airspeed at one
-altitude, or over both (the 3D view).
+turbine scalar of jets and turboprops), summed. Sweeps over altitude at one true airspeed or over true airspeed at one
+altitude; SFC as the fuel laws' own curves.
 """
 import json
 import math
@@ -36,18 +36,16 @@ SPEEDS = {'jet': (0., 1300.), 'rocket': (0., 1300.)}
 ALTITUDES = (0., 10000.)
 
 
-def sweeps(propulsion, altitudes=None, speeds=None, coarse=None):
+def sweeps(propulsion, altitudes=None, speeds=None):
     """Altitudes (m) and true airspeeds (km/h) of the two sweeps' base grids (Leo, 2026-10-29: high quality): every 50 m
-    and 2 km/h for propeller aircraft, 100 m and 5 km/h for jets, at most 800 steps over the range. coarse: (altitude,
-    speed) spacing wanted instead; the grid takes every k-th of those points, k chosen for the spacing nearest it, so a
-    coarse grid's points are sweep points too. A propeller needs inflow: no speed below 5 km/h."""
+    and 2 km/h for propeller aircraft, 100 m and 5 km/h for jets, at most 800 steps over the range. A propeller needs
+    inflow: no speed below 5 km/h."""
     jet = propulsion in ('jet', 'rocket')
-    def grid(lo, hi, step, wanted):
+    def grid(lo, hi, step):
         n = min(800, max(1, math.ceil((hi - lo) / step - 1e-9)))
-        k = 1 if wanted is None else n // min((d for d in range(1, n + 1) if n % d == 0), key=lambda d:abs(math.log(d * wanted / (hi - lo))))
-        return [lo + (hi - lo) * i / n for i in range(0, n + 1, k)]
-    altitudes = grid(*(altitudes or ALTITUDES), 100. if jet else 50., coarse and coarse[0])
-    speeds = grid(*(speeds or SPEEDS.get(propulsion, (0., 800.))), 5. if jet else 2., coarse and coarse[1])
+        return [lo + (hi - lo) * i / n for i in range(n + 1)]
+    altitudes = grid(*(altitudes or ALTITUDES), 100. if jet else 50.)
+    speeds = grid(*(speeds or SPEEDS.get(propulsion, (0., 800.))), 5. if jet else 2.)
     if not jet:speeds = sorted({max(v, 5.) for v in speeds})
     return altitudes, speeds
 
@@ -224,9 +222,9 @@ POINTS = OrderedDict()   # sweep identity -> {x: (row, seed)}
 def points(key):
     """The points already solved for one sweep (aircraft, settings, axis, fixed value), kept across requests: another plot
     of the same sweep, another range or a repeat solves only the points it lacks (Leo, 2026-10-29: no redundant
-    calculations). The 3D view's grid lines are sweeps too. The oldest sweeps go beyond 256 sweeps or 30,000 points."""
+    calculations)."""
     store = POINTS.setdefault(key, {});POINTS.move_to_end(key)
-    while len(POINTS) > 1 and (len(POINTS) > 256 or sum(map(len, POINTS.values())) > 30000):POINTS.popitem(last=False)
+    while len(POINTS) > 32:POINTS.popitem(last=False)
     return store
 
 
@@ -340,22 +338,17 @@ TOLERANCE = .0005  # of each plotted quantity's range over the sweep: the larges
 EXTRA = 1500       # most refinement points added to one sweep
 
 
-def scales(rows, curves, tolerance):
-    """The largest midpoint error kept for each curve: `tolerance` of its range over the rows. A flat quantity varies
-    only by float32 noise: its scale is at least 1% of its size."""
-    values = [[f(r) for r in rows] for f in curves]
-    return [tolerance * max(max(f) - min(f), .01 * max(map(abs, f))) if len(f := [v for v in vs if v is not None and math.isfinite(v)]) > 1
-            else 0. for vs in values]
-
-
-def refined(rows, at, x, step, curves, scale=None, budget=None):
+def refined(rows, at, x, step, curves):
     """The sweep with points added where a straight line between neighbours misrepresents the plotted curves (Leo,
     2026-10-28: the fixed grid cut corners; 2026-10-29: only for the plot asked for). An interval is split where one end
     is solved and the other not, or where the base grid bends there (second difference above the tolerance); a split
-    keeps halving while the midpoint is off the chord or the solved state changes inside, down to `step`. scale: each
-    curve's tolerance (default scales(rows, curves, TOLERANCE)); budget: [points left] when shared between sweeps."""
+    keeps halving while the midpoint is off the chord or the solved state changes inside, down to `step`."""
     def kind(r):return r['solved']
-    if scale is None:scale = scales(rows, curves, TOLERANCE)
+    values = [[f(r) for r in rows] for f in curves]
+    # A flat quantity (RPM held by the governor, manifold below critical altitude) varies only by float32 noise: its
+    # scale is at least 1% of its size.
+    scale = [TOLERANCE * max(max(f) - min(f), .01 * max(map(abs, f))) if len(f := [v for v in vs if v is not None and math.isfinite(v)]) > 1
+             else 0. for vs in values]
     def bent(a, m, b):
         for f, s in zip(curves, scale):
             ya, ym, yb = f(a), f(m), f(b)
@@ -364,7 +357,7 @@ def refined(rows, at, x, step, curves, scale=None, budget=None):
     def candidate(i):
         if kind(rows[i]) != kind(rows[i + 1]):return True
         return any(0 < j < len(rows) - 1 and bent(rows[j - 1], rows[j], rows[j + 1]) for j in (i, i + 1))
-    if budget is None:budget = [EXTRA]
+    budget = [EXTRA]
     def fill(a, b):
         if x(b) - x(a) <= step or budget[0] <= 0:return []
         budget[0] -= 1
@@ -431,78 +424,12 @@ def starts(axis, prop):
 PLACE = dict(altitude=lambda r:r['altitude_m'], speed=lambda r:r['speed_kmh'])
 
 
-# The 3D view (Leo, 2026-10-29: f(speed, altitude)). A point costs 6-12 ms (30 ms for four engines), so the grid is
-# coarse where the plotted quantity is smooth and fine only where it bends or a solved edge crosses.
-SURFACE_STEPS = 250., 40.      # base grid spacing wanted: altitude (m), true airspeed (km/h); speed curves are the smoother
-SURFACE_TOLERANCE = .002       # of the plotted quantity's range over the base grid
-SURFACE_SPLITS = 3             # halvings of a base grid step at most (31 m, 5 km/h)
-LINE_EXTRA = 150               # most refinement points added to one grid line
-
-
-def surface_line(task):
-    """One grid line of the 3D view (Leo, 2026-10-29: speed it up): march its base grid (a row: xs given) or refine it
-    (base and scale given). Runs on the EM plotter's worker processes, or here. task: (spec, axis, fixed, known points,
-    xs, base, scale, step, quantity); spec's report True means em_server.pitch_percent. Returns (points solved here,
-    base, refined line)."""
-    spec, axis, fixed, known, xs, base, scale, step, quantity = task
-    if spec[5] is True:
-        from em_server import pitch_percent
-        spec = spec[:5] + (pitch_percent,)
-    store = dict(known);at = sweep_at(spec, axis, fixed, store)
-    if base is None:base = march(xs, at, starts(axis, AIRCRAFT[spec[0]]['propulsion'] not in ('jet', 'rocket')), blank(axis, fixed))
-    line = None if scale is None else refined(base, at, PLACE[axis], step, curves_for(quantity), scale, [LINE_EXTRA])
-    return {x:v for x, v in store.items() if x not in known}, base, line
-
-
-def lines(tasks, parallel):
-    """surface_line of every task, in order: on the EM plotter's worker processes (em_workers, as its chart columns)
-    when there are several and `parallel` (a jet's engine points take well under a millisecond: here), else here.
-    Every line is the same calculation either way."""
-    from em_workers import WORKERS, process_pool
-    if not parallel or WORKERS < 2 or len(tasks) < 2:return [surface_line(t) for t in tasks]
-    shipped = [(t[0][:5] + (True if t[0][5] is not None else None,),) + t[1:] for t in tasks]
-    with process_pool() as (pool, cancel):
-        return [f.result() for f in [pool.submit(surface_line, t) for t in shipped]]
-
-
-def surface(propulsion, spec, ranges, quantity):
-    """The 3D view's points, triangles and grid lines. Rows (speed sweeps about every SURFACE_STEPS[0]) march as speed
-    sweeps do; columns (altitude sweeps about every SURFACE_STEPS[1]) share the rows' points. Every row and column is
-    then refined as a sweep is, with one tolerance for all of them; a refinement point lies on its grid line and is that
-    sweep's point, kept for later plots. The triangulation (Delaunay over the range scaled to a unit square) takes every
-    point, solved or not, so a triangle with an unsolved corner, and only that one, is left out: gaps stay open."""
-    from scipy.spatial import Delaunay, QhullError
-    heights, speeds = sweeps(propulsion, *ranges, SURFACE_STEPS)
-    parallel = spec[4] or propulsion not in ('jet', 'rocket')
-    step = [(xs[-1] - xs[-2]) / 2 ** SURFACE_SPLITS if len(xs) > 1 else math.inf for xs in (heights, speeds)]
-    rows = {h:points(spec[:5] + ('speed', h)) for h in heights}
-    base = {}
-    for h, (new, line, _) in zip(heights, lines([(spec, 'speed', h, rows[h], speeds, None, None, None, quantity) for h in heights], parallel)):
-        rows[h].update(new);base[h] = line
-    columns = {v:points(spec[:5] + ('altitude', v)) for v in speeds}
-    for v in speeds:
-        for h in heights:
-            if v in rows[h]:columns[v].setdefault(h, rows[h][v])
-    scale = scales([r for h in heights for r in base[h]], curves_for(quantity), SURFACE_TOLERANCE)
-    tasks = ([(spec, 'speed', h, rows[h], None, base[h], scale, step[1], quantity) for h in heights] +
-             [(spec, 'altitude', v, columns[v], None, [base[h][j] for h in heights], scale, step[0], quantity) for j, v in enumerate(speeds)])
-    out = {}
-    for (_, axis, fixed, *_), (new, _, line) in zip(tasks, lines(tasks, parallel)):
-        (rows if axis == 'speed' else columns)[fixed].update(new)
-        for r in line:out.setdefault((r['altitude_m'], r['speed_kmh']), r)
-    keys = sorted(out);vertices = [out[k] for k in keys]
-    (h0, h1), (v0, v1) = ranges
-    try:corners = Delaunay(np.array([[(v - v0) / (v1 - v0), (h - h0) / (h1 - h0)] for h, v in keys])).simplices.tolist()
-    except (QhullError, ValueError):corners = []   # one row or one column: nothing to span
-    return vertices, [t for t in corners if all(vertices[i]['solved'] for i in t)], dict(altitudes=heights, speeds=speeds)
-
-
 @lru_cache(maxsize=32)
 def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False, mass='{}',
             altitudes=None, speeds=None, quantity=None):
-    """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m), 'surface' (over
-    both ranges), 'sfc' (the fuel laws' SFC curves, no flight condition) or None for altitude and speed. pitch: manual
-    propeller control (%) or None for automatic control.
+    """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m), 'sfc' (the fuel
+    laws' SFC curves, no flight condition) or None for altitude and speed. pitch: manual propeller control (%) or None
+    for automatic control.
     level: SEP in 1 g level flight instead of the engine at angle of attack 0. mass: JSON of the MASS settings (EM
     defaults where left out). altitudes, speeds: the sweep ranges (min, max), defaults SPEEDS / ALTITUDES. quantity: the
     plotted CURVES key the refinement follows (None: all of them)."""
@@ -513,7 +440,6 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
         raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
     if throttle > 100. and name in without_wep():raise ValueError(entry['name'] + ' has no WEP: its throttle stops at 100%')
     started = time.perf_counter()
-    ranges = altitudes or ALTITUDES, speeds or SPEEDS.get(entry['propulsion'], (0., 800.))
     altitudes, speeds = sweeps(entry['propulsion'], altitudes, speeds)
     curves = curves_for(quantity)
     spec = (name, throttle, pitch, mass, bool(level), report)
@@ -525,7 +451,6 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
             at = sweep_at(spec, axis, fixed, points(spec[:5] + (axis, fixed)))
             base = march(xs, at, starts(axis, prop), blank(axis, fixed))
             mode[axis] = refined(base, at, PLACE[axis], 2. if axis == 'altitude' else .25 if prop else .5, curves)
-        if sweep == 'surface':mode['surface'], mode['triangles'], mode['grid'] = surface(entry['propulsion'], spec, ranges, quantity)
         if sweep == 'sfc':mode['sfc'] = sfc_curves(name, chart, entry['propulsion'])
         modes = [mode]
     engines = chart.engine.properties['engines'] if prop else []
@@ -539,7 +464,7 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
 
 
 def request(body, report=None):
-    """POST /api/engine: {aircraft, sweep: altitude|speed|surface|sfc, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
+    """POST /api/engine: {aircraft, sweep: altitude|speed|sfc, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
     mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle}}."""
     known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass', 'altitude_range', 'speed_range', 'quantity'}
     if set(body) - known:raise ValueError('Unknown field: ' + ', '.join(sorted(set(body) - known)))
@@ -553,7 +478,7 @@ def request(body, report=None):
     altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 5., 1600.), number('throttle', 110., 0., 110.)
     pitch = body.get('pitch', 'auto');pitch = None if pitch == 'auto' else number('pitch', None, 0., 100.)
     sweep = body.get('sweep', 'both')
-    if sweep not in ('altitude', 'speed', 'surface', 'sfc', 'both'):raise ValueError('Unknown sweep')
+    if sweep not in ('altitude', 'speed', 'sfc', 'both'):raise ValueError('Unknown sweep')
     if not isinstance(body.get('level', False), bool):raise ValueError('level must be true or false')
     def span(key, high):
         r = body.get(key)
