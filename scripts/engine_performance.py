@@ -424,6 +424,28 @@ def starts(axis, prop):
 PLACE = dict(altitude=lambda r:r['altitude_m'], speed=lambda r:r['speed_kmh'])
 
 
+def admitted(name, throttle, pitch):
+    """The aircraft's catalog entry and whether it has propellers, or ValueError for settings the page cannot calculate."""
+    entry = AIRCRAFT[name]
+    if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
+    prop = entry['propulsion'] not in ('jet', 'rocket')
+    if pitch is not None and not (prop and entry.get('manual_controls', {}).get('propeller_pitch')):
+        raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
+    if throttle > 100. and name in without_wep():raise ValueError(entry['name'] + ' has no WEP: its throttle stops at 100%')
+    return entry, prop
+
+
+def point(name, altitude_m, speed_kmh, throttle, pitch, report, axis, level, mass):
+    """One point of a sweep, solved exactly as the sweep solves its points and kept in the same store (a level-flight
+    point is seeded from the nearest solved one): the page hovers every 1 km/h or 1 m and a click gives the state there
+    (Leo, 2026-10-29). axis: the sweep's ('altitude' at speed_kmh, or 'speed' at altitude_m)."""
+    admitted(name, throttle, pitch)
+    spec = (name, throttle, pitch, mass, bool(level), report)
+    fixed, x = (speed_kmh, altitude_m) if axis == 'altitude' else (altitude_m, speed_kmh)
+    with LOCK:
+        return sweep_at(spec, axis, fixed, points(spec[:5] + (axis, fixed)))(x)
+
+
 @lru_cache(maxsize=32)
 def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False, mass='{}',
             altitudes=None, speeds=None, quantity=None):
@@ -433,12 +455,7 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
     level: SEP in 1 g level flight instead of the engine at angle of attack 0. mass: JSON of the MASS settings (EM
     defaults where left out). altitudes, speeds: the sweep ranges (min, max), defaults SPEEDS / ALTITUDES. quantity: the
     plotted CURVES key the refinement follows (None: all of them)."""
-    entry = AIRCRAFT[name]
-    if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
-    prop = entry['propulsion'] not in ('jet', 'rocket')
-    if pitch is not None and not (prop and entry.get('manual_controls', {}).get('propeller_pitch')):
-        raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
-    if throttle > 100. and name in without_wep():raise ValueError(entry['name'] + ' has no WEP: its throttle stops at 100%')
+    entry, prop = admitted(name, throttle, pitch)
     started = time.perf_counter()
     altitudes, speeds = sweeps(entry['propulsion'], altitudes, speeds)
     curves = curves_for(quantity)
@@ -465,8 +482,9 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
 
 def request(body, report=None):
     """POST /api/engine: {aircraft, sweep: altitude|speed|sfc, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
-    mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle}}."""
-    known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass', 'altitude_range', 'speed_range', 'quantity'}
+    mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle},
+    point: true for the one point of the sweep at altitude_m and speed_kmh ({row})}."""
+    known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass', 'altitude_range', 'speed_range', 'quantity', 'point'}
     if set(body) - known:raise ValueError('Unknown field: ' + ', '.join(sorted(set(body) - known)))
     name = body.get('aircraft')
     if not isinstance(name, str) or name not in AIRCRAFT:raise ValueError('Unknown aircraft')
@@ -475,7 +493,7 @@ def request(body, report=None):
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not low <= v <= high:
             raise ValueError(key + ' out of range')
         return v
-    altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 5., 1600.), number('throttle', 110., 0., 110.)
+    altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 0., 1600.), number('throttle', 110., 0., 110.)
     pitch = body.get('pitch', 'auto');pitch = None if pitch == 'auto' else number('pitch', None, 0., 100.)
     sweep = body.get('sweep', 'both')
     if sweep not in ('altitude', 'speed', 'sfc', 'both'):raise ValueError('Unknown sweep')
@@ -492,5 +510,9 @@ def request(body, report=None):
     mass = body.get('mass', {})
     if not isinstance(mass, dict) or set(mass) - set(MASS):raise ValueError('Unknown mass setting')
     # settings() checks every value when the solver is built; the text is canonical so equal settings share a result.
+    if body.get('point', False) is not False:
+        if body['point'] is not True or sweep not in ('altitude', 'speed'):raise ValueError('point needs true and an altitude or speed sweep')
+        return dict(row=point(name, float(altitude), float(speed), float(throttle), None if pitch is None else float(pitch), report,
+                              sweep, body.get('level', False), json.dumps(mass, sort_keys=True)))
     return compute(name, float(altitude), float(speed), float(throttle), None if pitch is None else float(pitch), report,
                    None if sweep == 'both' else sweep, body.get('level', False), json.dumps(mass, sort_keys=True), altitudes, speeds, quantity)

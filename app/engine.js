@@ -361,10 +361,19 @@
         const rows = mode[axis], y = rows.map(r => r.solved ? quantity.y(r, d.result) ?? null : null);
         // An entry without this quantity (a jet's power) draws nothing and takes no legend row.
         if (!y.some(Number.isFinite)) continue;
-        traces.push({type: 'scatter', mode: 'lines', x: rows.map(x.x), y,
+        // Hover every 1 km/h or 1 m (Leo, 2026-10-29): between solved points the curve's own straight segments, marked ≈
+        // (the refinement keeps them within 0.05% of the plotted range); a click solves the exact point.
+        const hx = [], hy = [], approx = [];
+        rows.forEach((r, i) => {
+          const x0 = x.x(r), x1 = i + 1 < rows.length ? x.x(rows[i + 1]) : x0, y0 = y[i], y1 = y[i + 1];
+          hx.push(x0); hy.push(y0); approx.push('');
+          if (!Number.isFinite(y0) || !Number.isFinite(y1)) return;
+          for (let v = Math.floor(x0) + 1; v < x1; v++) { hx.push(v); hy.push(y0 + (y1 - y0) * (v - x0) / (x1 - x0)); approx.push('≈ '); }
+        });
+        traces.push({type: 'scatter', mode: 'lines', x: hx, y: hy, text: approx,
           name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, line: {color: d.color, width: 2.4}, connectgaps: false,
-          hoverlabel: {bordercolor: d.color}, customdata: rows.map(() => mode.label),
-          hovertemplate: `%{customdata}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
+          hoverlabel: {bordercolor: d.color},
+          hovertemplate: `${escapeText(mode.label)}<br>%{text}%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         // Supercharger gear changes over altitude: a mark where each new gear starts.
         if (axis === 'altitude' && d.result.stages.some(n => n > 1)) {
           const marks = rows.filter((r, i) => r.solved && i && rows[i - 1].solved && String(r.gear) !== String(rows[i - 1].gear));
@@ -384,9 +393,15 @@
       yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
       uirevision: `${axis}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
-    draw(list, traces, layout, (mode, p) => mode[axis].find(r => x.x(r) === p.x));
+    draw(list, traces, layout, (mode, p, d) => mode[axis].find(r => x.x(r) === p.x) || exact(d, axis, p.x));
   }
-  // find(mode, point): the clicked sweep row.
+  // The exact state at a clicked point between solved ones: the server solves it as the sweep solves its points.
+  async function exact(d, axis, at) {
+    const request = {...body(d.entry, shown), point: true, altitude_m: axis === 'altitude' ? at : shown.altitude, speed_kmh: axis === 'speed' ? at : shown.speed};
+    try { return (await api('/api/engine', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request)})).row; }
+    catch (error) { showError(error.message); return null; }
+  }
+  // find(mode, point, entry): the clicked sweep row (or its promise).
   function draw(list, traces, layout, find) {
     const chart = el('engine-chart');
     if (!chart.classList.contains('js-plotly-plot')) chart.innerHTML = '';
@@ -395,10 +410,10 @@
       modeBarButtonsToAdd: [{name: 'Download data (CSV)', icon: DATA_ICONS.csv, click: () => download('csv')},
                             {name: 'Download data (JSON)', icon: DATA_ICONS.json, click: () => download('json')}]});
     chart.removeAllListeners?.('plotly_click');
-    chart.on('plotly_click', event => {
+    chart.on('plotly_click', async event => {
       const p = event.points?.[0], meta = p?.data.meta; if (!meta) return;
       const d = list.find(item => item.entry.id === meta.entry), mode = d?.result.modes.find(m => m.key === meta.mode);
-      const row = mode && find(mode, p); if (row?.solved) inspect(d, mode, row);
+      const row = mode && await find(mode, p, d); if (row?.solved) inspect(d, mode, row);
     });
   }
 
