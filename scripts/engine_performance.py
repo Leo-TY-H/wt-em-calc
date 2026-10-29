@@ -71,11 +71,15 @@ MASS = ('fuel_percent', 'extra_mass_kg', 'flaps_percent', 'loadout', 'stores_rel
 
 
 def solver(name, altitude, throttle, pitch, mass='{}'):
-    """The EM chart's solver for these settings (built per altitude: the catalog caches the aircraft, so this is cheap)."""
+    """The EM chart's solver for these settings (built per altitude: the catalog caches the aircraft, so this is cheap),
+    with the compiled evaluator (em_march_native: the same values; the axial points take a third less time)."""
+    import em_march_native
     from em_stationary_baseline import BaselineSolver
     extra = dict(json.loads(mass), altitude_m=float(altitude), throttle=throttle / 100., afterburner=throttle > 100.)
     if pitch is not None:extra.update(manual_engine_controls=True, propeller_pitch_auto=False, propeller_pitch_percent=pitch)
-    return BaselineSolver(name, settings(dict(aircraft=[name], sideslip_recovery=False, **extra)))
+    chart = BaselineSolver(name, settings(dict(aircraft=[name], sideslip_recovery=False, **extra)))
+    em_march_native.attach(chart)
+    return chart
 
 
 def propeller_row(chart, speed_kmh, report):
@@ -130,9 +134,8 @@ def jet_row(chart, speed_kmh):
 
 def level_solver(name, altitude, throttle, pitch, mass='{}'):
     """The EM plotter's point solver (em_server.point_solver for a march chart): soft admission, compiled loop."""
-    import em_march_native
     chart = solver(name, altitude, throttle, pitch, mass)
-    chart.soft_admission = True;em_march_native.attach(chart)
+    chart.soft_admission = True
     return chart
 
 
@@ -232,37 +235,118 @@ def refined(rows, at, x, step, curves, scale=None, budget=None):
     return out
 
 
+def axial_point(chart, height, speed, prop, report):
+    """An engine sweep row: the axial state at angle of attack 0, unsolved where the EM plotter's reference is."""
+    try:value = propeller_row(chart, speed, report) if prop else jet_row(chart, speed)
+    except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
+    return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
+
+
+def level_point(chart, height, speed, near):
+    """A level-flight sweep row and its continuation seed."""
+    try:value, seed = level_row(chart, speed, near)
+    except (ArithmeticError, np.linalg.LinAlgError):value = seed = None
+    return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None), seed
+
+
+def sweep_at(spec, axis, fixed, store):
+    """at(x) of one sweep: over altitude at speed `fixed`, or over speed at altitude `fixed`. Each point is solved once and
+    kept in `store` {x: (row, seed)}, however many plots and requests use it. spec: (name, throttle, pitch, mass, level,
+    report)."""
+    name, throttle, pitch, mass, level, report = spec
+    prop, charts = AIRCRAFT[name]['propulsion'] not in ('jet', 'rocket'), []
+    def along():   # the speed sweep's chart, built at its first unsolved point
+        if not charts:charts.append((level_solver if level else solver)(name, fixed, throttle, pitch, mass))
+        return charts[0]
+    if level:
+        def solve(x):
+            near = min(((abs(s - x), seed) for s, (r, seed) in store.items() if seed), key=lambda t:t[0], default=(0, None))[1]
+            return (level_point(level_solver(name, x, throttle, pitch, mass), x, fixed, near) if axis == 'altitude' else
+                    level_point(along(), fixed, x, near))
+    else:
+        def solve(x):
+            return (axial_point(solver(name, x, throttle, pitch, mass), x, fixed, prop, report) if axis == 'altitude' else
+                    axial_point(along(), fixed, x, prop, report)), None
+    def at(x):
+        if x not in store:store[x] = solve(x)
+        return store[x][0]
+    return at
+
+
+def blank(axis, fixed):
+    """An unsolved row of a sweep (past a march's give-up)."""
+    return (lambda h:dict(altitude_m=h, speed_kmh=fixed, solved=False)) if axis == 'altitude' else \
+        (lambda v:dict(altitude_m=fixed, speed_kmh=v, solved=False))
+
+
+def starts(axis, prop):
+    """Where a march starts: a point that converges cold."""
+    return (0., 3000., 6000.) if axis == 'altitude' else (400., 300., 500., 250.) if prop else (800., 600., 1000., 450.)
+
+
+PLACE = dict(altitude=lambda r:r['altitude_m'], speed=lambda r:r['speed_kmh'])
+
+
 # The 3D view (Leo, 2026-10-29: f(speed, altitude)). A point costs 6-12 ms (30 ms for four engines), so the grid is
 # coarse where the plotted quantity is smooth and fine only where it bends or a solved edge crosses.
 SURFACE_STEPS = 250., 40.      # base grid spacing wanted: altitude (m), true airspeed (km/h); speed curves are the smoother
 SURFACE_TOLERANCE = .002       # of the plotted quantity's range over the base grid
 SURFACE_SPLITS = 3             # halvings of a base grid step at most (31 m, 5 km/h)
-SURFACE_EXTRA = 3000           # most refinement points added to one surface
+LINE_EXTRA = 150               # most refinement points added to one grid line
 
 
-def surface(propulsion, ranges, line, blank, starts, place, curves):
-    """The 3D view's points, triangles and grid lines. Rows (speed sweeps about every SURFACE_STEPS[0]) march as speed sweeps do;
-    columns (altitude sweeps about every SURFACE_STEPS[1]) share the rows' points. Every row and column is then refined
-    as a sweep is, with one tolerance for all of them; a refinement point lies on its grid line and is that sweep's
-    point, kept for later plots. The triangulation (Delaunay over the range scaled to a unit square) takes every point,
-    solved or not, so a triangle with an unsolved corner, and only that one, is left out: gaps stay open."""
+def surface_line(task):
+    """One grid line of the 3D view (Leo, 2026-10-29: speed it up): march its base grid (a row: xs given) or refine it
+    (base and scale given). Runs on the EM plotter's worker processes, or here. task: (spec, axis, fixed, known points,
+    xs, base, scale, step, quantity); spec's report True means em_server.pitch_percent. Returns (points solved here,
+    base, refined line)."""
+    spec, axis, fixed, known, xs, base, scale, step, quantity = task
+    if spec[5] is True:
+        from em_server import pitch_percent
+        spec = spec[:5] + (pitch_percent,)
+    store = dict(known);at = sweep_at(spec, axis, fixed, store)
+    if base is None:base = march(xs, at, starts(axis, AIRCRAFT[spec[0]]['propulsion'] not in ('jet', 'rocket')), blank(axis, fixed))
+    line = None if scale is None else refined(base, at, PLACE[axis], step, [CURVES[quantity]] if quantity else list(CURVES.values()),
+                                              scale, [LINE_EXTRA])
+    return {x:v for x, v in store.items() if x not in known}, base, line
+
+
+def lines(tasks, parallel):
+    """surface_line of every task, in order: on the EM plotter's worker processes (em_workers, as its chart columns)
+    when there are several and `parallel` (a jet's engine points take well under a millisecond: here), else here.
+    Every line is the same calculation either way."""
+    from em_workers import WORKERS, process_pool
+    if not parallel or WORKERS < 2 or len(tasks) < 2:return [surface_line(t) for t in tasks]
+    shipped = [(t[0][:5] + (True if t[0][5] is not None else None,),) + t[1:] for t in tasks]
+    with process_pool() as (pool, cancel):
+        return [f.result() for f in [pool.submit(surface_line, t) for t in shipped]]
+
+
+def surface(propulsion, spec, ranges, quantity):
+    """The 3D view's points, triangles and grid lines. Rows (speed sweeps about every SURFACE_STEPS[0]) march as speed
+    sweeps do; columns (altitude sweeps about every SURFACE_STEPS[1]) share the rows' points. Every row and column is
+    then refined as a sweep is, with one tolerance for all of them; a refinement point lies on its grid line and is that
+    sweep's point, kept for later plots. The triangulation (Delaunay over the range scaled to a unit square) takes every
+    point, solved or not, so a triangle with an unsolved corner, and only that one, is left out: gaps stay open."""
     from scipy.spatial import Delaunay, QhullError
     heights, speeds = sweeps(propulsion, *ranges, SURFACE_STEPS)
+    parallel = spec[4] or propulsion not in ('jet', 'rocket')
     step = [(xs[-1] - xs[-2]) / 2 ** SURFACE_SPLITS if len(xs) > 1 else math.inf for xs in (heights, speeds)]
-    rows = {h:line('speed', h) for h in heights}
-    base = {h:march(speeds, rows[h][1], starts['speed'], blank('speed', h)) for h in heights}
-    columns = {}
+    rows = {h:points(spec[:5] + ('speed', h)) for h in heights}
+    base = {}
+    for h, (new, line, _) in zip(heights, lines([(spec, 'speed', h, rows[h], speeds, None, None, None, quantity) for h in heights], parallel)):
+        rows[h].update(new);base[h] = line
+    columns = {v:points(spec[:5] + ('altitude', v)) for v in speeds}
     for v in speeds:
-        columns[v] = line('altitude', v)
         for h in heights:
-            if v in rows[h][0]:columns[v][0].setdefault(h, rows[h][0][v])
-    scale = scales([r for h in heights for r in base[h]], curves, SURFACE_TOLERANCE)
-    budget, out = [SURFACE_EXTRA], {}
-    for h in heights:
-        for r in refined(base[h], rows[h][1], place['speed'], step[1], curves, scale, budget):out[h, r['speed_kmh']] = r
-    for j, v in enumerate(speeds):
-        for r in refined([base[h][j] for h in heights], columns[v][1], place['altitude'], step[0], curves, scale, budget):
-            out.setdefault((r['altitude_m'], v), r)
+            if v in rows[h]:columns[v].setdefault(h, rows[h][v])
+    scale = scales([r for h in heights for r in base[h]], [CURVES[quantity]] if quantity else list(CURVES.values()), SURFACE_TOLERANCE)
+    tasks = ([(spec, 'speed', h, rows[h], None, base[h], scale, step[1], quantity) for h in heights] +
+             [(spec, 'altitude', v, columns[v], None, [base[h][j] for h in heights], scale, step[0], quantity) for j, v in enumerate(speeds)])
+    out = {}
+    for (_, axis, fixed, *_), (new, _, line) in zip(tasks, lines(tasks, parallel)):
+        (rows if axis == 'speed' else columns)[fixed].update(new)
+        for r in line:out.setdefault((r['altitude_m'], r['speed_kmh']), r)
     keys = sorted(out);vertices = [out[k] for k in keys]
     (h0, h1), (v0, v1) = ranges
     try:corners = Delaunay(np.array([[(v - v0) / (v1 - v0), (h - h0) / (h1 - h0)] for h, v in keys])).simplices.tolist()
@@ -288,48 +372,17 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
     started = time.perf_counter()
     ranges = altitudes or ALTITUDES, speeds or SPEEDS.get(entry['propulsion'], (0., 800.))
     altitudes, speeds = sweeps(entry['propulsion'], altitudes, speeds)
-    def row(chart, height, speed):
-        try:value = propeller_row(chart, speed, report) if prop else jet_row(chart, speed)
-        except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
-        return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
-    def flight(chart, height, speed, near):
-        try:value, seed = level_row(chart, speed, near)
-        except (ArithmeticError, np.linalg.LinAlgError):value = seed = None
-        return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None), seed
     curves = [CURVES[quantity]] if quantity else list(CURVES.values())
-    def line(axis, fixed):
-        """One sweep's solved points and at(x): over altitude at speed `fixed`, or over speed at altitude `fixed`. Each
-        point is solved once per sweep, however many plots and requests use it."""
-        store, charts = points((name, throttle, pitch, mass, bool(level), axis, fixed)), []
-        def along():   # the speed sweep's chart, built at its first unsolved point
-            if not charts:charts.append((level_solver if level else solver)(name, fixed, throttle, pitch, mass))
-            return charts[0]
-        if level:
-            def solve(x):
-                near = min(((abs(s - x), seed) for s, (r, seed) in store.items() if seed), key=lambda t:t[0], default=(0, None))[1]
-                return (flight(level_solver(name, x, throttle, pitch, mass), x, fixed, near) if axis == 'altitude' else
-                        flight(along(), fixed, x, near))
-        else:
-            def solve(x):
-                return (row(solver(name, x, throttle, pitch, mass), x, fixed) if axis == 'altitude' else row(along(), fixed, x)), None
-        def at(x):
-            if x not in store:store[x] = solve(x)
-            return store[x][0]
-        return store, at
-    def blank(axis, fixed):
-        return (lambda h:dict(altitude_m=h, speed_kmh=fixed, solved=False)) if axis == 'altitude' else \
-            (lambda v:dict(altitude_m=fixed, speed_kmh=v, solved=False))
-    starts = dict(altitude=(0., 3000., 6000.), speed=(400., 300., 500., 250.) if prop else (800., 600., 1000., 450.))
-    place = dict(altitude=lambda r:r['altitude_m'], speed=lambda r:r['speed_kmh'])
+    spec = (name, throttle, pitch, mass, bool(level), report)
     with LOCK:
         chart = solver(name, altitude_m, throttle, pitch, mass)
         mode = dict(key='throttle', label=f'{throttle:g}%', level=bool(level))
         for axis, xs, fixed in (('altitude', altitudes, speed_kmh), ('speed', speeds, altitude_m)):
             if sweep not in (None, axis):continue
-            store, at = line(axis, fixed)
-            base = march(xs, at, starts[axis], blank(axis, fixed))
-            mode[axis] = refined(base, at, place[axis], 2. if axis == 'altitude' else .25 if prop else .5, curves)
-        if sweep == 'surface':mode['surface'], mode['triangles'], mode['grid'] = surface(entry['propulsion'], ranges, line, blank, starts, place, curves)
+            at = sweep_at(spec, axis, fixed, points(spec[:5] + (axis, fixed)))
+            base = march(xs, at, starts(axis, prop), blank(axis, fixed))
+            mode[axis] = refined(base, at, PLACE[axis], 2. if axis == 'altitude' else .25 if prop else .5, curves)
+        if sweep == 'surface':mode['surface'], mode['triangles'], mode['grid'] = surface(entry['propulsion'], spec, ranges, quantity)
         modes = [mode]
     engines = chart.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
