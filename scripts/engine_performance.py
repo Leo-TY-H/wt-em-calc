@@ -24,11 +24,15 @@ from em_solver import AIRCRAFT, settings
 
 METRIC_HP = 735.49875
 KGF = 9.80665
+# The game engine model's own units, which its fuel laws use: horsepower = 746 W (piston torque_base = base_hp x 746 /
+# max_omega; the fuel law's power factor 0.00134048 = 1/746), kgf = 9.81 N (jets' k = ConsumptionOmegaMax / 3600 / 9.81).
+GAME_HP = 746.
+GAME_KGF = 9.81
 LOCK = threading.Lock()
 
 
 # Default ranges (Leo, 2026-10-28): true airspeed 0-800 km/h for propeller aircraft, 0-1,300 for jets; altitude 0-10 km.
-SPEEDS = {'jet': (0., 1300.)}
+SPEEDS = {'jet': (0., 1300.), 'rocket': (0., 1300.)}
 ALTITUDES = (0., 10000.)
 
 
@@ -116,9 +120,22 @@ def propeller_row(chart, speed_kmh, report):
     if report is not None:report(point, chart)
     thrust = float(prop['force'][0])
     fuel = [3600. * e['consumption'] for e in state['engines']]   # kg/h; mixed aircraft include their jets
+    # SFC (Leo, 2026-10-29), in the game's units: pistons' fuel per their shaft power (the torque x omega the fuel law
+    # takes; kg per GAME_HP hour), turbines' fuel per the turbine scalar thrust it multiplies (kg per GAME_KGF hour),
+    # from turbine_scalar, kept only where that re-run reproduces the solver's own fuel to the bit.
+    families = [e['family'] for e in p['engines']];turbines = [i for i, f in enumerate(families) if f in (2, 5)]
+    piston_w = sum(e.get('torque', 0.) * e['omega'] for e, f in zip(state['engines'], families) if f in (0, 1))
+    scalars = [turbine_scalar(p['engines'][i], state['engines'][i], velocity, chart.config['altitude_m'], chart.mass['nitro_mass'])
+               for i in turbines]
+    turbine_n = sum(x['thrust'] for x in scalars)
+    exact = all(x['consumption'] == state['engines'][i]['consumption'] for x, i in zip(scalars, turbines))
     return dict(thrust_kgf=thrust / KGF, power_hp=power / METRIC_HP if power > 0. or pistons else None,
                 engine_power_hp=[e.get('torque', 0.) * e['omega'] / METRIC_HP for e in state['engines']],
                 fuel_kgh=sum(fuel), engine_fuel_kgh=fuel,
+                piston_power_game_hp=piston_w / GAME_HP if pistons else None,
+                bsfc=sum(fuel[i] for i in pistons) / (piston_w / GAME_HP) if pistons and piston_w > 0. else None,
+                turbine_thrust_kgf=turbine_n / KGF if turbines and exact else None,
+                tsfc=sum(fuel[i] for i in turbines) / (turbine_n / GAME_KGF) if turbines and exact and turbine_n > 0. else None,
                 efficiency=thrust * v / power * 100. if power > 1. and not any(e['family'] == 2 for e in p['engines']) else None,
                 rpm=point['propulsion']['engine_rpm'], pitch_deg=point['propulsion']['propeller_pitch_deg'],
                 pitch_percent=point['propulsion'].get('propeller_pitch_percent'),
@@ -128,14 +145,48 @@ def propeller_row(chart, speed_kmh, report):
                 mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
+def turbine_scalar(engine, s, velocity, height, nitro):
+    """A solved jet or turboprop engine's turbine scalar (thrust, consumption): turbine_general.step's own
+    scalar_update call at the state's inputs, with dt 0 as prop_quasisteady.engine_output evaluates it (the gas
+    generator holds its speed). Its thrust is the one the game's fuel law multiplies: fuel = ConsumptionMult x thrust
+    x ConsumptionOmegaMax / 3600 / 9.81."""
+    from component_assembly import mul
+    from control_mixer import density_at_height
+    from engine_supply import mechanical_multiplier
+    from jet_model import scalar_update
+    from piston_model import boost_active, div
+    p = engine['properties'];omega = f32(s['omega']);dt = f32(0.)
+    throttle = min(f32(s.get('throttle', 1.)), f32(1.1))
+    health = mechanical_multiplier(p, omega, 1., p['cylinders'], s.get('mechanical', 1.), 0., s.get('torque', 0.), s.get('friction', 0.),
+                                   dt, 12345)[0]
+    gas = f32(s.get('turbo', 0.)) if p['family'] == 5 else omega
+    return scalar_update(engine['turbine'], density_at_height(f32(height)), velocity[0], gas,
+                         min(div(throttle, f32(1.1 if p['throttle_boost'] > 1. else 1.)), 1.), dt,
+                         afterburner=boost_active(p, throttle, s.get('afterburner', False), s.get('gear', 0), nitro), health=health,
+                         shaft_fraction=mul(omega, p['inverse_omega']), running=2)
+
+
 def jet_row(chart, speed_kmh):
     from air_state import cache
     v = speed_kmh / 3.6
     air = cache([f32(v), 0., 0.], chart.config['altitude_m'])
-    # The chart's nominal engine state (jet_nominal.evaluate): RPM and the scalar fuel demand, kg/s.
+    # The chart's nominal engine state (jet_nominal.evaluate): RPM, the scalar thrust and the fuel demand it sets, kg/s.
     nominal = [u.nominal(v) for u in chart.engine.units];fuel = [3600. * n['scalar']['consumption'] for n in nominal]
+    engine = sum(n['scalar']['thrust'] for n in nominal)
     return dict(thrust_kgf=float(chart.engine.vectors(v)[0][0]) / KGF, rpm=[n['omega'] * 30 / math.pi for n in nominal],
-                fuel_kgh=sum(fuel), engine_fuel_kgh=fuel, mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
+                fuel_kgh=sum(fuel), engine_fuel_kgh=fuel, turbine_thrust_kgf=engine / KGF,
+                tsfc=sum(fuel) / (engine / GAME_KGF) if engine > 0. else None, mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
+
+
+def rocket_row(chart, speed_kmh):
+    """A rocket aircraft's motors (rocket_em.RocketUnit: the scalar rocket law at the chart's throttle; no RPM)."""
+    from air_state import cache
+    v = speed_kmh / 3.6
+    air = cache([f32(v), 0., 0.], chart.config['altitude_m'])
+    units = chart.engine.units;fuel = [3600. * u.consumption for u in units];engine = sum(u.thrust for u in units)
+    return dict(thrust_kgf=float(chart.engine.vectors(v)[0][0]) / KGF, fuel_kgh=sum(fuel), engine_fuel_kgh=fuel,
+                turbine_thrust_kgf=engine / KGF, tsfc=sum(fuel) / (engine / GAME_KGF) if engine > 0. else None,
+                mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
 def level_solver(name, altitude, throttle, pitch, mass='{}'):
@@ -197,9 +248,15 @@ def march(xs, at, starts, blank):
 
 
 # The plotted quantities (Leo, 2026-10-28: power, thrust, efficiency, SEP; RPM, blade pitch and manifold only in details;
-# 2026-10-29: fuel flow).
+# 2026-10-29: fuel flow; SFC, over throttle).
 CURVES = {'power':lambda r:r.get('power_hp'), 'thrust':lambda r:r.get('thrust_kgf'), 'efficiency':lambda r:r.get('efficiency'),
           'fuel':lambda r:r.get('fuel_kgh'), 'sep':lambda r:r.get('ps_mps')}
+SFC = [lambda r:r.get('bsfc'), lambda r:r.get('tsfc')]   # an aircraft with pistons and jets has both
+
+
+def curves_for(quantity):
+    """The curves a sweep's refinement follows: the plot asked for, or all of them."""
+    return SFC if quantity == 'sfc' else [CURVES[quantity]] if quantity else list(CURVES.values())
 TOLERANCE = .0005  # of each plotted quantity's range over the sweep: the largest straight-line midpoint error kept
 EXTRA = 1500       # most refinement points added to one sweep
 
@@ -242,9 +299,10 @@ def refined(rows, at, x, step, curves, scale=None, budget=None):
     return out
 
 
-def axial_point(chart, height, speed, prop, report):
+def axial_point(chart, height, speed, propulsion, report):
     """An engine sweep row: the axial state at angle of attack 0, unsolved where the EM plotter's reference is."""
-    try:value = propeller_row(chart, speed, report) if prop else jet_row(chart, speed)
+    try:value = (jet_row(chart, speed) if propulsion == 'jet' else rocket_row(chart, speed) if propulsion == 'rocket' else
+                 propeller_row(chart, speed, report))
     except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
     return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None)
 
@@ -261,19 +319,22 @@ def sweep_at(spec, axis, fixed, store):
     kept in `store` {x: (row, seed)}, however many plots and requests use it. spec: (name, throttle, pitch, mass, level,
     report)."""
     name, throttle, pitch, mass, level, report = spec
-    prop, charts = AIRCRAFT[name]['propulsion'] not in ('jet', 'rocket'), []
+    propulsion, charts = AIRCRAFT[name]['propulsion'], []
     def along():   # the speed sweep's chart, built at its first unsolved point
         if not charts:charts.append((level_solver if level else solver)(name, fixed, throttle, pitch, mass))
         return charts[0]
-    if level:
+    if axis == 'throttle':   # at altitude and true airspeed `fixed`, one chart per throttle setting (%)
+        def solve(x):
+            return dict(axial_point(solver(name, fixed[0], x, pitch, mass), *fixed, propulsion, report), throttle_percent=x), None
+    elif level:
         def solve(x):
             near = min(((abs(s - x), seed) for s, (r, seed) in store.items() if seed), key=lambda t:t[0], default=(0, None))[1]
             return (level_point(level_solver(name, x, throttle, pitch, mass), x, fixed, near) if axis == 'altitude' else
                     level_point(along(), fixed, x, near))
     else:
         def solve(x):
-            return (axial_point(solver(name, x, throttle, pitch, mass), x, fixed, prop, report) if axis == 'altitude' else
-                    axial_point(along(), fixed, x, prop, report)), None
+            return (axial_point(solver(name, x, throttle, pitch, mass), x, fixed, propulsion, report) if axis == 'altitude' else
+                    axial_point(along(), fixed, x, propulsion, report)), None
     def at(x):
         if x not in store:store[x] = solve(x)
         return store[x][0]
@@ -282,16 +343,18 @@ def sweep_at(spec, axis, fixed, store):
 
 def blank(axis, fixed):
     """An unsolved row of a sweep (past a march's give-up)."""
+    if axis == 'throttle':return lambda t:dict(altitude_m=fixed[0], speed_kmh=fixed[1], throttle_percent=t, solved=False)
     return (lambda h:dict(altitude_m=h, speed_kmh=fixed, solved=False)) if axis == 'altitude' else \
         (lambda v:dict(altitude_m=fixed, speed_kmh=v, solved=False))
 
 
 def starts(axis, prop):
     """Where a march starts: a point that converges cold."""
+    if axis == 'throttle':return (100., 80., 50.)
     return (0., 3000., 6000.) if axis == 'altitude' else (400., 300., 500., 250.) if prop else (800., 600., 1000., 450.)
 
 
-PLACE = dict(altitude=lambda r:r['altitude_m'], speed=lambda r:r['speed_kmh'])
+PLACE = dict(altitude=lambda r:r['altitude_m'], speed=lambda r:r['speed_kmh'], throttle=lambda r:r['throttle_percent'])
 
 
 # The 3D view (Leo, 2026-10-29: f(speed, altitude)). A point costs 6-12 ms (30 ms for four engines), so the grid is
@@ -313,8 +376,7 @@ def surface_line(task):
         spec = spec[:5] + (pitch_percent,)
     store = dict(known);at = sweep_at(spec, axis, fixed, store)
     if base is None:base = march(xs, at, starts(axis, AIRCRAFT[spec[0]]['propulsion'] not in ('jet', 'rocket')), blank(axis, fixed))
-    line = None if scale is None else refined(base, at, PLACE[axis], step, [CURVES[quantity]] if quantity else list(CURVES.values()),
-                                              scale, [LINE_EXTRA])
+    line = None if scale is None else refined(base, at, PLACE[axis], step, curves_for(quantity), scale, [LINE_EXTRA])
     return {x:v for x, v in store.items() if x not in known}, base, line
 
 
@@ -347,7 +409,7 @@ def surface(propulsion, spec, ranges, quantity):
     for v in speeds:
         for h in heights:
             if v in rows[h]:columns[v].setdefault(h, rows[h][v])
-    scale = scales([r for h in heights for r in base[h]], [CURVES[quantity]] if quantity else list(CURVES.values()), SURFACE_TOLERANCE)
+    scale = scales([r for h in heights for r in base[h]], curves_for(quantity), SURFACE_TOLERANCE)
     tasks = ([(spec, 'speed', h, rows[h], None, base[h], scale, step[1], quantity) for h in heights] +
              [(spec, 'altitude', v, columns[v], None, [base[h][j] for h in heights], scale, step[0], quantity) for j, v in enumerate(speeds)])
     out = {}
@@ -365,21 +427,21 @@ def surface(propulsion, spec, ranges, quantity):
 def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None, sweep=None, level=False, mass='{}',
             altitudes=None, speeds=None, quantity=None):
     """The sweeps at a throttle setting (%): sweep 'altitude' (at speed_kmh), 'speed' (at altitude_m), 'surface' (over
-    both ranges) or None for altitude and speed. pitch: manual propeller control (%) or None for automatic control.
+    both ranges), 'throttle' (every setting, at altitude_m and speed_kmh) or None for altitude and speed. pitch: manual propeller control (%) or None for automatic control.
     level: SEP in 1 g level flight instead of the engine at angle of attack 0. mass: JSON of the MASS settings (EM
     defaults where left out). altitudes, speeds: the sweep ranges (min, max), defaults SPEEDS / ALTITUDES. quantity: the
     plotted CURVES key the refinement follows (None: all of them)."""
     entry = AIRCRAFT[name]
     if not entry['supported']:raise ValueError(entry['name'] + ': ' + entry['reason'])
-    if entry['propulsion'] == 'rocket':raise ValueError('Rocket aircraft have no engine performance page')
     prop = entry['propulsion'] not in ('jet', 'rocket')
+    if sweep == 'throttle' and level:raise ValueError('The throttle sweep is the engine at angle of attack 0')
     if pitch is not None and not (prop and entry.get('manual_controls', {}).get('propeller_pitch')):
         raise ValueError('Manual propeller pitch is unavailable for ' + entry['name'])
     if throttle > 100. and name in without_wep():raise ValueError(entry['name'] + ' has no WEP: its throttle stops at 100%')
     started = time.perf_counter()
     ranges = altitudes or ALTITUDES, speeds or SPEEDS.get(entry['propulsion'], (0., 800.))
     altitudes, speeds = sweeps(entry['propulsion'], altitudes, speeds)
-    curves = [CURVES[quantity]] if quantity else list(CURVES.values())
+    curves = curves_for(quantity)
     spec = (name, throttle, pitch, mass, bool(level), report)
     with LOCK:
         chart = solver(name, altitude_m, throttle, pitch, mass)
@@ -390,6 +452,14 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
             base = march(xs, at, starts(axis, prop), blank(axis, fixed))
             mode[axis] = refined(base, at, PLACE[axis], 2. if axis == 'altitude' else .25 if prop else .5, curves)
         if sweep == 'surface':mode['surface'], mode['triangles'], mode['grid'] = surface(entry['propulsion'], spec, ranges, quantity)
+        if sweep == 'throttle':
+            # SFC (Leo, 2026-10-29): every throttle setting from 0 to the game's cap, 0.5% apart, refined to 0.05%; the
+            # entry's own throttle plays no part.
+            fixed, top = (altitude_m, speed_kmh), 100. if name in without_wep() else 110.
+            tspec = (name, None, pitch, mass, False, report);n = int(top / .5)
+            at = sweep_at(tspec, 'throttle', fixed, points(tspec[:5] + ('throttle', fixed)))
+            base = march([top * i / n for i in range(n + 1)], at, starts('throttle', prop), blank('throttle', fixed))
+            mode['throttle'] = refined(base, at, PLACE['throttle'], .05, curves)
         modes = [mode]
     engines = chart.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
@@ -397,12 +467,12 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
                 engine_count=len(engines) if prop else len(chart.engine.units),
                 stages=[len(e['properties']['stages']) for e in engines if e['family'] in (0, 1)],
                 rpm_limit=([e['properties']['omega_limit'] * 30 / math.pi for e in engines] if prop else
-                           [u.ep['omega_limit'] * 30 / math.pi for u in chart.engine.units]),
+                           [u.ep['omega_limit'] * 30 / math.pi for u in chart.engine.units] if entry['propulsion'] == 'jet' else []),
                 elapsed_s=time.perf_counter() - started)
 
 
 def request(body, report=None):
-    """POST /api/engine: {aircraft, sweep: altitude|speed|surface, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
+    """POST /api/engine: {aircraft, sweep: altitude|speed|surface|throttle, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
     mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle}}."""
     known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass', 'altitude_range', 'speed_range', 'quantity'}
     if set(body) - known:raise ValueError('Unknown field: ' + ', '.join(sorted(set(body) - known)))
@@ -416,7 +486,7 @@ def request(body, report=None):
     altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 5., 1600.), number('throttle', 110., 0., 110.)
     pitch = body.get('pitch', 'auto');pitch = None if pitch == 'auto' else number('pitch', None, 0., 100.)
     sweep = body.get('sweep', 'both')
-    if sweep not in ('altitude', 'speed', 'surface', 'both'):raise ValueError('Unknown sweep')
+    if sweep not in ('altitude', 'speed', 'surface', 'throttle', 'both'):raise ValueError('Unknown sweep')
     if not isinstance(body.get('level', False), bool):raise ValueError('level must be true or false')
     def span(key, high):
         r = body.get(key)
@@ -426,7 +496,7 @@ def request(body, report=None):
         return float(r[0]), float(r[1])
     altitudes, speeds = span('altitude_range', 18000.), span('speed_range', 1600.)
     quantity = body.get('quantity')
-    if quantity is not None and quantity not in CURVES:raise ValueError('Unknown quantity')
+    if quantity is not None and quantity not in CURVES and quantity != 'sfc':raise ValueError('Unknown quantity')
     mass = body.get('mass', {})
     if not isinstance(mass, dict) or set(mass) - set(MASS):raise ValueError('Unknown mass setting')
     # settings() checks every value when the solver is built; the text is canonical so equal settings share a result.
