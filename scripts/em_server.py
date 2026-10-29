@@ -260,6 +260,38 @@ def fingerprint():
 
 
 RUNTIME_FINGERPRINT=fingerprint() if current_process().name=='MainProcess' else None
+DATA_FILES={}
+
+
+def data_file(path,view):
+    """view() of a JSON data file, re-read only after the file changes; None when absent or unreadable."""
+    try:stat=path.stat()
+    except OSError:return None
+    stamp=(stat.st_mtime_ns,stat.st_size);cached=DATA_FILES.get(path)
+    if cached and cached[0]==stamp:return cached[1]
+    try:value=view(orjson.loads(path.read_bytes()))
+    except (OSError,ValueError,TypeError,AttributeError):return None
+    DATA_FILES[path]=(stamp,value);return value
+
+
+def game_data():
+    # Datamine identity of the game data on disk, and the game version the compiled
+    # propeller, mass and missile inputs were built from (hosted updates only).
+    data=dict(data_file(ROOT/'references/data-version.json',lambda d:{k:v for k,v in d.items() if k!='files'}) or {})
+    inputs=data_file(ROOT/'references/input-build.json',lambda d:{k:d.get(k) for k in ('source_version','geometry_version')})
+    if inputs:data.update(inputs_source_version=inputs['source_version'],inputs_geometry_version=inputs['geometry_version'])
+    return data
+
+
+def active_jobs():
+    # Callers hold LOCK. Charts, missile flights and launch envelopes all count.
+    busy=any(job.get('status') in ('queued','running','stopping','exporting') for job in JOBS.values())
+    missiles=sys.modules.get('missile_service')
+    if missiles is not None:
+        with missiles.LOCK:
+            busy=busy or any(job.get('status') in ('queued','running') for job in missiles.JOBS.values())
+    envelopes=sys.modules.get('missile_envelope_service')
+    return busy or envelopes is not None and envelopes.busy()
 
 
 def key_for(config):
@@ -427,26 +459,25 @@ class Handler(BaseHTTPRequestHandler):
             key=path.removeprefix('/api/missiles/jobs/')
             job=get(key)
             return self.respond(job if job else dict(error='Unknown missile job'),200 if job else 404)
-        if path=='/api/health':return self.respond(dict(status='ok',release=release_info()))
+        if path=='/api/health':
+            # The host's game-data update reads busy before restarting this server.
+            with LOCK:busy=active_jobs()
+            return self.respond(dict(status='ok',release=release_info(),busy=busy,game_data=game_data(),
+                data_update=data_file(ROOT/'.data-sync/status.json',lambda d:d)))
         if path=='/api/meta':
             # Only a page load opts into edited equations. Running jobs keep
             # their session; Calculate never scans sources or initiates updates.
             if parse_qs(urlparse(self.path).query).get('refresh')==['1'] and fingerprint()!=RUNTIME_FINGERPRINT:
                 with LOCK:
-                    busy=any(job.get('status') in ('queued','running','stopping','exporting') for job in JOBS.values())
-                    missiles=sys.modules.get('missile_service')
-                    if missiles is not None:
-                        with missiles.LOCK:
-                            busy=busy or any(job.get('status') in ('queued','running') for job in missiles.JOBS.values())
-                    envelopes=sys.modules.get('missile_envelope_service')
-                    if envelopes is not None:busy=busy or envelopes.busy()
+                    busy=active_jobs()
                     if not busy:RESTART_REQUESTED.set()
                 if not busy:
                     self.respond(dict(error='Loading updated calculator.',code='server_restarting'),503)
                     threading.Thread(target=self.server.shutdown,daemon=True).start()
                     return
             return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,
-                result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info()))
+                result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info(),
+                game_data=game_data()))
         if path.startswith('/api/loadouts/'):
             name=unquote(path.removeprefix('/api/loadouts/'))
             if name not in AIRCRAFT:return self.respond(dict(error='Unknown aircraft'),404)

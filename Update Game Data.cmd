@@ -8,7 +8,4 @@ set PYTHONNOUSERSITE=1
 set "APP_PYTHON=.venv\Scripts\python.exe"
 if exist "runtime\python.exe" set "APP_PYTHON=runtime\python.exe"
 "%APP_PYTHON%" scripts\sync_game_data.py --force
-if errorlevel 1 goto done
-"%APP_PYTHON%" scripts\update_pages_snapshot.py --offline
-:done
 pause
