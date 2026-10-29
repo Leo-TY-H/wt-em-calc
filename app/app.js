@@ -1057,6 +1057,7 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
   $('calculate').disabled=false;
   state.meta.defaults=requestConditions({...state.meta.defaults,default_ammunition:true,aircraft:[]});
   populateAircraft();populate(state.meta.defaults);
+  if(state.meta.game_data?.version)$('runtime-footer').textContent='Game data '+state.meta.game_data.version;
   if(state.meta.public_static){
     $('hosting-notice').hidden=false;
     $('runtime-label').innerHTML='<i></i> PUBLIC PREVIEW';$('runtime-label').hidden=false;

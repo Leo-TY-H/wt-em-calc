@@ -171,6 +171,11 @@ class GitHubSource:
         return files
 
 
+# An update takes about a minute. A lock this old was left by a crashed or killed
+# update, which would otherwise block every later update on an unattended host.
+STALE_LOCK_SECONDS = 2 * 3600
+
+
 @contextmanager
 def sync_lock(root):
     work = root / '.data-sync'
@@ -179,7 +184,21 @@ def sync_lock(root):
     try:
         lock.mkdir()
     except FileExistsError:
-        raise RuntimeError('Another data update is running. If it crashed, remove .data-sync/lock after checking.')
+        try:
+            stale = time.time() - lock.stat().st_mtime > STALE_LOCK_SECONDS
+        except FileNotFoundError:
+            stale = True
+        if not stale:
+            raise RuntimeError('Another data update is running. A crashed update\'s lock clears after two hours.')
+        print('Removing a data update lock left more than two hours ago.', flush=True)
+        try:
+            lock.rmdir()
+        except FileNotFoundError:
+            pass
+        try:
+            lock.mkdir()
+        except FileExistsError:
+            raise RuntimeError('Another data update is running.')
     try:
         yield work
     finally:
