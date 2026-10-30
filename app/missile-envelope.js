@@ -50,7 +50,7 @@
     <span class="eyebrow">SCENARIO</span>
     <div class="mode-switch" role="radiogroup" aria-label="Launch platform" hidden><label><input id="envelope-platform-air" type="radio" name="envelope-platform" value="air" checked><span>Air-to-air</span></label><label><input id="envelope-platform-ground" type="radio" name="envelope-platform" value="ground"><span>Surface-to-air</span></label></div>
     <div class="mode-switch" role="radiogroup" aria-label="Plot centre"><label><input id="envelope-centre-target" type="radio" name="envelope-centre" value="target" checked><span>Target POV</span></label><label><input id="envelope-centre-launcher" type="radio" name="envelope-centre" value="launcher"><span>Launcher POV</span></label></div>
-    <div id="envelope-motion" class="envelope-motion" hidden><label class="field">Target flies<select id="envelope-target-heading">${Object.entries(motions).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('')}</select></label>${numberField('envelope-crossing', 'Target heading', '°', 90, -180, 180)}<label class="field">Launcher gimbal limit<div class="input-unit"><input id="envelope-gimbal" type="number" min="1" max="180" step="any" placeholder="None" aria-label="Launcher gimbal limit"><span>±°</span></div></label></div>
+    <div id="envelope-motion" class="envelope-motion" hidden><label class="field">Target flies<select id="envelope-target-heading">${Object.entries(motions).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join('')}</select></label>${numberField('envelope-crossing', 'Target heading', '°', 90, -180, 180)}</div>
     <p id="envelope-centre-note" class="hint" hidden>A ground launcher turns toward the target, so this is the target-centred envelope drawn around the launcher, with the target flying up the plot.</p>
     <div class="envelope-pair">${numberField('envelope-launcher-speed', 'Launcher speed', 'km/h', defaults.launcher.speed, 0, 7200)}${numberField('envelope-target-speed', 'Target speed', 'km/h', defaults.target.speed, 0, 7200)}</div>
     <label class="field"><span id="envelope-altitude-label">Altitude</span><div class="input-unit"><input id="envelope-altitude" type="number" min="50" max="25000" step="any" value="${defaults.altitude}" required aria-label="Altitude"><span>m</span></div></label>
@@ -60,6 +60,8 @@
 </div>
     <span class="eyebrow">SEARCH</span>
     <label class="field">Resolution<select id="envelope-quality">${Object.entries(qualities).map(([k, q]) => `<option value="${k}"${k === defaults.quality ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
+    <label class="check-row envelope-nez-toggle"><input id="envelope-turn-back" type="checkbox" checked><span>Include turn-back hits</span></label>
+    <label class="check-row envelope-nez-toggle"><input id="envelope-terminal-energy" type="checkbox"><span>Require terminal energy</span></label>
     <div class="sidebar-actions">
       <p id="envelope-ready" class="hint" hidden></p>
       <div class="action-row"><button id="envelope-run" class="primary-button" type="submit" disabled>Calculate</button><button id="envelope-reset" class="secondary-button reset-button" type="button">Reset</button></div>
@@ -78,6 +80,7 @@
 
   // Each added missile gets its own envelope run; the geometry helpers read the run in use (rays, submitted, jobInfo, cache).
   let meta = null, loading = null, selected = [], runs = [], job = null, cancelRequested = false;
+  const launcherAircraft = {}, launchers = window.missileLaunchers;
   // Results are kept for each plot centre, so switching between them never recalculates.
   const runSets = {target: [], launcher: []}, statusText = {target: '', launcher: ''};
   // rays: searched against the target holding its course; escapeRays: against the target breaking away (no-escape zone).
@@ -109,7 +112,7 @@
     const motion = frameOf() === 'launcher', crossing = el('envelope-target-heading').value === 'crossing';
     el('envelope-motion').hidden = !motion;
     el('envelope-crossing').closest('.field').hidden = !crossing; el('envelope-crossing').disabled = !motion || !crossing;
-    el('envelope-gimbal').disabled = !motion;
+    renderSelected();
     el('envelope-centre-note').hidden = !(centreOn() === 'launcher' && ground());
   }
   for (const id of ['envelope-platform-air', 'envelope-platform-ground', 'envelope-target-heading']) el(id).addEventListener('change', () => { platformControls(); updateForm(); });
@@ -121,11 +124,10 @@
   }
   el('envelope-nez').addEventListener('change', () => { escapeControls(); updateForm(); });
   function inputs() {
-    const frame = frameOf(), rule = el('envelope-target-heading').value, gimbal = el('envelope-gimbal').value.trim();
+    const frame = frameOf(), rule = el('envelope-target-heading').value;
     return {quality: el('envelope-quality').value, layers_m: layers(), frame,
       target: {speed_mps: value('envelope-target-speed') / 3.6, ...(frame === 'launcher' ? {heading: rule === 'crossing' ? value('envelope-crossing') : rule} : {})},
-      launcher: ground() ? {platform: 'ground', speed_mps: 0} : {platform: 'air', speed_mps: value('envelope-launcher-speed') / 3.6,
-        ...(frame === 'launcher' ? {gimbal_deg: gimbal ? Number(gimbal) : null} : {})},
+      launcher: ground() ? {platform: 'ground', speed_mps: 0} : {platform: 'air', speed_mps: value('envelope-launcher-speed') / 3.6},
       escape: el('envelope-nez').checked ? {load_g: value('envelope-escape-load'), delay_s: value('envelope-escape-delay')} : null};
   }
   function updateForm() {
@@ -135,7 +137,8 @@
     // Only problems are shown; the button says the rest.
     el('envelope-ready').textContent = meta && selected.length && !job ? problem : '';
     el('envelope-ready').hidden = !el('envelope-ready').textContent;
-    el('envelope-run').disabled = !!job || !meta || !selected.length || !!problem;
+    el('envelope-run').disabled = !!job || !meta || !selected.length || !!problem ||
+      (!ground() && selected.some(id => !launchers.valid(meta, id, launcherAircraft[id])));
   }
   async function load() {
     if (loading) return loading;
@@ -153,7 +156,7 @@
   }
   const normalize = text => text.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '');
   function populate() {
-    el('envelope-list').replaceChildren(...meta.missiles.map(item => {
+    el('envelope-list').replaceChildren(...meta.missiles.filter(item => launchers.choices(meta, item.id).length > 0).map(item => {
       const row = document.createElement('div'); row.className = 'aircraft-option';
       const family = item.family === 'optical' ? 'Optical / infrared' : 'Radar';
       row.dataset.search = item.id + ' ' + item.name + ' ' + family;
@@ -173,7 +176,9 @@
     for (const button of el('envelope-list').querySelectorAll('[data-pick]')) {
       const added = selected.includes(button.dataset.pick);
       button.textContent = added ? 'Added' : 'Add';
-      button.disabled = !!job || added || selected.length >= MAX_MISSILES;
+      const available = ground() || launchers.choices(meta, button.dataset.pick).length > 0;
+      button.disabled = !!job || added || selected.length >= MAX_MISSILES || !available;
+      button.title = available ? '' : (meta?.missiles.find(m => m.id === button.dataset.pick)?.launcher_availability?.reason || 'No compatible launcher aircraft in the source data');
     }
   }
   function renderSelected() {
@@ -183,11 +188,15 @@
       card.innerHTML = `<div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeHtml(name)}</strong><code>${escapeHtml(id)}</code></div>
         <div class="entry-actions"><button type="button" class="entry-icon" data-remove="${escapeHtml(id)}" title="Remove" aria-label="Remove ${escapeHtml(name)}">${REMOVE}</button></div>`;
       card.querySelector('button').disabled = !!job;
+      if (!ground() && launchers.needsAircraft(meta, id)) card.append(launchers.selector(meta, id, launcherAircraft[id], !!job, aircraft => {
+        launcherAircraft[id] = aircraft; updateForm();
+      }));
       return card;
     }));
   }
   el('envelope-selected').addEventListener('click', event => {
     const button = event.target.closest('[data-remove]'); if (!button || job) return;
+    delete launcherAircraft[button.dataset.remove];
     selected = selected.filter(id => id !== button.dataset.remove); renderSelected(); filter(); updateForm();
   });
   el('envelope-list').addEventListener('click', event => {
@@ -203,8 +212,12 @@
   function reset() {
     for (const [id, v] of [['envelope-target-speed', defaults.target.speed], ['envelope-launcher-speed', defaults.launcher.speed], ['envelope-crossing', 90],
       ['envelope-escape-load', defaults.escape.load], ['envelope-escape-delay', defaults.escape.delay], ['envelope-altitude', defaults.altitude]]) el(id).value = v;
-    el('envelope-platform-air').checked = true; el('envelope-target-heading').value = 'hot'; el('envelope-gimbal').value = ''; platformControls();
+    el('envelope-platform-air').checked = true; el('envelope-target-heading').value = 'hot'; platformControls();
     el('envelope-nez').checked = defaults.escape.on; escapeControls();
+    const filterChanged = !el('envelope-turn-back').checked || el('envelope-terminal-energy').checked;
+    el('envelope-turn-back').checked = true;
+    el('envelope-terminal-energy').checked = false;
+    if (filterChanged) refreshTurnBack();
     el('envelope-quality').value = defaults.quality; el('envelope-search').value = '';
     if (meta) filter();
     updateForm();
@@ -221,14 +234,36 @@
     filter(); renderSelected(); updateForm();
   }
   // The run whose results the geometry helpers read.
-  function use(run) { rays = run.rays; escapeRays = run.escapes; submitted = run.submitted; jobInfo = run.jobInfo; summary = run.summary; cache = run.cache; }
+  const includeTurnBack = () => el('envelope-turn-back').checked;
+  const requireTerminalEnergy = () => el('envelope-terminal-energy').checked;
+  function displayedRays(source) {
+    const energy = requireTerminalEnergy();
+    if (includeTurnBack() && !energy) return source;
+    const name = energy ? (includeTurnBack() ? 'with_energy' : 'first_pass_with_energy') : 'first_pass';
+    const unknown = {intervals: [], min_range_m: null, max_range_m: null, min_time_s: null, max_time_s: null,
+      min_bracket_m: null, max_bracket_m: null, ragged_edge: false};
+    return new Map([...source].map(([key, ray]) => {
+      const view = ray[name] || (energy ? unknown : null);
+      return [key, view ? {...ray, ...view, all_hits: Object.fromEntries(Object.keys(view).map(k => [k, ray[k]]))} : ray];
+    }));
+  }
+  function use(run) { rays = displayedRays(run.rays); escapeRays = displayedRays(run.escapes); submitted = run.submitted; jobInfo = run.jobInfo; summary = run.summary; cache = run.cache; }
+  function refreshTurnBack() {
+    for (const group of Object.values(runSets)) for (const run of group) run.cache = null;
+    cache = null;
+    if (runs.length) render().then(() => setExports(shownRuns().length > 0)).catch(error => showError(error.message));
+  }
+  el('envelope-turn-back').addEventListener('change', refreshTurnBack);
+  el('envelope-terminal-energy').addEventListener('change', refreshTurnBack);
   const received = run => run.rays.size + run.escapes.size;
   function within(run, fn) { use(run); try { return fn(); } finally { run.cache = cache; } }
   el('envelope-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (job || el('envelope-run').disabled) return;
     const base = inputs(), centre = centreOn();
-    runs = runSets[centre] = selected.map((missile, index) => ({missile, index, color: COLORS[index], submitted: {...base, missile}, rays: new Map(), escapes: new Map(), jobInfo: null, summary: null, cache: null}));
+    runs = runSets[centre] = selected.map((missile, index) => ({missile, index, color: COLORS[index], submitted: {...base, missile,
+      launcher: launchers.launcher(base.launcher, !ground() && launchers.needsAircraft(meta, missile) ? launcherAircraft[missile] : undefined)},
+      rays: new Map(), escapes: new Map(), jobInfo: null, summary: null, cache: null}));
     showError(''); inspected = null; cancelRequested = false; el('envelope-status').textContent = '';
     renderInspector(); setExports(false); render().catch(error => showError(error.message));
     job = 'starting'; busy(true);
@@ -261,6 +296,7 @@
       try { status = await request(`/api/missiles/envelopes/${job}?since=${received(run)}`); }
       catch (error) { await new Promise(r => setTimeout(r, 1500)); continue; }
       run.jobInfo = status;
+      if (status.config?.launcher) run.submitted.launcher = {...status.config.launcher};
       for (const ray of status.rays) (ray.motion === 'escape' ? run.escapes : run.rays).set(ray.key.join(','), ray);
       if (status.rays.length) run.cache = null;
       const p = status.progress, total = Math.max(p?.rays_total || status.rays_total || 1, received(run));
@@ -546,11 +582,15 @@
   }
   // The launching aircraft's gimbal limit as two dashed bearings (Leo, 2026-10-26: no shaded regions).
   function gimbalTrace(radius) {
-    const g = runs[0]?.submitted.launcher.gimbal_deg;
-    if (!sight().launcher || !g || g >= 180) return [];
+    if (!sight().launcher) return [];
     const R = kmOf(radius) * 1.3;
-    return [{type: 'scatterpolar', mode: 'lines', r: [0, R, null, 0, R], theta: [g, g, null, 360 - g, 360 - g], line: {color: 'rgba(240,240,250,.35)', width: 1, dash: '4px,4px'},
-      hovertemplate: `Launcher's gimbal limit (±${fmt(g, g % 1 ? 1 : 0)}°)<extra></extra>`, showlegend: false}];
+    return runs.flatMap(run => {
+      const g = run.submitted.launcher.gimbal_deg;
+      if (!g || g >= 180) return [];
+      const name = run.submitted.launcher.aircraft?.name || 'Launcher';
+      return [{type: 'scatterpolar', mode: 'lines', r: [0, R, null, 0, R], theta: [g, g, null, 360 - g, 360 - g], line: {color: run.color, width: 1, dash: '4px,4px'},
+        hovertemplate: `${escapeHtml(name)} radar limit (±${fmt(g, g % 1 ? 1 : 0)}°)<extra></extra>`, showlegend: false}];
+    });
   }
   // Around the launcher, a note in the top-right corner says how the target flies, with an arrow when its heading is fixed.
   function motionNotes() {
@@ -577,6 +617,8 @@
       if (!filterRay(ray)) continue;
       for (const az of mirrored() && ray.azimuth_deg > 0 && ray.azimuth_deg < 180 ? [ray.azimuth_deg, -ray.azimuth_deg] : [ray.azimuth_deg])
         for (const s of ray.samples) {
+          if (!includeTurnBack() && s.turn_back) continue;
+          if (requireTerminalEnergy() && s.terminal_energy_ok !== true) continue;
           const p = place(ray, az, s.range_m); if (!p) continue;
           const d = s.hit ? hits : misses;
           d.a.push(p[0]); d.b.push(p[1]); d.c.push([ray.key[0], az, run.index, 0, s.range_m]);
@@ -890,7 +932,7 @@
   el('envelope-open-simulator').addEventListener('click', () => {
     const run = inspected && runs[inspected.run]; if (!run) return;
     const c = run.submitted, s = states(c, inspected.altitude, inspected.azimuth, inspected.range);
-    window.missileSimulator.load({missile: c.missile, launcher: s.launcher, target: s.target});
+    window.missileSimulator.load({missile: c.missile, launcher: launchers.launcher(s.launcher, launchers.needsAircraft(meta, c.missile) ? c.launcher.aircraft_id : undefined), target: s.target});
   });
   for (const id of ['envelope-show-rays', 'envelope-show-samples'])
     el(id).addEventListener('change', () => render().catch(error => showError(error.message)));
@@ -914,12 +956,13 @@
     for (const url of downloadUrls) URL.revokeObjectURL(url); downloadUrls = [];
     for (const id of ['envelope-download-json', 'envelope-download-csv']) { el(id).setAttribute('aria-disabled', String(!enabled)); el(id).removeAttribute('href'); }
     if (!enabled) return;
-    const header = ['missile', 'target_motion', 'altitude_m', 'azimuth_deg', 'refinement_level', 'min_range_m', 'max_range_m', 'min_at_search_limit', 'max_at_search_limit', 'max_range_flight_time_s', 'hit_intervals_m', 'simulations'];
+    const header = ['missile', 'launcher_aircraft_id', 'radar_gimbal_deg', 'target_motion', 'altitude_m', 'azimuth_deg', 'refinement_level', 'min_range_m', 'max_range_m', 'min_at_search_limit', 'max_at_search_limit', 'max_range_flight_time_s', 'hit_intervals_m', 'simulations', 'include_turn_back_hits', 'require_terminal_energy'];
     const csvRows = [header.join(',')], envelopes = [];
     const sorted = source => [...source.values()].sort((a, b) => a.key[0] - b.key[0] || a.azimuth_deg - b.azimuth_deg);
     for (const run of shownRuns()) within(run, () => {
       const ordered = sorted(rays), escaping = sorted(escapeRays);
       envelopes.push({format: 'missile-envelope-v2', missile: run.missile, missile_name: missileName(run.missile), request: submitted,
+        display: {include_turn_back_hits: includeTurnBack(), require_terminal_energy: requireTerminalEnergy()},
         config: jobInfo?.config || null, mirrored: mirrored(), complete: jobInfo?.status === 'complete', summary, rays: ordered,
         ...(submitted.escape ? {escape_rays: escaping} : {}),
         conventions: {...(submitted.frame === 'launcher' ? {frame: 'Launcher at the origin flying level along +X and keeping that heading; each point is a target position at release',
@@ -933,8 +976,8 @@
           hit: 'Native proximity-fuze event against the constant-velocity point target',
           ...(submitted.escape ? {escape_rays: 'Searched against a target that, after the reaction delay, turns level at the escape load factor and constant speed until the launch point lies dead astern, then flies straight on',
             no_escape_zone: 'Launch distances where both rays and escape_rays hit'} : {})}});
-      for (const r of [...ordered, ...escaping]) csvRows.push([run.missile, r.motion || 'straight', r.layer_m, r.azimuth_deg, r.level, r.min_range_m ?? '', r.max_range_m ?? '', r.max_range_m === null ? '' : r.intervals[0].min_at_search_limit,
-        r.max_range_m === null ? '' : r.intervals.at(-1).max_at_search_limit, r.max_time_s ?? '', r.intervals.map(i => `${Math.round(i.start_m)}-${Math.round(i.end_m)}`).join(' '), r.simulations].join(','));
+      for (const r of [...ordered, ...escaping]) csvRows.push([run.missile, submitted.launcher.aircraft_id || '', submitted.launcher.gimbal_deg ?? '', r.motion || 'straight', r.layer_m, r.azimuth_deg, r.level, r.min_range_m ?? '', r.max_range_m ?? '', r.max_range_m === null ? '' : r.intervals[0].min_at_search_limit,
+        r.max_range_m === null ? '' : r.intervals.at(-1).max_at_search_limit, r.max_time_s ?? '', r.intervals.map(i => `${Math.round(i.start_m)}-${Math.round(i.end_m)}`).join(' '), r.simulations, includeTurnBack(), requireTerminalEnergy()].join(','));
     });
     const data = envelopes.length === 1 ? envelopes[0] : {format: 'missile-envelopes-v1', envelopes}, csv = csvRows.join('\n');
     const stem = runs.map(run => run.missile).join('-vs-');

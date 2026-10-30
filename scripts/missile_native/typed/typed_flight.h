@@ -441,9 +441,59 @@ struct EvaluateSetup {
     double best_distance = 0.;
     double straight_from = 0.;   // the target flies straight from then on (target_velocity_raw)
 };
+// Display-only missed-pass policy. Mirrors missile_envelope.PassTracker v1;
+// it never changes guidance, proximity events, or termination.
+struct PassTracker {
+    double time, distance, fuze;
+    double closing = -1., opening = -1., start_range;
+    bool approached = false, confirmed = false;
+    double pass_time = 0., pass_range = 0., reopening = 0.;
+    PassTracker(double t, double r, double f) : time(t), distance(r), fuze(f), start_range(r) {}
+    void advance(double t, double r) {
+        if (confirmed || t <= time) return;
+        double rate = (distance - r) / (t - time);
+        if (rate > 1.) {
+            if (closing < 0.) { closing = time; start_range = distance; approached = false; }
+            opening = -1.;
+            if (t - closing >= .1 && start_range - r >= 10.) approached = true;
+        } else if (rate < -1.) {
+            if (approached) {
+                if (opening < 0.) { opening = time; pass_time = time; pass_range = distance; }
+                reopening = r - pass_range;
+                double threshold = std::max(100., std::max(4. * fuze, .25 * pass_range));
+                if (t - opening >= .5 && reopening >= threshold) confirmed = true;
+            }
+            closing = -1.;
+        }
+        time = t; distance = r;
+    }
+};
+// Display-only counterpart of missile_envelope.terminal_energy.
+struct EnergySummary {
+    int passed = -1; double speed = 0., target_speed = 0., ratio = 0., kinetic = 0., minimum = 0.;
+};
+inline EnergySummary terminal_energy(const d3& previous, const d3& velocity, double start, double end, double at, const d3& target) {
+    EnergySummary r;
+    for (double v : previous) if (!finite(v)) return r;
+    for (double v : velocity) if (!finite(v)) return r;
+    for (double v : target) if (!finite(v)) return r;
+    if (!finite(start) || !finite(end) || !finite(at) || end < start) return r;
+    double fraction = end > start ? std::min(1., std::max(0., (at - start) / (end - start))) : 1.;
+    double v2 = 0., t2 = 0.;
+    for (size_t k = 0; k < 3; ++k) { double v = previous[k] + fraction * (velocity[k] - previous[k]); v2 = v2 + v * v; }
+    for (double v : target) t2 = t2 + v * v;
+    r.speed = py_sqrt(v2); r.target_speed = py_sqrt(t2);
+    double minimum = 1.2 * r.target_speed;
+    r.passed = r.speed >= minimum ? 1 : 0;
+    r.ratio = r.target_speed > 0. ? r.speed / r.target_speed : 0.;
+    r.kinetic = .5 * r.speed * r.speed; r.minimum = .5 * minimum * minimum;
+    return r;
+}
 struct EvaluateResult {
     bool hit; const char* outcome; double time_s; bool has_event_time; double event_time_s;
     double closest_m, closest_time_s; int64_t steps;
+    bool turn_back, passed; double pass_time, pass_range, reopening;
+    EnergySummary energy;
 };
 // Optional per-step hook for development comparisons (nullptr in production).
 using StepHook = void (*)(void*, const Session&, int64_t);
@@ -452,10 +502,13 @@ inline EvaluateResult evaluate_loop(const FlightProps& P, Session& S, const Eval
     d3 prev_point = {S.body.position.x, S.body.position.y, S.body.position.z};
     d3 prev_target = target_at(E.motion, S.body.time).position;
     double prev_time = S.body.time;
+    PassTracker passes(prev_time, best_d, std::max(0., E.radius - 30.));
+    d3 step_velocity = {}; double step_time = prev_time;
     const char* outcome = "time_limit"; double end_time = S.body.time; bool has_event_time = false; double event_time = 0.;
     int64_t i = 0;
     for (i = 0; i < E.count; ++i) {
         double now = add(S.body.time, STEP);
+        step_velocity = {S.body.velocity.x, S.body.velocity.y, S.body.velocity.z}; step_time = S.body.time;
         Expiry expiry = interaction_advance(P, S, E.motion, E.launch, now, STEP, now);
         if (hook) hook(hook_data, S, i);
         bool event = S.has_event;
@@ -463,6 +516,9 @@ inline EvaluateResult evaluate_loop(const FlightProps& P, Session& S, const Eval
         if (event) { point = S.event.position; at = S.event.time; }
         else { point = {S.body.position.x, S.body.position.y, S.body.position.z}; at = S.body.time; }
         d3 target_point = target_at(E.motion, at).position;
+        double range2 = 0.;
+        for (size_t k = 0; k < 3; ++k) { double delta = target_point[k] - point[k]; range2 = range2 + delta * delta; }
+        passes.advance(at, py_sqrt(range2));
         auto seg = closest_segment(prev_point, point, prev_target, target_point);
         if (seg.first < best_d) { best_d = seg.first; best_t = prev_time + seg.second * (at - prev_time); }
         prev_point = point; prev_target = target_point; prev_time = at;
@@ -493,7 +549,11 @@ inline EvaluateResult evaluate_loop(const FlightProps& P, Session& S, const Eval
     }
     bool hit = std::strcmp(outcome, "proximity_event") == 0 || std::strcmp(outcome, "reached") == 0;
     int64_t last = i < E.count ? i : E.count - 1;   // Python's loop variable after a completed range()
-    return {hit, outcome, has_event_time ? event_time : end_time, has_event_time, event_time, best_d, best_t, last + 1};
+    double stamp = has_event_time ? event_time : end_time;
+    EnergySummary energy = terminal_energy(step_velocity, {S.body.velocity.x, S.body.velocity.y, S.body.velocity.z},
+                                          step_time, S.body.time, stamp, target_at(E.motion, stamp).velocity);
+    return {hit, outcome, has_event_time ? event_time : end_time, has_event_time, event_time, best_d, best_t, last + 1,
+            hit && passes.confirmed, passes.confirmed, passes.pass_time, passes.pass_range, passes.reopening, energy};
 }
 
 }  // namespace typed
