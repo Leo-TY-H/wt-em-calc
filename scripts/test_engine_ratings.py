@@ -237,6 +237,24 @@ class BfF4(unittest.TestCase):
             self.assertGreater(er.first_damage(rows['water_rows'], work, recover, t), r['minutes'] * 2880)
             self.assertLessEqual(er.first_damage(rows['water_rows'], work, recover, er.next32(t)), r['minutes'] * 2880)
 
+    def test_recovery(self):
+        (e,) = er.evaluate(fm('bf-109f-4'))['engines']
+        self.assertEqual([(b['fill_s'], b['empty_s']) for b in e['buckets']],
+                         [(172939 / 48, 86458 / 48), (86458 / 48, 43218 / 48), (15362 / 48, 9120 / 48), (8640 / 48, 6240 / 48), (2881 / 48, 1440 / 48)])
+        self.assertEqual([[round(t['full_c'], 4) for t in b['channels']] for b in e['buckets']],
+                         [[80., 60.], [90., 80.], [95., 85.], [98., 88.], [105., 95.]])
+        self.assertEqual([[round(t['drains_c'], 2) for t in b['channels']] for b in e['buckets']],
+                         [[86.67, 73.33], [93.33, 83.33], [96.88, 86.88], [102.06, 92.06], [111.67, 101.67]])
+        # Each is the last float32 temperature with the property: the next one up loses it.
+        rows = er.construct(er.loader_block(fm('bf-109f-4')['Engine0']['Temperature']), False, True, er.powf, er.expf, er.logf)
+        work = [w for w, _ in rows['loads']]; recover = [r for _, r in rows['loads']]
+        for j, b in zip(range(1, 6), e['buckets']):
+            for table, t in zip((rows['water_rows'], rows['oil_rows']), b['channels']):
+                rate = lambda x: er.rates(table, work, recover, x)[j]
+                drains, full = t['drains_c'] + er.K, t['full_c'] + er.K
+                self.assertTrue(rate(drains) < 0. <= rate(er.next32(drains)))
+                self.assertTrue(rate(full) == f(-recover[j]) < rate(er.next32(full)))
+
     def test_automatic_radiator(self):
         (e,) = er.evaluate(fm('bf-109f-4'))['engines']
         self.assertEqual([(a['label'], a['targets_c'], a['seconds'] * 48, a['boils']) for a in e['automatic']],
@@ -321,6 +339,9 @@ class Fleet(unittest.TestCase):
                         seconds = [s for _, s in c['curve']]
                         self.assertTrue(all(a >= b for a, b in zip(seconds, seconds[1:])))
                         self.assertTrue(all(a[0] < b[0] for a, b in zip(c['curve'], c['curve'][1:])))
+                for b in e['buckets']:
+                    with self.subTest(fm=path.stem, bucket=b):
+                        self.assertTrue(all(t['drains_c'] >= t['full_c'] for t in b['channels'] if t['full_c'] is not None))
         times.sort()
         print(f"\n{counts['fms']} FMs, {counts['engines']} engines ({counts['verified']} verified, {counts['excluded']} excluded); "
               f"median {times[len(times) // 2] * 1e3:.0f} ms, max {times[-1] * 1e3:.0f} ms; port only: {', '.join(sorted(set(counts['port_only']))) or 'none'}",

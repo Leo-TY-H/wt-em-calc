@@ -34,7 +34,7 @@
 .ratings-table th:first-child{text-align:left;padding-left:0}
 .ratings-table tbody th{font-weight:400;color:#acacb4}
 .ratings-table td{color:var(--text)}
-.ratings-radiator{margin-top:14px}
+.ratings-radiator,.ratings-recovery{margin-top:14px}
 .ratings-swatch{display:inline-block;width:12px;height:2px;margin:0 6px 3px 0;vertical-align:middle}
 .ratings-fluids{display:flex;flex-wrap:wrap;gap:4px 16px;margin:7px 0 0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .ratings-excluded{margin:10px 0 0;font-size:12px;color:var(--muted)}
