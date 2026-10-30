@@ -56,13 +56,19 @@ def reviewed_assets(ident, base_sha, review, resolve):
     return found
 
 
-def inventory(references, loadouts=None, weapon_inputs=None):
+def inventory(references, loadouts=None, weapon_inputs=None, profiles_dir=None, review=None, labels=None):
+    """Carriers of each missile in `references`.
+
+    A per-build compile passes its own profiles and localization labels, and a review
+    without aircraft updates: its data is already the newest, so there is nothing to add.
+    """
     from missile_names import display_name
     profiles = {}
-    for path in (ROOT / 'scripts/missile_model/launch-profiles').glob('*.json'):
-        if path.name == 'index.json': continue
+    directory = Path(profiles_dir) if profiles_dir else ROOT / 'scripts/missile_model/launch-profiles'
+    for row in json.loads((directory / 'index.json').read_bytes())['profiles']:
+        path = directory / row['path']
         p = json.loads(path.read_bytes())
-        profiles[path.stem] = dict(family=p['family'], name=display_name(path.stem, p['properties']['rocket']))
+        profiles[path.stem] = dict(family=p['family'], name=display_name(path.stem, p['properties']['rocket'], labels=labels))
     groups = {}
     for asset, p in profiles.items(): groups.setdefault(p['name'].casefold(), []).append(asset)
     sources = {}
@@ -96,11 +102,12 @@ def inventory(references, loadouts=None, weapon_inputs=None):
     excluded = set(exclusions.get('vehicle_variants', {})) | set(exclusions.get('aircraft', {}))
     aircraft = {}; carriers = {asset: [] for asset in profiles}; required = set()
     records = read(references / 'prop-vehicles/manifest.json')
-    review_path = ROOT / 'references/missile-launcher-audit.json'
-    review = json.loads(review_path.read_bytes())
-    sources[str(review_path)] = hashlib.sha256(review_path.read_bytes()).hexdigest()
-    if review['base_commit'] != records['commit']:
-        raise ValueError('Launcher audit must be refreshed for the new base dataset')
+    if review is None:
+        review_path = ROOT / 'references/missile-launcher-audit.json'
+        review = json.loads(review_path.read_bytes())
+        sources[str(review_path)] = hashlib.sha256(review_path.read_bytes()).hexdigest()
+        if review['base_commit'] != records['commit']:
+            raise ValueError('Launcher audit must be refreshed for the new base dataset')
     compatibility_updates = {}
     compiled = {}
     if loadouts:

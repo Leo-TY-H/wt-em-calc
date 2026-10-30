@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import uuid
+from aircraft_availability import input_build
 from missile_names import display_name
 from missile_inputs import directory as input_directory
 import missile_engine
@@ -49,9 +50,12 @@ def metadata():
     for entry in sorted(entries, key=lambda item: (-1 if item['id']=='us_aim4g_falcon' else len(item['id']), item['id'])):
         unique.setdefault(entry['name'].strip().casefold(), entry)
     entries = sorted(unique.values(), key=lambda item: (item['name'].casefold(), item['id']))
+    kept = input_build().get('fallbacks', {}).get('missiles', {})
     for entry in entries:
         entry['aircraft_ids'] = launch_aircraft.compatible(entry['id'])
         entry['launcher_availability'] = launch_aircraft.catalog().get('availability', {}).get(entry['id'])
+        if entry['id'] in kept:
+            entry['data_version_used'] = kept[entry['id']]
     return dict(missiles=entries, aircraft=launch_aircraft.catalog()['aircraft'],
                 aircraft_source_commit=launch_aircraft.catalog()['source_commit'],
                 aircraft_review_commit=launch_aircraft.catalog().get('checked_commit'),

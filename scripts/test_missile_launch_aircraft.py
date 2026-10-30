@@ -21,8 +21,11 @@ class LaunchChecks(unittest.TestCase):
         for carrier in aircraft.compatible('us_aim_26b'):
             clean = aircraft.trajectory(shot('us_aim_26b', carrier, azimuth=60, elevation=30))
             launch = clean['launcher']['aircraft']
-            self.assertEqual(launch['source_commit'], '501af3e34af2cb82d65140297e1b994b444c4b88')
-            self.assertTrue(launch['compatibility_source']['mounts'])
+            # The release's catalog cites its review; a per-build catalog comes straight from that commit's data.
+            update = aircraft.catalog().get('compatibility_updates', {}).get('us_aim_26b', {}).get(carrier)
+            self.assertEqual(launch['source_commit'], update['source_commit'] if update else aircraft.catalog()['source_commit'])
+            if update:
+                self.assertTrue(launch['compatibility_source']['mounts'])
             self.assertEqual(launch['radars'][0]['azimuth_deg'], [-60, 60])
             self.assertEqual(launch['radars'][0]['elevation_deg'], [-30, 30])
             with self.assertRaisesRegex(ValueError, 'outside'):
