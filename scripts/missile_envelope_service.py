@@ -14,6 +14,7 @@ import time
 import uuid
 
 import missile_engine
+import missile_launch_aircraft as launch_aircraft
 
 LOCK = threading.Lock()
 MAX_PENDING = 2
@@ -68,6 +69,8 @@ def _run(key, config, cancel):
                 elif message['type'] == 'progress': job['progress'] = message['progress']
                 elif cancel.is_set(): continue
                 elif message['type'] == 'result':
+                    if 'config' in message['result']:
+                        launch_aircraft.attach(message['result']['config'], config['launcher'].get('aircraft'))
                     job.update(status='complete', summary=message['result']); completed = True
                 elif message['type'] == 'error': job.update(status='failed', error=message['error'])
         process.wait()
@@ -93,6 +96,7 @@ def _run(key, config, cancel):
 
 
 def start(request):
+    request, aircraft = launch_aircraft.envelope(request)
     if os.environ.get('WT_MISSILE_ENGINE', 'native') == 'python':
         import missile_envelope
         config = missile_envelope.validate(request)
@@ -107,6 +111,7 @@ def start(request):
             # through ValueError, without running a reference calculation.
             raise ValueError(str(error)) from error
         config = setup['config']
+    launch_aircraft.attach(config, aircraft)
     with LOCK:
         if sum(job['status'] in ('queued', 'running') for job in JOBS.values()) >= MAX_PENDING:
             raise ValueError('An envelope calculation is already running. Wait for it to finish or stop it.')

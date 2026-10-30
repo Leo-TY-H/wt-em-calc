@@ -6,6 +6,8 @@
 .missile-sidebar{padding:18px 16px 0;border-right:1px solid var(--line);background:#13131b}
 .missile-sidebar h2{font-size:14px;margin:22px 0 10px;font-weight:600}
 .missile-sidebar .field{margin:12px 0}
+body .missile-entry{flex-wrap:wrap}
+body .missile-entry .missile-launcher-field{flex-basis:100%;min-width:0;margin:0;font-size:11px}
 .missile-plot-note{padding:0 14px;margin:10px 0 0;font-size:11px}
 .missile-main{padding:18px 14px 22px;min-width:0}
 .missile-model-note{color:var(--muted);font-size:12px;line-height:1.7;margin:0 0 18px;max-width:850px}

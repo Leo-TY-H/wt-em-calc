@@ -573,6 +573,7 @@ class Handler(BaseHTTPRequestHandler):
         names={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/config.js':'config.js','/styles.css':'styles.css','/vendor/plotly.min.js':'vendor/plotly.min.js'}
         names.update({'/release.json':'release.json','/release-links.js':'release-links.js','/release-links.css':'release-links.css'})
         names.update({'/missiles.js':'missiles.js','/missiles.css':'missiles.css'})
+        names.update({f'/{name}':name for name in ('missile-launchers.js','missile-models.js','missile-plot.js','missile-models.json','target-model.json')})
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
         names.update({'/engine.js':'engine.js','/engine.css':'engine.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
