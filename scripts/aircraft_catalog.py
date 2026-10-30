@@ -4,7 +4,7 @@ import orjson
 from pathlib import Path
 import jet_catalog
 import prop_catalog
-from aircraft_availability import EXCLUSIONS, exclusions
+from aircraft_availability import EXCLUSIONS, exclusions, input_build
 REFERENCE=jet_catalog.REFERENCE
 _worker_snapshot=None
 
@@ -51,6 +51,14 @@ def catalog():
     for name, row in result.items():
         path = prop_catalog.fm_source(row['fm_id']) if 'fm_id' in row else jet_catalog.source(name)
         row['flaps'] = flap_profile(orjson.loads(path.read_bytes()))
+    # An item the last build couldn't update keeps its previous game data, and says so.
+    build = input_build()
+    kept, unavailable = build.get('fallbacks', {}).get('aircraft', {}), build.get('unavailable', {}).get('aircraft', {})
+    for name, row in result.items():
+        if name in kept:
+            row['data_version_used'] = kept[name]
+        if name in unavailable and not row['supported']:
+            row['reason'] = 'Not built for this game version: ' + unavailable[name]
     return result
 
 

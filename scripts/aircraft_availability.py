@@ -4,6 +4,7 @@ from pathlib import Path
 import orjson
 
 EXCLUSIONS = Path(__file__).resolve().parents[1] / 'references/aircraft-exclusions.json'
+INPUT_BUILD = Path(__file__).resolve().parents[1] / 'references/input-build.json'
 
 
 @lru_cache(maxsize=1)
@@ -13,6 +14,12 @@ def _policy():
 
 def exclusions():
     return _policy()['aircraft']
+
+
+@lru_cache(maxsize=1)
+def input_build():
+    """Record of a hosted compile: which items keep an older version, and which didn't build."""
+    return orjson.loads(INPUT_BUILD.read_bytes()) if INPUT_BUILD.is_file() else {}
 
 
 def excluded_vehicles():

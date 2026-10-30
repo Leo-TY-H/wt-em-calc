@@ -313,8 +313,11 @@ def game_data():
     # Datamine identity of the game data on disk, and the game version the compiled
     # propeller, mass and missile inputs were built from (hosted updates only).
     data=dict(data_file(ROOT/'references/data-version.json',lambda d:{k:v for k,v in d.items() if k!='files'}) or {})
-    inputs=data_file(ROOT/'references/input-build.json',lambda d:{k:d.get(k) for k in ('source_version','geometry_version')})
-    if inputs:data.update(inputs_source_version=inputs['source_version'],inputs_geometry_version=inputs['geometry_version'])
+    inputs=data_file(ROOT/'references/input-build.json',lambda d:{**{k:d.get(k) for k in ('source_version','geometry_version','channel')},
+        'kept':sum(len(d.get('fallbacks',{}).get(k,{})) for k in ('aircraft','missiles')),
+        'unavailable':sum(len(d.get('unavailable',{}).get(k,{})) for k in ('aircraft','missiles'))})
+    if inputs:data.update(inputs_source_version=inputs['source_version'],inputs_geometry_version=inputs['geometry_version'],
+        inputs_channel=inputs['channel'],inputs_kept_items=inputs['kept'],inputs_unavailable_items=inputs['unavailable'])
     return data
 
 
