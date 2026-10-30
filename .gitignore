@@ -564,4 +564,17 @@
 !/scripts/regenerate_missile_profiles.py
 !/scripts/test_missile_profile_loading.py
 !/scripts/test_missile_envelope_search.py
+!/scripts/test_missile_envelope_ui.cjs
+!/scripts/test_missile_playback.cjs
+!/scripts/build_missile_launcher_catalog.py
+!/scripts/missile_launch_aircraft.py
+!/scripts/test_missile_launch_aircraft.py
+!/scripts/test_missile_launchers_ui.cjs
+!/app/missile-launchers.js
+!/app/missile-models.js
+!/app/missile-plot.js
+!/scripts/test_missile_plot.cjs
+!/scripts/test_missile_models.cjs
+!/references/missile-launchers.json
+!/references/missile-launcher-audit.json
 !/references/missile-profile-native-259087.json

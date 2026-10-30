@@ -6,8 +6,10 @@
     // Both aircraft at 1,200 km/h by default (Leo, 2026-10-27).
     launch:{position:[0,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]},
     target:{position:[4000,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]}};
-  let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0;
+  let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0, animationFrame=0;
   const activeJobs=new Set();
+  const launcherAircraft = {}, launchers = window.missileLaunchers;
+  const visuals = window.missileModels;
   let selectedMissiles=[], flights=[], resultColors=[], timeline=[], comparison=null, batchRunning=false, cancelRequested=false, focusIndex=0;
   const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296','#f08070'];
   const missileName=id=>meta?.missiles.find(m=>m.id===id)?.name||id;
@@ -82,7 +84,11 @@
   }
   const showError = text => {el('missile-error').textContent=text;el('missile-error').hidden=!text;};
   const playButton=(icon,label)=>{const button=el('missile-play');button.innerHTML=icon;button.setAttribute('aria-label',label);button.title=label;};
-  const pause = () => {playing=false;playButton(PLAY_ICON,'Play');};
+  const pause = () => {playing=false;cancelAnimationFrame(animationFrame);animationFrame=0;playButton(PLAY_ICON,'Play');};
+  function resizeVisiblePlot(node) {
+    if(!node?.data||!node.clientWidth)return;
+    Plotly.Plots.resize(node).catch(error=>{if(node.clientWidth)showError(error.message);});
+  }
   const toolTabs=[['em','em-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';
@@ -94,8 +100,8 @@
     for(const group of document.querySelectorAll('.nav-group'))group.classList.toggle('current',!!group.querySelector('[aria-current=page]'));
     if(name==='missile') {
       if(!meta) load();
-      if(result) requestAnimationFrame(()=>{Plotly.Plots.resize(el('missile-chart'));resizeDataPlots();});
-    } else {pause(); if(name==='em'&&el('chart').data) requestAnimationFrame(()=>Plotly.Plots.resize(el('chart')));}
+      if(result) requestAnimationFrame(()=>{resizeVisiblePlot(el('missile-chart'));resizeDataPlots();});
+    } else {pause(); if(name==='em'&&el('chart').data) requestAnimationFrame(()=>resizeVisiblePlot(el('chart')));}
     document.dispatchEvent(new CustomEvent('tool-tab-change',{detail:name}));
   }
   for(const [key,tab] of toolTabs) el(tab).addEventListener('click',()=>selectTab(key));
@@ -125,7 +131,7 @@
     el('missile-target-azimuth').value=String(azimuth);el('missile-target-distance').value=String(distance);el('missile-target-position-1').value=String(offset[1]);
   }
   function inputs() {
-    const config={missiles:[...selectedMissiles]};
+    const config={missiles:[...selectedMissiles], launch_aircraft:Object.fromEntries(selectedMissiles.filter(id=>launchers.needsAircraft(meta,id)).map(id=>[id,launcherAircraft[id]]))};
     for(const role of ['launch','target']) {
       const [speed,heading,climb]=['speed','course','climb'].map(key=>Number(el(`missile-${role}-${key}`).value));
       const horizontal=speed/3.6*Math.cos(radians(climb));
@@ -138,7 +144,7 @@
   }
   const normalizeMissileSearch=value=>value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g,'');
   function populateMissiles() {
-    el('missile-list').replaceChildren(...meta.missiles.map(item=>{
+    el('missile-list').replaceChildren(...meta.missiles.filter(item=>launchers.choices(meta,item.id).length>0).map(item=>{
       const row=document.createElement('div');row.className='aircraft-option';
       const family=item.family==='optical'?'Optical / infrared':'Radar';
       row.dataset.search=item.id+' '+item.name+' '+family;
@@ -163,7 +169,9 @@
   function updateAddButton() {
     for(const button of el('missile-list').querySelectorAll('[data-add-missile]')) {
       const added=selectedMissiles.includes(button.dataset.addMissile);
-      button.disabled=batchRunning||added||selectedMissiles.length>=8;
+      const available=launchers.choices(meta,button.dataset.addMissile).length>0;
+      button.disabled=batchRunning||added||selectedMissiles.length>=8||!available;
+      button.title=available?'':(meta?.missiles.find(m=>m.id===button.dataset.addMissile)?.launcher_availability?.reason||'No compatible launcher aircraft in the source data');
       button.textContent=added?'Added':'Add';
     }
   }
@@ -172,7 +180,10 @@
       const card=document.createElement('article');card.className='aircraft-entry missile-entry';card.style.setProperty('--entry-color',flightColors[i]);
       card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong><code>${escapeHtml(id)}</code></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
       const remove=card.querySelector('button');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+missileLabel(id));
-      remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);renderSelected();filterMissiles();changed();busy(false);});
+      remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);delete launcherAircraft[id];renderSelected();filterMissiles();changed();busy(false);});
+      if(launchers.needsAircraft(meta,id))card.append(launchers.selector(meta,id,launcherAircraft[id],batchRunning,aircraft=>{
+        launcherAircraft[id]=aircraft;changed();busy(false);
+      }));
       return card;
     }));
     updateAddButton();
@@ -199,6 +210,23 @@
   }
   // The plot shows the setup's starting geometry or the calculated flight in one of four views.
   let plotView='setup',flightView='3d';
+  let trajectoryReady=false,renderedView=null,flightAspectBase=null;
+  const viewStates=new Map();
+  const plotGestures=window.missilePlot.bindGestures(el('missile-chart'),()=>{
+    if(renderedView==='3d')window.missilePlot.commitCamera(el('missile-chart'));
+    rememberPlotView();if(!playing)refreshFrame();
+  });
+  const trajectoryRenderer=window.missilePlot.latestRenderer(drawTrajectory);
+  function rememberPlotView() {
+    const layout=el('missile-chart')._fullLayout;if(!trajectoryReady||!renderedView||!layout)return;
+    viewStates.set(renderedView,JSON.parse(JSON.stringify(renderedView==='3d'?
+      {camera:layout.scene.camera,zoom:flightAspectBase?layout.scene.aspectratio.x/flightAspectBase.x:1,dragmode:layout.scene.dragmode||layout.dragmode}:
+      {x:layout.xaxis.range,y:layout.yaxis.range,dragmode:layout.dragmode})));
+  }
+  function refreshFrame() {
+    if(result&&trajectoryReady&&plotView!=='setup'&&!plotGestures.active)
+      updateFrame(indexAt(timeline,playbackTime,null),playbackTime);
+  }
   function showPanes(view) {
     plotView=view;const setup=view==='setup';
     for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.checked=input.value===view;
@@ -206,11 +234,12 @@
     el('missile-slice-note').hidden=setup||view==='3d';el('missile-flight-axes').toggleAttribute('hidden',view!=='3d');
   }
   function showView(view) {
+    pause();rememberPlotView();plotGestures.cancel();
     showPanes(view);
-    if(view==='setup'){updatePreview();return;}
+    if(view==='setup'){trajectoryRenderer.cancel();trajectoryReady=false;updatePreview();return;}
     flightView=view;
-    if(el('missile-view').value!==view){el('missile-view').value=view;el('missile-view').dispatchEvent(new Event('change'));}
-    else if(el('missile-chart').data)Plotly.Plots.resize(el('missile-chart'));
+    if(el('missile-view').value!==view||!trajectoryReady){el('missile-view').value=view;el('missile-view').dispatchEvent(new Event('change'));}
+    else resizeVisiblePlot(el('missile-chart'));
   }
   for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.addEventListener('change',()=>{if(input.checked)showView(input.value);});
   function updatePreview() {
@@ -370,10 +399,10 @@
   // The preview's view once it has been turned by hand; a preset or Reset all turns it back.
   let previewCamera=null;
   function busy(value) {
-    el('missile-run').disabled=value||!meta||!selectedMissiles.length;
+    el('missile-run').disabled=value||!meta||!selectedMissiles.length||selectedMissiles.some(id=>!launchers.valid(meta,id,launcherAircraft[id]));
     el('missile-cancel').hidden=!value;el('missile-reset').disabled=value;
     root.querySelectorAll('[data-preset]').forEach(button=>button.disabled=value);
-    el('missile-selected').querySelectorAll('button').forEach(button=>button.disabled=value);
+    el('missile-selected').querySelectorAll('button,select').forEach(button=>button.disabled=value);
     updateAddButton();
   }
   el('missile-search').addEventListener('input',()=>filterMissiles());
@@ -404,7 +433,7 @@
   }
   root.querySelectorAll('[data-preset]').forEach(button=>button.addEventListener('click',()=>applyPreset(button.dataset.preset)));
   el('missile-reset').addEventListener('click',()=>{
-    selectedMissiles=[];renderSelected();busy(false);
+    selectedMissiles=[];for(const id of Object.keys(launcherAircraft))delete launcherAircraft[id];renderSelected();busy(false);
     el('missile-search').value='';filterMissiles();
     applyPreset('chase');if(!meta)load();
   });
@@ -414,6 +443,7 @@
   window.missileSimulator={load(scenario){
     if(batchRunning)return false;
     selectTab('missile');
+    launcherAircraft[scenario.missile]=scenario.launcher.aircraft_id||'';
     selectedMissiles=[scenario.missile];renderSelected();filterMissiles();
     const origin=scenario.launcher.position;
     // Full precision: near an envelope boundary a rounded position can change the outcome.
@@ -427,16 +457,16 @@
   }};
   new ResizeObserver(()=>updatePreview()).observe(el('missile-geometry'));
   el('missile-form').addEventListener('submit',async event=>{
-    event.preventDefault();if(batchRunning||!selectedMissiles.length)return;
+    event.preventDefault();if(batchRunning||el('missile-run').disabled||!selectedMissiles.length)return;
     batchRunning=true;cancelRequested=false;pause();showError('');busy(true);
     const submitted=inputs(),completed=[],failed=[];el('missile-status').textContent='Submitting engagement…';
     try {
       const runFlight=async i=>{
         const id=submitted.missiles[i];let activeJob=null;
-        const {missiles,...shared}=submitted;
+        const {missiles,launch_aircraft,...shared}=submitted;
         el('missile-status').textContent=`Submitting ${i+1}/${missiles.length} · ${missileName(id)}…`;
         try {
-          const job=await request('/api/missiles/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...shared,missile:id})});activeJob=job.id;activeJobs.add(activeJob);
+          const job=await request('/api/missiles/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...shared,missile:id,launcher:launchers.launcher(shared.launcher,launch_aircraft[id])})});activeJob=job.id;activeJobs.add(activeJob);
           if(cancelRequested)await request('/api/missiles/jobs/'+activeJob+'/cancel',{method:'POST'});
           for(;;) {
             const status=await request('/api/missiles/jobs/'+activeJob);
@@ -493,8 +523,12 @@
       camera:{eye,up:{x:0,y:0,z:1},projection:{type:'orthographic'}}};
   }
   new ResizeObserver(()=>{
-    if(el('missile-view').value==='3d'&&flightBounds&&el('missile-chart').data&&el('missile-chart').clientWidth)
-      Plotly.relayout(el('missile-chart'),{'scene.aspectratio':sceneFit(flightBounds).aspectratio});
+    const chart=el('missile-chart');
+    if(trajectoryReady&&!plotGestures.active&&el('missile-view').value==='3d'&&flightBounds&&chart.data&&chart.clientWidth){
+      const zoom=flightAspectBase?chart._fullLayout.scene.aspectratio.x/flightAspectBase.x:1;
+      flightAspectBase=sceneFit(flightBounds).aspectratio;
+      Plotly.relayout(chart,{'scene.aspectratio':Object.fromEntries(Object.entries(flightAspectBase).map(([k,v])=>[k,v*zoom]))});
+    }
   }).observe(el('missile-chart'));
   // Seeker states as short codes (Leo, 2026-10-27): tracking (observed or coasting on the track), inertial guidance, acquiring.
   const trackingLabels={observed:'TRK',coasting:'TRK',inertial:'IOG',acquiring:'ACQ'};
@@ -580,13 +614,31 @@
     return [{type:'line',xref:'x',yref:'paper',x0:playbackTime,x1:playbackTime,y0:0,y1:1,line:{color:'#c5c5cd',width:1,dash:'dot'}}];
   }
   function resizeDataPlots() {
-    if(el('missile-flight-data').open&&el('missile-telemetry-chart').data)Plotly.Plots.resize(el('missile-telemetry-chart'));
+    if(el('missile-flight-data').open)resizeVisiblePlot(el('missile-telemetry-chart'));
   }
   const totalTime=()=>Math.max(...flights.map(f=>f.elapsed_s));
   function indexAt(rows,time,key='time_s') {
     let low=0,high=rows.length-1;
     while(low<high){const middle=Math.ceil((low+high)/2);if((key?rows[middle][key]:rows[middle])<=time)low=middle;else high=middle-1;}
     return low;
+  }
+  const playbackCache=new WeakMap();
+  function playbackFrame(flight,time,view) {
+    const samples=flight.trajectory,index=indexAt(samples,time),sample=samples[index],next=samples[index+1];
+    // Interpolate only the displayed geometry. Recorded telemetry and event
+    // samples remain exact; a finished missile stays at its last position.
+    const between=!!next&&time>sample.time_s&&next.time_s>sample.time_s;
+    const fraction=between?Math.min(1,(time-sample.time_s)/(next.time_s-sample.time_s)):0;
+    const position=between?sample.missile.map((v,i)=>v+(next.missile[i]-v)*fraction):sample.missile;
+    let cached=playbackCache.get(flight);
+    if(!cached){cached={text:samples.map(row=>flightHover(row,'missile',flight)),views:{}};playbackCache.set(flight,cached);}
+    const coordinates=cached.views[view]||(cached.views[view]=projectedPositions(samples.map(row=>row.missile),view));
+    const tip=projectedPositions([position],view);
+    const trail=Object.fromEntries(Object.entries(coordinates).map(([axis,values])=>{
+      const visible=values.slice(0,index+1);if(between)visible.push(tip[axis][0]);return [axis,visible];
+    }));
+    const text=cached.text.slice(0,index+1);if(between)text.push('');
+    return {sample,position,trail,text,hover:cached.text[index],quaternion:visuals?.attitude(sample,next,fraction,samples[index-1])};
   }
   function inspectFlight(index) {
     focusIndex=index;result=flights[index];
@@ -650,8 +702,18 @@
     return Object.fromEntries(viewAxes[view].map((axis,i)=>[['x','y','z'][i],positions.map(p=>p[axis])]));
   }
   async function renderTrajectory() {
-    const view=el('missile-view').value,is3d=view==='3d',type=is3d?'scatter3d':'scatter';
+    rememberPlotView();trajectoryReady=false;plotGestures.cancel();
+    const view=el('missile-view').value;
+    const current=await trajectoryRenderer.request(view);
+    if(current&&plotView!=='setup'&&el('missile-view').value===view){trajectoryReady=true;refreshFrame();}
+    return current;
+  }
+  async function drawTrajectory(view,isCurrent) {
+    await visuals?.load();
+    if(!isCurrent())return;
+    const is3d=view==='3d',type=is3d?'scatter3d':'scatter';
     const longest=flights.reduce((a,b)=>a.elapsed_s>b.elapsed_s?a:b);
+    const targetModel=visuals?.getTarget();
     const trace=(flight,role,color)=>({type,mode:'lines',name:role==='missile'?missileLabel(flight.scenario.missile):'Target',...projectedPositions(role==='missile'?[]:flight.trajectory.map(r=>r[role]),view),text:role==='missile'?[]:undefined,line:{color,width:role==='target'?(is3d?2:1.5):(is3d?5:2.5),dash:role==='target'?'dash':'solid'},...(role==='target'?{hoverinfo:'skip',opacity:.3}:{hovertemplate:'%{text}<extra></extra>'})});
     const marker=(name,color,interactive=true)=>({type,mode:'markers',name,...projectedPositions([],view),marker:{color,size:is3d?6:10},...(interactive?{hovertemplate:'%{text}<extra></extra>'}:{hoverinfo:'skip'}),showlegend:false});
     const bounds=[0,2,1].map(i=>{
@@ -660,27 +722,55 @@
     });
     flightBounds=bounds;const fitted=sceneFit(bounds);camera=fitted.camera;
     const axis=(title,index)=>{const center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];return {title:{text:index===2?'':title,font:{size:11}},range:index===1?[center+span/2,center-span/2]:[center-span/2,center+span/2],nticks:span<Math.max(...fitted.spans)*.2?3:6,tickfont:{size:10},tickangle:0,tickformat:',.0f',showspikes:false,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',color:'#b4b4bc',backgroundcolor:'#000000'};};
-    const sliceAxis=(worldAxis)=>({title:{text:axisNames[worldAxis]},gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',tickformat:',.0f',automargin:true});
+    const sliceAxis=worldAxis=>{
+      const index=[0,2,1].indexOf(worldAxis),center=(bounds[index][0]+bounds[index][1])/2,span=fitted.spans[index];
+      const range=[center-span/2,center+span/2];if(view==='xz'&&worldAxis===2)range.reverse();
+      return {title:{text:axisNames[worldAxis]},range,gridcolor:'rgba(240,240,250,.09)',zerolinecolor:'#515159',tickformat:',.0f',automargin:true};
+    };
     // Mouse logic as on the EM chart (Leo, 2026-10-27): drag pans (turns the 3D view), the wheel zooms, the toolbar resets.
     const layout={paper_bgcolor:'#000000',plot_bgcolor:'#000000',font:{color:'#e2e2ea'},hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'#38c9d7',font:{color:'#eaeaf2',size:12}},showlegend:false,uirevision:flightRevision+':'+view,
       dragmode:is3d?'turntable':'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'},
       ...(is3d?{margin:{l:0,r:0,t:0,b:0},annotations:[{text:'Y = altitude · m',xref:'paper',yref:'paper',x:.015,y:.985,xanchor:'left',yanchor:'top',showarrow:false,font:{size:10,color:'#b4b4bc'}}],scene:{xaxis:axis('X · m',0),yaxis:axis('Z · m',1),zaxis:axis('Altitude · m',2),aspectmode:'manual',aspectratio:fitted.aspectratio,camera}}:
-        {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1,...(view==='xz'?{autorange:'reversed'}:{})},hovermode:'closest'})};
+        {margin:{l:70,r:25,t:20,b:60},xaxis:{...sliceAxis(viewAxes[view][0]),constrain:'domain'},yaxis:{...sliceAxis(viewAxes[view][1]),scaleanchor:'x',scaleratio:1},hovermode:'closest'})};
+    const saved=viewStates.get(view);
+    if(saved){
+      layout.dragmode=saved.dragmode;
+      if(is3d){layout.scene.camera=saved.camera;layout.scene.aspectratio=Object.fromEntries(Object.entries(fitted.aspectratio).map(([k,v])=>[k,v*(saved.zoom||1)]));}
+      else{layout.xaxis.range=saved.x;layout.yaxis.range=saved.y;}
+    }
+    const requestedDragMode=layout.dragmode;
+    // Install the camera adapter before first entering turntable mode, avoiding
+    // Plotly's initial half-second input lock as well as later restyle locks.
+    if(is3d&&requestedDragMode==='turntable')layout.dragmode='orbit';
     el('missile-slice-note').hidden=is3d;
     el('missile-chart').setAttribute('aria-label',is3d?'Interactive 3D missile and target trajectories':`Interactive 2D missile and target trajectories: ${axisNames[viewAxes[view][0]]} / ${axisNames[viewAxes[view][1]]}`);
-    await Plotly.newPlot(el('missile-chart'),[...flights.map((f,i)=>trace(f,'missile',resultColors[i])),trace(longest,'target','#ffa66b'),...flights.map((f,i)=>marker(missileName(f.scenario.missile)+' now',resultColors[i])),marker('Target now','#ffd0ac',false)],
+    await Plotly.newPlot(el('missile-chart'),[...flights.map((f,i)=>trace(f,'missile',resultColors[i])),trace(longest,'target','#ffa66b'),...flights.map((f,i)=>{
+      const model=visuals?.get(f.scenario.missile),name=missileName(f.scenario.missile)+' now';
+      return model?visuals.trace(model,name,resultColors[i],view):marker(name,resultColors[i]);
+    }),targetModel?visuals.trace(targetModel,'Target now','#ffd0ac',view,false):marker('Target now','#ffd0ac',false)],
       layout,
       {responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['toImage','select2d','lasso2d']});
+    if(is3d){
+      window.missilePlot.stabilizeCamera(el('missile-chart'));
+      if(requestedDragMode==='turntable')await Plotly.relayout(el('missile-chart'),{dragmode:requestedDragMode});
+    }
+    if(!isCurrent())return;
+    renderedView=view;
+    if(is3d)flightAspectBase=fitted.aspectratio;
     // The setup view's axes indicator, turning with the 3D flight view too (Leo, 2026-10-27).
     const chart=el('missile-chart');el('missile-flight-axes').toggleAttribute('hidden',!is3d);   // an SVG has no hidden property
-    if(is3d) {
-      drawAxes(camera.eye,'missile-flight-axes');
-      const follow=event=>{if(event['scene.camera'])drawAxes(event['scene.camera'].eye,'missile-flight-axes');};
-      chart.removeAllListeners?.('plotly_relayouting');chart.on('plotly_relayouting',follow);chart.on('plotly_relayout',follow);
-    }
+    if(is3d)drawAxes(chart._fullLayout.scene.camera.eye,'missile-flight-axes');
+    const follow=event=>{
+      if(!trajectoryReady||renderedView!==view)return;
+      if(is3d)drawAxes(chart._fullLayout.scene.camera.eye,'missile-flight-axes');
+      rememberPlotView();
+      if(!playing)refreshFrame();
+    };
+    chart.removeAllListeners?.('plotly_relayouting');chart.removeAllListeners?.('plotly_relayout');
+    chart.on('plotly_relayout',follow);
   }
   async function render() {
-    flightRevision++;
+    flightRevision++;trajectoryReady=false;renderedView=null;viewStates.clear();playbackTime=0;
     timeline=[...new Set(flights.flatMap(f=>f.trajectory.map(r=>r.time_s)))].sort((a,b)=>a-b);
     for(const input of root.querySelectorAll('input[name=missile-plot-view]'))input.disabled=false;
     showPanes(flightView);el('missile-view').value=flightView;
@@ -688,7 +778,7 @@
     try{await renderTrajectory();}finally{el('missile-view').disabled=false;}
     el('missile-legend').replaceChildren(...flights.map((flight,i)=>{
       const button=document.createElement('button');button.type='button';button.textContent=`━ ${i+1} · ${missileName(flight.scenario.missile)}`;button.style.color=resultColors[i];button.title=missileLabel(flight.scenario.missile);
-      button.addEventListener('click',()=>{inspectFlight(i);updateFrame(Number(el('missile-time').value));});return button;
+      button.addEventListener('click',()=>{inspectFlight(i);updateFrame(Number(el('missile-time').value),playbackTime);});return button;
     }));
     const targetLegend=document.createElement('span');targetLegend.textContent='┄ Target';targetLegend.style.color='#ffa66b';targetLegend.style.opacity='.45';el('missile-legend').append(targetLegend);
     el('missile-time').max=timeline.length-1;el('missile-time').value=0;el('missile-time').disabled=false;el('missile-play').disabled=false;
@@ -702,37 +792,57 @@
     updateFrame(0);
     await renderDataPlots();
   }
-  function updateFrame(index) {
-    if(!result)return;const time=timeline[index],rows=flights.map(f=>f.trajectory[indexAt(f.trajectory,time)]),row=rows[focusIndex];
+  function updateFrame(index,time=timeline[index]) {
+    if(!result)return;
+    time=Math.max(timeline[0],Math.min(time,timeline[timeline.length-1]));
     el('missile-time').value=index;playbackTime=time;el('missile-time-label').textContent=time.toFixed(2)+' s';
+    if(!trajectoryReady||plotView==='setup')return;
+    if(plotView==='3d'){
+      window.missilePlot.commitCamera(el('missile-chart'));
+      drawAxes(el('missile-chart')._fullLayout.scene.camera.eye,'missile-flight-axes');
+    }
+    const frames=flights.map(f=>playbackFrame(f,time,el('missile-view').value)),row=frames[focusIndex].sample;
     const finished=time>=result.elapsed_s;
     el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':(trackingLabels[row.tracking_state]||'—'));
     const targetPosition=result.scenario.target.position.map((v,i)=>v+result.scenario.target.velocity[i]*time);
-    const positions=[...rows.map(r=>r.missile),targetPosition];
+    const positions=[...frames.map(f=>f.position),targetPosition];
     const projected=Object.fromEntries(Object.entries(projectedPositions(positions)).map(([axis,values])=>[axis,values.map(v=>[v])]));
-    const trails=flights.map(f=>f.trajectory.slice(0,indexAt(f.trajectory,time)+1));
-    const trailPositions=trails.map(path=>projectedPositions(path.map(r=>r.missile)));
-    const trailUpdate=Object.fromEntries(Object.keys(trailPositions[0]).map(axis=>[axis,trailPositions.map(p=>p[axis])]));
-    Plotly.restyle(el('missile-chart'),{...trailUpdate,text:trails.map((path,i)=>path.map(r=>flightHover(r,'missile',flights[i])))},flights.map((_,i)=>i));
-    Plotly.restyle(el('missile-chart'),{...projected,text:[...rows.map((r,i)=>[flightHover(r,'missile',flights[i])+(time>flights[i].elapsed_s?'<br>Flight ended · marker remains at the final position':'')]),[]]},positions.map((_,i)=>flights.length+1+i));
+    const geometry=Object.fromEntries(Object.keys(projected).map(axis=>[axis,[...frames.map(f=>f.trail[axis]),...projected[axis]]]));
+    const text=[...frames.map(f=>f.text),...frames.map((f,i)=>[f.hover+(time>flights[i].elapsed_s?'<br>Flight ended · marker remains at the final position':'')]),[]];
+    frames.forEach((frame,i)=>{
+      const model=visuals?.get(flights[i].scenario.missile);if(!model)return;
+      const view=el('missile-view').value,chart=el('missile-chart');
+      const shape=visuals.geometry(model,frame.position,frame.quaternion,visuals.displayLength(model,chart,view,flightBounds),view);
+      for(const axis of Object.keys(shape))geometry[axis][flights.length+i]=shape[axis];
+    });
+    const targetModel=visuals?.getTarget();
+    if(targetModel){
+      const view=el('missile-view').value,chart=el('missile-chart');
+      const shape=visuals.geometry(targetModel,targetPosition,visuals.targetAttitude(result.scenario.target),visuals.displayLength(targetModel,chart,view,flightBounds),view);
+      for(const axis of Object.keys(shape))geometry[axis][2*flights.length]=shape[axis];
+    }
+    // Trails and markers move together in one plot update; the target path is static.
+    Plotly.restyle(el('missile-chart'),{...geometry,text,meta:[...flights.map(()=>null),...frames.map(f=>f.hover),null]},[...flights.map((_,i)=>i),...positions.map((_,i)=>flights.length+1+i)]);
     if(el('missile-flight-data').open&&el('missile-telemetry-chart').data)Plotly.relayout(el('missile-telemetry-chart'),{shapes:timeCursor()});
   }
   el('missile-time').addEventListener('input',()=>{pause();if(plotView==='setup')showView(flightView);updateFrame(Number(el('missile-time').value));});
   el('missile-view').addEventListener('change',async()=>{
     if(!result)return;
-    pause();const index=Number(el('missile-time').value);el('missile-view').disabled=true;
-    try{await renderTrajectory();updateFrame(index);}catch(error){showError(error.message);}finally{el('missile-view').disabled=false;}
+    pause();el('missile-view').disabled=true;
+    try{await renderTrajectory();}catch(error){showError(error.message);}finally{el('missile-view').disabled=false;}
   });
   el('missile-play').addEventListener('click',()=>{
     if(playing){pause();return;}if(!result)return;
     if(plotView==='setup')showView(flightView);
     if(Number(el('missile-time').value)>=timeline.length-1)updateFrame(0);
-    playing=true;lastFrame=performance.now();playButton(PAUSE_ICON,'Pause');requestAnimationFrame(animate);
+    playing=true;lastFrame=performance.now();playButton(PAUSE_ICON,'Pause');animationFrame=requestAnimationFrame(animate);
   });
   function animate(now) {
-    if(!playing)return;const wanted=playbackTime+(now-lastFrame)/1000*Number(el('missile-play-speed').value);lastFrame=now;
+    animationFrame=0;if(!playing)return;
+    if(!trajectoryReady){lastFrame=now;animationFrame=requestAnimationFrame(animate);return;}
+    const wanted=playbackTime+(now-lastFrame)/1000*Number(el('missile-play-speed').value);lastFrame=now;
     let index=Number(el('missile-time').value);while(index<timeline.length-1&&timeline[index+1]<=wanted)index++;
-    updateFrame(index);playbackTime=wanted;
-    if(index>=timeline.length-1)pause();else requestAnimationFrame(animate);
+    updateFrame(index,wanted);
+    if(index>=timeline.length-1)pause();else animationFrame=requestAnimationFrame(animate);
   }
 })();
