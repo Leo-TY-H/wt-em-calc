@@ -324,7 +324,7 @@ class TrimCurve:
                 for j, bound in enumerate(bounds))
             def event(v):
                 bounds = (self.solver.instructor_at(v, self.speed / 3.6, v['equilibrium_load_g'])['control_bounds']
-                    if self.solver.config['instructor'] else v['allocation']['bounds'])
+                    if self.solver.config['autotrim'] else v['allocation']['bounds'])
                 return (1. if side == 0 else -1.) * (v['allocation']['commands'][axis] - bounds[axis][side]) - 3e-5
         elif kind == 'Instructor pitch':
             def event(v):

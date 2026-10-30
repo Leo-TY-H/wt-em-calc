@@ -296,7 +296,7 @@ class NativeLoop:
         if self.instructor is None:
             self.instructor = False
             entry = self.native(solver)
-            if entry is not None and solver.config.get('instructor'):
+            if entry is not None and solver.config.get('autotrim'):
                 try:
                     self.instructor = self.m.Instructor(entry[0].model, solver)
                 except self.m.InstructorUnsupported as error:
@@ -355,7 +355,7 @@ class NativeLoop:
         if code is None:return None
         if code is codes['stall'] and event.__defaults__ is None:return (1, 0, 0)
         if code is codes['wing force'] and event.__defaults__ is None:return (2, 0, 0)
-        if code is codes['control'] and not curve.solver.config.get('instructor'):
+        if code is codes['control'] and not curve.solver.config.get('autotrim'):
             d = event.__defaults__
             if d is not None and len(d) == 2 and d[0] in (0, 1, 2) and d[1] in (0, 1):return (3, d[0], d[1])
         return None

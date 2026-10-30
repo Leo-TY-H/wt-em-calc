@@ -11,6 +11,7 @@ import uuid
 from missile_names import display_name
 from missile_inputs import directory as input_directory
 import missile_engine
+import missile_launch_aircraft as launch_aircraft
 
 ROOT = Path(__file__).resolve().parent
 LOCK = threading.Lock()
@@ -48,7 +49,13 @@ def metadata():
     for entry in sorted(entries, key=lambda item: (-1 if item['id']=='us_aim4g_falcon' else len(item['id']), item['id'])):
         unique.setdefault(entry['name'].strip().casefold(), entry)
     entries = sorted(unique.values(), key=lambda item: (item['name'].casefold(), item['id']))
-    return dict(missiles=entries, defaults=dict(missile='us_aim9l_sidewinder', duration=60,
+    for entry in entries:
+        entry['aircraft_ids'] = launch_aircraft.compatible(entry['id'])
+        entry['launcher_availability'] = launch_aircraft.catalog().get('availability', {}).get(entry['id'])
+    return dict(missiles=entries, aircraft=launch_aircraft.catalog()['aircraft'],
+                aircraft_source_commit=launch_aircraft.catalog()['source_commit'],
+                aircraft_review_commit=launch_aircraft.catalog().get('checked_commit'),
+                defaults=dict(missile='us_aim9l_sidewinder', duration=60,
                 launcher=dict(position=[0,5000,0],velocity=[300,0,0],angles=[0,0,0]),
                 target=dict(position=[4000,5000,0],velocity=[200,0,0],angles=[0,0,0])),
                 model_status='experimental', profile_build='2.59.0.34', property_loading=index.get('property_loading'),
@@ -81,6 +88,7 @@ def _run(key, config, cancel):
                 if cancel.is_set(): continue
                 if message['type']=='progress': JOBS[key]['progress']=message['progress']
                 elif message['type']=='result':
+                    launch_aircraft.attach(message['result']['scenario'], config['launcher'].get('aircraft'))
                     JOBS[key].update(status='complete', result=message['result']); completed=True
                 elif message['type']=='error': JOBS[key].update(status='failed', error=message['error'])
         process.wait()
@@ -106,6 +114,7 @@ def _run(key, config, cancel):
 def start(config):
     if not isinstance(config,dict): raise ValueError('Expected a scenario object')
     if config.get('missile') not in {m['id'] for m in metadata()['missiles']}: raise ValueError('Select a supported missile')
+    config = launch_aircraft.trajectory(config)
     with LOCK:
         if sum(job['status'] in ('queued','running') for job in JOBS.values())>=MAX_PENDING:
             raise ValueError('Missile simulation queue is full. Wait for the current run to finish.')

@@ -1,6 +1,8 @@
 """Re-verify the march chart's compiled loop against the Python model and record it.
 
-  python scripts/verify_march_native.py [--aircraft NAME:sb|rb ...] [--stamp] [--out report.json]
+  python scripts/verify_march_native.py [--aircraft NAME:sb|rb|real ...] [--stamp] [--out report.json]
+
+(real = realistic controls: autotrim without the Instructor.)
 
 Runs march charts with WT_MARCH_NATIVE_VERIFY=1: every native finish row, every
 explicit-history operating point and every Instructor admission is compared
@@ -24,15 +26,15 @@ os.environ['WT_MARCH_NATIVE_VERIFY'] = '1'
 for key in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):os.environ[key] = '1'
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'scripts'))
-DEFAULT = ('bi:sb', 'f_16xl:rb', 'f_16a_block_10:sb', 'a6m2_zero:sb', 'ki_61_1a_otsu:rb', 'f_14a_early:rb')
+DEFAULT = ('bi:sb', 'f_16xl:rb', 'f_16a_block_10:sb', 'a6m2_zero:sb', 'ki_61_1a_otsu:rb', 'f_14a_early:rb', 'bf-109f-4:real')
 NUMERIC = 1e-8  # Instructor trim and event corrections agree to rounding (S2/S3: <= 2e-12)
 
 
 def run(spec):
     from em_solver import settings, compute
     name, mode = spec.split(':')
-    rb = mode.split('-')[0] == 'rb'
-    config = settings(dict(aircraft=[name], instructor=rb, torque_gyro=not rb, chart_solver='march',
+    rb = mode.split('-')[0] == 'rb';autotrim = rb or mode.split('-')[0] == 'real'
+    config = settings(dict(aircraft=[name], instructor=rb, autotrim=autotrim, torque_gyro=not autotrim, chart_solver='march',
                            turn_direction='right' if mode.endswith('-right') else 'left'))
     t0 = time.perf_counter()
     data = compute(config)

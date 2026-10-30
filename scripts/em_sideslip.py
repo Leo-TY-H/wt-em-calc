@@ -275,13 +275,13 @@ def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
         if side and side[0]['solution'] not in seeds:seeds.append(side[0]['solution'])
 
 
-    if not solver.config['instructor']:
+    if not solver.config['autotrim']:
         physical=solver
     else:
         physical=getattr(solver,'_physical_sideslip_recovery',None)
         if physical is None:
             physical=copy.copy(solver)
-            physical.config=dict(solver.config,instructor=False,aircraft_settings={})
+            physical.config=dict(solver.config,instructor=False,autotrim=False,aircraft_settings={})
             physical._sideslip_solvers={};physical.instructor_boundaries={}
             solver._physical_sideslip_recovery=physical
     attempts=0;last_failed=0.
@@ -294,7 +294,7 @@ def recover_sideslip(solver,speed_kmh,load,failed,neighbors=()):
             attempts+=1
 
 
-            accepted=point['valid'] or (solver.config['instructor'] and
+            accepted=point['valid'] or (solver.config['autotrim'] and
                                        set(point['reasons'])=={'control authority'})
             if accepted and abs(point['sideslip_deg'])<=MAX_SIDESLIP_DEG:
                 return point

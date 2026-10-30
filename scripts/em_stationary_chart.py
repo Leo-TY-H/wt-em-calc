@@ -66,6 +66,7 @@ def render(record, destination):
     title = record['aircraft_name']
     subtitle = (f"Sea level | fuel {config['fuel_percent']:g}% | throttle {config['throttle']*100:g}% | "
                 f"Instructor {'on' if config['instructor'] else 'off'} | "
+                f"autotrim {'on' if config.get('autotrim', config['instructor']) else 'off'} | "
                 f"ammunition {'on' if config['default_ammunition'] else 'off'}")
     if config['altitude_m'] != 0:subtitle = subtitle.replace('Sea level', f"{config['altitude_m']:g} m")
     fig.suptitle(title + ' — sampled stationary results\n' + subtitle, fontsize=14)
