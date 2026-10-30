@@ -3,7 +3,8 @@
 Per distinct engine and temperature channel (water or cylinder head, and oil), with the temperature held constant:
 the hottest temperature sustainable indefinitely (no load counter can ever overflow, whatever its history) and, for
 each rating of R minutes, the hottest one at which fresh counters give no damage within R minutes; the automatic
-radiator's resting temperatures and how long they last; and the time to first damage against temperature for the
+radiator's resting temperatures and how long they last; how fast each load counter fills and drains, and below which
+temperatures it drains; and the time to first damage against temperature for the
 chart. All of it is the float32 arithmetic of the research ports (R = research/thermal-fatigue-2026-10-29):
 thermal_properties.construct loads the engine's Temperature block, thermal_core.rates gives each load counter's rate
 at a temperature and thermal_counters.ticks_from_zero the exact tick its counter first overflows. No result reads a
@@ -22,7 +23,7 @@ import orjson
 
 import thermal_validated
 from thermal_core import f, add, sub, mul, rates, damage
-from thermal_counters import ticks_from_zero
+from thermal_counters import evolve, ticks_from_zero
 from thermal_properties import K, construct
 
 DT = f(1 / 48)                      # the aircraft thermal update's step (R/ENGINE-THERMODYNAMICS.md:52-55)
@@ -376,6 +377,30 @@ def radiator(r, rec, channels, work, recover):
     return out
 
 
+def recovery(r, channels, work, recover):
+    """Each load counter: its fill time from empty at the full work rate, its empty time from full at the full recover
+    rate (exact float32 ticks), and per channel the hottest temperature at which it drains at all and the hottest at
+    which it drains at the full rate (it sits above the band's point, R/thermal_core.py:31-33). Rates do not decrease
+    with temperature, so both are bisections; at the first load row every counter drains at its full rate and at the
+    last every counter fills (R/thermal_core.py:21-29). A load row without WorkTime (Load0's default 1e9 s,
+    R/thermal_properties.py:126-127) is no counter to show."""
+    out = []
+    for j, (w, x) in enumerate(zip(work, recover)):
+        if not w > 1e-8: continue
+        fill = ticks_from_zero(w, DT)
+        n, state, _ = evolve(1., f(-x), DT) if x > 0. else (None, 'stall', 1.)
+        temps = []
+        for rows in (r['water_rows'], r['oil_rows'])[:channels]:
+            if len(rows) < 2: temps.append(dict(drains_c=None, full_c=None)); continue
+            lo, hi = rows[0][0], rows[-1][0]
+            rate = lambda t, rows=rows: rates(rows, work, recover, t)[j]
+            full = f(-x)
+            temps.append(dict(drains_c=celsius(largest_true(lambda t: rate(t) < 0., lo, hi)) if rate(lo) < 0. else None,
+                              full_c=celsius(largest_true(lambda t: rate(t) <= full, lo, hi)) if x > 0. and rate(lo) <= full else None))
+        out.append(dict(fill_s=None if fill is None else fill / 48., empty_s=n / 48. if state == 'zero' else None, channels=temps))
+    return out
+
+
 # ---- One aircraft -----------------------------------------------------------------------------------------------
 def load(block, special, water):
     """construct() on the loader's view of the block; True when its Mode rows had to be left out. The port raises where
@@ -408,7 +433,8 @@ def engine(rec, ratings):
     # update processes properties[0x140]+1 channels (R/REPORT.md:80-83,290-300). Oil is always a liquid channel.
     liquid, labels = (rec['liquid0'], True), ('Water' if water else 'Head', 'Oil')
     channels = [channel(r, c, liquid[c], labels[c], work, recover, ratings) for c in ((0, 1) if r['has_oil'] else (0,))]
-    return dict(out, channels=channels, automatic=[] if special else radiator(r, rec, len(channels), work, recover))
+    return dict(out, channels=channels, buckets=recovery(r, len(channels), work, recover),
+                automatic=[] if special else radiator(r, rec, len(channels), work, recover))
 
 
 def merged(engines):

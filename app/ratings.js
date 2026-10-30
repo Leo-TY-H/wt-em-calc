@@ -143,12 +143,18 @@
       `<tr><th>${name}</th>${ch.map(c => `<td>${limitCell(pick(c), c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
     const fluids = ch.filter(c => c.thermostat_c != null || c.boiling_c != null).map(c =>
       `<span>${c.label} thermostat ${one(c.thermostat_c)} · boils ${one(c.boiling_c)}</span>`).join('');
+    // Recovery: each load counter's fill and empty times, and per channel the hottest temperatures at which it drains
+    // at all and at its full rate.
+    const below = c => c == null ? '—' : `≤ ${floorC(c).toFixed(1)}`;
+    const recovery = e.buckets?.length ? `<table class="ratings-table ratings-recovery"><thead><tr><th></th><th></th>${ch.map((c, i) => `<th colspan="2">${swatch(i)}${c.label} °C</th>`).join('')}</tr>
+      <tr><th>Fills in</th><th>Empties in</th>${ch.map(() => '<th>Drains</th><th>Full rate</th>').join('')}</tr></thead><tbody>${
+      e.buckets.map(b => `<tr><th>${time(b.fill_s)}</th><td>${time(b.empty_s)}</td>${b.channels.map(t => `<td>${below(t.drains_c)}</td><td>${below(t.full_c)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '';
     // Automatic radiator: only the channels whose radiator it moves.
     const autoColumns = ch.map((c, i) => i).filter(i => e.automatic?.some(a => a.targets_c[i] != null));
     const auto = autoColumns.length ? `<table class="ratings-table ratings-radiator"><thead><tr><th>Throttle</th>${autoColumns.map(i => `<th>${ch[i].label} target</th>`).join('')}<th>Lasts</th></tr></thead><tbody>${
       e.automatic.map(a => `<tr><th>${a.label}</th>${autoColumns.map(i => `<td>${one(a.targets_c[i])}</td>`).join('')}<td>${time(a.seconds)}${a.boils ? ' · boils' : ''}</td></tr>`).join('')}</tbody></table>` : '';
     return `<div class="ratings-engine"><h3>${engineLabel(e.engines)} · ${kind}${port}</h3>
-      <div class="ratings-engine-body"><div class="ratings-tables">${limits}${fluids ? `<p class="ratings-fluids">${fluids}</p>` : ''}${auto}</div>
+      <div class="ratings-engine-body"><div class="ratings-tables">${limits}${fluids ? `<p class="ratings-fluids">${fluids}</p>` : ''}${recovery}${auto}</div>
       <div class="ratings-chart" id="${chartId}" aria-label="Time to first damage against temperature"></div></div></div>`;
   }
   // One section per aircraft, rebuilt only when its number, ratings or result change (each holds up to four charts).
