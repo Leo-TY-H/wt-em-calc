@@ -107,6 +107,85 @@ QUALITY = dict(quick=dict(azimuth_step_deg=30., detail_step_deg=3.75, edge_step_
 _worker = None
 _profiles = {}
 
+# A display classification, not a fuze, guidance or early-stop rule. Unconfirmed
+# departures remain included. Keep the typed PassTracker in typed_flight.h equal.
+TURN_BACK_POLICY = dict(version=1, rate_deadband_mps=1., approach_s=.1,
+                        approach_m=10., departure_s=.5, departure_m=100.,
+                        departure_fuze_radii=4., departure_range_fraction=.25)
+TERMINAL_ENERGY_POLICY = dict(version=1, min_speed_ratio=1.2, metric='specific_kinetic_energy',
+                             velocity_at_event='linear_between_body_steps', absolute_speed_floor_mps=None)
+ENVELOPE_VIEWS = ('first_pass', 'with_energy', 'first_pass_with_energy')
+
+
+def terminal_energy(previous_velocity, velocity, start, end, at, target_velocity):
+    """Display policy: intercept speed >= 1.2 times target speed, no absolute floor.
+
+    Interpolate the missile velocity at a sub-step proximity event. Compare
+    speeds (magnitudes), not closing velocity; potential energy is not credited.
+    No mass dependence: the equivalent specific kinetic energy ratio is 1.44.
+    """
+    if not all(math.isfinite(v) for v in [*previous_velocity, *velocity, *target_velocity, start, end, at]) or end < start:
+        return dict(passed=None, speed_mps=None, target_speed_mps=None, speed_ratio=None,
+                    specific_kinetic_energy_j_kg=None, minimum_specific_kinetic_energy_j_kg=None)
+    fraction = min(1., max(0., (at - start) / (end - start))) if end > start else 1.
+    at_velocity = [a + fraction * (c - a) for a, c in zip(previous_velocity, velocity)]
+    speed = math.sqrt(sum(v * v for v in at_velocity))
+    target_speed = math.sqrt(sum(v * v for v in target_velocity))
+    minimum = TERMINAL_ENERGY_POLICY['min_speed_ratio'] * target_speed
+    return dict(passed=speed >= minimum, speed_mps=speed, target_speed_mps=target_speed,
+                speed_ratio=speed / target_speed if target_speed > 0. else None,
+                specific_kinetic_energy_j_kg=.5 * speed * speed,
+                minimum_specific_kinetic_energy_j_kg=.5 * minimum * minimum)
+
+
+class PassTracker:
+    """Confirm a missed pass from sustained closing followed by reopening.
+
+    Initial opening is ignored. Each uninterrupted closing run must establish
+    an approach; an opening run must then exceed both time and distance gates.
+    No launch grace period: a genuine first pass may happen before fuze arming.
+    Once confirmed, any later hit is a return hit, including a returning target.
+    """
+    def __init__(self, time, distance, fuze):
+        self.time, self.distance, self.fuze = time, distance, fuze
+        self.closing = self.opening = -1.
+        self.start_range = distance
+        self.approached = self.confirmed = False
+        self.pass_time = self.pass_range = self.reopening = 0.
+
+    def advance(self, time, distance):
+        if self.confirmed or time <= self.time: return
+        rate = (self.distance - distance) / (time - self.time)
+        if rate > TURN_BACK_POLICY['rate_deadband_mps']:
+            if self.closing < 0:
+                self.closing, self.start_range = self.time, self.distance
+                self.approached = False
+            self.opening = -1.
+            if time - self.closing >= TURN_BACK_POLICY['approach_s'] and self.start_range - distance >= TURN_BACK_POLICY['approach_m']:
+                self.approached = True
+        elif rate < -TURN_BACK_POLICY['rate_deadband_mps']:
+            if self.approached:
+                if self.opening < 0:
+                    self.opening = self.time
+                    self.pass_time, self.pass_range = self.time, self.distance
+                self.reopening = distance - self.pass_range
+                threshold = max(TURN_BACK_POLICY['departure_m'], TURN_BACK_POLICY['departure_fuze_radii'] * self.fuze,
+                                TURN_BACK_POLICY['departure_range_fraction'] * self.pass_range)
+                if time - self.opening >= TURN_BACK_POLICY['departure_s'] and self.reopening >= threshold:
+                    self.confirmed = True
+            self.closing = -1.
+        self.time, self.distance = time, distance
+
+
+def first_pass_hit(outcome):
+    return outcome['hit'] and not outcome.get('turn_back', False)
+
+
+def hit_filters(outcome):
+    hit = outcome['hit']; first = first_pass_hit(outcome)
+    energy = outcome.get('terminal_energy_ok') is True
+    return hit, first, hit and energy, first and energy
+
 
 def _missile_worker():
     """Import the website engagement module lazily (one model per process)."""
@@ -174,6 +253,8 @@ def validate(request):
     clean['tolerance_m'] = number(request.get('tolerance_m', quality['tolerance_m']), 'Absolute tolerance', 5., 1000.)
     clean['max_range_m'] = number(request.get('max_range_m', RANGE_CAP_M), 'Maximum range', 1000., RANGE_CAP_M)
     clean['early_exit'] = bool(request.get('early_exit', True))
+    clean['turn_back_policy'] = dict(TURN_BACK_POLICY)
+    clean['terminal_energy_policy'] = dict(TERMINAL_ENERGY_POLICY)
     escape = request.get('escape')
     if escape is not None and not isinstance(escape, dict): raise ValueError('Escape settings must be an object')
     clean['escape'] = None if escape is None else dict(
@@ -355,15 +436,18 @@ def evaluate(missile, launcher, target, early_exit=True, reach_m=None):
     body = session.frame.flight.state['body']
     best = (math.dist(frame.website_release['position'], target['position']), 0.)
     previous = (body['position'][:], target_at(body['time'])['position'], body['time'])
+    passes = PassTracker(body['time'], best[0], max(0., radius - 30.))
     outcome = 'time_limit'; end_time = body['time']; event_time = None
     for i in range(count):
         now = add(body['time'], STEP)
+        step_velocity, step_time = body['velocity'][:], body['time']
         result = session.advance(now, STEP, targets, collision_time=now, point_history=history, flight_step=radar_step)
         body = session.frame.flight.state['body']
         event = result.get('event')
         if event: point, at = event['position'], event['time']
         else: point, at = body['position'], body['time']
         target_point = target_at(at)['position']
+        passes.advance(at, math.sqrt(sum((t - p) ** 2 for t, p in zip(target_point, point))))
         distance, fraction = w.closest_segment(previous[0], point, previous[1], target_point)
         if distance < best[0]: best = (distance, previous[2] + fraction * (at - previous[2]))
         previous = (point[:], target_point, at)
@@ -383,7 +467,15 @@ def evaluate(missile, launcher, target, early_exit=True, reach_m=None):
             if unreachable(body['position'], speed, target_at(body['time'])['position'], straight_velocity,
                            deadline - body['time'] + 2 * STEP, radius, limits['origin'], limits['distance_limit']):
                 outcome = 'unreachable'; break
-    return dict(hit=outcome in ('proximity_event', 'reached'), outcome=outcome, time_s=end_time if event_time is None else event_time,
+    hit = outcome in ('proximity_event', 'reached')
+    stamp = end_time if event_time is None else event_time
+    energy = terminal_energy(step_velocity, body['velocity'], step_time, body['time'], stamp, target_at(stamp)['velocity'])
+    return dict(hit=hit, turn_back=hit and passes.confirmed,
+                terminal_energy_ok=energy['passed'] if hit else None, terminal_energy=energy,
+                pass_time_s=passes.pass_time if passes.confirmed else None,
+                pass_range_m=passes.pass_range if passes.confirmed else None,
+                reopening_m=passes.reopening if passes.confirmed else None,
+                outcome=outcome, time_s=end_time if event_time is None else event_time,
                 event_time_s=event_time,
                 closest_m=best[0], closest_time_s=best[1], steps=i + 1, family=frame.flight.family,
                 lifetime_s=limits['lifetime'], distance_limit_m=limits['distance_limit'])
@@ -569,7 +661,7 @@ class Ray:
             ragged = self.fringe(rs)
             zone = self.zone(rs, ragged)
             batch = [_middle(a, b) for a, b in zip(rs, rs[1:])
-                     if (self.samples[a]['hit'] != self.samples[b]['hit'] or self.drop(a, b)
+                     if (hit_filters(self.samples[a]) != hit_filters(self.samples[b]) or self.drop(a, b)
                          or (zone and b > zone[0] and a < zone[1] and b > a * dense
                              and (self.samples[a]['hit'] or self.samples[b]['hit'])))
                      and b - a > self.width((a + b) / 2)]
@@ -644,9 +736,29 @@ class Ray:
         ragged = self.fringe(rs)
         # A ragged edge needs a run of hits inside it and a hit beyond its first miss.
         band = ragged if ragged and ragged[4] and ragged[2] < ragged[3] else None
+        physical = self.view(rs, band, True)
+        first_pass = self.view(rs, band, False)
+        with_energy = self.view(rs, band, True, True)
+        first_pass_with_energy = self.view(rs, band, False, True)
+        samples = [dict(range_m=r, **{k: self.samples[r][k] for k in ('hit', 'outcome', 'time_s', 'closest_m')},
+                        turn_back=self.samples[r].get('turn_back', False),
+                        terminal_energy_ok=self.samples[r].get('terminal_energy_ok'), terminal_energy=self.samples[r].get('terminal_energy'),
+                        pass_time_s=self.samples[r].get('pass_time_s'), pass_range_m=self.samples[r].get('pass_range_m'),
+                        reopening_m=self.samples[r].get('reopening_m')) for r in rs]
+        self.result = dict(key=list(self.key), motion='escape' if self.escape else 'straight',
+                           layer_m=self.layer, azimuth_deg=self.azimuth, level=self.level, search=[self.low, self.high],
+                           samples=samples, simulations=self.simulations, seed=self.seed_source,
+                           first_pass=first_pass, with_energy=with_energy, first_pass_with_energy=first_pass_with_energy, **physical)
+        if self.blocked: self.result['blocked'] = True
+        return self.result
+
+    def view(self, rs, band, include_turn_back, require_energy=False):
+        """All four views share the physical far-edge policy and numerical samples."""
         intervals = []
         for i, r in enumerate(rs):
             if not self.samples[r]['hit'] or (band and i >= band[2]): continue
+            if not include_turn_back and not first_pass_hit(self.samples[r]): continue
+            if require_energy and self.samples[r].get('terminal_energy_ok') is not True: continue
             start = (rs[i - 1] + r) / 2 if i else r
             if intervals and intervals[-1]['last'] == rs[i - 1]:
                 intervals[-1].update(last=r); continue
@@ -656,24 +768,19 @@ class Ray:
             item['end'] = (item['last'] + rs[j + 1]) / 2 if j + 1 < len(rs) else item['last']
             item['open_low'] = item['first'] == rs[0]
             item['open_high'] = j + 1 == len(rs)
-        samples = [dict(range_m=r, **{k: self.samples[r][k] for k in ('hit', 'outcome', 'time_s', 'closest_m')}) for r in rs]
-        self.result = dict(key=list(self.key), motion='escape' if self.escape else 'straight',
-                           layer_m=self.layer, azimuth_deg=self.azimuth, level=self.level, search=[self.low, self.high],
-                           intervals=[dict(start_m=i['start'], end_m=i['end'], first_hit_m=i['first'], last_hit_m=i['last'],
+        result = dict(intervals=[dict(start_m=i['start'], end_m=i['end'], first_hit_m=i['first'], last_hit_m=i['last'],
                                            min_at_search_limit=i['open_low'], max_at_search_limit=i['open_high']) for i in intervals],
-                           samples=samples, simulations=self.simulations, seed=self.seed_source)
+                      min_range_m=None, max_range_m=None, min_time_s=None, max_time_s=None,
+                      min_bracket_m=None, max_bracket_m=None)
         if intervals:
             first, last = intervals[0], intervals[-1]
-            self.result.update(min_range_m=first['start'], max_range_m=last['end'],
+            result.update(min_range_m=first['start'], max_range_m=last['end'],
                                min_bracket_m=[rs[rs.index(first['first']) - 1] if not first['open_low'] else None, first['first']],
                                max_bracket_m=[last['last'], rs[rs.index(last['last']) + 1] if not last['open_high'] else None],
                                max_time_s=self.samples[last['last']]['time_s'], min_time_s=self.samples[first['first']]['time_s'])
-        else:
-            self.result.update(min_range_m=None, max_range_m=None)
         # Hits and misses alternate beyond max_range_m (scattered hits not in the intervals).
-        self.result['ragged_edge'] = bool(band and intervals)
-        if self.blocked: self.result['blocked'] = True
-        return self.result
+        result['ragged_edge'] = bool(band and intervals and intervals[-1]['last'] == rs[band[2] - 1])
+        return result
 
 
 MAX_RAYS = 1200
@@ -906,6 +1013,10 @@ class Planner:
     def matched(self, ray):
         """Whether a refinement ray's boundaries lie within MATCH tolerances of its parents' mean."""
         results = [self.rays[k].result for k in self.spans[ray.key]] + [ray.result]
+        return (self.matched_view(results)
+                and all(self.matched_view([r.get(view, r) for r in results]) for view in ENVELOPE_VIEWS))
+
+    def matched_view(self, results):
         scale = self.scale(*results)
         x, y, z = [structure(r, SHAPE * self.config['tolerance'] * scale) for r in results]
         limit = MATCH * self.config['tolerance'] * scale
@@ -950,6 +1061,10 @@ class Planner:
         self.queue.append(key)
 
     def refine(self, a, b, gap, smooth):
+        return (self.refine_view(a, b, gap, smooth)
+                or any(self.refine_view(a.get(view, a), b.get(view, b), gap, smooth) for view in ENVELOPE_VIEWS))
+
+    def refine_view(self, a, b, gap, smooth):
         """Whether two finished neighbours gap degrees apart need a ray between them.
 
         Where only one of them hits, rays are added down to the edge step. Where

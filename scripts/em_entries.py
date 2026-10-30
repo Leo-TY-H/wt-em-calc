@@ -6,6 +6,15 @@ COLORS=('#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#
 ENTRY_ID=re.compile(r'entry_[A-Za-z0-9_-]{1,48}\Z')
 
 
+def flight_mode(condition):
+    """Chart label of the Instructor and autotrim switches; torque/gyro is named
+    only where it differs from the game's pairing (on exactly when autotrim is off)."""
+    autotrim=condition.get('autotrim',condition['instructor'])
+    mode='Instructor + autotrim' if condition['instructor'] else 'Autotrim' if autotrim else 'Manual trim'
+    if condition['torque_gyro']==autotrim:mode+=f" · torque/gyro {'on' if condition['torque_gyro'] else 'off'}"
+    return mode
+
+
 def entry_settings(values):
     from em_solver import settings,AIRCRAFT,AIRCRAFT_SETTINGS
     entries=values['entries']
@@ -25,8 +34,11 @@ def entry_settings(values):
         if not isinstance(condition,dict) or set(condition)-AIRCRAFT_SETTINGS:
             raise ValueError('Unknown aircraft condition in entry')
 
-        resolved=settings(dict(values,**dict(condition,entries=None,aircraft=[name],
-                                             aircraft_settings={},compare_instructor=False)))
+        merged=dict(values,**dict(condition,entries=None,aircraft=[name],
+                                  aircraft_settings={},compare_instructor=False))
+        # An entry saved before the autotrim switch follows its own Instructor setting.
+        if 'instructor' in condition and 'autotrim' not in condition:merged['autotrim']=None
+        resolved=settings(merged)
         normalized.append(dict(id=identity,aircraft_id=name,
                                settings={k:resolved[k] for k in sorted(AIRCRAFT_SETTINGS)}))
         ids.add(identity)
@@ -62,8 +74,7 @@ def compute_entries(config,progress=None,cancelled=None,preview=None):
             if entry['aircraft_id'] not in physical:continue
             a=dict(physical[entry['aircraft_id']])
             condition=entry['settings']
-            mode=('RB' if condition['instructor'] else 'SB') if condition['instructor']!=condition['torque_gyro'] else (
-                f"Instructor {'on' if condition['instructor'] else 'off'} · torque/gyro {'on' if condition['torque_gyro'] else 'off'}")
+            mode=flight_mode(condition)
             if condition.get('turn_direction')=='right':mode+=' · Right turn'
             if not condition['structural_limits']:mode+=' · Flutter off'
             if condition['trim_solver_mode']!='stationary':mode+=' · Baseline solver'

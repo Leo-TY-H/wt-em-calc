@@ -47,7 +47,7 @@ def settings(values=None):
         raise ValueError('Unknown aircraft condition; altitude belongs to the plot range')
 
 
-    resolved = em_settings(dict(conditions, aircraft=[name], instructor=False,
+    resolved = em_settings(dict(conditions, aircraft=[name], instructor=False, autotrim=False,
                                 flaps_percent=0., torque_gyro=False))
     result['conditions'] = {k: resolved[k] for k in sorted(allowed)}
     return result

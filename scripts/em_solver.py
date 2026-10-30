@@ -45,7 +45,7 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
                 afterburner=True, torque_gyro=False, turn_direction='left', engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
                 extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', loadout='', stores_released=False, speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=False,aircraft_search_region=True,
-                sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,
+                sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,autotrim=None,
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='stationary',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='stable',
                 experimental_instantaneous_aero=False,experimental_lateral_trim='full',stationary_execution='baseline',
                 stationary_governor_mode='pitch_stops',enable_exports=False,
@@ -67,12 +67,18 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
 # Preliminary aircraft force estimates define the default chart search region.
 # The cap is predetermined from aircraft data; 64 g is an outer guard only.
 # The former frozen reference envelope remains an opt-in for reproduction.
+# autotrim: the game's automatic trim (aces.exe 2.59.0.86, 0x141b81440: on in
+# every control mode except full real while the battle allows it, so on in
+# RB and off in SB). It fixes the trim at the one-g level-flight value and
+# keys the payload CG multiplier. instructor adds the Instructor's AoA limit
+# and needs autotrim. None follows instructor, the meaning of settings saved
+# before the switch existed.
 
 
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
     'manual_engine_controls','propeller_pitch_auto','propeller_pitch_percent','oil_radiator_percent','radiator_percent',
     'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','structural_limits','turn_response_mode',
-    'timestep_hz','sweep_percent','flaps_percent','instructor','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode',
+    'timestep_hz','sweep_percent','flaps_percent','instructor','autotrim','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode',
     'experimental_instantaneous_aero','experimental_lateral_trim','stationary_governor_mode','turn_direction'))
 
 
@@ -133,6 +139,9 @@ def settings(values=None):
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
     for key in ['manual_engine_controls','propeller_pitch_auto','default_ammunition','stores_released','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region','enable_exports']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
+    if result['autotrim'] is None:result['autotrim']=result['instructor']
+    if not isinstance(result['autotrim'],bool):raise ValueError('autotrim must be true or false')
+    if result['instructor'] and not result['autotrim']:raise ValueError('The Instructor requires autotrim')
     if not isinstance(result['ammunition_vehicle'],str):raise ValueError('ammunition_vehicle must be a vehicle ID')
     from aircraft_loadouts import normalize as normalize_loadout
     result['loadout']=normalize_loadout(result['loadout'])
@@ -176,6 +185,7 @@ def settings(values=None):
         if not isinstance(conditions,dict) or set(conditions)-AIRCRAFT_SETTINGS:
             raise ValueError('Unknown aircraft condition for '+name)
         requested=dict(result,**dict(conditions,aircraft=[name],aircraft_settings={}))
+        if 'instructor' in conditions and 'autotrim' not in conditions:requested['autotrim']=None
         if 'mach_curve_mode' not in conditions and (not values or 'mach_curve_mode' not in values):
             requested.pop('mach_curve_mode',None)
         resolved=settings(requested)
@@ -377,9 +387,9 @@ class TrimSolver:
             # A loadout lists every weapon of the aircraft (guns included) in the game's order.
             weapon_payloads=self.loadout['payloads'];ammunition_mass=self.loadout['gun_mass_kg']
             external_tanks=tuple(self.loadout['external_tanks'])
-        # This app's Instructor toggle selects snapshot bit 0 (auto-trim
-        # assistance). Optimized manual trim and torque/gyro are independent.
-        assistance_flags=int(self.config['instructor'])
+        # The autotrim switch is snapshot bit 0 (aces.exe 0x14307cd3b keys the
+        # payload CG multiplier on it, not on the Instructor).
+        assistance_flags=int(self.config['autotrim'])
         payload_scale=payload_scales(assistance_flags,*payload_multipliers())[0]
         if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads,payload_scale=payload_scale,external_tanks=external_tanks)
         else:
@@ -615,7 +625,7 @@ class TrimSolver:
                         cycle_seconds=(trial_cycle_seconds if trial_cycle_seconds is not None else
                                        20. if self.is_prop and self.engine.automatic and self.engine.prefer_short_search else 60.))
                     if kind=='control':
-                        bounds_at_point=self.instructor_at(value,speed_kmh/3.6,z[5])['control_bounds'] if self.config['instructor'] else value['allocation']['bounds']
+                        bounds_at_point=self.instructor_at(value,speed_kmh/3.6,z[5])['control_bounds'] if self.config['autotrim'] else value['allocation']['bounds']
                         bound=bounds_at_point[axis-2][1 if target>0 else 0]
                         margin=z[axis]-(bound-target*3e-5)
                     elif kind=='stall':margin=(value['stall_margin']-.002)/10.
@@ -636,7 +646,7 @@ class TrimSolver:
             res,value=evaluate_at(z)
             if kind=='control':
                 bounds_at_point=(self.instructor_at(value,speed_kmh/3.6,z[5])['control_bounds']
-                    if self.config['instructor'] else value['allocation']['bounds'])
+                    if self.config['autotrim'] else value['allocation']['bounds'])
                 z[axis]=np.clip(bounds_at_point[axis-2][1 if target>0 else 0]-target*3e-5,lower[axis],upper[axis])
                 res,value=evaluate_at(z)
             if kind=='stall':
@@ -719,7 +729,7 @@ class TrimSolver:
                         if kind=='wing force':return max(v['maximum_wing_load_ratios'])-.99995
                         if kind=='Instructor pitch':return self.instructor_at(v,speed_kmh/3.6,v['equilibrium_load_g'])['envelope_margin']-active_pitch_inset
                         bounds_at_point=(self.instructor_at(v,speed_kmh/3.6,v['equilibrium_load_g'])['control_bounds']
-                            if self.config['instructor'] else v['allocation']['bounds'])
+                            if self.config['autotrim'] else v['allocation']['bounds'])
                         bound=bounds_at_point[axis-2][1 if target>0 else 0]
                         return v['equilibrium_coordinates'][axis]-(bound-target*3e-5)
                     interior=curve.correct(curve.state(hint),event=active,event_tolerance=constraint_tolerance,max_iterations=8)
@@ -869,7 +879,7 @@ class TrimSolver:
                 if trial['load_g']<point['load_g']-.0002:return None
                 if not trial['valid'] or trial['authority_margin']<.08 or trial['stall_margin_deg']<.15 or (
                     self.config['structural_limits'] and max(trial['wing_load_ratios'])>.98) or (
-                    self.config['instructor'] and trial['instructor']['margin']<.01):
+                    self.config['autotrim'] and trial['instructor']['margin']<.01):
                     limit=self.boundary(speed_kmh,point,trial,continuation=False)
                     if limit:
                         limit['envelope_limit']['seed_method']='balanced angle continuation'
@@ -982,7 +992,7 @@ class TrimSolver:
                     force_mean_uncertainty_g=final['force_mean_uncertainty_g'],
                     angular_mean_uncertainty_rad_s2=final['angular_mean_uncertainty_rad_s2'].tolist(),
                     history_error=final['history_error'],periodic_aircraft_trajectory_certified=False)
-        if not self.config['instructor'] and not final['allocation']['reachable']:reasons.append('control authority')
+        if not self.config['autotrim'] and not final['allocation']['reachable']:reasons.append('control authority')
         if final['stall_margin']<0:reasons.append('post-stall')
         if abs(final['kinematic']['velocity'][1])>.005:
             reasons.append('vertical step did not close')
@@ -1006,7 +1016,9 @@ class TrimSolver:
             if not pitch['normal']:
                 reasons.append('reversed pitch response' if pitch['reversed'] else 'pitch response unresolved')
         instructor=None
-        if self.config['instructor'] and (not reasons or (getattr(self,'soft_admission',False) and set(reasons)<=SOFT_REASONS)):
+        # Autotrim bounds the controls around the one-g trim; the Instructor adds
+        # its AoA limit (instructor_aoa returns an infinite margin without it).
+        if self.config['autotrim'] and (not reasons or (getattr(self,'soft_admission',False) and set(reasons)<=SOFT_REASONS)):
 
 
             instructor=self.instructor_at(final,speed,load)
@@ -1441,7 +1453,7 @@ def compute(config=None, progress=None, cancelled=None, preview=None):
         for index,enabled in enumerate((False,True)):
             if cancelled and cancelled():raise InterruptedError('Calculation cancelled')
             condition=aircraft_settings(config,name)
-            condition.update(compare_instructor=False,instructor=enabled)
+            condition.update(compare_instructor=False,instructor=enabled,autotrim=enabled)
             def report(p):
                 total=p.get('total',0)
                 progress(dict(p,done=index*total+p.get('done',0),total=2*total,
@@ -1516,7 +1528,8 @@ def compute_regular(config=None, progress=None, cancelled=None):
                 assumptions=['Full-real manual aerodynamic trim','Full pilot authority; aerodynamic control-power loss retained',
                              'Constant fuel and intact components','Positive-AoA stall enforced; negative-AoA stall not an exclusion; aircraft trim model selected per entry','Still air; out of ground effect; retracted gear/brake',
                              'Fixed flap extension; speed domain ends at the selected extension’s automatic IAS/Mach limit or intact-flap damage threshold; flap travel and damage transients omitted',
-                             'Steady Instructor AoA schedule approximation; transient overshoot, delay and control history omitted' if config['instructor'] else 'Instructor off',
+                             'Steady Instructor AoA schedule approximation; transient overshoot, delay and control history omitted' if config['instructor'] else
+                             'Instructor off; autotrim holds the one-g level-flight trim' if config['autotrim'] else 'Instructor off',
                              'Manual additional mass is at configured CG; default ammunition uses native per-weapon masses and attachment positions'],
                 validation='Reconstructed kernels have native-code comparisons; this EM solver has not been validated against live flight.')
     total=len(speeds)*len(loads)*len(config['aircraft']); done=0

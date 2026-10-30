@@ -88,7 +88,7 @@ def margins(solver, p):
     only where production evaluated them (no earlier rejection)."""
     out = {}
     if p.get('stall_margin_deg') is not None:out['stall'] = p['stall_margin_deg']/10.
-    if p.get('authority_margin') is not None and not solver.config['instructor']:out['control'] = p['authority_margin']
+    if p.get('authority_margin') is not None and not solver.config['autotrim']:out['control'] = p['authority_margin']
     if solver.config['structural_limits'] and p.get('wing_load_ratios'):out['wing force'] = 1.-max(p['wing_load_ratios'])
     pr = p.get('pitch_response')
     if pr is not None and pr.get('margin') is not None and math.isfinite(pr['margin']):out['pitch response'] = pr['margin']
@@ -96,10 +96,10 @@ def margins(solver, p):
         prop = p.get('propulsion') or {}
         rpm = [1.-v/(lim*(1.+1e-6)) for v, lim in zip(prop.get('engine_rpm', ()), prop.get('engine_rpm_threshold', ()))]
         if rpm:out['engine RPM'] = min(rpm)
-    if solver.config['instructor']:
+    if solver.config['autotrim']:
         ctl = p.get('instructor')
         if ctl is not None and ctl.get('converged'):
-            out['Instructor pitch'] = ctl['envelope_margin']
+            if solver.config['instructor']:out['Instructor pitch'] = ctl['envelope_margin']
             out['control'] = ctl['margins']['control authority with auto trim']
     return out
 

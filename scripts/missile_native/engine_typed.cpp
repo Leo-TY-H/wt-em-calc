@@ -807,7 +807,17 @@ void diagnostic(const V& value) {
 }
 
 V result_value(const Prepared& p, const EvaluateResult& r) {
+    const EnergySummary& t = r.energy;
+    V passed = t.passed < 0 ? V() : V(t.passed == 1);
+    V terminal = make_dict({{"passed", passed}, {"speed_mps", t.passed < 0 ? V() : V(t.speed)},
+                           {"target_speed_mps", t.passed < 0 ? V() : V(t.target_speed)},
+                           {"speed_ratio", t.passed < 0 || t.target_speed <= 0. ? V() : V(t.ratio)},
+                           {"specific_kinetic_energy_j_kg", t.passed < 0 ? V() : V(t.kinetic)},
+                           {"minimum_specific_kinetic_energy_j_kg", t.passed < 0 ? V() : V(t.minimum)}});
     return make_dict({{"hit", V(r.hit)}, {"outcome", V(r.outcome)}, {"time_s", V(r.time_s)},
+                      {"terminal_energy_ok", r.hit ? passed : V()}, {"terminal_energy", terminal},
+                      {"turn_back", V(r.turn_back)}, {"pass_time_s", r.passed ? V(r.pass_time) : V()},
+                      {"pass_range_m", r.passed ? V(r.pass_range) : V()}, {"reopening_m", r.passed ? V(r.reopening) : V()},
                       {"event_time_s", r.has_event_time ? V(r.event_time_s) : V()},
                       {"closest_m", V(r.closest_m)}, {"closest_time_s", V(r.closest_time_s)}, {"steps", V(r.steps)},
                       {"family", p.family}, {"lifetime_s", p.lifetime}, {"distance_limit_m", p.distance_limit}});

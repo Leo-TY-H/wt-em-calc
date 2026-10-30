@@ -259,6 +259,41 @@ def fingerprint():
     return h.hexdigest()
 
 
+@lru_cache(maxsize=1)
+def _watched_outside_scripts():
+    files=[ROOT/'requirements-plotter.txt',*(source(name) for name in AIRCRAFT),*asset_sources()]
+    return sorted({str(p.parent) for p in files}),frozenset(os.path.normcase(str(p)) for p in files)
+
+
+def watched_stamp():
+    """Size and modification time of every file fingerprint() can read (all of scripts/ as a superset), from one
+    directory listing per folder: ~20 ms, where fingerprint() parses and hashes them in ~2.5 s."""
+    h=hashlib.sha256()
+    def listing(folder,keep=None):
+        with os.scandir(folder) as entries:
+            for entry in sorted(entries,key=lambda e:e.name):
+                if entry.is_dir():
+                    if keep is None and entry.name!='__pycache__':listing(entry.path)
+                elif keep is None or os.path.normcase(entry.path) in keep:
+                    st=entry.stat();h.update(f'{entry.path}\0{st.st_size}\0{st.st_mtime_ns}\n'.encode())
+    listing(ROOT/'scripts')
+    folders,keep=_watched_outside_scripts()
+    for folder in folders:listing(folder,keep)
+    return h.hexdigest()
+
+
+def code_changed():
+    """A page load's update check (Leo, 2026-10-29: the search waited ~2.5 s for it on every load): the full
+    fingerprint runs only after a watched file changed; a change that leaves it equal (a touched file) is remembered."""
+    global WATCHED_STAMP
+    stamp=watched_stamp()
+    if stamp==WATCHED_STAMP:return False
+    if fingerprint()!=RUNTIME_FINGERPRINT:return True
+    WATCHED_STAMP=stamp;return False
+
+
+# The stamp is taken first, so an edit made while the fingerprint is computed still counts as a change.
+WATCHED_STAMP=watched_stamp() if current_process().name=='MainProcess' else None
 RUNTIME_FINGERPRINT=fingerprint() if current_process().name=='MainProcess' else None
 DATA_FILES={}
 
@@ -467,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/meta':
             # Only a page load opts into edited equations. Running jobs keep
             # their session; Calculate never scans sources or initiates updates.
-            if parse_qs(urlparse(self.path).query).get('refresh')==['1'] and fingerprint()!=RUNTIME_FINGERPRINT:
+            if parse_qs(urlparse(self.path).query).get('refresh')==['1'] and code_changed():
                 with LOCK:
                     busy=active_jobs()
                     if not busy:RESTART_REQUESTED.set()
@@ -475,7 +510,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(dict(error='Loading updated calculator.',code='server_restarting'),503)
                     threading.Thread(target=self.server.shutdown,daemon=True).start()
                     return
-            return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,
+            from engine_performance import without_wep
+            return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,no_wep=without_wep(),
                 result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info(),
                 game_data=game_data()))
         if path.startswith('/api/loadouts/'):
@@ -486,6 +522,26 @@ class Handler(BaseHTTPRequestHandler):
             from aircraft_loadouts import summary as loadout_summary
             try:return self.respond(loadout_summary(name,vehicle))
             except (OSError,ValueError,KeyError) as error:return self.respond(dict(supported=False,reason=str(error)))
+        if path.startswith('/api/engine/'):
+            # Engine performance page: one aircraft's sweeps. ?sweep=altitude|speed|both&altitude_m=&speed_kmh=&throttle=percent
+            # &pitch=auto|percent&level=0|1 (1: SEP and acceleration in 1 g level flight)
+            name=unquote(path.removeprefix('/api/engine/'))
+            if name not in AIRCRAFT:return self.respond(dict(error='Unknown aircraft'),404)
+            query=parse_qs(urlparse(self.path).query)
+            try:
+                if any(len(v)!=1 for v in query.values()):raise ValueError('Repeated parameter')
+                altitude,speed=float(query.get('altitude_m',['0'])[0]),float(query.get('speed_kmh',['300'])[0])
+                throttle=float(query.get('throttle',['110'])[0])
+                raw=query.get('pitch',['auto'])[0];pitch=None if raw=='auto' else float(raw)
+                sweep=query.get('sweep',['both'])[0]
+                if sweep not in ('altitude','speed','both'):raise ValueError('Unknown sweep')
+                level=query.get('level',['0'])[0]
+                if level not in ('0','1'):raise ValueError('level must be 0 or 1')
+                for label,value,low,high in (('Altitude',altitude,0.,18000.),('Speed',speed,5.,1600.),('Throttle',throttle,0.,110.),('Propeller pitch',pitch,0.,100.)):
+                    if value is not None and not (math.isfinite(value) and low<=value<=high):raise ValueError(f'{label} out of range')
+                from engine_performance import compute as engine_performance
+                return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent,None if sweep=='both' else sweep,level=='1'))
+            except ValueError as error:return self.respond(dict(error=str(error)),400)
         if path.startswith('/api/jobs/'):
             parts=path.split('/');key=parts[3]
             if len(key)!=20 or any(c not in '0123456789abcdef' for c in key):return self.respond(dict(error='Invalid job'),400)
@@ -548,7 +604,9 @@ class Handler(BaseHTTPRequestHandler):
         names={'/':'index.html','/index.html':'index.html','/app.js':'app.js','/config.js':'config.js','/styles.css':'styles.css','/vendor/plotly.min.js':'vendor/plotly.min.js'}
         names.update({'/release.json':'release.json','/release-links.js':'release-links.js','/release-links.css':'release-links.css'})
         names.update({'/missiles.js':'missiles.js','/missiles.css':'missiles.css'})
+        names.update({f'/{name}':name for name in ('missile-launchers.js','missile-models.js','missile-plot.js','missile-models.json','target-model.json','missile-setup3d.js','vendor/three.module.min.js')})
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
+        names.update({'/engine.js':'engine.js','/engine.css':'engine.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
@@ -588,6 +646,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(dict(cancelled=cancel_envelope(path.split('/')[4])))
             if path=='/api/jobs':
                 key=start_job(body);return self.respond(dict(id=key),202)
+            if path=='/api/engine':
+                # Engine performance page with the popup's mass settings (engine_performance.request).
+                from engine_performance import request as engine_request
+                return self.respond(engine_request(body,pitch_percent))
             if path=='/api/trial':
                 from em_uncorrected import request
                 return self.respond(request(body))
@@ -634,6 +696,8 @@ def main():
             except (OSError,ValueError,KeyError,TypeError):pass
         raise
     print('EM plotter: '+url,flush=True)
+    # The aircraft list's no-WEP set takes ~3.5 s the first time; build it before the first page load asks.
+    threading.Thread(target=lambda:__import__('engine_performance').without_wep(),daemon=True).start()
     if args.open:threading.Timer(.4,lambda:webbrowser.open(url)).start()
     try:server.serve_forever()
     except KeyboardInterrupt:pass
