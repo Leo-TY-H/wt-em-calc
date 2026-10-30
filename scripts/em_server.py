@@ -542,6 +542,17 @@ class Handler(BaseHTTPRequestHandler):
                 from engine_performance import compute as engine_performance
                 return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent,None if sweep=='both' else sweep,level=='1'))
             except ValueError as error:return self.respond(dict(error=str(error)),400)
+        if path.startswith('/api/engine-ratings/'):
+            # Engine ratings page: each engine's temperature limits. ?ratings=30,10,5,1 (minutes; up to 8, each in (0, 600]);
+            # absent: 30,10,5,1; empty (?ratings=, kept as blank): continuous limit only
+            name=unquote(path.removeprefix('/api/engine-ratings/'))
+            if name not in AIRCRAFT:return self.respond(dict(error='Unknown aircraft'),404)
+            query=parse_qs(urlparse(self.path).query,keep_blank_values=True)
+            try:
+                if any(len(v)!=1 for v in query.values()):raise ValueError('Repeated parameter')
+                from engine_ratings import limits,parse_ratings
+                return self.respond(dict(limits(name,parse_ratings(query.get('ratings',[None])[0])),game_data=game_data()))
+            except ValueError as error:return self.respond(dict(error=str(error)),400)
         if path.startswith('/api/jobs/'):
             parts=path.split('/');key=parts[3]
             if len(key)!=20 or any(c not in '0123456789abcdef' for c in key):return self.respond(dict(error='Invalid job'),400)
@@ -607,6 +618,7 @@ class Handler(BaseHTTPRequestHandler):
         names.update({f'/{name}':name for name in ('missile-launchers.js','missile-models.js','missile-plot.js','missile-models.json','target-model.json')})
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
         names.update({'/engine.js':'engine.js','/engine.css':'engine.css'})
+        names.update({'/ratings.js':'ratings.js','/ratings.css':'ratings.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})

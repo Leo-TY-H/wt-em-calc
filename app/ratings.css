@@ -1,0 +1,44 @@
+/* Engine ratings page: the Engine performance page's sidebar, list and cards; one block of tables and a chart per engine. */
+#ratings-workspace .sidebar{position:sticky;top:var(--header);align-self:start;height:calc(100vh - var(--header));overflow-y:auto;scrollbar-width:thin;scrollbar-color:#34343c transparent}
+@media(max-width:760px){#ratings-workspace .sidebar{position:static;align-self:stretch;height:auto;overflow:visible}}
+#ratings-picker{min-width:0;margin:0 0 6px}
+#ratings-search{width:100%;min-width:0;height:37px;padding:8px 10px;background:var(--panel2);color:var(--text);border:1px solid var(--line);font:inherit}
+#ratings-search:focus{border-color:var(--hairline)}
+#ratings-list{max-height:310px;margin-top:8px;padding:4px;border:1px solid var(--line);background:#000}
+#ratings-list .aircraft-option{gap:8px;margin:0;padding:6px 6px 6px 9px;border:0;background:none}
+#ratings-list .aircraft-option:hover{background:#111116}
+#ratings-list .aircraft-option strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ratings-list .aircraft-option small{display:block;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ratings-list code,.ratings-aircraft-heading code{font:11px/1.4 ui-monospace,Consolas,monospace;color:#7b7b83}
+#ratings-list .aircraft-option button{display:grid;place-items:center;flex:none;width:28px;height:28px;padding:0;font-size:0}
+#ratings-list .aircraft-option button::before{content:"+";font-size:18px;line-height:1}
+#ratings-selected{width:100%;margin:10px 0 4px}
+#ratings-selected .ratings-entry{display:flex;align-items:center;gap:10px;padding:10px 12px}
+#ratings-selected .entry-heading{flex:1;min-width:0}
+#ratings-selected .entry-heading+.entry-actions{margin-top:0}
+/* Results: one section per aircraft, one block per distinct engine. */
+#ratings-results>.empty{min-height:420px}
+.ratings-aircraft{padding:0 0 22px;margin:0 0 22px;border-bottom:1px solid var(--line)}
+.ratings-aircraft:last-child{border-bottom:0}
+.ratings-stale{opacity:.45}
+.ratings-aircraft-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 6px}
+.ratings-aircraft-heading .entry-number{color:var(--entry-color)}
+.ratings-aircraft-heading h2{margin:0;font-size:17px;font-weight:600}
+.ratings-engine{margin-top:14px}
+.ratings-engine h3{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#c8c8d2}
+.ratings-engine-body{display:grid;grid-template-columns:minmax(300px,420px) minmax(0,1fr);gap:24px;align-items:start}
+.ratings-tables{min-width:0}
+.ratings-table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.ratings-table th,.ratings-table td{padding:5px 8px;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
+.ratings-table thead th{border-top:0;padding-top:0;font-size:11px;font-weight:500;color:var(--muted)}
+.ratings-table th:first-child{text-align:left;padding-left:0}
+.ratings-table tbody th{font-weight:400;color:#acacb4}
+.ratings-table td{color:var(--text)}
+.ratings-radiator{margin-top:14px}
+.ratings-swatch{display:inline-block;width:12px;height:2px;margin:0 6px 3px 0;vertical-align:middle}
+.ratings-fluids{display:flex;flex-wrap:wrap;gap:4px 16px;margin:7px 0 0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ratings-excluded{margin:10px 0 0;font-size:12px;color:var(--muted)}
+.ratings-port{margin-left:6px;padding:0 4px;border:1px solid var(--line);font-size:10px;color:var(--muted);text-decoration:none;cursor:help}
+.ratings-chart{height:260px;min-width:0}
+@media(max-width:1150px){.ratings-engine-body{grid-template-columns:minmax(0,1fr);gap:12px}}
+@media(max-width:760px){.ratings-table th,.ratings-table td{padding:5px 5px}}

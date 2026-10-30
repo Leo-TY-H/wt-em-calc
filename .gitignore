@@ -40,6 +40,8 @@
 !/app/missiles.js
 !/app/missile-envelope.css
 !/app/missile-envelope.js
+!/app/ratings.css
+!/app/ratings.js
 !/app/release-links.css
 !/app/release-links.js
 !/app/release.json
@@ -176,6 +178,7 @@
 !/scripts/engine_performance.py
 !/scripts/engine_commands.py
 !/scripts/engine_supply.py
+!/scripts/engine_ratings.py
 !/scripts/flap_model.py
 !/scripts/fm_loader.py
 !/scripts/fuel_layout.py
@@ -554,6 +557,11 @@
 !/scripts/structural_limits.py
 !/scripts/sync_game_data.py
 !/scripts/tail_model.py
+!/scripts/test_engine_ratings.py
+!/scripts/thermal_core.py
+!/scripts/thermal_counters.py
+!/scripts/thermal_properties.py
+!/scripts/thermal_validated.py
 !/scripts/turbine_general.py
 !/scripts/vehicle_names.py
 !/scripts/windows_instructor_source.py
