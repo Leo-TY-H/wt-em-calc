@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "base_commit": "546f90e35873876ecd24191a07df49633c8f2b91",
+  "checked_commit": "501af3e34af2cb82d65140297e1b994b444c4b88",
+  "checked_version": "2.59.0.93",
+  "findings": {
+    "su_9m342": {
+      "status": "ground_variant_only",
+      "reason": "No aircraft launcher. The ZSU-23-4M4 uses a separate ground-launch 9M342 ammunition record.",
+      "evidence": [
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/weapons/groundmodels_weapons/72mm_9s846_4_rocket_launcher.blkx"
+      ]
+    },
+    "us_aim_120c_7": {
+      "status": "ground_variant_only",
+      "reason": "No aircraft launcher. NASAMS and CLAWS use a separate AIM-120C-7 SAM ammunition record.",
+      "evidence": [
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/weapons/groundmodels_weapons/178mm_nasams_user_cannon.blkx"
+      ]
+    },
+    "us_aim_26b": {
+      "status": "active",
+      "reason": "Current F-102A weapon slots support AIM-26B; the older local aircraft snapshot omitted this loadout.",
+      "aircraft": [
+        "f_102a_late",
+        "f_102a_greece"
+      ],
+      "evidence": [
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/flightmodels/f_102a_late.blkx",
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/flightmodels/f_102a_greece.blkx"
+      ]
+    },
+    "us_aim_54b": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile in the checked game data; no assigned aircraft, preset or launcher container.",
+      "evidence": []
+    },
+    "cn_pf10": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile in the checked game data; no assigned aircraft, preset or launcher container.",
+      "evidence": []
+    },
+    "cn_pl11": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile in the checked game data; no assigned aircraft, preset or launcher container.",
+      "evidence": []
+    },
+    "cn_pl15": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile, including its default alias; no assigned aircraft, preset or launcher container.",
+      "evidence": []
+    },
+    "su_pl9": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile. Its localized bullet identifier is cn_pl9; neither identifier leads to an aircraft launcher.",
+      "evidence": []
+    },
+    "il_pyton_4": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile. The old F-4E event preset named python_4 selects AIM-9J and AIM-7E-2 slots, not Python 4.",
+      "evidence": [
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/flightmodels/weaponpresets/f_4e_event_python_4.blkx"
+      ]
+    },
+    "su_r_13m": {
+      "status": "unused_air_profile",
+      "reason": "Unused aircraft missile profile. A remaining MiG-19 preset references it, but no aircraft assigns that preset. Active MiG loadouts use the distinct R-13M1.",
+      "evidence": [
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/flightmodels/weaponpresets/mig_19_r13m_x2.blkx"
+      ]
+    },
+    "uk_skyflash_aim_7": {
+      "status": "unused_air_profile",
+      "reason": "Unused original Skyflash profile. Assigned aircraft and the Skyflash launcher container use the distinct Skyflash (DF) or SuperTEMP variants.",
+      "evidence": [
+        "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/weapons/containers/us_lau_115a_skyflash.blkx"
+      ]
+    },
+    "us_fim-92b": {
+      "status": "unused_air_profile",
+      "reason": "Unused FIM-92B aircraft missile profile; assigned helicopter Stinger launchers use separate ATAS profiles.",
+      "evidence": []
+    }
+  },
+  "aircraft_updates": {
+    "f_102a_late": {
+      "source_commit": "501af3e34af2cb82d65140297e1b994b444c4b88",
+      "source_version": "2.59.0.93",
+      "source_sha": "a7c04b4a665396abc9d1cf7cd6c28a6d7803b882",
+      "source_url": "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/flightmodels/f_102a_late.blkx",
+      "mounts": [
+        {
+          "path": [
+            "WeaponSlots",
+            "WeaponSlot",
+            3,
+            "WeaponPreset",
+            4,
+            "Weapon"
+          ],
+          "blk": "gamedata/weapons/rocketGuns/us_aim_26b.blk",
+          "bullets": 1,
+          "trigger": "aam"
+        },
+        {
+          "path": [
+            "WeaponSlots",
+            "WeaponSlot",
+            3,
+            "WeaponPreset",
+            5,
+            "Weapon",
+            0
+          ],
+          "blk": "gamedata/weapons/rocketGuns/us_aim_26b.blk",
+          "bullets": 1,
+          "trigger": "aam"
+        },
+        {
+          "path": [
+            "WeaponSlots",
+            "WeaponSlot",
+            3,
+            "WeaponPreset",
+            5,
+            "Weapon",
+            1
+          ],
+          "blk": "gamedata/weapons/rocketGuns/us_aim_26b.blk",
+          "bullets": 1,
+          "trigger": "aam"
+        }
+      ],
+      "radar_sources": {
+        "us_mg_10_irst": "9f22db0972da3d5bb35477564d65f58063bd59bf"
+      },
+      "base_sha": "1fbcc336004209a7bb561e8e1700e0eeb5ab6243"
+    },
+    "f_102a_greece": {
+      "source_commit": "501af3e34af2cb82d65140297e1b994b444c4b88",
+      "source_version": "2.59.0.93",
+      "source_sha": "d0b30c1a756bf95aba99bcdcbaf00d6b59fb679b",
+      "source_url": "https://github.com/gszabi99/War-Thunder-Datamine/blob/501af3e34af2cb82d65140297e1b994b444c4b88/aces.vromfs.bin_u/gamedata/flightmodels/f_102a_greece.blkx",
+      "mounts": [
+        {
+          "path": [
+            "WeaponSlots",
+            "WeaponSlot",
+            3,
+            "WeaponPreset",
+            4,
+            "Weapon"
+          ],
+          "blk": "gamedata/weapons/rocketGuns/us_aim_26b.blk",
+          "bullets": 1,
+          "trigger": "aam"
+        },
+        {
+          "path": [
+            "WeaponSlots",
+            "WeaponSlot",
+            3,
+            "WeaponPreset",
+            5,
+            "Weapon",
+            0
+          ],
+          "blk": "gamedata/weapons/rocketGuns/us_aim_26b.blk",
+          "bullets": 1,
+          "trigger": "aam"
+        },
+        {
+          "path": [
+            "WeaponSlots",
+            "WeaponSlot",
+            3,
+            "WeaponPreset",
+            5,
+            "Weapon",
+            1
+          ],
+          "blk": "gamedata/weapons/rocketGuns/us_aim_26b.blk",
+          "bullets": 1,
+          "trigger": "aam"
+        }
+      ],
+      "radar_sources": {
+        "us_mg_10": "bab3885be2ed2ed86b498597167a1c3d2ac9d1f2"
+      },
+      "base_sha": "1be718db20883fe98ae7b658f5f3948daf7e6d90"
+    }
+  }
+}
