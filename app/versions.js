@@ -6,7 +6,7 @@
 window.GameVersions=(()=>{
   const base=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   const root=path=>base?base+path:'.'+path;
-  const START_LIMIT_S=120;
+  const START_LIMIT_S=120,START_POLL_MS=400;
   let list=null,history=null;
   const metas=new Map(),starts=new Map();
 
@@ -52,8 +52,8 @@ window.GameVersions=(()=>{
     if(!response.ok)throw new Error(`Build ${id} did not answer (${response.status})`);
     return response.json();
   }
-  // Resolves once the build's server answers, starting it if needed. onStatus reports the wait.
-  function ensure(version,onStatus=()=>{}){
+  // Resolves once the build's server answers, starting it if needed.
+  function ensure(version){
     if(isDefault(version))return Promise.resolve(null);
     const id=server(version),known=metas.get(id);
     if(known)return known;
@@ -64,8 +64,7 @@ window.GameVersions=(()=>{
       if(!started.ok)throw new Error((await started.json().catch(()=>({}))).error||`Build ${id} cannot start`);
       const until=performance.now()+START_LIMIT_S*1000;
       while(performance.now()<until){
-        onStatus(`Starting ${id}…`);
-        await new Promise(resolve=>setTimeout(resolve,2000));
+        await new Promise(resolve=>setTimeout(resolve,START_POLL_MS));
         try{const value=await requestMeta(id);waiting.value=value;return value;}
         catch(cause){if(!cause.starting&&!(cause instanceof TypeError))throw cause;}
       }
@@ -77,6 +76,16 @@ window.GameVersions=(()=>{
   }
   // A server stopped while idle has to be asked again.
   const forget=version=>metas.delete(server(version));
+  // A request to a build's server: it starts the server if needed, and again if it was stopped while idle.
+  async function request(path,options,version){
+    if(isDefault(version))return fetch(url(path,version),options);
+    await ensure(version);
+    let response=null;
+    try{response=await fetch(url(path,version),options);}catch(cause){if(!(cause instanceof TypeError))throw cause;}
+    if(response&&![502,503,504].includes(response.status))return response;
+    forget(version);await ensure(version);
+    return fetch(url(path,version),options);
+  }
 
   // ---- The search in an edit popup --------------------------------------------------------
   // file: the row's flight model or missile file name; kind: 'fm' or 'missile'.
@@ -118,15 +127,14 @@ window.GameVersions=(()=>{
     rows.addEventListener('click',async event=>{
       const row=event.target.closest('[data-version]');
       if(!row||row.disabled||row.dataset.version===selected)return;
-      const version=row.dataset.version;
+      const version=row.dataset.version,previous=selected;
+      // The switch is immediate. onPick's string means the build turned out not to fit and the row went back.
+      show(version);
       try{
-        say(`Loading ${version}…`);
-        await ensure(version,say);
         const result=await onPick(version===list.default?undefined:version);
-        if(typeof result==='string'){say(result);return;}
-        show(version);
+        if(typeof result==='string'){show(previous);say(result);return;}
         if(result?.note)say(result.note);
-      }catch(cause){say(cause.message);}
+      }catch(cause){show(previous);say(cause.message);}
     });
     loadHistory().then(value=>{
       track=value?.[kind]?.[file]||null;
@@ -200,17 +208,25 @@ window.GameVersions=(()=>{
     }
     return missileMetas.get(id);
   }
-  async function missileRow(meta,base,version){
+  // The row exists at once, from what the page knows of the missile; that build's own values replace them when they arrive.
+  function missileRow(meta,base,version,onLoaded=()=>{}){
     if(isDefault(version))return base;
     const key=`${base}@${server(version)}`;
-    if(!meta.missiles.some(m=>m.id===key)){
-      const other=await missileMeta(version),row=other.missiles.find(m=>m.id===base);
-      if(!row)throw new Error('This missile is not in that build.');
-      meta.missiles.push({...row,id:key,base_id:base,base_name:row.name,name:`${row.name} · ${server(version)}`});
+    if(meta.missiles.some(m=>m.id===key))return key;
+    const row=meta.missiles.find(m=>m.id===base),entry={...row,id:key,base_id:base,base_name:row.name,name:`${row.name} · ${server(version)}`};
+    meta.missiles.push(entry);
+    entry.loading=missileMeta(version).then(other=>{
+      const fresh=other.missiles.find(m=>m.id===base);
+      if(!fresh)throw new Error('This missile is not in that build.');
+      for(const item of meta.missiles)if(item.id===key||item.id.startsWith(key+'~'))
+        Object.assign(item,fresh,{id:item.id,base_id:base,base_name:fresh.name,name:`${fresh.name} · ${server(version)}`});
       meta.aircraft={...other.aircraft,...meta.aircraft};
-    }
+      onLoaded();
+    }).catch(onLoaded);
     return key;
   }
+  // Calculate waits for these: a launcher is checked against the build's own list.
+  const rowsLoaded=meta=>Promise.all(meta.missiles.map(m=>m.loading));
   function versionDialog(){
     let dialog=document.getElementById('version-dialog');
     if(dialog)return dialog;
@@ -222,13 +238,13 @@ window.GameVersions=(()=>{
     return dialog;
   }
   // onKey gets the row's new key; taken: the keys of all rows.
-  function missileDialog({key,meta,color,taken,onKey}){
+  function missileDialog({key,meta,color,taken,onKey,onLoaded}){
     const dialog=versionDialog(),base=baseMissile(key),row=meta.missiles.find(m=>m.id===key);
     dialog.querySelector('.eyebrow').textContent='MISSILE SETTINGS';
     dialog.querySelector('h2').textContent=row?.base_name||row?.name||base;
     dialog.style.setProperty('--entry-color',color);
-    picker(dialog.querySelector('.version-picker'),{file:base,kind:'missile',current:missileVersion(key),onPick:async version=>{
-      onKey(freeRow(meta,await missileRow(meta,base,version),taken.filter(other=>other!==key)));dialog.close();
+    picker(dialog.querySelector('.version-picker'),{file:base,kind:'missile',current:missileVersion(key),onPick:version=>{
+      onKey(freeRow(meta,missileRow(meta,base,version,onLoaded),taken.filter(other=>other!==key)));dialog.close();
     }});
     dialog.showModal();
   }
@@ -291,6 +307,6 @@ window.GameVersions=(()=>{
     }));
     if(container.dataset.token===token)container.innerHTML='<h2>What changed</h2>'+sections.join('');
   }
-  return {load,enabled,url,label,rowLabel,rulesNote,meta,ensure,forget,picker,split,merge,loadHistory,isDefault,baseMissile,missileVersion,freeRow,missileRow,missileDialog,changes,
+  return {load,enabled,url,request,label,rowLabel,rulesNote,meta,ensure,forget,picker,split,merge,loadHistory,isDefault,baseMissile,missileVersion,freeRow,missileRow,rowsLoaded,missileDialog,changes,
     get default(){return list?.default;},get dev(){return list?.builds.find(b=>b.channel==='dev')?.id;}};
 })();

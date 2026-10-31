@@ -27,7 +27,7 @@ async function api(path, options={}, version) {
   for(let attempt=0;attempt<attempts;attempt++){
     let response,body;
     try{
-      response=await fetch(apiUrl(path,version),options);
+      response=await (version&&window.GameVersions?.enabled()?GameVersions.request(path,options,version):fetch(apiUrl(path,version),options));
       // Proxy outage responses may be HTML or have no body at all.
       if([502,503,504].includes(response.status)&&!pageLoad){
         throw Object.assign(new Error('The calculation server is temporarily unavailable.'),{retryable:true});
@@ -934,15 +934,27 @@ async function startJob({version,config}){
 function openVersionSearch(entry){
   window.GameVersions?.picker($('entry-version'),{file:rowOf(entry).fm_id||entry.aircraft_id,kind:'fm',current:entry.version,onPick:version=>setEntryVersion(entry,version)});
 }
+// The row changes at once. The build's own values and checks follow when its data arrives, unless the row has moved on.
 async function setEntryVersion(entry,version){
-  const row=metaOf(version).aircraft[entry.aircraft_id];
-  if(!row)return 'This aircraft is not in that build.';
-  if(!row.supported)return 'Not available in that build: '+(row.reason||'model integration pending');
+  const previous=entry.version,current=()=>entry.version===version&&state.entries.includes(entry);
+  const apply=value=>{if(value)entry.version=value;else delete entry.version;renderEntries();syncLabels();};
+  const back=text=>{
+    if(current()){apply(previous);if(!$('entry-dialog').open)error(text);}
+    return text;
+  };
   saveCondition();
-  if(version)entry.version=version;else delete entry.version;
+  apply(version);
+  try{await GameVersions.ensure(version);}catch(cause){return back(cause.message);}
+  if(!current())return undefined;
+  const row=metaOf(version).aircraft[entry.aircraft_id];
+  if(!row)return back('This aircraft is not in that build.');
+  if(!row.supported)return back('Not available in that build: '+(row.reason||'model integration pending'));
+  saveCondition();
   const c=state.conditions[entry.id]=aircraftConditions(entry.aircraft_id,state.conditions[entry.id],version);
   const note=await dropMissingLoadout(row,entry.aircraft_id,c,version);
-  showCondition(entry.id);renderEntries();syncLabels();
+  if(!current())return undefined;
+  if(state.editing===entry.id)showCondition(entry.id);
+  renderEntries();syncLabels();
   return {note:note||(row.data_version_used?`That build couldn't compile this aircraft, so it uses data from ${row.data_version_used}.`:'')};
 }
 // A loadout the chosen build doesn't have is cleared, and the popup says so.

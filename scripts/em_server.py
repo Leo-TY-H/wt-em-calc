@@ -5,12 +5,14 @@ if __name__ in ('__main__','__mp_main__'):
 import argparse
 import ast
 import errno
+import gzip
 import hashlib
 import json
 import math
 import orjson
 import mimetypes
 import os
+import pickle
 import subprocess
 import sys
 from multiprocessing import current_process
@@ -307,15 +309,46 @@ def code_changed():
     """A page load's update check (Leo, 2026-10-29: the search waited ~2.5 s for it on every load): the full
     fingerprint runs only after a watched file changed; a change that leaves it equal (a touched file) is remembered."""
     global WATCHED_STAMP
+    if BUILD_SERVER:return False
     stamp=watched_stamp()
     if stamp==WATCHED_STAMP:return False
     if fingerprint()!=RUNTIME_FINGERPRINT:return True
     WATCHED_STAMP=stamp;return False
 
 
+# A game build's server (versions.js): its files can't change, so it has no update check, and it loads the catalog
+# saved for its release and build, which is most of a server's start (Leo, 2026-10-31: a switch shouldn't take time).
+BUILD_SERVER=bool(os.environ.get('WT_EM_BUILD_SERVER'))
+
+
+def start_cache_key():
+    return dict(commit=release_info().get('commit'),build=json.loads((ROOT/'references/data-version.json').read_bytes()).get('version'))
+
+
+def save_start_cache(output):
+    from aircraft_catalog import catalog
+    from engine_performance import without_wep
+    output.write(gzip.compress(pickle.dumps(dict(key=start_cache_key(),catalog=catalog(),no_wep=without_wep()),protocol=pickle.HIGHEST_PROTOCOL)))
+
+
+def load_start_cache(path):
+    # Written by the host for this image and mounted read-only. Anything else falls back to building the catalog.
+    try:saved=pickle.loads(gzip.decompress(Path(path).read_bytes()))
+    except (OSError,EOFError,ValueError,pickle.UnpicklingError):return False
+    if saved.get('key')!=start_cache_key():return False
+    from aircraft_catalog import install_worker_catalog
+    import engine_performance
+    install_worker_catalog(saved['catalog'])
+    engine_performance.without_wep=lambda:saved['no_wep']
+    return True
+
+
+if BUILD_SERVER and current_process().name=='MainProcess' and os.environ.get('WT_EM_START_CACHE'):load_start_cache(os.environ['WT_EM_START_CACHE'])
 # The stamp is taken first, so an edit made while the fingerprint is computed still counts as a change.
-WATCHED_STAMP=watched_stamp() if current_process().name=='MainProcess' else None
-RUNTIME_FINGERPRINT=fingerprint() if current_process().name=='MainProcess' else None
+WATCHED_STAMP=watched_stamp() if current_process().name=='MainProcess' and not BUILD_SERVER else None
+if current_process().name!='MainProcess':RUNTIME_FINGERPRINT=None
+elif BUILD_SERVER:RUNTIME_FINGERPRINT=hashlib.sha256(json.dumps(start_cache_key(),sort_keys=True).encode()).hexdigest()
+else:RUNTIME_FINGERPRINT=fingerprint()
 DATA_FILES={}
 
 
@@ -785,7 +818,9 @@ def main():
     parser.add_argument('--host',default=os.environ.get('WT_EM_HOST','127.0.0.1'))
     parser.add_argument('--port',type=int,default=int(os.environ.get('PORT','8765')))
     parser.add_argument('--open',action='store_true');parser.add_argument('--sample',action='store_true')
+    parser.add_argument('--save-start-cache',action='store_true',help='Write what a game build\'s server loads at its start to stdout')
     args=parser.parse_args()
+    if args.save_start_cache:return save_start_cache(sys.stdout.buffer)
     if args.sample:
         config=settings();key=key_for(config);event=threading.Event()
         JOBS[key]=dict(id=key,status='queued',settings=config,cancel=event);run_job(key,config,event)
