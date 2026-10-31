@@ -493,7 +493,7 @@ def request(body, report=None):
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not low <= v <= high:
             raise ValueError(key + ' out of range')
         return v
-    altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 0., 1600.), number('throttle', 110., 0., 110.)
+    altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 0., math.inf), number('throttle', 110., 0., 110.)
     pitch = body.get('pitch', 'auto');pitch = None if pitch == 'auto' else number('pitch', None, 0., 100.)
     sweep = body.get('sweep', 'both')
     if sweep not in ('altitude', 'speed', 'sfc', 'both'):raise ValueError('Unknown sweep')
@@ -502,9 +502,10 @@ def request(body, report=None):
         r = body.get(key)
         if r is None:return None
         if (not isinstance(r, list) or len(r) != 2 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in r)
-                or not 0 <= r[0] < r[1] <= high):raise ValueError(key + ' must be two increasing values from 0 to ' + str(int(high)))
+                or not 0 <= r[0] < r[1] <= high):raise ValueError(key + ' must be two increasing values from 0' + (f' to {int(high)}' if high < math.inf else ''))
         return float(r[0]), float(r[1])
-    altitudes, speeds = span('altitude_range', 18000.), span('speed_range', 1600.)
+    # True airspeed has no upper limit (Leo, 2026-10-30): a sweep stays at most 800 steps and ends where states stop solving.
+    altitudes, speeds = span('altitude_range', 18000.), span('speed_range', math.inf)
     quantity = body.get('quantity')
     if quantity is not None and quantity not in CURVES and quantity != 'sfc':raise ValueError('Unknown quantity')
     mass = body.get('mass', {})

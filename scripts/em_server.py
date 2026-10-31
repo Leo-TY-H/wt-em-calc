@@ -80,6 +80,9 @@ def download_data(key):
 def requested_contours(key,levels):
     data=named_data(key)
     validate_contour_coverage(data,levels)
+    if data.get('kind')=='altitude':
+        from altitude_chart import contour_paths as altitude_contours
+        return altitude_contours(data,levels)
     return contour_paths(data,levels)
 
 
@@ -221,12 +224,30 @@ def solve_point(key,entry,speed_kmh,load_g):
                        reasons=['stationary search unresolved'],search_unresolved=str(error))
         pitch_percent(point,solver)
         point=control_percent(point,solver.controls['invert_elevator'])
-    def public(value):
-        if isinstance(value,dict):return {k:public(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
-        if isinstance(value,(list,tuple)):return [public(v) for v in value]
-        return value
     from overrev import annotate
-    return annotate(dict(public(point),solved_at_request=True))
+    return annotate(dict(public_point(point),solved_at_request=True))
+
+
+def public_point(value):
+    if isinstance(value,dict):return {k:public_point(v) for k,v in value.items() if k not in ('sticks','trim') and not k.startswith('_')}
+    if isinstance(value,(list,tuple)):return [public_point(v) for v in value]
+    return value
+
+
+def solve_altitude_point(key,entry,speed_kmh,altitude_m):
+    """Full-model state at a clicked position of a stored altitude envelope."""
+    for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Altitude',altitude_m,0.,18000.)):
+        if not math.isfinite(value) or not low<=value<=high:raise ValueError(f'{label} out of range')
+    with LOCK:result=RESULTS.get(key)
+    if result is None:raise FileNotFoundError('Result expired')
+    if entry not in result['points']:raise FileNotFoundError('Unknown aircraft entry')
+    from altitude_chart import clicked_point
+    with POINT_LOCK:
+        point,solver=clicked_point(result['data'],result['points'][entry],entry,speed_kmh,altitude_m)
+        pitch_percent(point,solver)
+        point=control_percent(point,solver.controls['invert_elevator'])
+    from overrev import annotate
+    return annotate(dict(public_point(point),solved_at_request=True,altitude_m=altitude_m))
 
 
 def fingerprint():
@@ -319,6 +340,28 @@ def game_data():
     if inputs:data.update(inputs_source_version=inputs['source_version'],inputs_geometry_version=inputs['geometry_version'],
         inputs_channel=inputs['channel'],inputs_kept_items=inputs['kept'],inputs_unavailable_items=inputs['unavailable'])
     return data
+
+
+LAST_REQUEST=[time.monotonic()]
+
+
+@lru_cache(maxsize=1)
+def march_native_verified():
+    # False: charts run on the slower Python loop, because the compiled loop's stamp no longer matches its sources.
+    from em_march_native import STAMP,native_digest,python_digest
+    try:
+        stamp=json.loads(STAMP.read_text())
+        return stamp['native_sha256']==native_digest() and python_digest(stamp['python_modules'])==stamp['python_sha256']
+    except (OSError,ValueError,KeyError):return False
+
+
+def start_version(version):
+    # Other game builds run in their own containers, started on first use. Web containers have no
+    # Docker access: the host's starter service watches for this request file.
+    builds=(data_file(ROOT/'.data-sync/versions.json',lambda d:d) or {}).get('builds',())
+    if not any(b['id']==version and b.get('available') for b in builds):raise ValueError('Unknown game version')
+    requests=ROOT/'.data-sync/start';requests.mkdir(exist_ok=True);(requests/version).touch()
+    return dict(version=version)
 
 
 def active_jobs():
@@ -423,6 +466,37 @@ def run_job(key,config,event):
         reset_calculation()
 
 
+def run_altitude_job(key,config,event):
+    """An altitude envelope: the compiled point solve in this process, finished entries kept when stopped."""
+    from altitude_chart import calculate,prepared
+    started=time.monotonic()
+    def update(p):
+        with LOCK:
+            if event.is_set() or JOBS[key].get('cancel') is not event:raise InterruptedError('Calculation cancelled')
+            JOBS[key].update(status='running',progress=p)
+    def store(data,seeds,status):
+        data['equations_fingerprint']=RUNTIME_FINGERPRINT
+        with LOCK:
+            if JOBS[key].get('cancel') is event:
+                RESULTS[key]=prepared(data,seeds,started)
+                JOBS[key].update(status=status,elapsed_s=time.monotonic()-started,completed_at=time.monotonic(),
+                                 retained_points=sum(len(a['points']) for a in data['aircraft']))
+        discard_old_results()
+    try:
+        update(dict(done=0,total=len(config['entries']),phase='Starting'))
+        store(*calculate(config,update,event.is_set),'complete')
+    except InterruptedError as error:
+        data,seeds=getattr(error,'partial',None) or (dict(kind='altitude',settings=config,aircraft=[],speeds_kmh=[],loads_g=[],assumptions=[],elapsed_s=0.),{})
+        data.update(preview=True,calculation_stopped=True,calculation_status='stopped',coverage_complete=False,
+                    partial_result_note='Stopped by user. Only the rows finished before the stop are retained.')
+        store(data,seeds,'stopped')
+    except Exception as error:
+        import traceback
+        traceback.print_exc()
+        with LOCK:
+            if JOBS[key].get('cancel') is event:JOBS[key].update(status='error',error=str(error))
+
+
 def reset_calculation():
     from em_sampling import _AIRCRAFT_CACHE,_COLUMN_CACHE,worker_solver
     # Healthy processes stay warm. process_pool gives each calculation a new
@@ -431,8 +505,12 @@ def reset_calculation():
     _AIRCRAFT_CACHE.clear();_COLUMN_CACHE.clear();worker_solver.cache_clear()
 
 
-def start_job(config):
-    config=settings(config);key=uuid.uuid4().hex[:20]
+def start_job(config,altitude=False):
+    if altitude:
+        from altitude_chart import request
+        config=request(config)
+    else:config=settings(config)
+    key=uuid.uuid4().hex[:20]
     from em_uncorrected import require_chart_correction
     require_chart_correction(config)
     with LOCK:
@@ -440,7 +518,7 @@ def start_job(config):
         pending=sum(job.get('status') in ('queued','running','stopping','exporting') for job in JOBS.values())
         if pending>=MAX_PENDING_JOBS:raise ValueError('Calculation queue is full. Try again after the current jobs finish.')
         event=threading.Event();JOBS[key]=dict(id=key,status='queued',settings=config,cancel=event)
-        WORKER.submit(run_job,key,config,event)
+        WORKER.submit(run_altitude_job if altitude else run_job,key,config,event)
     return key
 
 
@@ -479,6 +557,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(content)
     def do_GET(self):
         path=urlparse(self.path).path
+        if path!='/api/health':LAST_REQUEST[0]=time.monotonic()
         if path=='/api/engagement-research/meta':
             from engagement_research_service import metadata
             try:return self.respond(metadata())
@@ -500,8 +579,22 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/api/health':
             # The host's game-data update reads busy before restarting this server.
             with LOCK:busy=active_jobs()
-            return self.respond(dict(status='ok',release=release_info(),busy=busy,game_data=game_data(),
+            return self.respond(dict(status='ok',release=release_info(),busy=busy,idle_s=time.monotonic()-LAST_REQUEST[0],march_native_verified=march_native_verified(),game_data=game_data(),
                 data_update=data_file(ROOT/'.data-sync/status.json',lambda d:d)))
+        if path in ('/api/versions','/api/version-history'):
+            # The game builds on offer (research/input_builders/version_index.py); a local copy has none.
+            value=data_file(ROOT/'.data-sync'/f"{path.removeprefix('/api/')}.json",lambda d:d)
+            return self.respond(value) if value else self.respond(dict(error='No version list'),404)
+        if path.startswith('/api/build-values/'):
+            # This build's values for the What changed table: an aircraft as its FM loader reads it, a missile's file.
+            kind,_,name=path.removeprefix('/api/build-values/').partition('/');name=unquote(name)
+            if kind=='aircraft' and name in AIRCRAFT:
+                from aircraft_catalog import load
+                return self.respond(load(name))
+            source=ROOT/'references/missile-sources'/f'{name}.blkx'
+            if kind=='missile' and name.replace('_','').replace('-','').isalnum() and source.is_file():
+                return self.respond(orjson.loads(source.read_bytes()).get('rocket',{}))
+            return self.respond(dict(error='Not in this build'),404)
         if path=='/api/meta':
             # Only a page load opts into edited equations. Running jobs keep
             # their session; Calculate never scans sources or initiates updates.
@@ -540,7 +633,7 @@ class Handler(BaseHTTPRequestHandler):
                 if sweep not in ('altitude','speed','both'):raise ValueError('Unknown sweep')
                 level=query.get('level',['0'])[0]
                 if level not in ('0','1'):raise ValueError('level must be 0 or 1')
-                for label,value,low,high in (('Altitude',altitude,0.,18000.),('Speed',speed,5.,1600.),('Throttle',throttle,0.,110.),('Propeller pitch',pitch,0.,100.)):
+                for label,value,low,high in (('Altitude',altitude,0.,18000.),('Speed',speed,5.,math.inf),('Throttle',throttle,0.,110.),('Propeller pitch',pitch,0.,100.)):
                     if value is not None and not (math.isfinite(value) and low<=value<=high):raise ValueError(f'{label} out of range')
                 from engine_performance import compute as engine_performance
                 return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent,None if sweep=='both' else sweep,level=='1'))
@@ -567,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(dict(error='Invalid aircraft entry'),400)
                 query=parse_qs(urlparse(self.path).query)
                 try:
+                    if len(query.get('altitude_m',()))==1 and len(query.get('speed_kmh',()))==1:
+                        return self.respond(solve_altitude_point(key,entry,float(query['speed_kmh'][0]),float(query['altitude_m'][0])))
                     if len(query.get('speed_kmh',()))!=1 or len(query.get('load_g',()))!=1:raise ValueError('speed_kmh and load_g required')
                     return self.respond(solve_point(key,entry,float(query['speed_kmh'][0]),float(query['load_g'][0])))
                 except FileNotFoundError as error:return self.respond(dict(error=str(error)),404)
@@ -592,6 +687,11 @@ class Handler(BaseHTTPRequestHandler):
                         return self.respond(dict(error='Stopped results support JSON and CSV exports; diagram refinement is incomplete.'),400)
                     if name=='chart.json':return self.respond(chart_payload(key))
                     data=download_data(key)
+                    if data.get('kind')=='altitude':
+                        if name.startswith('diagram.'):return self.respond(dict(error='Use the chart toolbar to save a picture of this chart.'),400)
+                        if name=='samples.csv':
+                            from altitude_chart import export_csv as altitude_csv
+                            return self.download(altitude_csv(data).encode(),name)
                     download_name=('partial-' if data.get('calculation_stopped') else '')+name
                     if name=='data.json':return self.download(orjson.dumps(data,option=orjson.OPT_SERIALIZE_NUMPY),download_name)
                     if name=='samples.csv':return self.download(export_csv(data).encode(),download_name)
@@ -609,7 +709,7 @@ class Handler(BaseHTTPRequestHandler):
         names.update({'/missiles.js':'missiles.js','/missiles.css':'missiles.css'})
         names.update({f'/{name}':name for name in ('missile-launchers.js','missile-models.js','missile-plot.js','missile-models.json','target-model.json','missile-setup3d.js','vendor/three.module.min.js')})
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
-        names.update({'/engine.js':'engine.js','/engine.css':'engine.css'})
+        names.update({'/engine.js':'engine.js','/engine.css':'engine.css','/versions.js':'versions.js','/versions.css':'versions.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
@@ -618,6 +718,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(dict(error='Not found'),404)
     def do_POST(self):
         path=urlparse(self.path).path
+        LAST_REQUEST[0]=time.monotonic()
         origin=self.headers.get('Origin')
         if origin and not self.allowed_origin():
             return self.respond(dict(error='Local or configured public origin required'),403)
@@ -629,6 +730,8 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/engagement-research/run':
                 from engagement_research_service import run
                 return self.respond(run(body))
+            if path.startswith('/api/versions/') and path.endswith('/start'):
+                return self.respond(start_version(path.split('/')[3]),202)
             if path=='/api/missiles/jobs':
                 from missile_service import start
                 with LOCK:
@@ -649,6 +752,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(dict(cancelled=cancel_envelope(path.split('/')[4])))
             if path=='/api/jobs':
                 key=start_job(body);return self.respond(dict(id=key),202)
+            if path=='/api/altitude/jobs':
+                key=start_job(body,altitude=True);return self.respond(dict(id=key),202)
             if path=='/api/engine':
                 # Engine performance page with the popup's mass settings (engine_performance.request).
                 from engine_performance import request as engine_request

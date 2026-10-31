@@ -4,15 +4,20 @@ const $ = id => document.getElementById(id);
 const runtimeConfig=window.EM_CONFIG||{};
 const apiBase=String(runtimeConfig.apiBase||'').replace(/\/$/,'');
 const remoteSite=!['localhost','127.0.0.1',''].includes(location.hostname);
-const state = {data:null, dataJob:null, activeJob:null, view:'compare', meta:null, running:false, conditions:{}, entries:[], nextEntry:1, editing:null, hiddenVehicles:new Set(), contourLevels:[100,0,-100,-200,-400], contourRequest:0};
+const state = {data:null, dataJob:null, activeJob:null, view:'compare', meta:null, running:false, conditions:{}, entries:[], nextEntry:1, editing:null, hiddenVehicles:new Set(), contourLevels:[100,0,-100,-200,-400], contourRequest:0, tool:'em', jobTool:null, charts:{}, jobParts:new Map(), jobDone:[], jobQueue:[], jobRows:[], extraAircraft:{}};
+// The altitude envelope shares this page: its sidebar, cards, popup, chart and details (Leo, 2026-10-30). Its chart data
+// mirrors an EM chart's, with altitude in the turn-rate fields (turn_dps), so the same drawing code serves both.
+const altitudeChart=data=>data?.kind==='altitude';
+// Each calculator keeps its own speed range; these are where they start (Leo, 2026-10-30: 100-2,500 km/h on this one).
+const defaultSpeeds=tool=>tool==='altitude'?[100,2500]:[state.meta.defaults.speed_min_kmh,state.meta.defaults.speed_max_kmh];
 // Accuracy drives refinement; all presets start with a small speed stencil.
 const quality = {quick:[9,7,1.], standard:[9,9,.5], fine:[9,13,.15]};
 const fmt = (v,d=1) => Number.isFinite(v) ? v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
 const turnRadius = (speed,rate) => !Number.isFinite(speed)||!Number.isFinite(rate) ? '—' :
   rate===0 ? '∞ (straight flight)' : fmt((speed/3.6)/(Math.abs(rate)*Math.PI/180),0)+' m';
 const escapeText = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const apiUrl=path=>path.startsWith('/api/')?(apiBase?apiBase+path:'.'+path):path;
-async function api(path, options={}) {
+const apiUrl=(path,version)=>path.startsWith('/api/')?(window.GameVersions?.enabled()?GameVersions.url(path,version):apiBase?apiBase+path:'.'+path):path;
+async function api(path, options={}, version) {
   // Relative API paths work both at localhost / and at a GitHub Pages project
   // path such as /repository-name/.
   const pageLoad=path==='/api/meta?refresh=1';
@@ -22,7 +27,7 @@ async function api(path, options={}) {
   for(let attempt=0;attempt<attempts;attempt++){
     let response,body;
     try{
-      response=await fetch(apiUrl(path),options);
+      response=await fetch(apiUrl(path,version),options);
       // Proxy outage responses may be HTML or have no body at all.
       if([502,503,504].includes(response.status)&&!pageLoad){
         throw Object.assign(new Error('The calculation server is temporarily unavailable.'),{retryable:true});
@@ -65,7 +70,11 @@ const fixedSolverConditions={trim_solver_mode:'stationary',mach_curve_mode:'auto
 const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolverConditions),'throttle','afterburner','trim_mode','trim_limit',
   'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','autotrim','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296'];
-const entryName=e=>state.meta.aircraft[e.aircraft_id].name;
+const metaOf=version=>window.GameVersions?.meta(version)||state.meta;
+const rowOf=e=>metaOf(e.version).aircraft[e.aircraft_id]??state.meta.aircraft[e.aircraft_id];
+const entryName=e=>rowOf(e).name;
+const jobPartsOf=job=>state.jobParts.get(job)||[{id:job,rows:[]}];
+const partOf=a=>{const parts=jobPartsOf(state.dataJob);return parts.find(p=>p.rows.includes(a.id))||parts[0];};
 // Catalog names end in the internal id ("Bf 109 F-4 [bf-109f-4]"): the page shows it apart, hover text keeps it.
 const cleanName=n=>String(n).replace(/\s*\[[^\]]*\]/,'');
 // Chart legend: aircraft and entry number only, no flight mode or other settings (Leo, 2026-10-28).
@@ -95,8 +104,8 @@ function normalizeManualControls(values,aircraft){
   return values;
 }
 // Aircraft without WEP (server's no_wep list): the game's throttle stops at 100% (Leo, 2026-10-28).
-const noWep=name=>!!name&&!!state.meta?.no_wep?.includes(name);
-const aircraftConditions=(name,c)=>{const values=modeConditions(c);if(noWep(name)){values.throttle=Math.min(values.throttle,1);values.afterburner=false;}const aircraft=state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
+const noWep=(name,version)=>!!name&&!!metaOf(version)?.no_wep?.includes(name);
+const aircraftConditions=(name,c,version)=>{const values=modeConditions(c);if(noWep(name,version)){values.throttle=Math.min(values.throttle,1);values.afterburner=false;}const aircraft=metaOf(version).aircraft[name]??state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
 // One control mode switch (Leo, 2026-10-28), set as in the game (aces.exe 0x141b81440): the Instructor in Mouse aim and
 // Simplified (one option: both use the same steady Instructor here), autotrim in every mode but Full real, torque/gyro
 // only in Full real. The entry keeps its mode (control_mode, page only) for its name.
@@ -123,17 +132,17 @@ function saveCondition(){
       ...('autotrim' in state.meta.defaults?{autotrim:CONTROL_MODES[mode].autotrim}:{})}))(document.querySelector('input[name=control-mode]:checked')?.value||'mouse_aim'),
     // A server without the turn setting (older release) gets no turn_direction and calculates left turns.
     ...('turn_direction' in state.meta.defaults?{turn_direction:$('turn-right').checked?'right':'left'}:{})};
-  if(!state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id].has_flaps)state.conditions[state.editing].flaps_percent=0;
+  if(!rowOf(state.entries.find(e=>e.id===state.editing)).has_flaps)state.conditions[state.editing].flaps_percent=0;
 }
 function showCondition(id){
   state.editing=id||null;
   const c=id?(state.conditions[id]??=modeConditions(state.meta.defaults)):state.meta.defaults;
-  if(id&&!state.meta.aircraft[state.entries.find(e=>e.id===id).aircraft_id].has_flaps)c.flaps_percent=0;
+  if(id&&!rowOf(state.entries.find(e=>e.id===id)).has_flaps)c.flaps_percent=0;
   for(const [field,key] of Object.entries(conditionFields))$(field).value=c[key];
   $('default-ammunition').checked=!!c.default_ammunition;
   $('manual-engine-controls').checked=!!c.manual_engine_controls;
   $('propeller-pitch-auto').checked=c.propeller_pitch_auto!==false;
-  const aircraft=id?state.meta.aircraft[state.entries.find(e=>e.id===id).aircraft_id]:null;
+  const aircraft=id?rowOf(state.entries.find(e=>e.id===id)):null;
   const variants=aircraft?.ammunition?.variants;
   $('ammunition-vehicle-field').hidden=!variants||Object.keys(variants).length<2;
   $('ammunition-vehicle').innerHTML=variants?Object.keys(variants).map(v=>`<option value="${escapeText(v)}">${escapeText(aircraft.vehicle_names?.find(n=>n.vehicle_id===v)?.display_name||v)}</option>`).join(''):'';
@@ -141,12 +150,12 @@ function showCondition(id){
   showAmmunition(aircraft);
   showLoadout();
   // The cap first: a range input clamps a value above its current max.
-  $('throttle').max=noWep(id&&state.entries.find(e=>e.id===id).aircraft_id)?100:110;$('throttle').value=c.throttle*100;
+  $('throttle').max=noWep(id&&state.entries.find(e=>e.id===id).aircraft_id,id&&state.entries.find(e=>e.id===id).version)?100:110;$('throttle').value=c.throttle*100;
   $('control-'+controlMode(c).replace('_','-')).checked=true;
   // A server without the autotrim setting (older release) has no Realistic mode.
   $('control-realistic').closest('label').hidden=!('autotrim' in state.meta.defaults);
   $('turn-left').checked=c.turn_direction!=='right';$('turn-right').checked=c.turn_direction==='right';
-  $('turn-left').closest('.field').hidden=!('turn_direction' in state.meta.defaults);
+  $('turn-left').closest('.field').hidden=!('turn_direction' in state.meta.defaults)||state.tool==='altitude';
   $('flutter-on').checked=c.structural_limits!==false;$('flutter-off').checked=c.structural_limits===false;
   $('aircraft-condition').disabled=!id;
 }
@@ -175,7 +184,7 @@ function renderEntries(){
   // The single settings editor lives in the settings popup while an entry is open (Leo, 2026-10-26); never clone form IDs.
   const editor=$('aircraft-condition');(state.editing?$('entry-dialog-body'):$('condition-home')).append(editor);
   $('selected-aircraft').innerHTML=state.entries.map((e,i)=>`<article class="aircraft-entry ${e.id===state.editing?'active':''}" data-entry="${escapeText(e.id)}" style="--entry-color:${entryColors[i]}">
-    <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong></div>
+    <div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeText(cleanName(entryName(e)))}</strong>${window.GameVersions?.enabled()?`<code class="entry-version" title="${escapeText(GameVersions.rulesNote(e.version))}">${escapeText(GameVersions.rowLabel(e.version,rowOf(e)))}</code>`:''}</div>
     <div class="entry-actions">
     <button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i+1}" title="Edit settings">${EDIT_ICON}</button>
     <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i+1}" title="Duplicate" ${state.entries.length>=8?'disabled':''}>${COPY_ICON}</button>
@@ -183,12 +192,12 @@ function renderEntries(){
   $('apply-settings-to-all').disabled=state.entries.length<2;
   $('apply-settings-status').textContent='';
 }
-function addEntry(name,condition){
+function addEntry(name,condition,version){
   if(state.entries.length>=8)return;
   saveCondition();
   let id;do{id=`entry_${state.nextEntry++}`;}while(state.entries.some(e=>e.id===id));
-  state.entries.push({id,aircraft_id:name});
-  state.conditions[id]=structuredClone(aircraftConditions(name,condition||state.meta.defaults));
+  state.entries.push(version?{id,aircraft_id:name,version}:{id,aircraft_id:name});
+  state.conditions[id]=structuredClone(aircraftConditions(name,condition||state.meta.defaults,version));
   updateDefaultContours();
   // A new card stays closed; its settings open with Configure (Leo, 2026-10-26).
   showCondition(state.editing);renderEntries();syncLabels();
@@ -200,7 +209,8 @@ function readConfig() {
     entries:state.entries.map(e=>({...e,settings:requestConditions(state.conditions[e.id])})),
     speed_min_kmh:+$('speed-min').value,speed_max_kmh:+$('speed-max').value,max_load_g:null,
     speed_samples:grid[0],load_samples:grid[1],sampling:'adaptive',sep_tolerance_mps:grid[2],surface_resolution:601,
-    sep_contour_levels_mps:[...state.contourLevels],enable_exports:$('enable-exports').checked};
+    sep_contour_levels_mps:[...state.contourLevels],enable_exports:$('enable-exports').checked,
+    ...(state.tool==='altitude'?{altitude_min_m:+$('altitude-min').value,altitude_max_m:+$('altitude-max').value,auto_contours:!state.customContours}:{})};
 }
 function populate(c) {
   state.conditions={};state.editing=null;
@@ -209,6 +219,7 @@ function populate(c) {
   state.entries=configEntries(c).map(e=>{state.conditions[e.id]=aircraftConditions(e.aircraft_id,e.settings);return {id:e.id,aircraft_id:e.aircraft_id};});
   updateDefaultContours();
   $('speed-min').value=c.speed_min_kmh;$('speed-max').value=c.speed_max_kmh;
+  $('altitude-min').value=c.altitude_min_m??0;$('altitude-max').value=c.altitude_max_m??10000;
   // Exports are always prepared (Leo, 2026-10-23); the switch stays in the page, hidden.
   $('enable-exports').checked=true;
   let selected=Object.keys(quality).find(k=>quality[k][2]===c.sep_tolerance_mps&&c.sampling==='adaptive') ||
@@ -217,10 +228,10 @@ function populate(c) {
   $('quality').value=selected;showCondition(state.entries[0]?.id);renderEntries();syncLabels();
 }
 function syncLabels(){
-  $('throttle').max=noWep(state.entries.find(e=>e.id===state.editing)?.aircraft_id)?100:110;
+  $('throttle').max=noWep(state.entries.find(e=>e.id===state.editing)?.aircraft_id,state.entries.find(e=>e.id===state.editing)?.version)?100:110;
   $('fuel-label').textContent=$('fuel').value+'%';$('throttle-label').textContent=fmt(+$('throttle').value,0)+'%';
   $('sweep-label').textContent=$('sweep').value+'%';
-  const aircraft=state.meta?.aircraft[state.entries.find(e=>e.id===state.editing)?.aircraft_id];
+  const editingEntry=state.entries.find(e=>e.id===state.editing),aircraft=editingEntry&&rowOf(editingEntry);
   const caps=aircraft?.manual_controls||{};
   $('manual-engine-field').hidden=!aircraft||['jet','rocket'].includes(aircraft.propulsion);
   $('manual-engine-settings').hidden=!$('manual-engine-controls').checked;
@@ -284,7 +295,7 @@ function flapLimitLabel(profile,percent){
 $('flap-modes').addEventListener('click',event=>{
   const button=event.target.closest('[data-flap-mode]');
   if(!button||button.disabled||!state.editing)return;
-  const aircraft=state.meta.aircraft[state.entries.find(e=>e.id===state.editing).aircraft_id];
+  const aircraft=rowOf(state.entries.find(e=>e.id===state.editing));
   $('flaps').value=Math.round(aircraft.flaps.modes[button.dataset.flapMode]);
   syncLabels();
 });
@@ -304,20 +315,20 @@ function syncAircraftMenu(){
 function populateAircraft(){
   // By name, the leading nation symbol ignored, so an aircraft's variants sit together (the one without a symbol first).
   const symbol=a=>Number(cleanName(a.name)!==sortName(a.name));
-  const entries=Object.entries(state.meta.aircraft).sort(([,a],[,b])=>Number(b.supported)-Number(a.supported)||
+  const entries=Object.entries({...state.extraAircraft,...state.meta.aircraft}).sort(([,a],[,b])=>Number(b.supported)-Number(a.supported)||
     sortName(a.name).localeCompare(sortName(b.name),undefined,{numeric:true})||symbol(a)-symbol(b)||a.name.localeCompare(b.name));
   // The type stays searchable but is not shown (Leo, 2026-10-23).
   const family=a=>({piston:'Piston propeller',turboprop:'Turboprop',mixed:'Propeller + jet',rocket:'Rocket'})[a.propulsion]||(a.has_sweep?'Variable sweep':'Jet');
-  $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):' · '+(a.reason||'Model integration pending'))}</small></span><button type="button" data-add="${escapeText(id)}" aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
+  $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):' · '+(a.reason||'Model integration pending'))}${a.only_in?escapeText(' · Only in '+a.only_in):''}</small></span><button type="button" data-add="${escapeText(id)}"${a.only_in?` data-version="${escapeText(a.only_in)}"`:''} aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
 }
 $('aircraft-search').addEventListener('input',syncAircraftMenu);
 $('aircraft-search').addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault();});
-$('aircraft-list').addEventListener('click',e=>{const b=e.target.closest('[data-add]');if(b&&!b.disabled)addEntry(b.dataset.add);});
+$('aircraft-list').addEventListener('click',e=>{const b=e.target.closest('[data-add]');if(b&&!b.disabled)addEntry(b.dataset.add,undefined,b.dataset.version);});
 $('selected-aircraft').addEventListener('click',event=>{
   const button=event.target.closest('[data-action]');if(!button||button.disabled)return;
   const id=button.closest('[data-entry]').dataset.entry,entry=state.entries.find(e=>e.id===id);
   saveCondition();
-  if(button.dataset.action==='duplicate'){addEntry(entry.aircraft_id,state.conditions[id]);return;}
+  if(button.dataset.action==='duplicate'){addEntry(entry.aircraft_id,state.conditions[id],entry.version);return;}
   if(button.dataset.action==='remove'){
     const index=state.entries.findIndex(e=>e.id===id);state.entries.splice(index,1);delete state.conditions[id];
     updateDefaultContours();
@@ -327,6 +338,7 @@ $('selected-aircraft').addEventListener('click',event=>{
     const index=state.entries.findIndex(e=>e.id===id);
     $('entry-dialog-title').textContent=`${index+1} · ${cleanName(entryName(entry))}`;
     $('entry-dialog').style.setProperty('--entry-color',entryColors[index]);
+    openVersionSearch(entry);
     $('entry-dialog').showModal();return;
   }
   renderEntries();syncLabels();
@@ -342,7 +354,7 @@ $('apply-settings-to-all').addEventListener('click',()=>{
   const source=state.entries.find(e=>e.id===state.editing).aircraft_id;
   // Loadouts belong to one aircraft (and armament variant); other aircraft keep a clean loadout.
   for(const entry of state.entries)state.conditions[entry.id]=structuredClone(aircraftConditions(entry.aircraft_id,
-    entry.aircraft_id===source?settings:{...settings,loadout:'',stores_released:false}));
+    entry.aircraft_id===source?settings:{...settings,loadout:'',stores_released:false},entry.version));
   renderEntries();syncLabels();
   $('apply-settings-status').textContent=`Applied to all ${state.entries.length} aircraft.`;
 });
@@ -350,9 +362,21 @@ $('apply-settings-to-all').addEventListener('click',()=>{
 const CALCULATE_LABEL=$('calculate').innerHTML;
 function setRunning(value){state.running=value;$('calculate').disabled=value;$('calculate').innerHTML=value?'Calculating…':CALCULATE_LABEL;$('calculate').classList.toggle('calculating',value);$('calculate').style.setProperty('--progress','0%');$('cancel').hidden=!value;$('cancel').disabled=false;$('progress').hidden=true;}
 async function loadData(id,populateForm=false,preview=false){
+  const version=state.activeVersion,data=await api(`/api/jobs/${id}/${preview?'preview.json':'chart.json'}`,{},version);
+  for(const a of data.aircraft)a.name=a.name.replace(/ · (Instructor \+ autotrim|Autotrim|Manual trim)(?= · |$)/,()=>' · '+CONTROL_MODES[controlMode({...(a.settings||{...data.settings,...data.settings.aircraft_settings?.[a.id]}),torque_gyro:(a.settings||data.settings).torque_gyro??true,control_mode:state.conditions[a.id]?.control_mode})].label);
+  // Rows on other game builds ran as their own jobs (versions.js): they show as one result.
+  state.jobLast={id,version,data};
+  const parts=[...state.jobDone,state.jobLast],key=parts.map(p=>p.id).join('+');
+  state.jobParts.set(key,parts.map(p=>({id:p.id,version:p.version,rows:p.data.aircraft.map(a=>a.id)})));
+  const shown=window.GameVersions?.enabled()?GameVersions.merge(parts,state.jobRows,entryColors):data;
+  // A chart finished while the other calculator is open waits for that one to be opened.
+  if(state.jobTool&&state.jobTool!==state.tool){state.charts[state.jobTool]={...state.charts[state.jobTool],data:shown,dataJob:key,view:'compare',hiddenVehicles:new Set(),waiting:true};return;}
+  return showData(shown,key,populateForm,preview);
+}
+async function showData(data,id,populateForm=false,preview=false){
   const sameResult=state.dataJob===id;
-  const data=await api(`/api/jobs/${id}/${preview?'preview.json':'chart.json'}`);state.data=data;state.dataJob=id;
-  for(const a of data.aircraft)a.name=a.name.replace(/ · (Instructor \+ autotrim|Autotrim|Manual trim)(?= · |$)/,()=>' · '+CONTROL_MODES[controlMode({...resultConditions(a),control_mode:state.conditions[a.id]?.control_mode})].label);
+  state.data=data;state.dataJob=id;
+  if(altitudeChart(data))updateDefaultContours();
   if(!sameResult)state.hiddenVehicles.clear();
   if(populateForm)populate(data.settings);
   if(state.view!=='compare'&&!data.aircraft.some(a=>a.id===state.view))state.view='compare';
@@ -362,6 +386,7 @@ async function loadData(id,populateForm=false,preview=false){
     button.classList.toggle('active',button.dataset.view===state.view);
   }
   renderChart();syncLabels();
+  if(!preview&&window.GameVersions?.enabled())GameVersions.changes($('version-changes'),data.aircraft.map(a=>({id:a.aircraft_id||a.id,kind:'fm',version:a.game_version,name:cleanName(a.name).split(' · ')[0]})));
   updateContourAvailability();
   const rpmNotices=data.aircraft.filter(a=>a.over_rev&&(a.over_rev.crossings.length||a.over_rev.over_rev_at_minimum||a.over_rev.unresolved_intervals_kmh.length));
   $('over-rev-status').textContent=rpmNotices.map(a=>{
@@ -392,8 +417,10 @@ async function loadData(id,populateForm=false,preview=false){
 function rgba(hex,opacity){return `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${opacity})`;}
 function updateDefaultContours(){
   if(state.customContours)return;
-  const props=state.entries.length>0&&state.entries.every(e=>['piston','turboprop','mixed'].includes(state.meta.aircraft[e.aircraft_id].propulsion));
-  state.contourLevels=props?[20,10,0,-20,-40,-80]:[100,0,-100,-200,-400];
+  // An altitude chart's levels come from the SEP it found (altitude_chart.contour_levels); these are only a first guess.
+  if(altitudeChart(state.data)){state.contourLevels=[...state.data.settings.sep_contour_levels_mps];renderContourControls();return;}
+  const props=state.entries.length>0&&state.entries.every(e=>['piston','turboprop','mixed'].includes(rowOf(e).propulsion));
+  state.contourLevels=state.tool==='altitude'?(props?[20,15,10,5,0,-10,-25]:[40,30,20,10,0,-20,-50]):props?[20,10,0,-20,-40,-80]:[100,0,-100,-200,-400];
   renderContourControls();
 }
 function renderContourControls(){
@@ -414,8 +441,8 @@ function updateContourAvailability(){
     const figure=link.dataset.export.startsWith('diagram.');
     const disabled=!$('enable-exports').checked||(state.data.preview&&(!state.data.calculation_stopped||figure))||(figure&&missing.length>0);
     const query=figure?'?levels='+encodeURIComponent(state.contourLevels.join(',')):'';
-    link.href=disabled?'#':apiUrl(`/api/jobs/${state.dataJob}/${link.dataset.export}${query}`);
-    link.download=`WT-EM-${state.data.calculation_stopped?'partial-':''}${state.data.aircraft.map(a=>a.id).join('-vs-')}-${link.dataset.export}`;
+    link.href=disabled?'#':apiUrl(`/api/jobs/${jobPartsOf(state.dataJob)[0].id}/${link.dataset.export}${query}`,jobPartsOf(state.dataJob)[0].version);
+    link.download=`WT-${altitudeChart(state.data)?'altitude':'EM'}-${state.data.calculation_stopped?'partial-':''}${state.data.aircraft.map(a=>a.id).join('-vs-')}-${link.dataset.export}`;
     link.setAttribute('aria-disabled',disabled?'true':'false');
     link.title=!$('enable-exports').checked?'Enable exports to download this result':'';
   }
@@ -427,9 +454,10 @@ async function refreshContours(){
   if(data.preview){renderChart();return;}
   const levels=supportedContourLevels();
   try{
-    const payload=await api(`/api/jobs/${state.dataJob}/contours.json?levels=${encodeURIComponent(levels.join(','))}`);
+    const payloads=await Promise.all(jobPartsOf(state.dataJob).map(p=>api(`/api/jobs/${p.id}/contours.json?levels=${encodeURIComponent(levels.join(','))}`,{},p.version)));
     if(token!==state.contourRequest||data!==state.data)return;
-    for(const a of data.aircraft)a.contours=payload.contours[a.id]||[];
+    const contours=Object.assign({},...payloads.map(p=>p.contours));
+    for(const a of data.aircraft)a.contours=contours[a.id]||[];
     renderChart();
   }catch(e){if(token===state.contourRequest)error(e.message);}
 }
@@ -449,6 +477,11 @@ function envelopeEnd(aircraft,data){
   if(!fastest)return data.settings.speed_max_kmh;
   return Math.min(data.settings.speed_max_kmh,Math.max(Math.ceil((fastest+40)/50)*50,data.settings.speed_min_kmh+100));
 }
+function chartYRange(aircraft,data){
+  if(!altitudeChart(data))return [0,envelopeTop(aircraft)];
+  const top=Math.max(data.settings.altitude_min_m+100,...aircraft.flatMap(a=>(a.boundary||[]).map(p=>p.turn_dps)));
+  return [data.settings.altitude_min_m,top+(top-data.settings.altitude_min_m)*.02];
+}
 function envelopeTop(aircraft){
   const peak=Math.max(0,...aircraft.flatMap(a=>[...(a.boundary||[]),...(a.points||[]).filter(chartUsable)].map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
   return Math.max(10,Math.ceil(peak*1.05+1));
@@ -459,7 +492,7 @@ function contourLabels(displayed,data,view){
   // slanted along its contour. Text is an annotation (rotatable); an invisible marker keeps hover and click.
   const chart=$('chart'),size=chart._fullLayout?._size;
   const width=size?.w||Math.max(300,(chart.clientWidth||1000)-80),height=size?.h||Math.max(200,(chart.clientHeight||700)-54-Math.max(40,displayed.length*22));
-  const [x0,x1]=view?.x||[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],[y0,y1]=view?.y||[0,envelopeTop(displayed)],cell=6;
+  const [x0,x1]=view?.x||[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],[y0,y1]=view?.y||chartYRange(displayed,data),cell=6;
   const px=(x,y)=>[(x-x0)/(x1-x0)*width,(y1-y)/(y1-y0)*height];
   const lines=new Map(),shown=displayed.filter(a=>!state.hiddenVehicles.has(a.id));
   const mark=(key,xs,ys)=>{
@@ -475,6 +508,7 @@ function contourLabels(displayed,data,view){
     mark(a.id+'|envelope',edge.map(q=>q.speed_kmh),edge.map(q=>q.turn_dps));
     for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,path.x,path.y);
     for(const line of a.overrev_lines||[])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
+    if(a.best_climb)mark(a.id+'|line',a.best_climb.speed_kmh,a.best_climb.altitude_m);
   }
   const placed=[],inside=(x,y)=>x>=4&&y>=4&&x<=width-4&&y<=height-4;
   const crossings=(box,own)=>{let n=0;
@@ -573,17 +607,18 @@ function nearestSolved(a,speed,rate,showRejected){
 }
 async function solveAt(a,position,origin,showRejected){
   // Lines are interpolated between solved states: solve the full model at the clicked speed and load.
-  const sequence=state.inspection=(state.inspection||0)+1,job=state.dataJob;
+  const sequence=state.inspection=(state.inspection||0)+1,job=state.dataJob,altitude=altitudeChart(state.data);
   const load=Math.hypot(1,(position.speed/3.6)*(position.rate*Math.PI/180)/9.8100004196167);
   const clicked={...origin,speed:position.speed,rate:position.rate};
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${fmt(position.rate,2)} °/s`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${altitude?fmt(position.rate,0)+' m':fmt(position.rate,2)+' °/s'}`;
   $('point-status').innerHTML='<span class="point-pill">Solving the clicked point…</span>';
   $('point-content').innerHTML='';
   let point;
-  try{point=await api(`/api/jobs/${job}/solve/${encodeURIComponent(a.id)}?speed_kmh=${position.speed}&load_g=${load}`);}
+  try{const part=partOf(a);point=await api(`/api/jobs/${part.id}/solve/${encodeURIComponent(a.id)}?speed_kmh=${position.speed}&${altitude?'altitude_m='+position.rate:'load_g='+load}`,{},part.version);}
   catch(e){
     if(sequence!==state.inspection||job!==state.dataJob)return;
+    if(altitude){error(e.message);$('point-status').textContent='';return;}
     // A server without point solves: the nearest solved state instead.
     const nearest=nearestSolved(a,position.speed,position.rate,showRejected);
     if(nearest)return inspect(a,nearest,{...clicked,nearest:true});
@@ -602,12 +637,14 @@ function downloadExport(name){
 }
 function renderChart(){
   if(!state.data)return;
-  const data=state.data,displayed=data.aircraft.filter(a=>state.view==='compare'||a.id===state.view),traces=[];
+  const data=state.data,displayed=data.aircraft.filter(a=>state.view==='compare'||a.id===state.view),traces=[],altitude=altitudeChart(data);
+  // A chart position in the hovers: speed and turn rate, or speed and altitude.
+  const place=altitude?'%{x:.0f} km/h · %{y:,.0f} m':'%{x:.0f} km/h · %{y:.2f}°/s';
   const showSamples=$('show-samples').checked,showRejected=$('show-rejected').checked;
   // Analytic guides need their own drawing grid; trim columns can be sparse.
   const guideMin=data.settings.speed_min_kmh,guideMax=data.settings.speed_max_kmh;
   const guideSpeeds=Array.from({length:1201},(_,i)=>guideMin*Math.pow(guideMax/guideMin,i/1200));
-  for(const n of [2,4,6,9,12,16]){
+  for(const n of altitude?[]:[2,4,6,9,12,16]){
     if(n>(data.plot_max_load_g||data.settings.max_load_g))continue;
     traces.push({type:'scatter',mode:'lines',x:guideSpeeds,y:guideSpeeds.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
       line:{color:'rgba(240,240,250,.12)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
@@ -619,8 +656,8 @@ function renderChart(){
       const x=[],y=[],over=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);over.push(...pathOverrev(path),'');}
       traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
-        text:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
-        hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}%{customdata}<extra></extra>`,showlegend:false});
+        text:altitude?undefined:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
+        hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>${place}${altitude?'':'<br>Turn radius %{text}'}%{customdata}<extra></extra>`,showlegend:false});
     }
     // SEP jump lines are not drawn (Leo, 2026-10-26); contours still end where SEP jumps (a.sep_jumps stays in the data).
     for(const line of a.overrev_lines||[]){
@@ -630,12 +667,14 @@ function renderChart(){
       traces.push({type:'scatter',mode:'lines',x:line.speed_kmh,y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         // Approximate kinds (jump links, column crossings: traced false) are drawn fainter than traced lines.
         line:{color:line.traced===false?'rgba(246,190,109,.5)':'rgba(246,190,109,.95)',width:line.traced===false?2:2.6,dash:'dot'},showlegend:false,
-        hovertemplate:`Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
+        hovertemplate:`Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>${place}<extra></extra>`});
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
-      name:legendName(a.name),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
+      name:legendName(a.name)+(a.version_label?' · '+a.version_label:''),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
       customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)]),
-      hovertemplate:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
+      hovertemplate:altitude?`%{customdata[2]}<br>AoA %{customdata[0]}<br>Altitude %{y:,.0f} m<br>Speed %{x:.0f} km/h<extra></extra>`:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
+    if(altitude&&a.best_climb?.speed_kmh.length)traces.push({type:'scatter',mode:'lines',x:a.best_climb.speed_kmh,y:a.best_climb.altitude_m,name:`${a.name} · best climb`,meta:{id:a.id,kind:'best-climb'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+      line:{color:rgba(a.color,.8),width:1.6,dash:'dot'},customdata:a.best_climb.ps_mps,hovertemplate:`Best climb speed<br>SEP %{customdata:.1f} m/s<br>${place}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
       traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,marker:{size:8,symbol:'x',color:'#f6be6d'},
@@ -660,7 +699,7 @@ function renderChart(){
     if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>r.p.speed_kmh),y:valid.map(r=>r.p.turn_dps),
       marker:{size:showSamples?5:9,color:showSamples?rgba(a.color,.5):'rgba(0,0,0,0)'},name:a.name,meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
       customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${fmt(r.p.load_g,2)} g<br>SEP ${fmt(r.p.ps_mps,1)} m/s`),
-      hovertemplate:'%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>'});
+      hovertemplate:`%{text}<br>${place}<extra></extra>`});
     if(showRejected){
       const rejected=a.points.map((p,i)=>({p,i})).filter(r=>!chartUsable(r.p));
       traces.push({type:'scatter',mode:'markers',x:rejected.map(r=>r.p.speed_kmh),y:rejected.map(r=>r.p.turn_dps),
@@ -672,7 +711,7 @@ function renderChart(){
   const sepLabels=contourLabels(displayed,data);traces.push(...sepLabels.traces);
   // Tooltips carry no aircraft name (Leo, 2026-10-26); the border takes the aircraft's colour instead.
   for(const trace of traces){const owner=displayed.find(a=>a.id===trace.legendgroup);if(owner)trace.hoverlabel={...trace.hoverlabel,bordercolor:owner.color};}
-  const ymax=envelopeTop(displayed);
+  const [ymin,ymax]=chartYRange(displayed,data);
   const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
     annotations:[...displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),...sepLabels.annotations],
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
@@ -680,7 +719,7 @@ function renderChart(){
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
     margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
     xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
-    yaxis:{title:{text:'Turn rate (°/s)',standoff:8,font:{size:13}},range:[0,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:5,tickfont:{size:12}},
+    yaxis:{title:{text:altitude?'Altitude (m)':'Turn rate (°/s)',standoff:8,font:{size:13}},range:[ymin,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:altitude?1000:5,tickformat:altitude?',d':undefined,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
@@ -723,6 +762,12 @@ function renderChart(){
       const position=a&&projectedPoint(event,[{x:a.boundary.map(q=>q.speed_kmh),y:a.boundary.map(q=>q.turn_dps)}]);
       if(position)return solveAt(a,position,{boundary:true},showRejected);
     }
+    if(altitude){
+      // Everything else on this chart (the best-climb and over-rev lines) is solved where it is clicked.
+      const a=data.aircraft.find(a=>a.id===(p.data.meta?.id||p.data.meta));
+      if(a)return solveAt(a,{speed:p.x,rate:p.y},{line:true},showRejected);
+      return;
+    }
     if(Array.isArray(p.customdata)&&p.customdata.length===3){
       const [id,kind,index]=p.customdata,a=data.aircraft.find(a=>a.id===id);if(a)return inspect(a,(kind==='root'?a.sustained:a.points)[index]);
     }
@@ -742,7 +787,7 @@ function propellerPower(a,p){
   const power=p.propulsion.shaft_power_kw;if(!power?.length)return [];
   const rows=[['Engine power',power.map(kw=>fmt(kw*1000/GAME_HP,0)).join(' / ')+' hp']];
   const total=power.reduce((sum,kw)=>sum+kw,0)*1000;
-  if(['piston','turboprop'].includes(state.meta.aircraft[a.aircraft_id||a.id]?.propulsion)&&total>1)
+  if(['piston','turboprop'].includes(metaOf(a.game_version).aircraft[a.aircraft_id||a.id]?.propulsion)&&total>1)
     rows.push(['Propeller efficiency',fmt(p.engine_force_n[0]*p.speed_kmh/3.6/total*100,1)+'%']);
   return rows;
 }
@@ -777,12 +822,13 @@ function controlDeflections(p){
 async function inspect(a,p,clicked){
   const sequence=state.inspection=(state.inspection||0)+1;
   if(!p.component_forces&&p.detail_index!=null){
-    try {p=await api(`/api/jobs/${state.dataJob}/point/${encodeURIComponent(a.id)}/${p.detail_index}`);}
+    try {const part=partOf(a);p=await api(`/api/jobs/${part.id}/point/${encodeURIComponent(a.id)}/${p.detail_index}`,{},part.version);}
     catch(e){error(e.message);return;}
   }
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.turn_dps,2)} °/s`;
+  const altitude=altitudeChart(state.data);
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${altitude?fmt(p.altitude_m,0)+' m':fmt(p.turn_dps,2)+' °/s'}`;
   // Only exceptions get a status tag; a normal solved point needs none (Leo, 2026-10-26).
   $('point-status').innerHTML=clicked?.nearest||!chartUsable(p)?`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`:'';
   const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
@@ -808,9 +854,9 @@ async function inspect(a,p,clicked){
     ['SEP',fmt(p.ps_mps,2)+' m/s'],
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
-    ['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)],
+    ...(altitude?[['Altitude',fmt(p.altitude_m,0)+' m']]:[['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)]]),
     ['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],...liftDrag(p)])}${section('ATTITUDE & CONTROLS',[
-    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Angle of sideslip',sideslip(p)],['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')],...controlDeflections(p),
+    ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Angle of sideslip',sideslip(p)],...(altitude?[]:[['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')]]),...controlDeflections(p),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}${section('ENGINE',engine)}<div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
@@ -836,9 +882,11 @@ async function inspect(a,p,clicked){
 async function poll(id){
   if(state.activeJob!==id)return;
   try{
-    const job=await api(`/api/jobs/${id}`);const p=job.progress||{};
+    const job=await api(`/api/jobs/${id}`,{},state.activeVersion);const p=job.progress||{};
     if(job.status==='complete'||job.status==='stopped'){
-      await loadData(id,false);setRunning(false);state.activeJob=null;return;
+      await loadData(id,false);
+      if(job.status==='complete'&&state.jobQueue.length){state.jobDone.push(state.jobLast);return startJob(state.jobQueue.shift());}
+      setRunning(false);state.activeJob=null;return;
     }
     if(job.status==='error')throw new Error(job.error||'Calculation failed');
     if(job.status==='cancelled'){setRunning(false);state.activeJob=null;$('footer-status').textContent=state.data?.preview?'Calculation cancelled · incomplete preview retained; exports unavailable.':'Calculation cancelled. Previous results retained.';return;}
@@ -848,7 +896,7 @@ async function poll(id){
     const name=state.meta.aircraft[p.aircraft]?.name||'';
     $('progress-label').textContent=job.status==='stopping'?'Stopping calculation and retaining partial results…':job.status==='exporting'?(job.partial_result?'Preparing partial results…':'Preparing diagram and result data…'):
       p.phase?`${p.phase}${name?' · '+name:''}`:name?`Solving ${name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`:'Queued for calculation…';
-    const percent=p.total?Math.min(99,100*p.done/p.total):0;
+    const percent=((p.total?Math.min(99,100*p.done/p.total):0)+100*state.jobDone.length)/(state.jobDone.length+state.jobQueue.length+1);
     $('progress-fill').style.width=percent+'%';$('calculate').style.setProperty('--progress',percent+'%');$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
     setTimeout(()=>poll(id),900);
   }catch(e){
@@ -866,23 +914,71 @@ $('scenario').addEventListener('submit',async e=>{
   if(!state.entries.length)return error('Add at least one aircraft.');
   saveCondition();
   if(+$('speed-min').value>=+$('speed-max').value)return error('Maximum speed must exceed minimum speed.');
+  if(state.tool==='altitude'&&+$('altitude-min').value>=+$('altitude-max').value)return error('Highest altitude must exceed lowest altitude.');
   try{setRunning(true);$('progress-label').textContent='Preparing calculation…';$('progress-count').textContent='';$('progress-fill').style.width='0%';
-    const job=await api('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(readConfig())});state.activeJob=job.id;poll(job.id);
+    state.jobTool=state.tool;state.jobPath=state.tool==='altitude'?'/api/altitude/jobs':'/api/jobs';
+    const config=readConfig(),jobs=window.GameVersions?.enabled()?GameVersions.split(config):[{config}];
+    // One job per game build, one after the other: the server sees the same load as a chart with these rows.
+    state.jobRows=config.entries.map(e=>({id:e.id}));state.jobDone=[];state.jobQueue=jobs.slice(1);
+    await startJob(jobs[0]);
   }catch(e){setRunning(false);error(e.message);}
 });
+async function startJob({version,config}){
+  state.activeVersion=version;
+  try{
+    const job=await api(state.jobPath,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)},version);
+    state.activeJob=job.id;poll(job.id);
+  }catch(e){setRunning(false);state.activeJob=null;error(e.message);}
+}
+// ---- Game versions (versions.js): each row's build, chosen in its edit popup ----
+function openVersionSearch(entry){
+  window.GameVersions?.picker($('entry-version'),{file:rowOf(entry).fm_id||entry.aircraft_id,kind:'fm',current:entry.version,onPick:version=>setEntryVersion(entry,version)});
+}
+async function setEntryVersion(entry,version){
+  const row=metaOf(version).aircraft[entry.aircraft_id];
+  if(!row)return 'This aircraft is not in that build.';
+  if(!row.supported)return 'Not available in that build: '+(row.reason||'model integration pending');
+  saveCondition();
+  if(version)entry.version=version;else delete entry.version;
+  const c=state.conditions[entry.id]=aircraftConditions(entry.aircraft_id,state.conditions[entry.id],version);
+  const note=await dropMissingLoadout(row,entry.aircraft_id,c,version);
+  showCondition(entry.id);renderEntries();syncLabels();
+  return {note:note||(row.data_version_used?`That build couldn't compile this aircraft, so it uses data from ${row.data_version_used}.`:'')};
+}
+// A loadout the chosen build doesn't have is cleared, and the popup says so.
+async function dropMissingLoadout(row,aircraft,c,version){
+  if(!c.loadout||!row.loadouts?.supported)return '';
+  try{
+    const info=await fetchLoadouts(aircraft,c.ammunition_vehicle,version);
+    const exists=typeof c.loadout==='string'?info.presets.some(p=>p.id===c.loadout):Object.entries(c.loadout.tiers||{}).every(([tier,id])=>optionOf(info.editor,tier,id));
+    if(exists)return '';
+    c.loadout='';c.stores_released=false;
+    return "Its loadout isn't in that build, so it was reset.";
+  }catch{return '';}
+}
+// The aircraft search also finds aircraft that only the dev build has; adding one starts on that build.
+async function addDevAircraft(){
+  const dev=window.GameVersions?.enabled()&&GameVersions.dev;
+  if(!dev||GameVersions.isDefault(dev))return;
+  try{
+    const meta=await GameVersions.ensure(dev);
+    state.extraAircraft=Object.fromEntries(Object.entries(meta.aircraft).filter(([id])=>!state.meta.aircraft[id]).map(([id,a])=>[id,{...a,only_in:dev}]));
+    populateAircraft();syncAircraftMenu();document.dispatchEvent(new Event('game-versions-ready'));
+  }catch{}
+}
 // ---- Weapon loadouts: the game's presets and custom pylons (in-game editor rules) ----
 const loadoutCache=new Map();
-const loadoutKey=(aircraft,vehicle)=>`${aircraft}|${vehicle||''}`;
-function fetchLoadouts(aircraft,vehicle){
-  const key=loadoutKey(aircraft,vehicle);
+const loadoutKey=(aircraft,vehicle,version)=>`${aircraft}|${vehicle||''}|${version||''}`;
+function fetchLoadouts(aircraft,vehicle,version){
+  const key=loadoutKey(aircraft,vehicle,version);
   if(!loadoutCache.has(key)){
-    const request=api(`/api/loadouts/${encodeURIComponent(aircraft)}?vehicle=${encodeURIComponent(vehicle||'')}`)
+    const request=api(`/api/loadouts/${encodeURIComponent(aircraft)}?vehicle=${encodeURIComponent(vehicle||'')}`,{},version)
       .then(info=>{request.value=info;return info;},cause=>{loadoutCache.delete(key);throw cause;});
     loadoutCache.set(key,request);
   }
   return loadoutCache.get(key);
 }
-const cachedLoadouts=(aircraft,vehicle)=>loadoutCache.get(loadoutKey(aircraft,vehicle))?.value;
+const cachedLoadouts=(aircraft,vehicle,version)=>loadoutCache.get(loadoutKey(aircraft,vehicle,version))?.value;
 const optionOf=(editor,tier,id)=>editor?.tiers.find(t=>t.tier===+tier)?.options.find(o=>o.id===id);
 // Without stores the loadout is either the default ammunition and countermeasures (default) or clean: nothing aboard
 // (Leo, 2026-10-26; this replaces the "Include default ammunition" switch). Stores always come with the ammunition.
@@ -912,16 +1008,16 @@ async function showLoadout(){
   const entry=state.entries.find(e=>e.id===state.editing);
   $('loadout-field').hidden=!entry;
   if(!entry)return;
-  const aircraft=state.meta.aircraft[entry.aircraft_id],c=state.conditions[entry.id];
+  const aircraft=rowOf(entry),c=state.conditions[entry.id];
   const available=!!aircraft.loadouts?.supported,ammunition=!!ammunitionFor(aircraft,c.ammunition_vehicle)?.supported;
   // Without stores the choice is still between ammunition only and clean.
   $('loadout-edit').disabled=!available&&!ammunition;
-  $('loadout-summary').textContent=loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle));
+  $('loadout-summary').textContent=loadoutText(c,cachedLoadouts(entry.aircraft_id,c.ammunition_vehicle,entry.version));
   $('loadout-detail').textContent=c.loadout?'':c.default_ammunition?ammunitionText(aircraft,c.ammunition_vehicle):
     available||ammunition?'Nothing aboard':(aircraft.loadouts?.reason||'Loadouts are unavailable for this aircraft.');
   if(!available||!c.loadout)return;
   try{
-    const info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle);
+    const info=await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle,entry.version);
     if(state.editing!==entry.id)return;
     $('loadout-summary').textContent=loadoutText(c,info);
     $('loadout-detail').textContent=loadoutFigures(loadoutTotals(c.loadout,info))+(c.stores_released?' · stores released, racks stay':'');
@@ -934,20 +1030,20 @@ async function openLoadoutEditor(target){
   if(!target){
     const entry=state.entries.find(e=>e.id===state.editing);if(!entry)return;
     saveCondition();
-    target={id:entry.id,aircraft_id:entry.aircraft_id,c:state.conditions[entry.id],applied(){
+    target={id:entry.id,aircraft_id:entry.aircraft_id,version:entry.version,c:state.conditions[entry.id],applied(){
       if(state.editing===entry.id){$('default-ammunition').checked=this.c.default_ammunition;showLoadout();}
       syncLabels();}};
   }
-  const entry={id:target.id,aircraft_id:target.aircraft_id},c=target.c,d=loadoutDialog;
+  const entry={id:target.id,aircraft_id:target.aircraft_id,version:target.version},c=target.c,d=loadoutDialog;
   d.entry=entry.id;d.target=target;d.info=null;d.pylon=null;d.notes=[];
-  $('loadout-title').textContent=cleanName(state.meta.aircraft[entry.aircraft_id].name);
+  $('loadout-title').textContent=cleanName(rowOf(entry).name);
   $('loadout-preset-list').innerHTML='<p class="hint">Loading loadouts…</p>';
   $('loadout-custom').hidden=true;$('loadout-apply').disabled=true;
   $('loadout-released').checked=!!c.stores_released;
   $('loadout-dialog').showModal();
-  const aircraft=state.meta.aircraft[entry.aircraft_id];
+  const aircraft=rowOf(entry);
   d.ammunition=ammunitionText(aircraft,c.ammunition_vehicle);
-  try{d.info=aircraft.loadouts?.supported?await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle):{presets:[],editor:null};}
+  try{d.info=aircraft.loadouts?.supported?await fetchLoadouts(entry.aircraft_id,c.ammunition_vehicle,entry.version):{presets:[],editor:null};}
   catch(cause){$('loadout-preset-list').innerHTML=`<p class="hint">${escapeText('Could not load loadouts: '+cause.message)}</p>`;return;}
   if(d.entry!==entry.id)return;
   const loadout=c.loadout;
@@ -1080,8 +1176,8 @@ function formChanged(e){
   syncLabels();
 }
 $('scenario').addEventListener('input',formChanged);$('scenario').addEventListener('change',formChanged);
-$('reset').addEventListener('click',()=>{populate(state.meta.defaults);syncLabels();error('');});
-$('cancel').addEventListener('click',async()=>{if(state.activeJob){$('cancel').disabled=true;try{await api(`/api/jobs/${state.activeJob}/cancel`,{method:'POST'});$('progress-label').textContent='Stopping calculation and retaining partial results…';}catch(e){error(e.message);$('cancel').disabled=false;}}});
+$('reset').addEventListener('click',()=>{populate(state.meta.defaults);[$('speed-min').value,$('speed-max').value]=defaultSpeeds(state.tool);syncLabels();error('');if(altitudeChart(state.data))refreshContours();});
+$('cancel').addEventListener('click',async()=>{if(state.activeJob){$('cancel').disabled=true;try{state.jobQueue=[];await api(`/api/jobs/${state.activeJob}/cancel`,{method:'POST'},state.activeVersion);$('progress-label').textContent='Stopping calculation and retaining partial results…';}catch(e){error(e.message);$('cancel').disabled=false;}}});
 $('chart-tabs').addEventListener('click',event=>{
   const button=event.target.closest('[data-view]');if(!button)return;
   state.view=button.dataset.view;document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b===button));renderChart();
@@ -1102,14 +1198,60 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{if(a.getAttribute('aria-disabled')==='true')e.preventDefault();}));
+// ---- The EM diagram and the altitude envelope on one page -------------------------------------------------------
+// Aircraft cards and their settings are shared; each calculator keeps its own chart, contours, sampling text and details.
+const QUALITY_LABELS={em:{quick:'Preview · 1 m/s / 0.04°/s',standard:'Smooth · 0.5 m/s / 0.02°/s',fine:'Detailed · 0.15 m/s / 0.01°/s'},
+  altitude:{quick:'Preview · 1 m/s',standard:'Smooth · 0.5 m/s',fine:'Detailed · 0.15 m/s'}};
+function showToolFields(){
+  const altitude=state.tool==='altitude';
+  $('altitude-range').hidden=!altitude;$('altitude-field').hidden=altitude;
+  for(const option of $('quality').options)if(QUALITY_LABELS[state.tool][option.value])option.textContent=QUALITY_LABELS[state.tool][option.value];
+  $('chart').setAttribute('aria-label',altitude?'Altitude envelope':'Energy maneuverability diagram');
+  showCondition(state.editing);
+}
+function setTool(tool){
+  if(tool!==state.tool){
+    saveCondition();
+    state.charts[state.tool]={data:state.data,dataJob:state.dataJob,view:state.view,hiddenVehicles:state.hiddenVehicles,contourLevels:state.contourLevels,customContours:state.customContours,
+      details:{hidden:$('inspector').hidden,title:$('point-title').textContent,status:$('point-status').innerHTML,content:$('point-content').innerHTML},footer:$('footer-status').textContent,
+      speeds:[$('speed-min').value,$('speed-max').value]};
+    const next=state.charts[tool]||{};state.tool=tool;state.inspection=(state.inspection||0)+1;
+    [$('speed-min').value,$('speed-max').value]=next.speeds||defaultSpeeds(tool);
+    state.data=next.data||null;state.dataJob=next.dataJob||null;state.view=next.view||'compare';state.hiddenVehicles=next.hiddenVehicles||new Set();
+    // Default contours follow the aircraft added meanwhile; a calculator's own choice stays.
+    state.customContours=next.customContours||false;if(next.contourLevels)state.contourLevels=next.contourLevels;
+    updateDefaultContours();renderContourControls();showToolFields();error('');
+    const tabs=$('chart-tabs');
+    if(state.data){
+      const job=state.dataJob;state.dataJob=next.waiting?null:job;
+      showData(state.data,job);
+      if(!next.waiting&&next.details){$('inspector').hidden=next.details.hidden;$('point-title').textContent=next.details.title;$('point-status').innerHTML=next.details.status;$('point-content').innerHTML=next.details.content;}
+      if(next.footer&&!next.waiting)$('footer-status').textContent=next.footer;
+    }else{
+      if($('chart').classList.contains('js-plotly-plot')){Plotly.purge('chart');$('chart').classList.remove('js-plotly-plot');}
+      $('chart').innerHTML='<div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div>';
+      tabs.innerHTML='<button type="button" data-view="compare" class="active">Compare</button>';
+      $('inspector').hidden=true;$('over-rev-status').hidden=true;$('footer-status').textContent='';
+    }
+    syncLabels();
+  }
+}
+document.addEventListener('tool-tab-change',event=>{if(event.detail==='em'||event.detail==='altitude')setTool(event.detail);});
+document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{
+  if(a.getAttribute('aria-disabled')==='true'){e.preventDefault();return;}
+  // A compare downloads one file per game build; this link is the first one's.
+  for(const part of jobPartsOf(state.dataJob).slice(1)){
+    const other=document.createElement('a');other.href=apiUrl(`/api/jobs/${part.id}/${a.dataset.export}${new URL(a.href,location.href).search}`,part.version);
+    other.download=`${part.version||GameVersions.default}-${a.download}`;other.click();
+  }
+}));
 (async()=>{try{
   $('calculate').disabled=true;
   // Symbol glyphs are cosmetic; a missing font must not disable the calculator.
-  [state.meta]=await Promise.all([api('/api/meta?refresh=1'),document.fonts?.load('14px WTSymbols','▄').catch(()=>[])]);
+  [state.meta]=await Promise.all([api('/api/meta?refresh=1'),document.fonts?.load('14px WTSymbols','▄').catch(()=>[]),window.GameVersions?.load()]);
   $('calculate').disabled=false;
   state.meta.defaults=requestConditions({...state.meta.defaults,default_ammunition:true,aircraft:[]});
-  populateAircraft();populate(state.meta.defaults);
+  populateAircraft();populate(state.meta.defaults);addDevAircraft();
   if(state.meta.game_data?.version)$('runtime-footer').textContent='Game data '+state.meta.game_data.version;
   if(state.meta.public_static){
     $('hosting-notice').hidden=false;
