@@ -29,7 +29,7 @@ const hover = source.slice(source.indexOf('  const trackingLabels='), source.ind
 vm.runInNewContext(`'use strict';
   let flights=[],result=null,focusIndex=0,timeline=[],playbackTime=0,playing=false,lastFrame=0,hoverCalls=0,animationFrame=0,trajectoryReady=true,plotView='3d';
   const plotGestures={active:false};
-  const missileName=id=>id,missileLabel=id=>id,escapeHtml=text=>String(text);
+  const missileName=id=>id,missileLabel=id=>id,escapeHtml=text=>String(text),baseId=id=>id;
   const viewAxes={'3d':[0,2,1],xz:[0,2],xy:[0,1],zy:[2,1]};
   const pause=()=>{playing=false;};
   ${hover}

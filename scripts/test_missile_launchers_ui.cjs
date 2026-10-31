@@ -61,11 +61,13 @@ function harness(kind) {
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/missile-launchers.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/missile-plot.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/versions.js'), 'utf8'), context);
+  context.GameVersions = context.window.GameVersions; context.COPY_ICON = ''; context.EDIT_ICON = '';
   const file = kind === 'missile' ? 'missiles.js' : 'missile-envelope.js';
   const source = fs.readFileSync(path.join(__dirname, '../app', file), 'utf8');
   const hook = kind === 'missile'
-    ? `globalThis.test={setup(m,ids,saved={}){meta=m;selectedMissiles=ids;Object.assign(launcherAircraft,saved);renderSelected();busy(false);},busy,inputs};`
-    : `globalThis.test={setup(m,ids,saved={}){meta=m;selected=ids;Object.assign(launcherAircraft,saved);renderSelected();updateForm();},busy(on){job=on?'fixture':null;busy(on);},inputs,
+    ? `globalThis.test={setup(m,ids,saved={}){meta=m;selectedMissiles=ids;Object.assign(launcherAircraft,saved);renderSelected();busy(false);},busy,inputs,copyRow,names:()=>selectedMissiles.map(rowName)};`
+    : `globalThis.test={setup(m,ids,saved={}){meta=m;selected=ids;Object.assign(launcherAircraft,saved);renderSelected();updateForm();},busy(on){job=on?'fixture':null;busy(on);},inputs,copyRow,names:()=>selected.map(missileName),
         traces(data){runs=data;return gimbalTrace(10000);}};`;
   vm.runInContext(source.replace(/\}\)\(\);\s*$/, hook + '})();'), context);
   return {context, get, posts};
@@ -74,15 +76,17 @@ function harness(kind) {
   for (const kind of ['missile', 'envelope']) {
     const {context, get, posts} = harness(kind);
     context.test.setup(meta, ids);
-    assert.equal(get(kind + '-run').disabled, true, 'Aircraft is required');
+    assert.equal(get(kind + '-run').disabled, false, 'Launcher defaults to the first on the list');
     const selectors = () => get(kind + '-selected').children.flatMap(card => card.children.flatMap(field => field.children));
     assert.equal(selectors().length, 2, 'Only radar missiles have an aircraft selector');
     assert.equal(get(kind + '-selected').children[2].children.length, 0, 'No selector for IR');
     let [pl, aim] = selectors();
-    assert.deepEqual(pl.children.slice(1).map(o => o.value).sort(), [...catalog.carriers.cn_pl12a].sort());
+    assert.deepEqual(pl.children.map(o => o.value).sort(), [...catalog.carriers.cn_pl12a].sort());
+    const firstOfPl = [...pl.children][0].value;
+    assert.equal(pl.value, firstOfPl);
     assert.ok(aim.children.some(o => o.value === 'f_15c_golden_eagle'));
     assert.ok(!pl.children.some(o => o.value === 'f_15c_golden_eagle'));
-    pl.value = 'j_10c'; await pl.emit('change'); assert.equal(get(kind + '-run').disabled, true);
+    pl.value = 'j_10c'; await pl.emit('change'); assert.equal(get(kind + '-run').disabled, false);
     aim.value = 'f_15c_golden_eagle'; await aim.emit('change'); assert.equal(get(kind + '-run').disabled, false);
     context.test.busy(true); assert.ok(selectors().every(s => s.disabled));
     context.test.busy(false); [pl, aim] = selectors();
@@ -108,9 +112,20 @@ function harness(kind) {
     assert.equal(posts.length, 4);
     assert.equal(posts[3].missile, 'uk_sraam');
     assert.ok(!('aircraft_id' in posts[3].launcher), 'Discard saved IR aircraft choice');
+    // Two rows of one missile on one version, each with its own launcher.
+    context.test.setup(meta, ['cn_pl12a'], {cn_pl12a: 'j_10c'});
+    context.test.copyRow(0);
+    const twin = selectors()[1];
+    assert.equal(twin.value, 'j_10c', 'A duplicate starts as a copy of its row');
+    const other = catalog.carriers.cn_pl12a.find(id => id !== 'j_10c');
+    twin.value = other; await twin.emit('change');
+    assert.deepEqual(Array.from(context.test.names()), [`cn_pl12a · ${catalog.aircraft.j_10c.name}`, `cn_pl12a · ${catalog.aircraft[other].name}`]);
+    assert.equal(selectors()[0].value, 'j_10c', 'Changing one row leaves the other');
+    await get(kind + '-form').emit('submit');
+    assert.deepEqual(posts.slice(4).map(p => [p.missile, p.launcher.aircraft_id]), [['cn_pl12a', 'j_10c'], ['cn_pl12a', other]]);
   }
-  console.log(JSON.stringify({status: 'passed', controllers: 2, posts: 8,
-    checks: ['compatibility options', 'required selections', 'independent choices', 'busy state', 'selection persistence',
+  console.log(JSON.stringify({status: 'passed', controllers: 2, posts: 12,
+    checks: ['compatibility options', 'first launcher by default', 'duplicate rows', 'independent choices', 'busy state', 'selection persistence',
       'actual request payloads', 'per-aircraft plot limits', 'manual gimbal removed', 'mixed radar and IR selections',
       'IR alone without aircraft', 'saved IR selection discarded'], browser_rendering_tested: false}));
 })().catch(error => {console.error(error); process.exitCode = 1;});

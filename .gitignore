@@ -11,19 +11,16 @@
 !/.gitattributes
 !/.gitignore
 !/Dockerfile
-!/Launch Altitude Plotter.cmd
 !/Launch EM Plotter.cmd
 !/README.md
 !/Setup Windows.cmd
 !/Update Game Data.cmd
-!/app/altitude.css
-!/app/altitude.html
-!/app/altitude.js
-!/app/altitude_surface.js
 !/app/app.js
 !/app/config.js
 !/app/engine.css
 !/app/engine.js
+!/app/versions.js
+!/app/versions.css
 !/app/engagement-research.css
 !/app/engagement-research.html
 !/app/engagement-research.js
@@ -61,17 +58,7 @@
 !/scripts/aircraft_loadouts.py
 !/scripts/aircraft_model.py
 !/scripts/aircraft_upgrades.py
-!/scripts/altitude_climb.py
-!/scripts/altitude_climb_refine.py
-!/scripts/altitude_climb_zoom.py
-!/scripts/altitude_energy.py
-!/scripts/altitude_envelope.py
-!/scripts/altitude_launch.py
-!/scripts/altitude_plot.py
-!/scripts/altitude_pool.py
-!/scripts/altitude_rows.py
-!/scripts/altitude_runtime.py
-!/scripts/altitude_server.py
+!/scripts/altitude_chart.py
 !/scripts/body_dynamics.py
 !/scripts/bootstrap_runtime.py
 !/scripts/build_em_backend.py

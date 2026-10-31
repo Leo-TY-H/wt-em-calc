@@ -8,12 +8,16 @@
     target:{position:[4000,5000,0],velocity:[1200/3.6,0,0],angles:[0,0,0]}};
   let meta=null, loading=null, result=null, playing=false, lastFrame=0, playbackTime=0, downloadUrl=null, flightRevision=0, animationFrame=0;
   const activeJobs=new Set();
-  const launcherAircraft = {}, launchers = window.missileLaunchers;
+  const launcherAircraft = {}, launchers = window.missileLaunchers, jobVersions = new Map();
   const visuals = window.missileModels;
   let selectedMissiles=[], flights=[], resultColors=[], timeline=[], comparison=null, batchRunning=false, cancelRequested=false, focusIndex=0;
   const flightColors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296','#f08070'];
-  const missileName=id=>meta?.missiles.find(m=>m.id===id)?.name||id;
-  const missileLabel=id=>`${missileName(id)} [${id}]`;
+  const rowName=id=>[meta?.missiles.find(m=>m.id===id)?.name||id,!versionOf(id)&&selectedMissiles.some(versionOf)&&GameVersions.default,launchers.sharedLauncherName(meta,selectedMissiles,id,launcherAircraft[id])].filter(Boolean).join(' · ');
+  // A finished flight keeps the name it flew under, whatever its row has become since.
+  const missileName=id=>flights.find(f=>f.scenario.missile===id)?.scenario.label||rowName(id);
+  const baseId=key=>window.GameVersions?.baseMissile(key)??key;
+  const versionOf=key=>window.GameVersions?.missileVersion(key);
+  const missileLabel=id=>`${missileName(id)} [${baseId(id)}]`;
   const PLAY_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M4.5 2.5v11l9-5.5z"/></svg>';
   const PAUSE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>';
   const REMOVE_ICON='<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5v-2h4v2M4 4.5l.7 9h6.6l.7-9M6.7 7v4.5M9.3 7v4.5"/></svg>';
@@ -72,12 +76,13 @@
       <div id="missile-telemetry-legend" class="missile-plot-legend" aria-label="Missile colors"></div>
       <div id="missile-telemetry-chart" class="missile-telemetry-chart" aria-label="Telemetry over flight time"></div>
     </details>
+    <section id="missile-version-changes" class="version-changes" hidden></section>
     <div class="exports"><span>EXPORT</span><a id="missile-download" aria-disabled="true">Flight data JSON</a></div>
     <details class="missile-details" hidden><summary>Model and current limitations</summary><p>Recovered profile baseline: War Thunder 2.59.0.34. Seekers begin with warm-up complete, respecting designation and angle limits. Radar missiles retain their lock-before-launch or lock-after-launch behavior. Ideal radar support moves from the launch position at the entered launch velocity; recovered inertial guidance remains active where configured. Target geometry is a point, so a proximity event does not assert aircraft damage. Full engagements and native collision timing are still being validated.</p><ul id="missile-model-details"></ul></details>
   </div>`;
   const apiBase=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
-  async function request(path, options={}) {
-    const response=await fetch(apiBase?apiBase+path:'.'+path,options);
+  async function request(path, options={}, version) {
+    const response=await fetch(window.GameVersions?.enabled()?GameVersions.url(path,version):apiBase?apiBase+path:'.'+path,options);
     const body=await response.json();
     if(!response.ok) throw new Error(body.error||`Request failed (${response.status})`);
     return body;
@@ -89,19 +94,21 @@
     if(!node?.data||!node.clientWidth)return;
     Plotly.Plots.resize(node).catch(error=>{if(node.clientWidth)showError(error.message);});
   }
-  const toolTabs=[['em','em-tab','em-workspace'],['engine','engine-tab','engine-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
+  const toolTabs=[['em','em-tab','em-workspace'],['engine','engine-tab','engine-workspace'],['altitude','altitude-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';
+    // The EM diagram and the altitude envelope share one panel: hide the others first, then show the chosen one.
     for(const [key,tab,panel] of toolTabs) {
-      const selected=key===name;el(panel).hidden=!selected;
-      if(selected)el(tab).setAttribute('aria-current','page');else el(tab).removeAttribute('aria-current');
+      if(key===name)continue;
+      el(panel).hidden=true;el(tab).removeAttribute('aria-current');
     }
+    for(const [key,tab,panel] of toolTabs) if(key===name){el(panel).hidden=false;el(tab).setAttribute('aria-current','page');}
     // The header group holding the open calculator is marked current (app.js runs its menus).
     for(const group of document.querySelectorAll('.nav-group'))group.classList.toggle('current',!!group.querySelector('[aria-current=page]'));
     if(name==='missile') {
       if(!meta) load();
       if(result) requestAnimationFrame(()=>{resizeVisiblePlot(el('missile-chart'));resizeDataPlots();});
-    } else {pause(); if(name==='em'&&el('chart').data) requestAnimationFrame(()=>resizeVisiblePlot(el('chart')));}
+    } else {pause(); if((name==='em'||name==='altitude')&&el('chart').data) requestAnimationFrame(()=>resizeVisiblePlot(el('chart')));}
     document.dispatchEvent(new CustomEvent('tool-tab-change',{detail:name}));
   }
   for(const [key,tab] of toolTabs) el(tab).addEventListener('click',()=>selectTab(key));
@@ -131,7 +138,7 @@
     el('missile-target-azimuth').value=String(azimuth);el('missile-target-distance').value=String(distance);el('missile-target-position-1').value=String(offset[1]);
   }
   function inputs() {
-    const config={missiles:[...selectedMissiles], launch_aircraft:Object.fromEntries(selectedMissiles.filter(id=>launchers.needsAircraft(meta,id)).map(id=>[id,launcherAircraft[id]]))};
+    const config={missiles:[...selectedMissiles], launch_aircraft:Object.fromEntries(selectedMissiles.filter(id=>launchers.needsAircraft(meta,id)).map(id=>[id,launchers.resolve(meta,id,launcherAircraft[id])]))};
     for(const role of ['launch','target']) {
       const [speed,heading,climb]=['speed','course','climb'].map(key=>Number(el(`missile-${role}-${key}`).value));
       const horizontal=speed/3.6*Math.cos(radians(climb));
@@ -144,7 +151,7 @@
   }
   const normalizeMissileSearch=value=>value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g,'');
   function populateMissiles() {
-    el('missile-list').replaceChildren(...meta.missiles.filter(item=>launchers.choices(meta,item.id).length>0).map(item=>{
+    el('missile-list').replaceChildren(...meta.missiles.filter(item=>!item.base_id&&launchers.choices(meta,item.id).length>0).map(item=>{
       const row=document.createElement('div');row.className='aircraft-option';
       const family=item.family==='optical'?'Optical / infrared':'Radar';
       row.dataset.search=item.id+' '+item.name+' '+family;
@@ -170,18 +177,34 @@
   }
   function updateAddButton() {
     for(const button of el('missile-list').querySelectorAll('[data-add-missile]')) {
-      const added=selectedMissiles.includes(button.dataset.addMissile);
       const available=launchers.choices(meta,button.dataset.addMissile).length>0;
-      button.disabled=batchRunning||added||selectedMissiles.length>=8||!available;
+      button.disabled=batchRunning||selectedMissiles.length>=8||!available;
       button.title=available?'':(meta?.missiles.find(m=>m.id===button.dataset.addMissile)?.launcher_availability?.reason||'No compatible launcher aircraft in the source data');
-      button.textContent=added?'Added':'Add';
     }
+  }
+  // A copy of a row as it stands; change its launcher or version from there.
+  function copyRow(i) {
+    const id=selectedMissiles[i],key=GameVersions.freeRow(meta,id,selectedMissiles);
+    if(launcherAircraft[id])launcherAircraft[key]=launcherAircraft[id];
+    selectedMissiles.push(key);renderSelected();filterMissiles();changed();busy(false);
   }
   function renderSelected() {
     el('missile-selected').replaceChildren(...selectedMissiles.map((id,i)=>{
       const card=document.createElement('article');card.className='aircraft-entry missile-entry';card.style.setProperty('--entry-color',flightColors[i]);
-      card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(missileName(id))}</strong></div><div class="entry-actions"><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
-      const remove=card.querySelector('button');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+missileLabel(id));
+      card.innerHTML=`<div class="entry-heading"><span class="entry-number">${i+1}</span><strong>${escapeHtml(meta?.missiles.find(m=>m.id===id)?.base_name||meta?.missiles.find(m=>m.id===id)?.name||id)}</strong>${window.GameVersions?.enabled()?`<code class="entry-version" title="${escapeHtml(GameVersions.rulesNote(versionOf(id)))}">${escapeHtml(GameVersions.rowLabel(versionOf(id),meta?.missiles.find(m=>m.id===id)))}</code>`:''}</div><div class="entry-actions">${window.GameVersions?.enabled()?`<button type="button" class="entry-edit entry-icon" data-action="version" aria-haspopup="dialog" title="Game version" aria-label="Game version of ${escapeHtml(rowName(id))}">${EDIT_ICON}</button>`:''}<button type="button" class="entry-icon" data-action="duplicate" title="Duplicate" aria-label="Duplicate ${escapeHtml(rowName(id))}">${COPY_ICON}</button><button type="button" class="entry-icon" data-action="remove" title="Remove">${REMOVE_ICON}</button></div>`;
+      const version=card.querySelector('[data-action=version]');
+      if(version){
+        version.disabled=batchRunning;
+        version.addEventListener('click',()=>GameVersions.missileDialog({key:id,meta,color:flightColors[i],taken:selectedMissiles,onKey:key=>{
+          selectedMissiles[i]=key;
+          if(launcherAircraft[id])launcherAircraft[key]=launcherAircraft[id];
+          if(key!==id)delete launcherAircraft[id];
+          renderSelected();filterMissiles();changed();busy(false);
+        }}));
+      }
+      const duplicate=card.querySelector('[data-action=duplicate]');duplicate.disabled=batchRunning||selectedMissiles.length>=8;
+      duplicate.addEventListener('click',()=>copyRow(i));
+      const remove=card.querySelector('[data-action=remove]');remove.disabled=batchRunning;remove.setAttribute('aria-label','Remove '+rowName(id));
       remove.addEventListener('click',()=>{selectedMissiles.splice(i,1);delete launcherAircraft[id];renderSelected();filterMissiles();changed();busy(false);});
       if(launchers.needsAircraft(meta,id))card.append(launchers.selector(meta,id,launcherAircraft[id],batchRunning,aircraft=>{
         launcherAircraft[id]=aircraft;changed();busy(false);
@@ -193,7 +216,7 @@
   el('missile-list').addEventListener('click',event=>{
     const button=event.target.closest('[data-add-missile]');
     if(!button||button.disabled)return;
-    selectedMissiles.push(button.dataset.addMissile);renderSelected();filterMissiles();changed();busy(false);
+    selectedMissiles.push(GameVersions.freeRow(meta,button.dataset.addMissile,selectedMissiles));renderSelected();filterMissiles();changed();busy(false);
   });
   const radians = angle => angle*Math.PI/180;
   const degrees = angle => angle*180/Math.PI;
@@ -306,7 +329,7 @@
     onCamera:eye=>drawAxes(eye,'missile-axes'),onDrag:applySetupDrag})||null;
   if(setupScene)visuals?.load().then(()=>setupScene.setModel(visuals.getTarget()));
   function busy(value) {
-    el('missile-run').disabled=value||!meta||!selectedMissiles.length||selectedMissiles.some(id=>!launchers.valid(meta,id,launcherAircraft[id]));
+    el('missile-run').disabled=value||!meta||!selectedMissiles.length||selectedMissiles.some(id=>!launchers.valid(meta,id,launchers.resolve(meta,id,launcherAircraft[id])));
     el('missile-cancel').hidden=!value;el('missile-reset').disabled=value;
     root.querySelectorAll('[data-preset]').forEach(button=>button.disabled=value);
     el('missile-selected').querySelectorAll('button,select').forEach(button=>button.disabled=value);
@@ -350,8 +373,9 @@
   window.missileSimulator={load(scenario){
     if(batchRunning)return false;
     selectTab('missile');
-    launcherAircraft[scenario.missile]=scenario.launcher.aircraft_id||'';
-    selectedMissiles=[scenario.missile];renderSelected();filterMissiles();
+    const place=key=>{launcherAircraft[key]=scenario.launcher.aircraft_id||'';selectedMissiles=[key];renderSelected();filterMissiles();changed();busy(false);};
+    if(versionOf(scenario.missile))(async()=>{await load();try{place(await GameVersions.missileRow(meta,baseId(scenario.missile),versionOf(scenario.missile)));}catch(error){showError(error.message);}})();
+    else place(baseId(scenario.missile));
     const origin=scenario.launcher.position;
     // Full precision: near an envelope boundary a rounded position can change the outcome.
     el('missile-launch-position-1').value=String(origin[1]);
@@ -369,23 +393,23 @@
     const submitted=inputs(),completed=[],failed=[];el('missile-status').textContent='Submitting engagement…';
     try {
       const runFlight=async i=>{
-        const id=submitted.missiles[i];let activeJob=null;
+        const id=submitted.missiles[i],version=versionOf(id);let activeJob=null;
         const {missiles,launch_aircraft,...shared}=submitted;
-        el('missile-status').textContent=`Submitting ${i+1}/${missiles.length} · ${missileName(id)}…`;
+        el('missile-status').textContent=`Submitting ${i+1}/${missiles.length} · ${rowName(id)}…`;
         try {
-          const job=await request('/api/missiles/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...shared,missile:id,launcher:launchers.launcher(shared.launcher,launch_aircraft[id])})});activeJob=job.id;activeJobs.add(activeJob);
-          if(cancelRequested)await request('/api/missiles/jobs/'+activeJob+'/cancel',{method:'POST'});
+          const job=await request('/api/missiles/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...shared,missile:baseId(id),launcher:launchers.launcher(shared.launcher,launch_aircraft[id])})},version);activeJob=job.id;activeJobs.add(activeJob);jobVersions.set(activeJob,version);
+          if(cancelRequested)await request('/api/missiles/jobs/'+activeJob+'/cancel',{method:'POST'},version);
           for(;;) {
-            const status=await request('/api/missiles/jobs/'+activeJob);
-            if(status.status==='complete') {completed.push(status.result);break;}
+            const status=await request('/api/missiles/jobs/'+activeJob,{},version);
+            if(status.status==='complete') {status.result.scenario.missile=id;status.result.scenario.label=rowName(id);completed.push(status.result);break;}
             if(status.status==='failed')throw new Error(status.error);
             if(status.status==='cancelled'){cancelRequested=true;break;}
-            const p=status.progress;el('missile-status').textContent=`${completed.length}/${missiles.length} complete · ${missileName(id)} · `+(p?`${p.time_s.toFixed(1)} s flown…`:'Waiting for simulation…');
+            const p=status.progress;el('missile-status').textContent=`${completed.length}/${missiles.length} complete · ${rowName(id)} · `+(p?`${p.time_s.toFixed(1)} s flown…`:'Waiting for simulation…');
             await new Promise(resolve=>setTimeout(resolve,200));
           }
         } catch(error) {
-          failed.push(`${missileLabel(id)}: ${error.message}`);
-          if(activeJob)try{await request('/api/missiles/jobs/'+activeJob+'/cancel',{method:'POST'});}catch{}
+          failed.push(`${rowName(id)}: ${error.message}`);
+          if(activeJob)try{await request('/api/missiles/jobs/'+activeJob+'/cancel',{method:'POST'},version);}catch{}
         }
         finally {activeJobs.delete(activeJob);}
       };
@@ -399,6 +423,7 @@
         const {missiles,...shared}=submitted;
         comparison={requested_missiles:missiles,shared_conditions:shared,complete:completed.length===missiles.length,cancelled:cancelRequested,errors:failed};
         flights=completed;resultColors=flights.map(f=>flightColors[missiles.indexOf(f.scenario.missile)]);focusIndex=0;result=flights[0];await render();
+        window.GameVersions?.changes(el('missile-version-changes'),missiles.map(id=>({id:baseId(id),kind:'missile',version:versionOf(id),name:meta.missiles.find(m=>m.id===id)?.base_name||meta.missiles.find(m=>m.id===id)?.name||id})));
       }
       el('missile-status').textContent=cancelRequested?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'';
       if(failed.length)showError(failed.join(' · '));
@@ -410,7 +435,7 @@
   el('missile-cancel').addEventListener('click',async()=>{
     cancelRequested=true;
     el('missile-status').textContent='Cancelling comparison…';
-    await Promise.all([...activeJobs].map(async id=>{try{await request('/api/missiles/jobs/'+id+'/cancel',{method:'POST'});}catch(error){showError(error.message);}}));
+    await Promise.all([...activeJobs].map(async id=>{try{await request('/api/missiles/jobs/'+id+'/cancel',{method:'POST'},jobVersions.get(id));}catch(error){showError(error.message);}}));
   });
   let camera={eye:{x:.15,y:-1.6,z:1},up:{x:0,y:0,z:1},projection:{type:'orthographic'}},flightBounds=null;
   function sceneFit(bounds,{chart=el('missile-chart'),floor=.08,pad=1.08,eye=null,points=null,viewport=null}={}) {
@@ -652,7 +677,7 @@
     el('missile-slice-note').hidden=is3d;
     el('missile-chart').setAttribute('aria-label',is3d?'Interactive 3D missile and target trajectories':`Interactive 2D missile and target trajectories: ${axisNames[viewAxes[view][0]]} / ${axisNames[viewAxes[view][1]]}`);
     await Plotly.newPlot(el('missile-chart'),[...flights.map((f,i)=>trace(f,'missile',resultColors[i])),trace(longest,'target','#ffa66b'),...flights.map((f,i)=>{
-      const model=visuals?.get(f.scenario.missile),name=missileName(f.scenario.missile)+' now';
+      const model=visuals?.get(baseId(f.scenario.missile)),name=missileName(f.scenario.missile)+' now';
       return model?visuals.trace(model,name,resultColors[i],view):marker(name,resultColors[i]);
     }),targetModel?visuals.trace(targetModel,'Target now','#ffd0ac',view,false):marker('Target now','#ffd0ac',false)],
       layout,
@@ -717,7 +742,7 @@
     const geometry=Object.fromEntries(Object.keys(projected).map(axis=>[axis,[...frames.map(f=>f.trail[axis]),...projected[axis]]]));
     const text=[...frames.map(f=>f.text),...frames.map((f,i)=>[f.hover+(time>flights[i].elapsed_s?'<br>Flight ended · marker remains at the final position':'')]),[]];
     frames.forEach((frame,i)=>{
-      const model=visuals?.get(flights[i].scenario.missile);if(!model)return;
+      const model=visuals?.get(baseId(flights[i].scenario.missile));if(!model)return;
       const view=el('missile-view').value,chart=el('missile-chart');
       const shape=visuals.geometry(model,frame.position,frame.quaternion,visuals.displayLength(model,chart,view,flightBounds),view);
       for(const axis of Object.keys(shape))geometry[axis][flights.length+i]=shape[axis];

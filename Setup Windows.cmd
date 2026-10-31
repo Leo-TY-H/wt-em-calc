@@ -16,7 +16,7 @@ if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 ".venv\Scripts\python.exe" scripts\build_missile_engine.py
 if errorlevel 1 goto failed
-echo Setup complete. Use Launch EM Plotter.cmd or Launch Altitude Plotter.cmd.
+echo Setup complete. Use Launch EM Plotter.cmd.
 pause
 exit /b 0
 :failed

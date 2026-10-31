@@ -45,10 +45,10 @@
     <div id="engine-selected" aria-label="Added aircraft"></div>
     <label class="field">Plot<select id="engine-quantity">${Object.entries(QUANTITIES).map(([k, q]) => `<option value="${k}"${k === defaults.quantity ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="field" id="engine-axis-field">X axis${radios('engine-axis', AXES, defaults.axis, 'X axis')}</div>
-    ${field('engine-speed', 'True airspeed', 'km/h', defaults.speed, 5, 1600)}
+    ${field('engine-speed', 'True airspeed', 'km/h', defaults.speed, 5, '')}
     ${range('engine-altitude-range', 'Altitude range', 'm', 'altitude', defaults.altitudes, 18000)}
     ${field('engine-altitude', 'Altitude', 'm', defaults.altitude, 0, 18000)}
-    ${range('engine-speed-range', 'True airspeed range', 'km/h', 'true airspeed', [0, 800], 1600)}
+    ${range('engine-speed-range', 'True airspeed range', 'km/h', 'true airspeed', [0, 800], '')}
     <div class="sidebar-actions"><p id="engine-ready" class="hint" hidden></p>
       <div class="action-row"><button id="engine-run" class="primary-button" type="submit" disabled>Calculate</button><button id="engine-reset" class="secondary-button reset-button" type="button">Reset</button></div></div>
   </form></aside>
@@ -56,10 +56,11 @@
     <div id="engine-error" class="error" role="alert" hidden></div>
     <section class="chart-card">
       <div id="engine-chart" aria-label="Engine performance"><div class="empty"><span class="empty-glyph">⌁</span><h2>Add an aircraft and press Calculate</h2></div></div></section>
+    <section id="engine-version-changes" class="version-changes" hidden></section>
     <section id="engine-inspector" class="inspector" hidden><div class="inspector-heading"><h2 id="engine-point-title"></h2></div><div id="engine-point"></div></section>
   </main>
   <dialog id="engine-dialog" class="entry-dialog" aria-labelledby="engine-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="engine-dialog-title"></h2></div><button type="button" id="engine-dialog-close" class="text-button" aria-label="Close settings">✕</button></header>
-    <div class="entry-dialog-body"><label class="field">Fuel load <output id="engine-fuel-label">30%</output><input id="engine-fuel" type="range" min="1" max="100" step="1" value="30"></label>
+    <div class="entry-dialog-body"><div id="engine-version" class="version-picker" hidden></div><label class="field">Fuel load <output id="engine-fuel-label">30%</output><input id="engine-fuel" type="range" min="1" max="100" step="1" value="30"></label>
       <label class="field">Throttle <output id="engine-throttle-label">110%</output><input id="engine-throttle" type="range" min="0" max="110" step="1" value="110"></label>
       <div id="engine-manual-field"><label class="check-row"><input id="engine-manual" type="checkbox"> Manual engine controls</label>
       <div id="engine-manual-settings"><label id="engine-pitch-auto-field" class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
@@ -80,7 +81,8 @@
   const checked = name => root.querySelector(`input[name=${name}]:checked`).value;
   const propeller = a => PROPS.includes(a?.propulsion);
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
-  const aircraftOf = entry => catalog()?.[entry.aircraft_id];
+  const aircraftOf = entry => metaOf(entry.version)?.aircraft?.[entry.aircraft_id] ?? catalog()?.[entry.aircraft_id];
+  const versionSuffix = e => window.GameVersions?.enabled() && (e.version || shown?.entries.some(x => x.version)) ? ` · ${e.version || GameVersions.default}` : '';
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
   // run: {axis, level, altitude, speed, altitudes, speeds}; the fixed value and range the axis does not use stay out of
   // the request and the cache key. quantity: the plot asked for; the server refines only that curve and reuses points it
@@ -89,8 +91,8 @@
     altitude_m: run.axis === 'speed' ? run.altitude : 0, speed_kmh: run.axis === 'altitude' ? run.speed : 300,
     ...(run.axis === 'altitude' && {altitude_range: run.altitudes}), ...(run.axis === 'speed' && {speed_range: run.speeds}),
     // SFC covers every throttle setting: the entry's own throttle plays no part.
-    throttle: run.axis === 'sfc' ? +full(entry.aircraft_id) : +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
-  const key = (entry, run) => JSON.stringify(body(entry, run));
+    throttle: run.axis === 'sfc' ? +full(entry.aircraft_id, entry.version) : +entry.throttle, pitch: entry.pitch === 'auto' ? 'auto' : +entry.pitch, mass: entry.c});
+  const key = (entry, run) => JSON.stringify({...body(entry, run), version: entry.version});
   const levelPlot = () => !!QUANTITIES[el('engine-quantity').value].level;
   // Plots of one group share a calculation: the engine sweeps, level flight (SEP), the throttle sweep (SFC).
   const group = q => QUANTITIES[q].level ? 'level' : QUANTITIES[q].sweep || 'engine';
@@ -99,9 +101,9 @@
   function populate() {
     const aircraft = catalog();
     const symbol = a => Number(cleanName(a.name) !== sortName(a.name));
-    const rows = Object.entries(aircraft).sort(([, a], [, b]) => Number(b.supported) - Number(a.supported) ||
+    const rows = Object.entries({...state.extraAircraft, ...aircraft}).sort(([, a], [, b]) => Number(b.supported) - Number(a.supported) ||
       sortName(a.name).localeCompare(sortName(b.name), undefined, {numeric: true}) || symbol(a) - symbol(b) || a.name.localeCompare(b.name));
-    el('engine-list').innerHTML = rows.map(([id, a]) => `<div class="aircraft-option" data-search="${escapeText(id + ' ' + a.name)}" data-supported="${!!a.supported}" title="${escapeText(a.reason || '')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name) || id)}</code></small></span><button type="button" data-add="${escapeText(id)}" aria-label="Add ${escapeText(a.name)}"${a.supported ? '' : ' disabled'}>Add</button></div>`).join('');
+    el('engine-list').innerHTML = rows.map(([id, a]) => `<div class="aircraft-option" data-search="${escapeText(id + ' ' + a.name)}" data-supported="${!!a.supported}" title="${escapeText(a.reason || '')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name) || id)}</code>${a.only_in ? escapeText(' · Only in ' + a.only_in) : ''}</small></span><button type="button" data-add="${escapeText(id)}"${a.only_in ? ` data-version="${escapeText(a.only_in)}"` : ''} aria-label="Add ${escapeText(a.name)}"${a.supported ? '' : ' disabled'}>Add</button></div>`).join('');
     filter(); renderEntries(); updateForm();
   }
   function filter() {
@@ -121,7 +123,7 @@
     el('engine-selected').innerHTML = entries.map((e, i) => {
       const a = aircraftOf(e), name = a?.name || e.aircraft_id, off = running ? ' disabled' : '';
       return `<article class="aircraft-entry ${e.id === editing ? 'active' : ''}" data-entry="${e.id}" style="--entry-color:${entryColors[i]}">
-        <div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeText(cleanName(name))}</strong></div>
+        <div class="entry-heading"><span class="entry-number">${i + 1}</span><strong>${escapeText(cleanName(name))}</strong>${window.GameVersions?.enabled() ? `<code class="entry-version" title="${escapeText(GameVersions.rulesNote(e.version))}">${escapeText(GameVersions.rowLabel(e.version, aircraftOf(e)))}</code>` : ''}</div>
         <div class="entry-actions"><button type="button" class="entry-edit entry-icon" data-action="configure" aria-haspopup="dialog" aria-label="Edit settings of entry ${i + 1}" title="Edit settings"${off}>${EDIT_ICON}</button>
         <button type="button" class="entry-icon" data-action="duplicate" aria-label="Duplicate entry ${i + 1}" title="Duplicate"${entries.length >= MAX || running ? ' disabled' : ''}>${COPY_ICON}</button>
         <button type="button" class="entry-icon" data-action="remove" aria-label="Remove entry ${i + 1}" title="Remove"${off}>${REMOVE_ICON}</button></div></article>`;
@@ -133,9 +135,9 @@
   // c: the EM page's mass settings (fuel, flaps, loadout, ammunition, additional mass), normalized as app.js
   // aircraftConditions does: ammunition only where the aircraft has it, flaps 0 without flaps, loadouts per aircraft.
   const FRESH = {throttle: null, manual: false, auto: true, setting: '50', pitch: 'auto', c: null};
-  const full = aircraft_id => noWep(aircraft_id) ? '100' : '110';
-  function massSettings(aircraft_id, from) {
-    const a = catalog()[aircraft_id], d = state.meta.defaults, c = {fuel_percent: d.fuel_percent, extra_mass_kg: d.extra_mass_kg, flaps_percent: 0,
+  const full = (aircraft_id, version) => noWep(aircraft_id, version) ? '100' : '110';
+  function massSettings(aircraft_id, from, version) {
+    const a = metaOf(version).aircraft[aircraft_id] ?? catalog()[aircraft_id], d = state.meta.defaults, c = {fuel_percent: d.fuel_percent, extra_mass_kg: d.extra_mass_kg, flaps_percent: 0,
       loadout: '', stores_released: false, default_ammunition: d.default_ammunition, ammunition_vehicle: '', ...(from || {})};
     if (!a.ammunition?.variants?.[c.ammunition_vehicle]) c.ammunition_vehicle = a.ammunition?.vehicle_id || '';
     if (!ammunitionFor(a, c.ammunition_vehicle)?.supported) c.default_ammunition = false;
@@ -143,14 +145,14 @@
     if (!a.loadouts?.supported || !c.loadout) { c.loadout = ''; c.stores_released = false; }
     return c;
   }
-  const addEntry = (aircraft_id, from = FRESH) => {
+  const addEntry = (aircraft_id, from = FRESH, version = from.version) => {
     if (entries.length >= MAX) return;
-    const {manual, auto, setting, pitch} = from, throttle = from.throttle ?? full(aircraft_id);
-    entries.push({id: `engine_${nextEntry++}`, aircraft_id, throttle, manual, auto, setting, pitch, c: massSettings(aircraft_id, from.c && structuredClone(from.c))});
+    const {manual, auto, setting, pitch} = from, throttle = from.throttle ?? full(aircraft_id, version);
+    entries.push({id: `engine_${nextEntry++}`, aircraft_id, ...(version ? {version} : {}), throttle, manual, auto, setting, pitch, c: massSettings(aircraft_id, from.c && structuredClone(from.c), version)});
     renderEntries(); filter(); updateForm();
   };
   el('engine-list').addEventListener('click', event => {
-    const button = event.target.closest('[data-add]'); if (button && !button.disabled) addEntry(button.dataset.add);
+    const button = event.target.closest('[data-add]'); if (button && !button.disabled) addEntry(button.dataset.add, FRESH, button.dataset.version);
   });
   el('engine-selected').addEventListener('click', event => {
     const button = event.target.closest('[data-action]'); if (!button || button.disabled || running) return;
@@ -158,10 +160,23 @@
     if (button.dataset.action === 'duplicate') return addEntry(entry.aircraft_id, entry);
     if (button.dataset.action === 'remove') { entries.splice(index, 1); renderEntries(); filter(); updateForm(); render(); return; }
     editing = entry.id; showSettings(); renderEntries();
+    window.GameVersions?.picker(el('engine-version'), {file: aircraftOf(entry)?.fm_id || entry.aircraft_id, kind: 'fm', current: entry.version, onPick: version => setVersion(entry, version)});
     el('engine-dialog-title').textContent = `${index + 1} · ${cleanName(aircraftOf(entry)?.name || entry.aircraft_id)}`;
     el('engine-dialog').style.setProperty('--entry-color', entryColors[index]);
     el('engine-dialog').showModal();
   });
+
+  async function setVersion(entry, version) {
+    const row = metaOf(version).aircraft[entry.aircraft_id];
+    if (!row) return 'This aircraft is not in that build.';
+    if (!row.supported) return 'Not available in that build: ' + (row.reason || 'model integration pending');
+    if (version) entry.version = version; else delete entry.version;
+    entry.c = massSettings(entry.aircraft_id, entry.c, version);
+    if (+entry.throttle > +full(entry.aircraft_id, version)) entry.throttle = full(entry.aircraft_id, version);
+    const note = await dropMissingLoadout(row, entry.aircraft_id, entry.c, version);
+    showSettings(); renderEntries(); updateForm();
+    return {note: note || (row.data_version_used ? `That build couldn't compile this aircraft, so it uses data from ${row.data_version_used}.` : '')};
+  }
 
   // ---- Settings popup: applies as it changes; ✕, Escape or a click outside puts it away ------
   // The EM page's rules (app.js syncLabels, normalizeManualControls); radiators are left out (drag only).
@@ -221,12 +236,12 @@
     const a = aircraftOf(entry), c = entry.c;
     const available = !!a.loadouts?.supported, ammunition = !!ammunitionFor(a, c.ammunition_vehicle)?.supported;
     el('engine-loadout-edit').disabled = !available && !ammunition;
-    el('engine-loadout-summary').textContent = loadoutText(c, cachedLoadouts(entry.aircraft_id, c.ammunition_vehicle));
+    el('engine-loadout-summary').textContent = loadoutText(c, cachedLoadouts(entry.aircraft_id, c.ammunition_vehicle, entry.version));
     el('engine-loadout-detail').textContent = c.loadout ? '' : c.default_ammunition ? ammunitionText(a, c.ammunition_vehicle) :
       available || ammunition ? 'Nothing aboard' : (a.loadouts?.reason || 'Loadouts are unavailable for this aircraft.');
     if (!available || !c.loadout) return;
     try {
-      const info = await fetchLoadouts(entry.aircraft_id, c.ammunition_vehicle);
+      const info = await fetchLoadouts(entry.aircraft_id, c.ammunition_vehicle, entry.version);
       if (editing !== entry.id) return;
       el('engine-loadout-summary').textContent = loadoutText(c, info);
       el('engine-loadout-detail').textContent = loadoutFigures(loadoutTotals(c.loadout, info)) + (c.stores_released ? ' · stores released, racks stay' : '');
@@ -234,7 +249,7 @@
   }
   el('engine-loadout-edit').addEventListener('click', () => {
     const entry = entries.find(e => e.id === editing); if (!entry) return;
-    openLoadoutEditor({id: entry.id, aircraft_id: entry.aircraft_id, c: entry.c, applied() { if (editing === entry.id) showLoadoutSummary(entry); }});
+    openLoadoutEditor({id: entry.id, aircraft_id: entry.aircraft_id, version: entry.version, c: entry.c, applied() { if (editing === entry.id) showLoadoutSummary(entry); }});
   });
   el('engine-apply-all').addEventListener('click', () => {
     // As the EM page: every setting to every entry; a loadout and armament variant only to the same aircraft.
@@ -321,11 +336,12 @@
       for (const [i, entry] of wanted.entries()) {
         const id = key(entry, run);
         if (!results.has(id)) results.set(id, await api('/api/engine', {method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body(entry, run))}));
+          body: JSON.stringify(body(entry, run))}, entry.version));
         el('engine-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
       shown = {...run, entries: wanted.map(e => structuredClone(e))};
       el('engine-inspector').hidden = true; render();
+      window.GameVersions?.changes(el('engine-version-changes'), wanted.map(e => ({id: e.aircraft_id, kind: 'fm', version: e.version, name: cleanName(aircraftOf(e)?.name || e.aircraft_id)})));
     } catch (error) { showError(error.message); }
     finally { busy(false); }
   });
@@ -342,7 +358,7 @@
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
     d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r, d.result)))));
   // Legend: aircraft · number, then the settings that differ from the defaults (full throttle, automatic pitch).
-  const entryName = (d, swept) => `${cleanName(d.result.name)} · ${d.index + 1}${!swept && d.entry.throttle !== full(d.entry.aircraft_id) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
+  const entryName = (d, swept) => `${cleanName(d.result.name)} · ${d.index + 1}${versionSuffix(d.entry)}${!swept && d.entry.throttle !== full(d.entry.aircraft_id, d.entry.version) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
   function render() {
     const list = displayed(), chart = el('engine-chart');
     if (!list.length) {
@@ -398,7 +414,7 @@
   // The exact state at a clicked point between solved ones: the server solves it as the sweep solves its points.
   async function exact(d, axis, at) {
     const request = {...body(d.entry, shown), point: true, altitude_m: axis === 'altitude' ? at : shown.altitude, speed_kmh: axis === 'speed' ? at : shown.speed};
-    try { return (await api('/api/engine', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request)})).row; }
+    try { return (await api('/api/engine', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request)}, d.entry.version)).row; }
     catch (error) { showError(error.message); return null; }
   }
   // find(mode, point, entry): the clicked sweep row (or its promise).
@@ -518,6 +534,7 @@
 
   // The catalog arrives with the EM page's start; the list fills once it is there.
   function whenReady() { if (catalog()) populate(); else setTimeout(whenReady, 300); }
+  document.addEventListener('game-versions-ready', () => { if (catalog()) populate(); });
   document.addEventListener('tool-tab-change', event => {
     if (event.detail === 'engine') requestAnimationFrame(() => { if (el('engine-chart').data) Plotly.Plots.resize(el('engine-chart')); });
   });
