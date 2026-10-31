@@ -7,7 +7,7 @@
   const baseId = key => window.GameVersions?.baseMissile(key) ?? key;
   const versionOf = key => window.GameVersions?.missileVersion(key);
   async function request(path, options = {}, version) {
-    const response = await fetch(window.GameVersions?.enabled() ? GameVersions.url(path, version) : apiBase ? apiBase + path : '.' + path, options);
+    const response = await (window.GameVersions?.enabled() ? GameVersions.request(path, options, version) : fetch(apiBase ? apiBase + path : '.' + path, options));
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
     return body;
@@ -216,7 +216,7 @@
         if (launcherAircraft[key]) launcherAircraft[next] = launcherAircraft[key];
         if (next !== key) delete launcherAircraft[key];
         renderSelected(); filter(); updateForm();
-      }});
+      }, onLoaded: cause => { if (cause) showError(cause.message); renderSelected(); filter(); updateForm(); }});
       return;
     }
     const button = event.target.closest('[data-remove]'); if (!button || job) return;
@@ -284,6 +284,8 @@
   el('envelope-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (job || el('envelope-run').disabled) return;
+    job = 'starting'; busy(true);
+    await window.GameVersions?.rowsLoaded(meta);
     const base = inputs(), centre = centreOn();
     runs = runSets[centre] = selected.map((missile, index) => ({missile, index, color: COLORS[index], label: missileName(missile), submitted: {...base, missile,
       launcher: launchers.launcher(base.launcher, !ground() ? launchers.resolve(meta, missile, launcherAircraft[missile]) : undefined)},

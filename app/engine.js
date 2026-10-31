@@ -166,15 +166,23 @@
     el('engine-dialog').showModal();
   });
 
+  // The row changes at once. The build's own values and checks follow when its data arrives, unless the row has moved on.
   async function setVersion(entry, version) {
+    const previous = entry.version, current = () => entry.version === version && entries.includes(entry);
+    const apply = value => { if (value) entry.version = value; else delete entry.version; renderEntries(); updateForm(); };
+    const back = text => { if (current()) apply(previous); return text; };
+    apply(version);
+    try { await GameVersions.ensure(version); } catch (cause) { return back(cause.message); }
+    if (!current()) return undefined;
     const row = metaOf(version).aircraft[entry.aircraft_id];
-    if (!row) return 'This aircraft is not in that build.';
-    if (!row.supported) return 'Not available in that build: ' + (row.reason || 'model integration pending');
-    if (version) entry.version = version; else delete entry.version;
+    if (!row) return back('This aircraft is not in that build.');
+    if (!row.supported) return back('Not available in that build: ' + (row.reason || 'model integration pending'));
     entry.c = massSettings(entry.aircraft_id, entry.c, version);
     if (+entry.throttle > +full(entry.aircraft_id, version)) entry.throttle = full(entry.aircraft_id, version);
     const note = await dropMissingLoadout(row, entry.aircraft_id, entry.c, version);
-    showSettings(); renderEntries(); updateForm();
+    if (!current()) return undefined;
+    if (editing === entry.id) showSettings();
+    renderEntries(); updateForm();
     return {note: note || (row.data_version_used ? `That build couldn't compile this aircraft, so it uses data from ${row.data_version_used}.` : '')};
   }
 

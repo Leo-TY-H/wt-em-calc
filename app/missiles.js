@@ -82,7 +82,7 @@
   </div>`;
   const apiBase=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   async function request(path, options={}, version) {
-    const response=await fetch(window.GameVersions?.enabled()?GameVersions.url(path,version):apiBase?apiBase+path:'.'+path,options);
+    const response=await (window.GameVersions?.enabled()?GameVersions.request(path,options,version):fetch(apiBase?apiBase+path:'.'+path,options));
     const body=await response.json();
     if(!response.ok) throw new Error(body.error||`Request failed (${response.status})`);
     return body;
@@ -182,6 +182,11 @@
       button.title=available?'':(meta?.missiles.find(m=>m.id===button.dataset.addMissile)?.launcher_availability?.reason||'No compatible launcher aircraft in the source data');
     }
   }
+  // That build's own values for a row arrived, or could not.
+  function rowLoaded(cause) {
+    if(cause)showError(cause.message);
+    renderSelected();filterMissiles();busy(batchRunning);
+  }
   // A copy of a row as it stands; change its launcher or version from there.
   function copyRow(i) {
     const id=selectedMissiles[i],key=GameVersions.freeRow(meta,id,selectedMissiles);
@@ -200,7 +205,7 @@
           if(launcherAircraft[id])launcherAircraft[key]=launcherAircraft[id];
           if(key!==id)delete launcherAircraft[id];
           renderSelected();filterMissiles();changed();busy(false);
-        }}));
+        },onLoaded:rowLoaded}));
       }
       const duplicate=card.querySelector('[data-action=duplicate]');duplicate.disabled=batchRunning||selectedMissiles.length>=8;
       duplicate.addEventListener('click',()=>copyRow(i));
@@ -374,7 +379,7 @@
     if(batchRunning)return false;
     selectTab('missile');
     const place=key=>{launcherAircraft[key]=scenario.launcher.aircraft_id||'';selectedMissiles=[key];renderSelected();filterMissiles();changed();busy(false);};
-    if(versionOf(scenario.missile))(async()=>{await load();try{place(await GameVersions.missileRow(meta,baseId(scenario.missile),versionOf(scenario.missile)));}catch(error){showError(error.message);}})();
+    if(versionOf(scenario.missile))(async()=>{await load();try{place(GameVersions.missileRow(meta,baseId(scenario.missile),versionOf(scenario.missile),rowLoaded));}catch(error){showError(error.message);}})();
     else place(baseId(scenario.missile));
     const origin=scenario.launcher.position;
     // Full precision: near an envelope boundary a rounded position can change the outcome.
@@ -390,6 +395,7 @@
   el('missile-form').addEventListener('submit',async event=>{
     event.preventDefault();if(batchRunning||el('missile-run').disabled||!selectedMissiles.length)return;
     batchRunning=true;cancelRequested=false;pause();showError('');busy(true);
+    await window.GameVersions?.rowsLoaded(meta);
     const submitted=inputs(),completed=[],failed=[];el('missile-status').textContent='Submitting engagement…';
     try {
       const runFlight=async i=>{
