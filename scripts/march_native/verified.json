@@ -100,9 +100,9 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "88c04a1d299db24099d37a87853e7895fced322128b4dac80fa3b75170c1168f",
+ "python_sha256": "62ece173b4933b0712f05daadf3e84e5bdb5732b9b48a006f571936be56d29aa",
  "verification": {
-  "date": "2026-10-27",
+  "date": "2026-10-30",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
