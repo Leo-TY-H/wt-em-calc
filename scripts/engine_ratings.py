@@ -45,8 +45,10 @@ VECTORS = frozenset(('WaterThermalConductionCrossCoeffTable', 'OilThermalConduct
 # Values of a malformed block that the port's float32 helpers reject (native SSE code gives inf or nan instead).
 DATA_ERRORS = (ValueError, OverflowError, ZeroDivisionError, TypeError, IndexError, KeyError, AttributeError, struct.error)
 # The Zeppelin-like engines (no oil channel, nonzero water cross coupling) depend on stack memory in the temperature
-# update (R/ENGINE-THERMODYNAMICS.md:591-598; R/REPORT.md:290-300), which no result here uses: every result holds the
-# temperature, and load counters read only their own channel (R/thermal_core.py:18-46). True excludes them anyway.
+# update (R/ENGINE-THERMODYNAMICS.md:591-598; R/REPORT.md:290-300), which no limit uses: every limit holds the
+# temperature, and load counters read only their own channel (R/thermal_core.py:18-46). The heat index (settled) uses
+# the computed oil coefficient there; the cross factor clamps, so any plausible stack value moves it by under 0.3 K.
+# True excludes them anyway.
 EXCLUDE_NO_OIL_CROSS = False
 
 
@@ -69,7 +71,7 @@ def largest_true(pred, lo, hi):
     return unbits(a)
 
 
-# Stand-ins for the game's CRT, used only by loader slots no result reads.
+# Stand-ins for the game's CRT, used only by loader slots no limit reads, and by the display-only plots.
 def expf(x):
     try: return f(math.exp(f(x)))
     except OverflowError: return math.inf
@@ -469,9 +471,11 @@ def settled(r, x, altitude_m, channels):
     (R/thermal_temperature.py:47-80, dT/dt = 0) at full cooling: radiator open (E = 1), thermostat open, full fluid,
     fast flight (the flow term decays to nothing: the sink is the ambient) and the ambient AMBIENT, with the air
     density at altitude_m. There dT/dt = [(Ta - T)k + (D - (T - Ta))h]/inertia, so T = Ta + hD/(h + k): float64 from
-    the float32 terms. At a Mode row above the thermostat setpoint this is that row's temperature less about 0.45 K (its
-    calibration takes the ambient B + 0.5 K, R/ENGINE-THERMODYNAMICS.md:146-163). None where the channel has no heat
-    calibration (h = 0 in every row)."""
+    the float32 terms. At a Mode row above the thermostat setpoint, or on an air-cooled head, this is that row's
+    temperature less 0.5(700 - (T - Ta))/699.5 K, 0.3-0.5 K (its calibration takes the ambient B + 0.5 K,
+    R/ENGINE-THERMODYNAMICS.md:146-163); a row below the setpoint is calibrated with the thermostat closed
+    (R/thermal_properties.py:107), so the index reads far below it. None where the channel has no heat calibration
+    (h = 0 in every row)."""
     s = r['slots']; rho = density(altitude_m); q = []
     for c in (0, 1):
         level = add(mul(sub(1., s[hex(0x1a0 + 4 * c)]), 1.), s[hex(0x1a0 + 4 * c)])
@@ -503,6 +507,28 @@ def heat_bases(fm):
     return out
 
 
+def same_curve(a, b):
+    """Two engines' heat curves equal to the plot's precision: the same points solved, RPM within 0.05, manifold within
+    1e-4 ata and heat index within 0.005 C. Twins with counter-rotating propellers differ only by solver rounding
+    (0.001 rpm and 4e-5 C, 2026-11-01)."""
+    close = lambda x, y, tol: (x is None) == (y is None) and (x is None or abs(x - y) <= tol)
+    return len(a) == len(b) and all(
+        (p is None) == (q is None) and (p is None or close(p['rpm'], q['rpm'], .05) and close(p['manifold_ata'], q['manifold_ata'], 1e-4)
+                                        and len(p['heat_c']) == len(q['heat_c']) and all(close(x, y, .005) for x, y in zip(p['heat_c'], q['heat_c'])))
+        for p, q in zip(a, b))
+
+
+def grouped(curves):
+    """[{engines, points}]: engines in order, each joining the first group whose curve is the same (same_curve); a group
+    shows its first engine's points."""
+    groups = []
+    for i, points in sorted(curves.items()):
+        group = next((g for g in groups if same_curve(g['points'], points)), None)
+        if group: group['engines'].append(i)
+        else: groups.append(dict(engines=[i], points=points))
+    return groups
+
+
 @functools.lru_cache(maxsize=32)
 def _heat(path, stamp, aircraft_id, altitude_m, speed_kmh):
     import numpy as np
@@ -516,9 +542,8 @@ def _heat(path, stamp, aircraft_id, altitude_m, speed_kmh):
     count = len(contiguous(fm, 'Engine'))
     with ep.LOCK:
         for t in throttles if curves else ():
-            try:
-                chart = ep.solver(aircraft_id, altitude_m, t, None)
-                row = ep.propeller_row(chart, speed_kmh, None)
+            chart = ep.solver(aircraft_id, altitude_m, t, None)    # outside the try, as engine_performance.compute: a
+            try: row = ep.propeller_row(chart, speed_kmh, None)     # solver the page cannot build is a ValueError (400)
             except (ValueError, ArithmeticError, np.linalg.LinAlgError): row = None     # as engine_performance.axial_point
             engines = chart.engine.properties['engines'] if row else []
             pistons = [j for j, e in enumerate(engines) if e['family'] in (0, 1)]
@@ -532,16 +557,14 @@ def _heat(path, stamp, aircraft_id, altitude_m, speed_kmh):
                         x = mul(mul(heat_scale(rec, f(t / 100.)), f(manifold)), f(rpm * math.pi / 30.))
                         point = dict(rpm=rpm, manifold_ata=manifold, heat_c=settled(r, x, altitude_m, channels))
                 curves[i].append(point)
-    groups = {}
-    for i, points in sorted(curves.items()):
-        groups.setdefault(json.dumps(points), dict(engines=[], points=points))['engines'].append(i)
-    return dict(throttle_percent=throttles, altitude_m=altitude_m, speed_kmh=speed_kmh, engines=list(groups.values()))
+    return dict(throttle_percent=throttles, altitude_m=altitude_m, speed_kmh=speed_kmh, engines=grouped(curves))
 
 
 def heat(aircraft_id, altitude_m=HEAT_ALTITUDE_M, speed_kmh=HEAT_SPEED_KMH):
     """Heat index against throttle (every HEAT_STEP % up to the engine page's throttle stop) of each ordinary engine, at
     the engine state the Engine performance page solves at altitude_m and speed_kmh (engine_performance.solver and
-    propeller_row: auto pitch, angle of attack 0, 1 g; unsolved points are None). Engines with equal curves share one.
+    propeller_row: auto pitch, angle of attack 0, 1 g; each point solved from cold, as the page's sweeps start: some
+    do not converge, and are None). Engines with the same curve (same_curve) share one.
     ValueError where the engine page cannot calculate the aircraft. Cached on the FM file."""
     from aircraft_catalog import source
     path = source(aircraft_id); stat = path.stat()
@@ -552,8 +575,8 @@ def heat(aircraft_id, altitude_m=HEAT_ALTITUDE_M, speed_kmh=HEAT_SPEED_KMH):
 def load(block, special, water):
     """construct() on the loader's view of the block; True when its Mode rows had to be left out. The port raises where
     native SSE arithmetic gives inf or nan (f() beyond the float32 range, a division by zero). Mode rows feed only the
-    mode, heat and flow slots (R/thermal_properties.py:78-120); nothing used here reads them (lines 58-75 and 122-133),
-    so a block whose Mode rows fail loads again without them, with every value used here unchanged."""
+    mode, heat and flow slots (R/thermal_properties.py:78-120); no limit reads them (lines 58-75 and 122-133), so a
+    block whose Mode rows fail loads again without them, with every limit unchanged (heat_bases leaves such blocks out)."""
     data = loader_block(block)
     try: return construct(data, special, water, powf, expf, logf), False
     except DATA_ERRORS as error:
