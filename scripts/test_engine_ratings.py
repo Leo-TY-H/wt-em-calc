@@ -1,4 +1,5 @@
-"""Engine ratings: ported files, exact counters, the game's engine selection, Bf 109 F-4 values, monotonicity, API.
+"""Engine ratings: ported files, exact counters, the game's engine selection, Bf 109 F-4 values, monotonicity, radiator
+and heat plots, API.
 
 Fleet checks read references/jet-catalog/fm when it is there and are skipped otherwise.
 """
@@ -206,6 +207,25 @@ class Selection(unittest.TestCase):
         self.assertEqual([t for _, t, _ in automatic(hasOilRadiatorControl=True)], [[None, 70.], [None, 70.]])
         self.assertEqual(automatic(hasRadiatorControl=False, hasOilRadiatorControl=False, hasCommonRadiator=True), [])
 
+    def test_radiator_curves(self):
+        tree = dict(Engine0=dict(engine(), Controls=dict(hasRadiatorControl=True)), Aerodynamics=dict(RadiatorCd=.01))
+        tree['Engine0']['Temperature'].update(WaterMinRadiatorThermalConductionCoeff=.7, WaterRadiatorEffectPower=4.)
+        result = er.evaluate(tree); (e,) = result['engines']
+        self.assertEqual((e['radiator']['channels'], e['radiator']['opening_percent'][::50]), ([0], [0, 50, 100]))
+        factor = e['radiator']['factor'][0]
+        self.assertAlmostEqual(factor[0], .7, places=6); self.assertAlmostEqual(factor[-1], 1., places=6)
+        self.assertTrue(all(a < b for a, b in zip(factor, factor[1:])))
+        self.assertEqual(result['radiator_cd'], [f(.01), 0.])
+        self.assertIsNone(er.evaluate(dict(Engine0=engine()))['engines'][0]['radiator'])                     # no control
+        jet = dict(Engine0=dict(Main=dict(Type='Jet'), Temperature=engine()['Temperature'], Controls=dict(hasRadiatorControl=True)))
+        self.assertIsNone(er.evaluate(jet)['engines'][0]['radiator'])
+
+    def test_heat_scale(self):
+        rec = dict(boost_controlled=False, throttle_boost=f(1.2))
+        self.assertEqual([er.heat_scale(rec, f(t)) for t in (0., 1., 1.1, 1.2)], [1., 1., f(1.2), f(1.2)])
+        self.assertAlmostEqual(er.heat_scale(rec, f(1.05)), 1.1, places=5)
+        self.assertEqual(er.heat_scale(dict(rec, boost_controlled=True), f(1.1)), 1.)
+
     def test_no_load_rows(self):
         tree = dict(Engine0=dict(engine(), Controls=dict(hasRadiatorControl=True, hasOilRadiatorControl=True)))
         tree['Engine0']['Temperature'] = dict(RadiatorMode0=dict(Throttle=.8, WaterTemperature=80., OilTemperature=70.))
@@ -260,6 +280,23 @@ class BfF4(unittest.TestCase):
         self.assertEqual([(a['label'], a['targets_c'], a['seconds'] * 48, a['boils']) for a in e['automatic']],
                          [('89%', [90.5, 80.5], 172939, False), ('100%', [95.5, 85.5], 86458, False), ('WEP', [105.5, 95.5], 8640, False)])
         self.assertEqual(e['automatic'][0]['held_c'], [91.4521484375, 81.4521484375])
+
+    def test_radiator(self):
+        result = er.evaluate(fm('bf-109f-4')); (e,) = result['engines']
+        self.assertEqual(result['radiator_cd'], [f(.007), f(.002)])
+        self.assertEqual(e['radiator']['channels'], [0, 1])
+        self.assertEqual([[round(row[x], 4) for x in (0, 25, 50, 75, 100)] for row in e['radiator']['factor']],
+                         [[.84, .9493, .9847, .9963, 1.], [.81, .9398, .9819, .9956, 1.]])
+
+    def test_heat_index_calibration(self):
+        # At each Mode row's own operating point and altitude the heat index is the row's temperature less about 0.45 K
+        # (the calibration's ambient is 0.5 K above the reference).
+        tree = fm('bf-109f-4'); rec, r, channels = er.heat_bases(tree)[0]
+        self.assertEqual((rec['boost_controlled'], channels), (True, 2))
+        for j, row in enumerate(r['mode_rows']):
+            mode = tree['Engine0']['Temperature'][f'Mode{j}']
+            for c, t in enumerate(er.settled(r, row[0], mode['Altitude'], channels)):
+                with self.subTest(mode=j, channel=c): self.assertTrue(-.5 < t - mode[('WaterTemperature', 'OilTemperature')[c]] < -.4)
 
     def test_mode_rows_fallback(self):
         # Mode rows the port cannot load (native gives inf) feed no result: the block loads without them, same limits.
@@ -339,6 +376,9 @@ class Fleet(unittest.TestCase):
                         seconds = [s for _, s in c['curve']]
                         self.assertTrue(all(a >= b for a, b in zip(seconds, seconds[1:])))
                         self.assertTrue(all(a[0] < b[0] for a, b in zip(c['curve'], c['curve'][1:])))
+                if e['radiator']:
+                    with self.subTest(fm=path.stem, radiator=e['radiator']['channels']):
+                        self.assertTrue(all(math.isfinite(v) for row in e['radiator']['factor'] for v in row))
                 for b in e['buckets']:
                     with self.subTest(fm=path.stem, bucket=b):
                         self.assertTrue(all(t['drains_c'] >= t['full_c'] for t in b['channels'] if t['full_c'] is not None))
@@ -381,6 +421,31 @@ class Fleet(unittest.TestCase):
                         self.assertEqual(None if limit['max_c'] is None else limit['max_c'] + er.K, expected)
 
 
+@unittest.skipUnless(F4.is_file(), 'references/jet-catalog/fm is not here')
+class Heat(unittest.TestCase):
+    def test_bf_109f_4(self):
+        try:
+            import engine_performance  # noqa: F401  (the solver and catalog)
+            from em_solver import AIRCRAFT
+        except Exception as error:
+            self.skipTest(f'solver not importable: {error}')
+        if 'bf-109f-4' not in AIRCRAFT: self.skipTest('bf-109f-4 not in the catalog')
+        a = er.heat('bf-109f-4'); b = er.heat('bf-109f-4')
+        self.assertIs(a['engines'], b['engines'])
+        self.assertEqual((a['altitude_m'], a['speed_kmh'], a['throttle_percent'][::25]), (1000., 300., [0., 50., 100.]))
+        self.assertEqual(a['throttle_percent'][-1], 110.)
+        (group,) = a['engines']; self.assertEqual(group['engines'], [0])
+        points = dict(zip(a['throttle_percent'], group['points']))
+        for t in (50., 100., 110.):
+            with self.subTest(throttle=t): self.assertIsNotNone(points[t])
+        water = {t: points[t]['heat_c'][0] for t in (50., 100., 110.)}
+        self.assertTrue(water[50.] < water[100.] < water[110.], water)
+        shown = [points[t] for t in (50., 100., 110.)]
+        heats = '; '.join('%.1f/%.1f' % tuple(p['heat_c']) for p in shown)
+        states = ', '.join('%.0f rpm %.2f ata' % (p['rpm'], p['manifold_ata']) for p in shown)
+        print(f'\nBf 109 F-4 at 50/100/110%: heat index water/oil {heats} C; {states}', file=sys.stderr)
+
+
 class Page(unittest.TestCase):
     def test_page_files_are_served(self):
         # em_server.py serves only the app files its name table lists; index.html loads these two.
@@ -413,7 +478,11 @@ class Api(unittest.TestCase):
             body = json.loads(urlopen(base + name + '?ratings=30,10').read())
             self.assertEqual((body['aircraft_id'], body['ratings_min']), (name, [30., 10.]))
             self.assertIn('game_data', body)
-            for path, status in (('no_such_aircraft', 404), (name + '?ratings=0', 400), (name + '?ratings=1&ratings=2', 400),
+            if name == 'bf-109f-4':
+                heat = json.loads(urlopen(base + name + '/heat').read())
+                self.assertEqual((heat['aircraft_id'], heat['engines'][0]['engines']), (name, [0]))
+            for path, status in (('no_such_aircraft', 404), ('no_such_aircraft/heat', 404), (name + '/heat?altitude_m=0', 400),
+                                 (name + '?ratings=0', 400), (name + '?ratings=1&ratings=2', 400),
                                  (name + '?ratings=' + ','.join(str(i) for i in range(1, 10)), 400), (name + '?ratings=nan', 400)):
                 with self.subTest(path=path), self.assertRaises(HTTPError) as caught: urlopen(base + path)
                 self.assertEqual(caught.exception.code, status)

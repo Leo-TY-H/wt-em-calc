@@ -1,6 +1,8 @@
 // Engine ratings (Leo, 2026-10-30): each engine's temperature limits under the game's thermal fatigue rules, for up to
 // eight aircraft (GET /api/engine-ratings/<aircraft>, scripts/engine_ratings.py). Laid out like the Engine performance
 // page; uses app.js's catalog (state.meta), api() and name helpers. Results load as aircraft or ratings change.
+// Plots (Leo, 2026-11-01): radiator factor and drag coefficient against opening, and the heat index against throttle
+// (GET /api/engine-ratings/<aircraft>/heat, loaded after the tables: it runs the engine page's solver).
 (() => {
   'use strict';
   const el = id => document.getElementById(id);
@@ -31,6 +33,7 @@
 
   let entries = [], nextEntry = 1, ratings = [...RATINGS];
   const results = new Map(), failures = new Map();   // results: done or loading (null); failures are retried
+  const heats = new Map(), heatFailures = new Map();  // the same, per aircraft
   const catalog = () => (typeof state !== 'undefined' && state.meta) ? state.meta.aircraft : null;
   const showError = text => { el('ratings-error').textContent = text; el('ratings-error').hidden = !text; };
   const key = aircraft_id => `${aircraft_id}?ratings=${ratings.join(',')}`;
@@ -123,16 +126,23 @@
   async function load() {
     const wanted = [...new Set(entries.map(e => key(e.aircraft_id)))].filter(k => !results.has(k));
     for (const k of wanted) { results.set(k, null); failures.delete(k); }
+    const hot = [...new Set(entries.map(e => e.aircraft_id))].filter(id => !heats.has(id));
+    for (const id of hot) { heats.set(id, null); heatFailures.delete(id); }
     render();
-    await Promise.all(wanted.map(async k => {
+    await Promise.all([...wanted.map(async k => {
       try { results.set(k, await api(`/api/engine-ratings/${encodeURIComponent(k.split('?')[0])}?${k.split('?')[1]}`)); }
       catch (error) { results.delete(k); failures.set(k, error.message); }
       render();
-    }));
+    }), ...hot.map(async id => {
+      try { heats.set(id, await api(`/api/engine-ratings/${encodeURIComponent(id)}/heat`)); }
+      catch (error) { heats.delete(id); heatFailures.set(id, error.message); }
+      render();
+    })]);
   }
+  const heatStatus = id => heats.get(id) ? 'done' : heatFailures.has(id) && !heats.has(id) ? 'error' : 'pending';
 
   // ---- Results --------------------------------------------------------------------------------------------------
-  function engineBlock(e, chartId) {
+  function engineBlock(e, chartId, plots) {
     const kind = [FAMILY[e.family] || e.family, ['Inline', 'Radial'].includes(e.family) ? (e.water_cooled ? 'water-cooled' : 'air-cooled') : null].filter(Boolean).join(' · ');
     const port = e.verified === false ? ` <abbr class="ratings-port" title="${PORT}${e.mode_rows_skipped ? ' · Mode rows not loadable' : ''}">P</abbr>` : '';
     if (e.excluded) return `<p class="ratings-excluded">${engineLabel(e.engines)} · ${escapeText(e.family && !e.excluded.startsWith(e.family) ? `${e.family} · ` : '')}${escapeText(e.excluded)}${port}</p>`;
@@ -155,17 +165,34 @@
       e.automatic.map(a => `<tr><th>${a.label}</th>${autoColumns.map(i => `<td>${one(a.targets_c[i])}</td>`).join('')}<td>${time(a.seconds)}${a.boils ? ' · boils' : ''}</td></tr>`).join('')}</tbody></table>` : '';
     return `<div class="ratings-engine"><h3>${engineLabel(e.engines)} · ${kind}${port}</h3>
       <div class="ratings-engine-body"><div class="ratings-tables">${limits}${fluids ? `<p class="ratings-fluids">${fluids}</p>` : ''}${recovery}${auto}</div>
-      <div class="ratings-chart" id="${chartId}" aria-label="Time to first damage against temperature"></div></div></div>`;
+      <div class="ratings-chart" id="${chartId}" aria-label="Time to first damage against temperature"></div></div>${plots}</div>`;
+  }
+  // The plots row: radiator factor and drag against opening (controllable radiators), heat index against throttle
+  // (piston engines; a note while it loads or where the engine page cannot solve the aircraft).
+  function plotsRow(e, id, result, heat, status, charts) {
+    const cells = [], piston = ['Inline', 'Radial'].includes(e.family);
+    if (e.radiator) {
+      cells.push(`<div class="ratings-plot" id="${id}-factor" aria-label="Radiator factor against opening"></div>`, `<div class="ratings-plot" id="${id}-drag" aria-label="Drag coefficient against opening"></div>`);
+      charts.push(() => factorChart(el(`${id}-factor`), e), () => dragChart(el(`${id}-drag`), e, result.radiator_cd));
+    }
+    const groups = status === 'done' ? heat.engines.filter(g => g.engines.some(i => e.engines.includes(i))) : [];
+    if (groups.length) {
+      cells.push(`<div class="ratings-plot" id="${id}-heat" aria-label="Heat index against throttle"></div>`);
+      charts.push(() => heatChart(el(`${id}-heat`), e, heat, groups));
+    } else if (piston && status !== 'done') cells.push(`<p class="ratings-plot ratings-plot-note">${status === 'error' ? 'Heat index not available' : 'Heat index · calculating…'}</p>`);
+    return cells.length ? `<div class="ratings-plots">${cells.join('')}</div>` : '';
   }
   // One section per aircraft, rebuilt only when its number, ratings or result change (each holds up to four charts).
   const purge = node => { if (typeof Plotly !== 'undefined') for (const chart of node.querySelectorAll('.js-plotly-plot')) Plotly.purge(chart); };
   function section(entry, i, result, status, charts) {
+    const heat = heats.get(entry.aircraft_id), hot = heatStatus(entry.aircraft_id);
     const a = catalog()?.[entry.aircraft_id];
     const heading = `<header class="ratings-aircraft-heading"><span class="entry-number">${i + 1}</span><h2>${escapeText(cleanName(a?.name || entry.aircraft_id))}</h2><code>${escapeText(entry.aircraft_id)}</code></header>`;
     if (status !== 'done') return `${heading}<p class="ratings-excluded">${status === 'error' ? 'Not available' : 'Calculating…'}</p>`;
     if (!result.engines.length) return `${heading}<p class="ratings-excluded">No engines</p>`;
     return heading + result.engines.map((e, j) => {
-      const id = `ratings-chart-${entry.id}-${j}`; if (!e.excluded) charts.push([id, e]); return engineBlock(e, id);
+      const id = `ratings-chart-${entry.id}-${j}`; if (e.excluded) return engineBlock(e, id, '');
+      charts.push(() => chart(el(id), e)); return engineBlock(e, id, plotsRow(e, id, result, heat, hot, charts));
     }).join('');
   }
   function render() {
@@ -177,7 +204,7 @@
     for (const node of [...host.children]) if (!kept.has(node.dataset.entry)) { purge(node); node.remove(); }
     entries.forEach((entry, i) => {
       const k = key(entry.aircraft_id), result = results.get(k);
-      const status = result ? 'done' : failures.has(k) && !results.has(k) ? 'error' : 'pending', stamp = `${i}|${k}|${status}`;
+      const status = result ? 'done' : failures.has(k) && !results.has(k) ? 'error' : 'pending', stamp = `${i}|${k}|${status}|${heatStatus(entry.aircraft_id)}`;
       let node = host.querySelector(`[data-entry="${entry.id}"]`);
       // While new ratings load, the shown result stays (dimmed): the page keeps its height and scroll position.
       const keep = node && status === 'pending' && node.dataset.index === String(i) && node.dataset.status !== 'pending';
@@ -188,7 +215,7 @@
         Object.assign(fresh.dataset, {entry: entry.id, stamp, index: i, status}); fresh.style.setProperty('--entry-color', entryColors[i]);
         if (node) { purge(node); node.replaceWith(fresh); } else host.append(fresh);
         node = fresh;
-        if (typeof Plotly !== 'undefined') for (const [id, e] of charts) chart(el(id), e);
+        if (typeof Plotly !== 'undefined') for (const draw of charts) draw();
       }
       if (host.children[i] !== node) host.insertBefore(node, host.children[i] || null);
     });
@@ -196,15 +223,18 @@
 
   // Time to first damage (log) against temperature, one panel per channel sharing the time axis; dashed lines at the
   // continuous limits; the HUD's warning colours along the time axis.
+  const axisStyle = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, tickfont: {size: 11}, fixedrange: true};
+  const CONFIG = {responsive: true, displaylogo: false, displayModeBar: false};
+  const frame = () => ({paper_bgcolor: '#000', plot_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
+    margin: {l: 56, r: 14, t: 10, b: 42}, hovermode: 'closest', showlegend: false, dragmode: false,
+    hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}}});
+  const title = text => ({text, standoff: 6, font: {size: 12}});
   function chart(node, e) {
     const ch = e.channels.filter(c => c.curve.length);
     if (!ch.length) { node.remove(); return; }
     const gap = .1, width = (1 - gap * (ch.length - 1)) / ch.length;
     const lowest = Math.min(60, ...ch.flatMap(c => c.curve.map(p => p[1])));
-    const axisStyle = {gridcolor: 'rgba(240,240,250,.09)', zeroline: false, tickfont: {size: 11}, fixedrange: true};
-    const layout = {paper_bgcolor: '#000', plot_bgcolor: '#000', font: {family: 'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif', color: '#b9b9c4', size: 12},
-      margin: {l: 56, r: 14, t: 10, b: 42}, hovermode: 'closest', showlegend: false, dragmode: false,
-      hoverlabel: {bgcolor: '#0c0c0f', bordercolor: 'rgba(240,240,250,.35)', font: {color: '#f4f4fc', size: 12}},
+    const layout = {...frame(),
       yaxis: {...axisStyle, type: 'log', range: [Math.log10(lowest / 1.15), Math.log10(CAP * 1.15)],
         tickvals: [60, 300, 600, 1800, 3600, 36000], ticktext: ['1 min', '5 min', '10 min', '30 min', '1 h', '10 h']},
       shapes: HUD.filter(([, hi]) => hi > lowest / 1.15).map(([lo, hi, color, opacity]) => ({type: 'rect', xref: 'paper', xsizemode: 'pixel', xanchor: 0, x0: 0, x1: 5,
@@ -213,7 +243,7 @@
       const axis = n ? String(n + 1) : '', xs = c.curve.map(p => p[0]), lo = xs[0], hi = xs.at(-1), pad = Math.max(.5, (hi - lo) * .04);
       const color = COLORS[e.channels.indexOf(c)];
       layout['xaxis' + axis] = {...axisStyle, domain: [n * (width + gap), n * (width + gap) + width], range: [lo - pad, hi + pad], nticks: 6,
-        title: {text: `${c.label} °C`, standoff: 6, font: {size: 12}}, ...(n && {anchor: 'y'})};
+        title: title(`${c.label} °C`), ...(n && {anchor: 'y'})};
       if (c.continuous.bound === 'load') layout.shapes.push({type: 'line', xref: 'x' + axis, yref: 'paper', x0: c.continuous.max_c, x1: c.continuous.max_c, y0: 0, y1: 1,
         line: {color: 'rgba(240,240,250,.35)', width: 1, dash: 'dash'}});
       return {type: 'scatter', mode: 'lines', x: xs, y: c.curve.map(p => p[1]), xaxis: 'x' + axis, yaxis: 'y', line: {color, width: 2},
@@ -221,7 +251,38 @@
         customdata: c.curve.map(p => [floorC(p[0]).toFixed(1), curveTime(p[1])]), hoverlabel: {bordercolor: color},
         hovertemplate: `${c.label} %{customdata[0]} °C: %{customdata[1]}<extra></extra>`};
     });
-    Plotly.react(node, traces, layout, {responsive: true, displaylogo: false, displayModeBar: false});
+    Plotly.react(node, traces, layout, CONFIG);
+  }
+
+  // Against radiator opening: one line per controllable radiator (a common radiator moves both).
+  function openingChart(node, e, values, yTitle, format) {
+    const x = e.radiator.opening_percent;
+    const traces = e.radiator.channels.map((c, n) => ({type: 'scatter', mode: 'lines', x, y: values(c, n), line: {color: COLORS[c], width: 2},
+      hovertemplate: `${e.channels[c].label} %{y:${format}}<extra></extra>`}));
+    Plotly.react(node, traces, {...frame(), hovermode: 'x unified', margin: {l: 64, r: 20, t: 10, b: 42},
+      xaxis: {...axisStyle, range: [-1, 101], dtick: 25, hoverformat: '.0f', ticksuffix: '%', title: title('Radiator open')},
+      yaxis: {...axisStyle, title: title(yTitle)}}, CONFIG);
+  }
+  const factorChart = (node, e) => openingChart(node, e, (c, n) => e.radiator.factor[n], 'Radiator factor', '.3f');
+  // The solver adds Cd x opening (wing_model.drag_terms).
+  const dragChart = (node, e, cd) => openingChart(node, e, c => e.radiator.opening_percent.map(x => cd[c] == null ? null : cd[c] * x / 100), 'Drag coefficient', '.5f');
+
+  // Heat index against throttle, per channel; dashed lines at the continuous limits. Engines of this block with
+  // different curves get one line each (dotted after the first).
+  function heatChart(node, e, heat, groups) {
+    const x = heat.throttle_percent, shapes = [], traces = [];
+    groups.forEach((g, n) => e.channels.forEach((c, j) => {
+      const label = groups.length > 1 ? `${c.label} · ${engineLabel(g.engines)}` : c.label;
+      traces.push({type: 'scatter', mode: 'lines', x, y: g.points.map(p => p?.heat_c[j] ?? null), line: {color: COLORS[j], width: 2, dash: n ? 'dot' : 'solid'},
+        customdata: g.points.map(p => p ? [Math.round(p.rpm), p.manifold_ata.toFixed(2)] : null),
+        hovertemplate: j ? `${label} %{y:.1f} °C<extra></extra>` : `${label} %{y:.1f} °C · %{customdata[0]} rpm · %{customdata[1]} ata<extra></extra>`});
+    }));
+    e.channels.forEach((c, j) => { if (c.continuous.bound === 'load') shapes.push({type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: c.continuous.max_c, y1: c.continuous.max_c,
+      line: {color: COLORS[j], width: 1, dash: 'dash'}, opacity: .55}); });
+    const where = `${heat.altitude_m.toLocaleString('en-US')} m · ${heat.speed_kmh} km/h TAS`;
+    Plotly.react(node, traces, {...frame(), hovermode: 'x unified', shapes, margin: {l: 56, r: 20, t: 10, b: 42},
+      xaxis: {...axisStyle, range: [-1, x.at(-1) + 1], dtick: 20, hoverformat: '.0f', ticksuffix: '%', title: title(`Throttle · ${where}`)},
+      yaxis: {...axisStyle, title: title('Heat index °C')}}, CONFIG);
   }
 
   // The catalog arrives with the EM page's start; the list fills once it is there.
