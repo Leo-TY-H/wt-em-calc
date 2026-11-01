@@ -7,10 +7,14 @@ radiator's resting temperatures and how long they last; how fast each load count
 temperatures it drains; and the time to first damage against temperature for the
 chart. All of it is the float32 arithmetic of the research ports (R = research/thermal-fatigue-2026-10-29):
 thermal_properties.construct loads the engine's Temperature block, thermal_core.rates gives each load counter's rate
-at a temperature and thermal_counters.ticks_from_zero the exact tick its counter first overflows. No result reads a
+at a temperature and thermal_counters.ticks_from_zero the exact tick its counter first overflows. No limit reads a
 loader value that depends on expf/powf/logf (R/thermal_properties.py:68-71,122-133 use none), so the Python
 stand-ins below do not change any of them. RB/SB (Engine_Overheat on), fresh counters, full health, standard
 atmosphere. No modification carries a thermal block, so the limits do not depend on upgrades, throttle or mass.
+
+Plots (Leo, 2026-11-01): each controllable radiator's factor on the cooling coefficient against opening, and the
+heat index against throttle (heat(): the settled temperature at full cooling, from the engine state the Engine
+performance page solves). These read slots and use expf/powf, so they carry the stand-ins' rounding (display only).
 """
 import functools
 import json
@@ -22,9 +26,9 @@ from pathlib import Path
 import orjson
 
 import thermal_validated
-from thermal_core import f, add, sub, mul, rates, damage
+from thermal_core import f, add, sub, mul, div, rates, damage
 from thermal_counters import evolve, ticks_from_zero
-from thermal_properties import K, construct
+from thermal_properties import K, construct, density
 
 DT = f(1 / 48)                      # the aircraft thermal update's step (R/ENGINE-THERMODYNAMICS.md:52-55)
 RATINGS = (30., 10., 5., 1.)        # minutes
@@ -145,6 +149,7 @@ def properties(block, mass):
                 liquid0=water and family in (0, 1),                 # ch0 liquid flag inp[1] (R/validate_input_construction.py:68)
                 boost_controlled=controlled,                        # target coordinate (engine_commands.py:2)
                 wep=f(first(main.get('ThrottleBoost', 1.))) > 1.,   # pilot throttle reaches 110% (engine_performance.without_wep)
+                throttle_boost=f(first(main.get('ThrottleBoost', 1.))),  # props+0x1e8, the WEP heat scale (heat_scale)
                 boost_delivered=controlled and boost_delivered(block, kind, mass),
                 radiator_control=None if family in (2, 5) else [radiator, oil])
 
@@ -181,7 +186,7 @@ def select(fm):
                 elif row['family_index'] not in ADMITTED: row.update(admitted=False, reason=f'{name}: no thermal model')
                 elif temperature is None: row.update(admitted=False, reason='no Temperature block')
                 else: row.update(admitted=True)
-        fields = ('temperature', 'family', 'water', 'boost_controlled', 'wep', 'boost_delivered', 'radiator_control')
+        fields = ('temperature', 'family', 'water', 'boost_controlled', 'wep', 'throttle_boost', 'boost_delivered', 'radiator_control')
         group = json.dumps([row['admitted'], *([row[k] for k in fields] if row['admitted'] else [row['family'], row['reason']])],
                            sort_keys=True, default=str)
         if group in out:
@@ -401,6 +406,148 @@ def recovery(r, channels, work, recover):
     return out
 
 
+# ---- Radiator and heat ------------------------------------------------------------------------------------------
+OPENINGS = tuple(range(101))        # radiator opening, %
+AMBIENT = f(288.1600036621094)      # the reference global B and the current global A (R/ENGINE-THERMODYNAMICS.md:286-290)
+
+
+def radiator_factor(s, c, opening, extra=1.):
+    """Channel c's radiator factor on the cooling coefficient at an opening in [0, 1] (R/thermal_temperature.py:43-45):
+    b*exp((-0.9r - 0.1)*RadiatorEffectPower) + a*E, calibrated to MinRadiatorThermalConductionCoeff closed and 1 open
+    with E = 1 (R/ENGINE-THERMODYNAMICS.md:201-202,316-323). E is EngineProperties+0x240, which only the modification
+    parameter radiatorEffMul assigns (R/UPSTREAM-THERMAL-TRACE.md:330,347-350); new_radiator carries it with
+    invertEnableLogic, so it applies only while the upgrade is missing: fully upgraded, E keeps its default, 1."""
+    return add(mul(expf(mul(add(mul(f(opening), -.9), -.1), s[hex(0x180 + 4 * c)])), s[hex(0x18c + 8 * c)]), mul(s[hex(0x188 + 8 * c)], extra))
+
+
+def radiator_curves(r, rec, channels):
+    """Factor against opening of each channel whose radiator the pilot controls (ordinary engines only: special ones
+    have no radiator term). A channel without control stays fully open (R/validate_input_construction.py:66-67)."""
+    if rec['special']: return None
+    shown = [c for c in range(channels) if rec['radiator_control'][c]]
+    if not shown: return None
+    return dict(opening_percent=list(OPENINGS), channels=shown,
+                factor=[[radiator_factor(r['slots'], c, x / 100.) for x in OPENINGS] for c in shown])
+
+
+def interval(x, x0, x1, y0, y1):
+    """R/thermal_temperature.py:9-14."""
+    if x0 > x1: x0, x1, y0, y1 = x1, x0, y1, y0
+    if x <= x0: return y0
+    if x >= x1: return y1
+    d = sub(x1, x0)
+    return add(y0, div(mul(sub(x, x0), sub(y1, y0)), d) if abs(d) > f(4e-19) else 0.)
+
+
+def mode_value(r, x, index):
+    """heat_inputs' lookup (R/thermal_temperature.py:23-33) of a mode output (index 2/3: water h/D, 4/5: oil h/D) at the
+    driving coordinate x: linear between Mode rows, scaled by x over the end row's coordinate beyond them. Native code
+    reads that coordinate at the mode ID as a row index; heat() admits only blocks where every ID is its row."""
+    rows, modes = r['mode_rows'], r['modes']
+    if not rows: return 0.
+    if len(rows) == 1 or x <= rows[0][0]: row = rows[0]
+    elif x >= rows[-1][0]: row = rows[-1]
+    else:
+        k = next(i for i, q in enumerate(rows) if q[0] >= x)
+        lo, hi = modes[rows[k - 1][2]][index], modes[rows[k][2]][index]
+        return add(mul(sub(hi, lo), mul(sub(x, rows[k - 1][0]), rows[k - 1][1])), lo)
+    d = rows[row[2]][0]
+    return mul(div(x, d) if abs(d) > f(4e-19) else 0., modes[row[2]][index])
+
+
+def heat_scale(rec, throttle):
+    """The caller's heat scale on the compressor coordinate of an ordinary engine (R/validate_input_construction.py:
+    57-63; R/REPORT.md:407-409): 1 up to throttle 1, ThrottleBoost (props+0x1e8) from 1.1, linear between; 1 on a
+    boost-controlled engine."""
+    if rec['boost_controlled'] or not throttle > 1.: return 1.
+    m = rec['throttle_boost']
+    return add(mul(add(mul(m, 9.999998092651367), -9.999998092651367), sub(throttle, 1.)), 1.) if throttle < f(1.1) else m
+
+
+def settled(r, x, altitude_m, channels):
+    """Heat index (C) of each channel at heat coordinate x: the temperature at which the update leaves it unchanged
+    (R/thermal_temperature.py:47-80, dT/dt = 0) at full cooling: radiator open (E = 1), thermostat open, full fluid,
+    fast flight (the flow term decays to nothing: the sink is the ambient) and the ambient AMBIENT, with the air
+    density at altitude_m. There dT/dt = [(Ta - T)k + (D - (T - Ta))h]/inertia, so T = Ta + hD/(h + k): float64 from
+    the float32 terms. At a Mode row above the thermostat setpoint this is that row's temperature less about 0.45 K (its
+    calibration takes the ambient B + 0.5 K, R/ENGINE-THERMODYNAMICS.md:146-163). None where the channel has no heat
+    calibration (h = 0 in every row)."""
+    s = r['slots']; rho = density(altitude_m); q = []
+    for c in (0, 1):
+        level = add(mul(sub(1., s[hex(0x1a0 + 4 * c)]), 1.), s[hex(0x1a0 + 4 * c)])
+        thermostat = add(mul(sub(1., s[hex(0x198 + 4 * c)]), 1.), s[hex(0x198 + 4 * c)])
+        q.append(mul(mul(thermostat, mul(level, powf(rho, s[hex(0x1c8 + 4 * c)]))), radiator_factor(s, c, 1.)))
+    out = []
+    for c in range(channels):
+        if not any(m[2 + 2 * c] for m in r['modes']): out.append(None); continue
+        h, d = mode_value(r, x, 2 + 2 * c), mode_value(r, x, 3 + 2 * c)
+        cross = interval(q[1 - c], s[hex(0x1a8 + 16 * c)], s[hex(0x1ac + 16 * c)], s[hex(0x1b0 + 16 * c)], s[hex(0x1b4 + 16 * c)])
+        k = mul(s[hex(0x14c + 4 * c)], add(mul(sub(q[1 - c], q[c]), cross), q[c]))
+        out.append(AMBIENT + h * d / (h + k) - K if h + k > 0. else None)
+    return out
+
+
+HEAT_ALTITUDE_M, HEAT_SPEED_KMH = 1000., 300.   # the Engine performance page's defaults (app/engine.js)
+HEAT_STEP = 2.                                  # throttle %
+
+
+def heat_bases(fm):
+    """{engine index: (record, construct result, channels)} of the ordinary engines whose Mode rows load unfiltered."""
+    out = {}
+    for rec in select(fm):
+        if not rec['admitted'] or rec['special']: continue
+        try: r, skipped = load(rec['temperature'], False, rec['water'])
+        except DATA_ERRORS: continue
+        if skipped or not r['mode_rows'] or any(row[2] != k for k, row in enumerate(r['mode_rows'])): continue
+        for i in rec['indices']: out[i] = (rec, r, 2 if r['has_oil'] else 1)
+    return out
+
+
+@functools.lru_cache(maxsize=32)
+def _heat(path, stamp, aircraft_id, altitude_m, speed_kmh):
+    import numpy as np
+    import engine_performance as ep
+    fm = orjson.loads(Path(path).read_bytes())
+    bases = heat_bases(fm)
+    _, prop = ep.admitted(aircraft_id, 100., None)
+    top = 100. if aircraft_id in ep.without_wep() else 110.
+    throttles = [top * i / round(top / HEAT_STEP) for i in range(round(top / HEAT_STEP) + 1)]
+    curves = {i: [] for i in bases} if prop else {}
+    count = len(contiguous(fm, 'Engine'))
+    with ep.LOCK:
+        for t in throttles if curves else ():
+            try:
+                chart = ep.solver(aircraft_id, altitude_m, t, None)
+                row = ep.propeller_row(chart, speed_kmh, None)
+            except (ValueError, ArithmeticError, np.linalg.LinAlgError): row = None     # as engine_performance.axial_point
+            engines = chart.engine.properties['engines'] if row else []
+            pistons = [j for j, e in enumerate(engines) if e['family'] in (0, 1)]
+            for i, (rec, r, channels) in bases.items():
+                point = None
+                # The solver lists every FM engine in order; the heat input is the engine's own compressor output
+                # (Engine+0x12c, R/UPSTREAM-THERMAL-TRACE.md:58-60), the state's manifold, at its angular speed.
+                if len(engines) == count and i in pistons:
+                    rpm, manifold = row['rpm'][i], row['manifold_ata'][pistons.index(i)]
+                    if math.isfinite(rpm) and math.isfinite(manifold):
+                        x = mul(mul(heat_scale(rec, f(t / 100.)), f(manifold)), f(rpm * math.pi / 30.))
+                        point = dict(rpm=rpm, manifold_ata=manifold, heat_c=settled(r, x, altitude_m, channels))
+                curves[i].append(point)
+    groups = {}
+    for i, points in sorted(curves.items()):
+        groups.setdefault(json.dumps(points), dict(engines=[], points=points))['engines'].append(i)
+    return dict(throttle_percent=throttles, altitude_m=altitude_m, speed_kmh=speed_kmh, engines=list(groups.values()))
+
+
+def heat(aircraft_id, altitude_m=HEAT_ALTITUDE_M, speed_kmh=HEAT_SPEED_KMH):
+    """Heat index against throttle (every HEAT_STEP % up to the engine page's throttle stop) of each ordinary engine, at
+    the engine state the Engine performance page solves at altitude_m and speed_kmh (engine_performance.solver and
+    propeller_row: auto pitch, angle of attack 0, 1 g; unsolved points are None). Engines with equal curves share one.
+    ValueError where the engine page cannot calculate the aircraft. Cached on the FM file."""
+    from aircraft_catalog import source
+    path = source(aircraft_id); stat = path.stat()
+    return dict(_heat(str(path), (stat.st_mtime_ns, stat.st_size), aircraft_id, float(altitude_m), float(speed_kmh)), aircraft_id=aircraft_id)
+
+
 # ---- One aircraft -----------------------------------------------------------------------------------------------
 def load(block, special, water):
     """construct() on the loader's view of the block; True when its Mode rows had to be left out. The port raises where
@@ -434,7 +581,8 @@ def engine(rec, ratings):
     liquid, labels = (rec['liquid0'], True), ('Water' if water else 'Head', 'Oil')
     channels = [channel(r, c, liquid[c], labels[c], work, recover, ratings) for c in ((0, 1) if r['has_oil'] else (0,))]
     return dict(out, channels=channels, buckets=recovery(r, len(channels), work, recover),
-                automatic=[] if special else radiator(r, rec, len(channels), work, recover))
+                automatic=[] if special else radiator(r, rec, len(channels), work, recover),
+                radiator=radiator_curves(r, rec, len(channels)))
 
 
 def merged(engines):
@@ -447,12 +595,24 @@ def merged(engines):
     return list(out.values())
 
 
+def radiator_cd(fm):
+    """Aerodynamics.RadiatorCd and OilRadiatorCd: the drag coefficients the solver adds times each opening
+    (wing_model.drag_terms)."""
+    aero = fm.get('Aerodynamics') if isinstance(fm.get('Aerodynamics'), dict) else {}
+    out = []
+    for name in ('RadiatorCd', 'OilRadiatorCd'):
+        try: out.append(f(first(aero.get(name, 0.))))
+        except DATA_ERRORS: out.append(None)
+    return out
+
+
 def evaluate(fm, ratings_min=RATINGS):
     """Every engine of a raw FM tree (orjson.loads of its .blkx)."""
     ratings = tuple(float(m) for m in ratings_min)
     engines = [engine(rec, ratings) if rec['admitted'] else dict(engines=rec['indices'], family=rec['family'], excluded=rec['reason'], verified=None)
                for rec in select(fm)]
-    return dict(engines=merged(engines), ratings_min=list(ratings), assumptions=dict(ASSUMPTIONS, verified_against=thermal_validated.VERSION))
+    return dict(engines=merged(engines), ratings_min=list(ratings), radiator_cd=radiator_cd(fm),
+                assumptions=dict(ASSUMPTIONS, verified_against=thermal_validated.VERSION))
 
 
 @functools.lru_cache(maxsize=64)

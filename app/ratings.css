@@ -1,4 +1,4 @@
-/* Engine ratings page: the Engine performance page's sidebar, list and cards; one block of tables and a chart per engine. */
+/* Engine ratings page: the Engine performance page's sidebar, list and cards; one block of tables and charts per engine. */
 #ratings-workspace .sidebar{position:sticky;top:var(--header);align-self:start;height:calc(100vh - var(--header));overflow-y:auto;scrollbar-width:thin;scrollbar-color:#34343c transparent}
 @media(max-width:760px){#ratings-workspace .sidebar{position:static;align-self:stretch;height:auto;overflow:visible}}
 #ratings-picker{min-width:0;margin:0 0 6px}
@@ -40,5 +40,9 @@
 .ratings-excluded{margin:10px 0 0;font-size:12px;color:var(--muted)}
 .ratings-port{margin-left:6px;padding:0 4px;border:1px solid var(--line);font-size:10px;color:var(--muted);text-decoration:none;cursor:help}
 .ratings-chart{height:260px;min-width:0}
-@media(max-width:1150px){.ratings-engine-body{grid-template-columns:minmax(0,1fr);gap:12px}}
-@media(max-width:760px){.ratings-table th,.ratings-table td{padding:5px 5px}}
+/* Plots row: radiator factor, drag, heat index. */
+.ratings-plots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:16px}
+.ratings-plot{height:220px;min-width:0;margin:0}
+.ratings-plot-note{display:grid;place-items:center;border:1px solid var(--line);font-size:12px;color:var(--muted)}
+@media(max-width:1150px){.ratings-engine-body{grid-template-columns:minmax(0,1fr);gap:12px}.ratings-plots{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.ratings-table th,.ratings-table td{padding:5px 5px}.ratings-plots{grid-template-columns:minmax(0,1fr)}}

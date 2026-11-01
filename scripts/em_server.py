@@ -542,6 +542,15 @@ class Handler(BaseHTTPRequestHandler):
                 from engine_performance import compute as engine_performance
                 return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent,None if sweep=='both' else sweep,level=='1'))
             except ValueError as error:return self.respond(dict(error=str(error)),400)
+        if path.startswith('/api/engine-ratings/') and path.endswith('/heat'):
+            # Engine ratings page: heat index against throttle (engine_ratings.heat; the engine page's solver). No parameters.
+            name=unquote(path.removeprefix('/api/engine-ratings/').removesuffix('/heat'))
+            if name not in AIRCRAFT:return self.respond(dict(error='Unknown aircraft'),404)
+            if urlparse(self.path).query:return self.respond(dict(error='No parameters'),400)
+            try:
+                from engine_ratings import heat
+                return self.respond(dict(heat(name),game_data=game_data()))
+            except ValueError as error:return self.respond(dict(error=str(error)),400)
         if path.startswith('/api/engine-ratings/'):
             # Engine ratings page: each engine's temperature limits. ?ratings=30,10,5,1 (minutes; up to 8, each in (0, 600]);
             # absent: 30,10,5,1; empty (?ratings=, kept as blank): continuous limit only
