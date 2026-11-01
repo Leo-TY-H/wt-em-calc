@@ -175,11 +175,13 @@
       cells.push(`<div class="ratings-plot" id="${id}-factor" aria-label="Radiator factor against opening"></div>`, `<div class="ratings-plot" id="${id}-drag" aria-label="Drag coefficient against opening"></div>`);
       charts.push(() => factorChart(el(`${id}-factor`), e), () => dragChart(el(`${id}-drag`), e, result.radiator_cd));
     }
-    const groups = status === 'done' ? heat.engines.filter(g => g.engines.some(i => e.engines.includes(i))) : [];
+    // Groups with no solved throttle (e.g. over-rev at every throttle) leave a note instead of an empty chart.
+    const groups = status === 'done' ? heat.engines.filter(g => g.engines.some(i => e.engines.includes(i)) && g.points.some(p => p?.heat_c.some(v => v != null))) : [];
     if (groups.length) {
       cells.push(`<div class="ratings-plot" id="${id}-heat" aria-label="Heat index against throttle"></div>`);
       charts.push(() => heatChart(el(`${id}-heat`), e, heat, groups));
-    } else if (piston && status !== 'done') cells.push(`<p class="ratings-plot ratings-plot-note">${status === 'error' ? 'Heat index not available' : 'Heat index · calculating…'}</p>`);
+    } else if (piston) cells.push(`<p class="ratings-plot ratings-plot-note">${status === 'pending' ? 'Heat index · calculating…' :
+      status === 'done' ? `Heat index not solved at ${heat.altitude_m.toLocaleString('en-US')} m · ${heat.speed_kmh} km/h` : 'Heat index not available'}</p>`);
     return cells.length ? `<div class="ratings-plots">${cells.join('')}</div>` : '';
   }
   // One section per aircraft, rebuilt only when its number, ratings or result change (each holds up to four charts).
@@ -268,14 +270,17 @@
   const dragChart = (node, e, cd) => openingChart(node, e, c => e.radiator.opening_percent.map(x => cd[c] == null ? null : cd[c] * x / 100), 'Drag coefficient', '.5f');
 
   // Heat index against throttle, per channel; dashed lines at the continuous limits. Engines of this block with
-  // different curves get one line each (dotted after the first).
+  // different curves get one line each (dotted after the first). Unsolved throttles leave gaps; a solved point with no
+  // solved neighbour is a dot.
   function heatChart(node, e, heat, groups) {
     const x = heat.throttle_percent, shapes = [], traces = [];
     groups.forEach((g, n) => e.channels.forEach((c, j) => {
-      const label = groups.length > 1 ? `${c.label} · ${engineLabel(g.engines)}` : c.label;
-      traces.push({type: 'scatter', mode: 'lines', x, y: g.points.map(p => p?.heat_c[j] ?? null), line: {color: COLORS[j], width: 2, dash: n ? 'dot' : 'solid'},
+      const label = groups.length > 1 ? `${c.label} (${engineLabel(g.engines)})` : c.label;
+      const y = g.points.map(p => p?.heat_c[j] ?? null), lone = y.map((v, k) => v != null && y[k - 1] == null && y[k + 1] == null);
+      traces.push({type: 'scatter', mode: 'lines+markers', x, y, line: {color: COLORS[j], width: 2, dash: n ? 'dot' : 'solid'},
+        marker: {color: COLORS[j], size: lone.map(l => l ? 5 : 0)},
         customdata: g.points.map(p => p ? [Math.round(p.rpm), p.manifold_ata.toFixed(2)] : null),
-        hovertemplate: j ? `${label} %{y:.1f} °C<extra></extra>` : `${label} %{y:.1f} °C · %{customdata[0]} rpm · %{customdata[1]} ata<extra></extra>`});
+        hovertemplate: j ? `${label} %{y:.1f} °C<extra></extra>` : `${label} %{y:.1f} °C<br>%{customdata[0]} rpm · %{customdata[1]} ata<extra></extra>`});
     }));
     e.channels.forEach((c, j) => { if (c.continuous.bound === 'load') shapes.push({type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: c.continuous.max_c, y1: c.continuous.max_c,
       line: {color: COLORS[j], width: 1, dash: 'dash'}, opacity: .55}); });

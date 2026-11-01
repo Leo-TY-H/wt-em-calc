@@ -226,6 +226,14 @@ class Selection(unittest.TestCase):
         self.assertAlmostEqual(er.heat_scale(rec, f(1.05)), 1.1, places=5)
         self.assertEqual(er.heat_scale(dict(rec, boost_controlled=True), f(1.1)), 1.)
 
+    def test_heat_groups(self):
+        point = lambda rpm, *heat: dict(rpm=rpm, manifold_ata=1.3, heat_c=list(heat))
+        a = [None, point(2500., 90., 80.)]
+        curves = {0: a, 1: [None, point(2500.001, 90.00004, 80.)], 2: [None, point(2500., 90.01, 80.)], 3: [point(2500., 90., 80.)] * 2,
+                  4: [None, point(2500., 90., None)]}
+        self.assertEqual([g['engines'] for g in er.grouped(curves)], [[0, 1], [2], [3], [4]])
+        self.assertIs(er.grouped(curves)[0]['points'], a)
+
     def test_no_load_rows(self):
         tree = dict(Engine0=dict(engine(), Controls=dict(hasRadiatorControl=True, hasOilRadiatorControl=True)))
         tree['Engine0']['Temperature'] = dict(RadiatorMode0=dict(Throttle=.8, WaterTemperature=80., OilTemperature=70.))
