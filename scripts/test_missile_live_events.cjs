@@ -26,7 +26,7 @@ const root=path.resolve(__dirname,'..');
       await page.keyboard.up('w');await page.keyboard.press('Space');await page.waitForTimeout(150);await page.keyboard.press('Escape');await idle();
       assert.deepEqual((await exported()).scenario.target_control.inputs.at(-1).slice(1),[0,0,0]);report.checks.push(event+' clears inputs and pauses');
     }
-    await fly();const pad=page.locator('[data-code="KeyW"]'),bounds=await pad.boundingBox();
+    await fly();const pad=page.locator('[data-code="KeyS"]'),bounds=await pad.boundingBox();
     await page.mouse.move(bounds.x+20,bounds.y+20);await page.mouse.down();await page.waitForTimeout(100);
     await page.mouse.move(10,200);await page.mouse.up();await page.waitForTimeout(100);await page.keyboard.press('Escape');await idle();
     const log=(await exported()).scenario.target_control.inputs;

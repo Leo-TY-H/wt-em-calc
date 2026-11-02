@@ -151,3 +151,11 @@ is in the evidence manifest. Cleanup removed 319,636,914 bytes of owned intermed
 failed-startup scratch and superseded diagnostics. No owned scratch remains; installed
 tools are retained in `../tools`. Optional per-case rerun logs are omitted; exact
 acceptance counters, replay inputs and useful difference records are retained.
+
+## UI follow-up
+
+S now pitches up and W pitches down. The playback timeline is hidden before results
+and throughout live flight, then shown when the run ends. Live aircraft and missile
+meshes are 25% larger. Core/playback/launcher checks and two browser replay runs
+passed for the controls and timeline changes; the existing browser event checks
+also passed. The engine and its retained parity evidence are unchanged.
