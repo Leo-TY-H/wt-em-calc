@@ -751,7 +751,7 @@ class Handler(BaseHTTPRequestHandler):
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
         names.update({'/engine.js':'engine.js','/engine.css':'engine.css','/versions.js':'versions.js','/versions.css':'versions.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
-        names.update({f'/{name}':name for name in ('missile-live.js','missile-live-core.js','missile-live.css','live/missile-engine.mjs','live/missile-engine.wasm','live/manifest.json')})
+        names.update({f'/{name}':name for name in ('missile-live.js','missile-live-camera.js','missile-live-core.js','missile-live.css','live/missile-engine.mjs','live/missile-engine.wasm','live/manifest.json')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
         names.update({f'/icons/neothunderism-{asset}':f'icons/neothunderism-{asset}' for asset in ('mark.svg','mark.png','app.svg','favicon.svg')})
