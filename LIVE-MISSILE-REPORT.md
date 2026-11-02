@@ -191,3 +191,18 @@ above the normal 100 MB ceiling; it is an unplanned overage, not an approved bud
 exception. No further builds are planned. Remove this scratch after cleanup is
 permitted; the running preview uses the Python EM backend. Exact storage accounting
 is recorded in the manifest. No camera verification evidence is omitted.
+
+
+## Mouse look follow-up
+
+Target view now accepts mouse movement to select an independent world viewing
+direction. Clicking the canvas captures the pointer for continuous turning; Esc
+releases it without stopping flight. Touch dragging also moves the view. Center view
+restores aircraft following. Pause, camera switching and flight completion release
+pointer capture. Free view remains the default. No physics or engine changes.
+
+After implementation, 6 camera groups and 7 control groups passed. Two real-browser
+runs passed 10 mouse-look checks and 84 loop-camera samples; both exports replayed
+with identical trajectories. All 12 browser event checks passed. No page errors.
+The refreshed phone screenshot was inspected; results are in `mouse-look.json`.
+The previously recorded temporary EM build remains untouched.
