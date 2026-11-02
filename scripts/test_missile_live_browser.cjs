@@ -20,6 +20,7 @@ function save(name,data,kind='summary'){
       const missile=i===1?'us_aim_120c_5':'us_aim9l_sidewinder';
       const row=meta.missiles.find(m=>m.id===missile);const aircraft=row.aircraft_ids?.[0];
       await page.evaluate(({missile,aircraft})=>window.missileSimulator.load({missile,launcher:{position:[0,5000,0],velocity:[300,0,0],angles:[0,0,0],aircraft_id:aircraft},target:{position:[12000,5000,0],velocity:[50,0,0],angles:[0,0,0]}}),{missile,aircraft});
+      await page.locator('#missile-target-aircraft').selectOption(i===1?'saab_jas39c':'f_16a_block_15_adf');
       await page.locator('#missile-live-start').click();
       await page.waitForFunction(()=>window.missileLive.active||(!window.missileSimulator.isBusy()&&!document.getElementById('missile-error').hidden),null,{timeout:120000});
       assert(await page.evaluate(()=>window.missileLive.active),await page.locator('#missile-error').textContent());
@@ -88,11 +89,16 @@ function save(name,data,kind='summary'){
       const info=await page.evaluate(()=>window.missileLive.info());assert(info.every(x=>x.open_handles===0));report.handles.push(info.map(x=>x.open_handles));report.heap.push(info.reduce((n,x)=>n+x.heap_bytes,0));report.runs++;
       if(i<2){
         const doc=await page.evaluate(async()=>JSON.parse(await (await fetch(document.getElementById('missile-download').href)).text()));
+        assert.equal(doc.scenario.target_control.model,'aircraft_point_mass_v1');
+        assert.equal(doc.scenario.target_control.aircraft_profile.version,1);
+        assert(doc.trajectory.every(r=>Number.isFinite(r.target_speed_mps)&&r.target_velocity.length===3));
+        assert(Math.abs(doc.trajectory.at(-1).target_speed_mps-doc.trajectory[0].target_speed_mps)>.1,'Aircraft speed stayed fixed');
         const scenario=structuredClone(doc.scenario);delete scenario.launcher.aircraft;
         const submitted=await (await page.request.post('/api/missiles/jobs',{data:scenario})).json();assert(submitted.id,JSON.stringify(submitted));let result;
         for(let tries=0;tries<600;tries++){const job=await (await page.request.get('/api/missiles/jobs/'+submitted.id)).json();if(job.status==='complete'){result=job.result;break;}assert.notEqual(job.status,'failed',job.error);await page.waitForTimeout(100);}
         assert(result);assert.equal(result.outcome.code,doc.outcome.code);report.replays++;
         report['replay_'+i]={outcome:doc.outcome.code,trajectory_identical:JSON.stringify(result.trajectory)===JSON.stringify(doc.trajectory)};
+        assert(report['replay_'+i].trajectory_identical,'Native replay differs from browser aircraft trajectory');
       }
     }
     if(runCount>=50)assert(report.heap[49]<=report.heap[4]+1_000_000,'Heap grew by more than 1 MB');

@@ -167,7 +167,7 @@ function render(alpha,dt){
   if(camera.aspect!==aspect||camera.fov!==fov){camera.aspect=aspect;camera.fov=fov;camera.updateProjectionMatrix();}
   view.renderer.render(view.scene,camera);
   const velocity=targetState.slice(16,19),horizontal=Math.hypot(velocity[0],velocity[2]),climb=Math.atan2(velocity[1],horizontal)*180/Math.PI;
-  run.heading.textContent=`${targetState[0].toFixed(2)} s · ${Math.abs(climb)>89.5?'—':((Math.atan2(velocity[2],velocity[0])*180/Math.PI+360)%360).toFixed(0)+'°'} · ${climb.toFixed(0)}° · ${run.input[0]||run.input[1]?run.load:1} g${run.clock.paused?' · Paused':''}`;
+  run.heading.textContent=`${targetState[0].toFixed(2)} s · ${Math.abs(climb)>89.5?'—':((Math.atan2(velocity[2],velocity[0])*180/Math.PI+360)%360).toFixed(0)+'°'} · ${climb.toFixed(0)}° · Target ${(Math.hypot(...velocity)*3.6).toFixed(0)} km/h · ${run.input[1]?run.input[1]*run.load:1} g requested${run.clock.paused?' · Paused':''}`;
   states.forEach((s,i)=>{const session=run.sessions[i];if(session.error){session.chip.textContent=session.label+' · '+session.error;return;}
     const delta=s.slice(13,16).map((v,k)=>v-s[1+k]),range=Math.hypot(...delta),closing=range?delta.reduce((sum,v,k)=>sum+v*(s[4+k]-s[16+k]),0)/range:0;
     session.chip.textContent=`${session.label} · ${(range/1000).toFixed(2)} km · ${closing.toFixed(0)} m/s · ${s[11].toFixed(0)} m/s · M ${s[12].toFixed(2)} · ${['ACQ','TRK','IOG','COAST'][s[23]]||'—'}${session.terminal?' · Ended':''}`;});

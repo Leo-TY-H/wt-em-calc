@@ -328,12 +328,28 @@ No Python installation is needed. To update the app, close it and extract the ne
 
 ## Live target flight
 
-In Missile simulator, select missiles, set the target speed and **Target load (g)**,
+In Missile simulator, select missiles and a **Live target aircraft**, set the target speed and **Requested load (g)**,
 then choose **Fly live**. S pitches up, W pitches down; the up/down arrows also
 control pitch. A/D or left/right roll. Space pauses, Escape stops, C cycles cameras,
 1/2/3 select normal/half/quarter speed, and R starts another flight from the current
 setup. Touch controls provide the same commands. Loops and inverted flight are
-supported at constant speed; gravity and energy changes are excluded for the target.
+supported by a reduced aircraft trajectory model. Lift bends the path, bank directs
+lift, and thrust, drag and gravity change speed. The model uses existing aircraft
+Mach-dependent polar and engine data; it is not a full attitude dynamics model.
+The current selector supports fixed-sweep pure jets supported by the existing
+adapters. The target is clean with 50% internal fuel, fixed mass and selected power.
+Controls have a 0.25 s response; neutral pitch requests +1 g, S the requested positive
+load, W negative load bounded by aircraft structure. Lift is also limited by the
+Mach-dependent polar. Roll response is an approximate 180 degrees/s maximum, scaled
+by IAS relative to the aircraft’s authored aileron effective speed.
+
+The reduced drag polar includes clean component drag and wing induced drag, but
+not elevator trim drag, sideslip, damage, fuel burn, engine spool-up, spins or
+post-stall dynamics. Flights stop on leaving the supported speed envelope (below
+25 m/s, above 1000 m/s, IAS VNE or Mach MNE) or above 30 km. Low-speed lift saturation
+can cause descent; it does not simulate a spin. Old constant-speed input logs remain
+replayable. New exports embed the performance tables and source hash, and record
+target velocity and speed at each trajectory sample.
 
 The default camera is the free/orbit overview (drag to orbit, wheel to zoom).
 C cycles to the target-follow view, then each active missile, then back to free view.
@@ -371,6 +387,13 @@ Use `scripts/verify_missile_live_reference.py` for canonical JSON comparison acr
 the full reference corpus and `scripts/test_missile_live_events.cjs` for browser
 focus, touch and failure recovery. See LIVE-MISSILE-REPORT.md for acceptance status; a successful build
 alone is not acceptance.
+
+For the reduced aircraft model, run `python scripts/verify_missile_aircraft.py`
+after building the native engine. It checks energy conservation, lift limits,
+vertical/inverted starts and Python/typed-native agreement for F-16 and Gripen
+profiles. `LIVE_BROWSER_REPORT=aircraft-browser.json` with the browser acceptance
+script additionally checks both aircraft against native replay. Set
+`LIVE_PERF_AIRCRAFT=1` for the eight-session browser performance check.
 
 Generated `app/live/missile-engine.mjs`, `missile-engine.wasm`, and `manifest.json`
 must be copied together with `app/missile-models.json` and the live UI modules
