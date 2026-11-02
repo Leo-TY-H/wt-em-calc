@@ -6,13 +6,20 @@ import * as THREE from './vendor/three.module.min.js';
 const clamp=THREE.MathUtils.clamp,limit=80*Math.PI/180;
 const wrap=angle=>Math.atan2(Math.sin(angle),Math.cos(angle));
 export class TargetCamera {
-  constructor(){this.ready=false;this.yaw=0;this.pitch=0;this.bank=0;this.distance=17;}
+  constructor(){this.ready=false;this.yaw=0;this.pitch=0;this.bank=0;this.distance=17;this.look=null;}
+  lookBy(dx,dy){
+    if(!this.ready||!Number.isFinite(dx)||!Number.isFinite(dy))return;
+    if(!this.look)this.look={yaw:this.yaw,pitch:this.pitch};
+    this.look.yaw=wrap(this.look.yaw+dx*.004);
+    this.look.pitch=clamp(this.look.pitch-dy*.004,-limit,limit);
+  }
+  recenter(){this.look=null;}
   update(camera,target,attitude,pitchInput,dt){
     const forward=new THREE.Vector3(1,0,0).applyQuaternion(attitude);
     const horizontal=Math.hypot(forward.x,forward.z);
     // Keep heading through the pole; don't turn numerical noise into a 180° snap.
-    const yaw=horizontal>Math.cos(limit)||!this.ready?Math.atan2(forward.z,forward.x):this.yaw;
-    const pitch=clamp(Math.atan2(forward.y,horizontal),-limit,limit);
+    const yaw=this.look?this.look.yaw:horizontal>Math.cos(limit)||!this.ready?Math.atan2(forward.z,forward.x):this.yaw;
+    const pitch=this.look?this.look.pitch:clamp(Math.atan2(forward.y,horizontal),-limit,limit);
     const distance=pitchInput?14:17;
     if(!this.ready){this.yaw=yaw;this.pitch=pitch;this.distance=distance;this.ready=true;}
     const seconds=clamp(dt,0,.1),blend=-Math.expm1(-seconds/.1);

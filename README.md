@@ -337,6 +337,11 @@ supported at constant speed; gravity and energy changes are excluded for the tar
 
 The default camera is the free/orbit overview (drag to orbit, wheel to zoom).
 C cycles to the target-follow view, then each active missile, then back to free view.
+In target view, move the mouse over the scene to look independently of the aircraft;
+click the scene to capture the mouse for continuous turning, then Esc to release it.
+Touch users can drag the scene. The selected direction stays fixed while the aircraft
+maneuvers. **Center view** restores automatic following. Flight steering stays on
+the keyboard/touch controls.
 The target view approximates War Thunder’s mouse-aim camera with a steady horizon,
 smoothed heading and pitch, and a small amount of bank. Framing is based on the
 [aircraft TPS settings](https://github.com/gszabi99/War-Thunder-Datamine/blob/546f90e35873876ecd24191a07df49633c8f2b91/aces.vromfs.bin_u/config/camera.blkx);

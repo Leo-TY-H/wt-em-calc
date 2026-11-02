@@ -9,7 +9,7 @@ function save(name,data,kind='summary'){
 }
 (async()=>{
   const browser=await chromium.launch({headless:true,args:['--enable-unsafe-swiftshader']});
-  const page=await browser.newPage({viewport:{width:1440,height:1000},baseURL:process.env.LIVE_URL||'http://127.0.0.1:8799'}),errors=[],report={runs:0,replays:0,cameraSamples:0,handles:[],heap:[],errors};
+  const page=await browser.newPage({viewport:{width:1440,height:1000},baseURL:process.env.LIVE_URL||'http://127.0.0.1:8799'}),errors=[],report={runs:0,replays:0,cameraSamples:0,mouseLookChecks:0,handles:[],heap:[],errors};
   page.on('pageerror',error=>errors.push(error.message));
   try{
     await page.goto(process.env.LIVE_URL||'http://127.0.0.1:8799');await page.waitForFunction(()=>window.missileLive&&window.missileSimulator);
@@ -29,6 +29,25 @@ function save(name,data,kind='summary'){
       if(i<2){
         await page.keyboard.press('c');
         assert.equal((await page.evaluate(()=>window.missileLive.snapshot())).camera,'target');
+        await page.keyboard.press('Space');
+        const canvas=page.locator('.missile-live-canvas'),box=await canvas.boundingBox();
+        const mx=box.x+box.width*.5,my=box.y+box.height*.4;
+        await page.mouse.move(mx,my);await page.waitForTimeout(100);
+        const beforeLook=await page.evaluate(()=>window.missileLive.snapshot());
+        await page.mouse.move(mx+120,my-60,{steps:6});await page.waitForTimeout(600);
+        const afterLook=await page.evaluate(()=>window.missileLive.snapshot());
+        assert(beforeLook.cameraDirection.reduce((sum,v,k)=>sum+v*afterLook.cameraDirection[k],0)<.95,'Mouse movement did not aim camera');
+        assert.deepEqual(beforeLook.targetUp,afterLook.targetUp,'Mouse changed target attitude');
+        assert.equal(beforeLook.time,afterLook.time);report.mouseLookChecks+=3;
+        await page.getByRole('button',{name:'Center view',exact:true}).click();await page.waitForTimeout(600);
+        const centered=await page.evaluate(()=>window.missileLive.snapshot());
+        assert(centered.cameraDirection.reduce((sum,v,k)=>sum+v*beforeLook.cameraDirection[k],0)>.999);report.mouseLookChecks++;
+        await page.keyboard.press('Space');
+        await page.mouse.click(mx,my);await page.waitForFunction(()=>document.pointerLockElement);
+        await page.mouse.move(mx+80,my+40);await page.waitForTimeout(100);
+        await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.pointerLockElement);
+        assert(await page.evaluate(()=>window.missileLive.active),'Esc stopped flight instead of releasing mouse');report.mouseLookChecks++;
+        await page.getByRole('button',{name:'Center view',exact:true}).click();await page.waitForTimeout(600);
         let previousUp=null;
         await page.keyboard.down('s');
         for(let j=0;j<42;j++){

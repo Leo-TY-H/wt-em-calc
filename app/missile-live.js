@@ -71,6 +71,8 @@ function createView(){
   const actions=document.createElement('div');actions.className='missile-live-actions';pane.append(actions);
   const button=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const pauseButton=button('Pause',()=>togglePause());button('Stop',()=>stop());button('Camera',()=>cycleCamera());
+  const centerButton=button('Center view',()=>run?.targetCamera.recenter());centerButton.hidden=true;
+  const lookHint=document.createElement('span');lookHint.className='missile-live-look-hint';lookHint.textContent='Move mouse to look · Click scene to capture · Esc releases';lookHint.hidden=true;pane.append(lookHint);
   for(const [label,scale] of [['1×',1],['½×',.5],['¼×',.25]])button(label,()=>{if(run)run.clock.scale=scale;});
   const pad=document.createElement('div');pad.className='missile-live-pad';pane.append(pad);
   for(const [label,code] of [['↑','KeyS'],['↶','KeyA'],['↓','KeyW'],['↷','KeyD']]){
@@ -82,12 +84,37 @@ function createView(){
   const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(50,1,1,2e6);
   scene.add(new THREE.HemisphereLight(0xffffff,0x303038,2));const sun=new THREE.DirectionalLight(0xffffff,1.8);sun.position.set(.6,1,.4);scene.add(sun);
   const grid=new THREE.GridHelper(500000,100,0x555555,0x222222);scene.add(grid);
-  const orbit={yaw:1,pitch:.35,distance:1000},up=new THREE.Vector3(0,1,0);let drag=null;
-  renderer.domElement.addEventListener('pointerdown',e=>{if(run?.camera==='free'){drag=[e.clientX,e.clientY];renderer.domElement.setPointerCapture(e.pointerId);}});
-  renderer.domElement.addEventListener('pointermove',e=>{if(drag){orbit.yaw-=(e.clientX-drag[0])*.005;orbit.pitch=Math.max(-1.5,Math.min(1.5,orbit.pitch+(e.clientY-drag[1])*.005));drag=[e.clientX,e.clientY];}});
-  for(const name of ['pointerup','pointercancel','lostpointercapture'])renderer.domElement.addEventListener(name,()=>{drag=null;});
+  const orbit={yaw:1,pitch:.35,distance:1000},up=new THREE.Vector3(0,1,0);let drag=null,mouse=null;
+  const canvas=renderer.domElement;
+  canvas.addEventListener('pointerdown',e=>{
+    if(!run||e.button!==0)return;
+    if(run.camera==='free'||(run.camera==='target'&&e.pointerType!=='mouse')){
+      drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);
+    }else if(run.camera==='target'&&canvas.requestPointerLock){
+      const requestedRun=run;
+      try{Promise.resolve(canvas.requestPointerLock()).then(()=>{
+        if(run!==requestedRun||run?.camera!=='target'||run.clock.paused)releaseMouse();
+      }).catch(()=>{});}catch{} // Uncaptured mouse look still works if capture is unavailable.
+    }
+  });
+  canvas.addEventListener('pointerenter',e=>{mouse=[e.clientX,e.clientY];});
+  canvas.addEventListener('pointerleave',()=>{mouse=null;});
+  canvas.addEventListener('pointermove',e=>{
+    if(!run)return;
+    if(run.camera==='target'){
+      if(document.pointerLockElement===canvas)run.targetCamera.lookBy(e.movementX,e.movementY);
+      else if(drag?.id===e.pointerId)run.targetCamera.lookBy(e.clientX-drag.x,e.clientY-drag.y);
+      else if(e.pointerType==='mouse'&&mouse)run.targetCamera.lookBy(e.clientX-mouse[0],e.clientY-mouse[1]);
+    }else if(run.camera==='free'&&drag?.id===e.pointerId){
+      orbit.yaw-=(e.clientX-drag.x)*.005;orbit.pitch=Math.max(-1.5,Math.min(1.5,orbit.pitch+(e.clientY-drag.y)*.005));
+    }
+    if(drag?.id===e.pointerId){drag.x=e.clientX;drag.y=e.clientY;}
+    mouse=[e.clientX,e.clientY];
+  });
+  for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,e=>{if(drag?.id===e.pointerId)drag=null;});
+  document.addEventListener('pointerlockchange',()=>{mouse=null;drag=null;});
   renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();orbit.distance=Math.max(50,Math.min(1e6,orbit.distance*Math.exp(e.deltaY*.001)));},{passive:false});
-  return {pane,renderer,hud,scene,camera,grid,orbit,up,pauseButton,size:'',objects:[]};
+  return {pane,renderer,hud,scene,camera,grid,orbit,up,pauseButton,centerButton,lookHint,size:'',objects:[]};
 }
 function mesh(model,color){const object=new THREE.Mesh(aircraftGeometry(model),new THREE.MeshLambertMaterial({color,side:THREE.DoubleSide}));view.scene.add(object);view.objects.push(object);return object;}
 function trail(color){
@@ -95,10 +122,11 @@ function trail(color){
   const object=new THREE.Line(geometry,new THREE.LineBasicMaterial({color}));object.frustumCulled=false;view.scene.add(object);view.objects.push(object);return object;
 }
 function addTrail(object,position){const count=object.geometry.drawRange.count;if(count>=14402)return;object.geometry.attributes.position.setXYZ(count,...position);object.geometry.attributes.position.needsUpdate=true;object.geometry.setDrawRange(0,count+1);}
-function pause(){if(!run)return;run.clock.pause();keys.clear();view.pauseButton.textContent='Resume';}
+function releaseMouse(){if(view&&document.pointerLockElement===view.renderer.domElement)document.exitPointerLock();}
+function pause(){if(!run)return;releaseMouse();run.clock.pause();keys.clear();view.pauseButton.textContent='Resume';}
 function togglePause(){if(!run)return;if(run.clock.paused){run.clock.resume();view.pauseButton.textContent='Pause';}else pause();}
 function stop(){if(!run)return;if(!run.clock.steps){void finish(true);return;}run.stopRequested=true;run.clock.resume();}
-function cycleCamera(){if(!run)return;const choices=['target',...run.sessions.filter(s=>!s.terminal&&!s.error).map(s=>s.rowKey),'free'];run.camera=choices[(choices.indexOf(run.camera)+1)%choices.length];run.targetCamera=new TargetCamera();}
+function cycleCamera(){if(!run)return;releaseMouse();const choices=['target',...run.sessions.filter(s=>!s.terminal&&!s.error).map(s=>s.rowKey),'free'];run.camera=choices[(choices.indexOf(run.camera)+1)%choices.length];run.targetCamera=new TargetCamera();}
 function render(alpha,dt){
   if(!run)return;
   const states=run.sessions.map(s=>core.interpolate(s.previous,s.current,alpha));
@@ -106,6 +134,7 @@ function render(alpha,dt){
   const target=new THREE.Vector3(...targetState.slice(13,16)),q=new THREE.Quaternion(...targetState.slice(19,23));
   run.target.position.copy(target);run.target.quaternion.copy(q);
   for(let i=0;i<states.length;i++){const s=states[i],session=run.sessions[i];session.mesh.position.set(...s.slice(1,4));session.mesh.quaternion.set(...s.slice(7,11));}
+  view.centerButton.hidden=run.camera!=='target';view.lookHint.hidden=run.camera!=='target';
   const camera=view.camera;
   if(run.camera==='target'){
     run.targetCamera.update(camera,target,q,run.input[1],dt);
@@ -156,7 +185,7 @@ function frame(now){
   if(run===currentRun){try{render(alpha,dt);run.raf=requestAnimationFrame(frame);}catch(error){for(const session of run.sessions)session.error=error.message;void finish(false);}}
 }
 async function finish(cancelled){
-  if(!run||run.finishing)return;const ended=run;ended.finishing=true;cancelAnimationFrame(ended.raf);keys.clear();
+  if(!run||run.finishing)return;releaseMouse();const ended=run;ended.finishing=true;cancelAnimationFrame(ended.raf);keys.clear();
   const entries=[],failed=[...ended.failed];
   try{
     for(const session of ended.sessions){
@@ -198,7 +227,7 @@ async function fly(){
     hooks.liveError(error.message);hooks.endLive();
   }
 }
-window.addEventListener('keydown',event=>{const action=keys.down(event,!!run,!run&&window.missileSimulator?.isLiveResult()&&!window.missileSimulator?.isBusy());if(action==='pause')togglePause();else if(action==='stop')stop();else if(action==='camera')cycleCamera();else if(action==='again')void fly();else if(typeof action==='number'&&run)run.clock.scale=action;});
+window.addEventListener('keydown',event=>{if(event.code==='Escape'&&view&&document.pointerLockElement===view.renderer.domElement){event.preventDefault();releaseMouse();return;}const action=keys.down(event,!!run,!run&&window.missileSimulator?.isLiveResult()&&!window.missileSimulator?.isBusy());if(action==='pause')togglePause();else if(action==='stop')stop();else if(action==='camera')cycleCamera();else if(action==='again')void fly();else if(typeof action==='number'&&run)run.clock.scale=action;});
 window.addEventListener('keyup',event=>keys.up(event));window.addEventListener('blur',pause);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
 document.addEventListener('tool-tab-change',event=>{if(event.detail!=='missile')pause();});
