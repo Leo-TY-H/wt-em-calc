@@ -12,7 +12,8 @@ import jet_catalog
 from aircraft_model import prepare, condition_properties
 from air_state import speed_of_sound
 from control_mixer import density_at_height
-from jet_model import prepare as prepare_jet, steady, prepare_nozzle, selected_nozzle
+from jet_model import prepare as prepare_jet, steady
+from jet_nozzle import prepare as prepare_nozzle, evaluate as evaluate_nozzles
 from mass_model import aircraft_properties
 
 
@@ -55,7 +56,10 @@ def profile(aircraft_id, throttle=1.1):
             total=0.
             for engine,nozzles in installed:
                 t=steady(engine,height,speed,throttle)['thrust']
-                total+=sum(selected_nozzle(n,t,[0.,0.,0.],ias=speed*math.sqrt(rho/1.225))['force'][0] for n in nozzles)
+                # Use the catalog's general nozzle adapter, including authored
+                # installation angles and neutral control schedules. This reduced
+                # model retains only the forward component, with no vectoring input.
+                total+=evaluate_nozzles(nozzles,t,[0.,0.,0.],ias=speed*math.sqrt(rho/1.225))['force'][0]
             row.append(total)
         thrust.append(row)
     out=dict(version=1,aircraft_id=aircraft_id,name=choices[aircraft_id]['name'],
