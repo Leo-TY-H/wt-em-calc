@@ -22,3 +22,5 @@ body .missile-live-entry>button{width:auto;margin:0;flex:1 1 76px;min-height:44p
 .missile-live-pane button[hidden],.missile-live-look-hint[hidden]{display:none}
 .missile-live-look-hint{position:absolute;top:78px;left:12px;color:#aaa;font:11px/1.4 monospace;pointer-events:none}
 @media(pointer:coarse){.missile-live-look-hint{display:none}}
+
+#missile-target-aircraft,#missile-target-power{width:100%;background:#111;color:#eee;border:1px solid #555;padding:8px;margin:6px 0 12px}

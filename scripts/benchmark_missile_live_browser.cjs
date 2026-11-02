@@ -1,7 +1,7 @@
 const path=require('node:path'),cp=require('node:child_process'),assert=require('node:assert/strict');
 const {chromium,firefox}=require(process.env.PLAYWRIGHT_MODULE||'../../tools/live-browser/node_modules/playwright');
 const root=path.resolve(__dirname,'..'),python=path.resolve(root,'../WT-FM-Reconstruction/.venv/Scripts/python.exe');
-const summary=[];
+const summary=[],aircraftMode=process.env.LIVE_PERF_AIRCRAFT==='1';
 const describe=values=>{const sorted=values.slice().sort((a,b)=>a-b);return {median_ms:sorted[Math.floor(sorted.length/2)],p99_ms:sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.99))]};};
 async function chrome(throttle){
   const browser=await chromium.launch({headless:true,args:['--enable-unsafe-swiftshader']});
@@ -10,7 +10,7 @@ async function chrome(throttle){
     await page.goto('/');await page.waitForFunction(()=>window.missileLive&&window.missileSimulator);
     const meta=await (await page.request.get('/api/missiles/meta')).json();
     const missile='us_aim_120c_5',aircraft=meta.missiles.find(m=>m.id===missile).aircraft_ids[0];
-    await page.evaluate(({missile,aircraft})=>window.missileSimulator.load({missile,launcher:{position:[0,5000,0],velocity:[300,0,0],angles:[0,0,0],aircraft_id:aircraft},target:{position:[12000,5000,0],velocity:[2000,0,0],angles:[0,0,0]}}),{missile,aircraft});
+    await page.evaluate(({missile,aircraft})=>window.missileSimulator.load({missile,launcher:{position:[0,5000,0],velocity:[300,0,0],angles:[0,0,0],aircraft_id:aircraft},target:{position:[100000,5000,0],velocity:[300,0,0],angles:[0,0,0]}}),{missile,aircraft});
     await page.waitForFunction(()=>document.querySelector('[data-add-missile="us_aim_120c_5"]'));
     await page.evaluate(()=>{for(let i=0;i<7;i++)document.querySelector('[data-add-missile="us_aim_120c_5"]').click();});
     const session=await page.context().newCDPSession(page);await session.send('Emulation.setCPUThrottlingRate',{rate:throttle});
@@ -55,9 +55,9 @@ async function firefoxLoop(){
   }finally{await browser.close();}
 }
 (async()=>{
-  try{await chrome(1);await chrome(4);await firefoxLoop();}
+  try{await chrome(1);await chrome(4);if(!aircraftMode)await firefoxLoop();}
   finally{
-    const code="import sys;from pathlib import Path;sys.path.insert(0,'scripts');from benchmark_output import OutputBudget;b=OutputBudget(Path('outputs/live-missile'),'browser-performance');b.write(Path('outputs/live-missile/performance.json'),lambda f:f.write(sys.stdin.buffer.read()),kind='summary');raise SystemExit(b.finish())";
-    cp.execFileSync(python,['-X','utf8','-c',code],{cwd:root,input:JSON.stringify(summary)});
+    const code="import sys;from pathlib import Path;sys.path.insert(0,'scripts');from benchmark_output import OutputBudget;b=OutputBudget(Path('outputs/live-missile'),'browser-performance');b.write(Path('outputs/live-missile/'+sys.argv[1]),lambda f:f.write(sys.stdin.buffer.read()),kind='summary');raise SystemExit(b.finish())";
+    cp.execFileSync(python,['-X','utf8','-c',code,aircraftMode?'aircraft-performance.json':'performance.json'],{cwd:root,input:JSON.stringify(summary)});
   }
 })().catch(error=>{console.error(error);process.exitCode=1;});

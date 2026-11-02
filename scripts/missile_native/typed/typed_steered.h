@@ -15,7 +15,7 @@ inline d4 frame_quaternion(const d3& f,const d3& u,const d3& r) {
     return f32s(q);
 }
 struct SteeredPath {
-    struct Segment {bool straight;double t0,t1;d3 p0,p1,velocity;d4 quaternion;};
+    struct Segment {bool straight;double t0,t1;d3 p0,p1,velocity;d4 quaternion;bool dynamic=false;d3 velocity0{};d4 quaternion0{};};
     double V=0,A=0,s=0,c=0,k1=0,k2=0,rs=0,rc=0,diag=0,last_time=0;
     d3 position{},velocity{},p{},f{},u{},r{};d4 quaternion{};
     std::vector<Segment> segments;
@@ -49,7 +49,14 @@ struct SteeredPath {
         while(low<high){size_t mid=(low+high)/2;if(time<=segments[mid].t1)high=mid;else low=mid+1;}
         const auto& seg=segments[low];double fraction=(time-seg.t0)/(seg.t1-seg.t0);
         for(int i=0;i<3;++i){result.position[i]=f32(seg.straight?seg.p0[i]+seg.velocity[i]*(time-seg.t0):seg.p0[i]+(seg.p1[i]-seg.p0[i])*fraction);result.velocity[i]=f32(seg.velocity[i]);}
-        result.quaternion=f32s(seg.quaternion);return result;
+        result.quaternion=f32s(seg.quaternion);
+        if(seg.dynamic){
+            double sign=0;for(int i=0;i<4;++i)sign+=seg.quaternion0[i]*seg.quaternion[i];sign=sign<0?-1.:1.;
+            d4 q{};double square=0.;for(int i=0;i<4;++i){q[i]=seg.quaternion0[i]+(sign*seg.quaternion[i]-seg.quaternion0[i])*fraction;square+=q[i]*q[i];}
+            double length=std::sqrt(square);for(int i=0;i<4;++i)result.quaternion[i]=f32(q[i]/length);
+            for(int i=0;i<3;++i)result.velocity[i]=f32(seg.velocity0[i]+(seg.velocity[i]-seg.velocity0[i])*fraction);
+        }
+        return result;
     }
 };
 }

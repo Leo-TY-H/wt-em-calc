@@ -219,6 +219,13 @@ def validate(request):
             total += row[0]
             if total > maximum: raise ValueError('Target input log exceeds duration')
         clean['target_control'] = dict(load_g=load, inputs=deepcopy(log))
+        if 'aircraft_profile' in control:
+            from missile_aircraft_motion import validate_profile
+            clean['target_control']['aircraft_profile']=validate_profile(control['aircraft_profile'])
+            clean['target_control']['model']='aircraft_point_mass_v1'
+            if any(row[1] for row in log): raise ValueError('Aircraft model supports pitch and roll inputs only')
+        elif control.get('model') or control.get('aircraft_id'):
+            raise ValueError('Aircraft model requires a prepared performance profile')
         if 'stop_after_steps' in control:
             n = control['stop_after_steps']
             if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= maximum:
@@ -414,6 +421,8 @@ class Simulation:
                                         deadline - new['time_s'] + 2 * STEP, reach_radius,
                                         limits['origin'], limits['distance_limit'])):
                     outcome = dict(code='unreachable', label='Miss — target is unreachable'); terminal=True
+            if target_motion.get('outside') and not terminal:
+                outcome=dict(code='target_envelope',label='Target left the supported aircraft envelope'); terminal=True
             if stop and not terminal:
                 outcome = dict(code='stopped', label='Stopped'); terminal = True
             if event:
@@ -485,6 +494,11 @@ def simulate(request, progress=lambda _: None, cancelled=lambda: False):
 
 def simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new):
     """The simulator's result: trajectory, transitions and model description."""
+    if 'aircraft_profile' in config.get('target_control',{}):
+        for row in rows+[new]:
+            point=target_point(setup['target_motion'],row['time_s'])
+            row['target_velocity']=point['velocity']
+            row['target_speed_mps']=math.sqrt(sum(v*v for v in point['velocity']))
     profile, frame, escape = setup['profile'], setup['frame'], setup['escape']
     launcher_aircraft, initialization = setup['launcher_aircraft'], setup['initialization']
     return dict(scenario=config, release=frame.website_release, trajectory=rows, tracking_transitions=transitions,

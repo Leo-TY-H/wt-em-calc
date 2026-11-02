@@ -225,3 +225,59 @@ replays and 12 event checks passed, with no page errors. The first capture-denia
 assertion sampled residual recenter smoothing too early; waiting for the camera
 to settle fixed the test without changing the implementation. Evidence is retained
 in `mouse-capture.json`; no new build scratch was generated.
+
+
+## Reduced aircraft trajectory model
+
+New live flights select an aircraft-specific point-mass model. Existing fixed-sweep
+pure-jet adapters supply Mach-dependent clean component drag, wing induced drag,
+positive/negative lift limits, installed jet/nozzle thrust, structural loads, VNE,
+MNE and aileron reference speed. Profiles embed sampled performance tables and the
+original FM SHA-256 in exports. They are replay inputs, not globally installed assets.
+
+The aircraft is clean, with 50% internal fuel and constant mass. Selected military
+or maximum/afterburner thrust is held; the engine response is steady. Neutral pitch
+requests +1 g, S positive requested load, W bounded negative load; roll rotates the
+lift direction. A 0.25 s response and four midpoint substeps per 48 Hz update integrate
+position and velocity with gravity. Roll has an approximate 180 deg/s maximum,
+scaled by IAS and the authored aileron effective speed. Full attitude moments,
+trim drag, damage, fuel burn, spins and post-stall dynamics are excluded. Runs stop
+outside the supported speed/altitude envelope; old idealized logs remain supported.
+
+The UI shows target speed, and exports include target velocity/speed on each sample.
+The native/browser engine uses a typed version of the reference integrator and
+decodes aircraft tables once. Export materializes the interpolation history once.
+An initial generic implementation measured 96.2 ms median for eight sessions and
+timed out with 4x CPU throttling; that implementation was replaced before acceptance.
+
+All verification started after implementation. Seven physical/validation groups
+passed, including ballistic energy conservation, induced drag, lift saturation,
+720 vertical/inverted steps and native low-speed envelope termination. Sixteen
+F-16/Gripen cases compared with Python with zero target position/speed differences;
+17 typed/reference full-document comparisons passed without fallback. Twelve legacy
+cases passed, including 18 typed comparisons and three unchanged baseline cases.
+
+Fifty Chromium flights passed with zero heap growth after warmup and no page errors.
+Both F-16 and Gripen exports replayed with identical native trajectories. Eighteen
+mouse capture checks, 84 camera samples, all 12 event/recovery checks, seven control
+groups, six camera groups and 17 playback checks passed. Desktop/phone screenshots
+were inspected. The native and assertion-enabled WASM builds are current; the WASM
+asset is 22,946,671 bytes (2,413,574 Brotli bytes).
+
+Eight-session Chromium measurements each retained 1,001 frames. Engine work per
+frame was 0.2 ms median / 0.7 ms p99 normally, and 1.8 ms median / 16.5 ms p99
+under 4x CPU throttling. These measure physics work, not total rendering latency.
+After verification, 267 owned compiler intermediates (205,871,389 logical bytes)
+were removed. Final binaries and generated source remain; prior `.native_em`
+scratch remains untouched.
+
+The selector exposes 374 supported fixed-sweep jets; detailed trajectory acceptance
+covers F-16 and Gripen, not every aircraft. The visual aircraft mesh remains generic.
+The current Linux/Firefox engines were not revalidated for this follow-up. Historical
+720-case reports describe their recorded earlier revision, not this new model.
+
+Evidence: `aircraft-validation.json`, `aircraft-legacy-regression.json`,
+`aircraft-browser.json`, `aircraft-performance.json` and `events.json` in
+`outputs/live-missile`. Initial build/test/startup failures and their corrections
+are recorded in `aircraft-implementation.json`. Native/WASM builds have a recorded
+1.4 GB temporary workstream ceiling, including prior blocked-cleanup scratch.

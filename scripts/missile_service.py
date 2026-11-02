@@ -58,7 +58,8 @@ def metadata():
         entry['launcher_availability'] = launch_aircraft.catalog().get('availability', {}).get(entry['id'])
         if entry['id'] in kept:
             entry['data_version_used'] = kept[entry['id']]
-    return dict(missiles=entries, aircraft=launch_aircraft.catalog()['aircraft'],
+    from missile_aircraft_profile import catalog as target_catalog
+    return dict(target_aircraft=target_catalog(),missiles=entries, aircraft=launch_aircraft.catalog()['aircraft'],
                 aircraft_source_commit=launch_aircraft.catalog()['source_commit'],
                 aircraft_review_commit=launch_aircraft.catalog().get('checked_commit'),
                 defaults=dict(missile='us_aim9l_sidewinder', duration=60,
@@ -120,7 +121,12 @@ def _run(key, config, cancel):
 def checked_setup(config):
     if not isinstance(config,dict): raise ValueError('Expected a scenario object')
     if config.get('missile') not in {m['id'] for m in metadata()['missiles']}: raise ValueError('Select a supported missile')
-    return launch_aircraft.trajectory(config)
+    config=launch_aircraft.trajectory(config)
+    control=config.get('target_control',{})
+    if control.get('aircraft_id') and 'aircraft_profile' not in control:
+        from missile_aircraft_profile import profile
+        control['aircraft_profile']=profile(control['aircraft_id'],control.get('throttle',1.1))
+    return config
 
 
 def start(config):

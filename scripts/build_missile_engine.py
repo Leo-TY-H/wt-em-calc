@@ -21,7 +21,7 @@ SOURCE = ROOT / 'scripts' / 'missile_native'
 DIRECTORY = ROOT / '.native_missile_engine'
 MODEL = ROOT / 'scripts' / 'missile_model'
 WRAPPERS = ('missile_worker', 'missile_support', 'missile_initialization',
-            'missile_telemetry', 'missile_tracking', 'missile_fast', 'missile_envelope', 'missile_live_motion')
+            'missile_telemetry', 'missile_tracking', 'missile_fast', 'missile_envelope', 'missile_live_motion', 'missile_aircraft_motion')
 
 
 def inputs():

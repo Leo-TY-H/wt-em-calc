@@ -51,12 +51,15 @@
     </fieldset>
     ${stateFields('launch','Launcher aircraft')}
     ${stateFields('target','Target aircraft')}
+    <label class="field">Live target aircraft<select id="missile-target-aircraft" aria-label="Live target aircraft"></select></label>
+    <label class="field">Target power<select id="missile-target-power"><option value="1.1">Afterburner / maximum</option><option value="1">Military power</option></select></label>
+    <p class="hint">Live flight: clean fixed-wing jets, 50% fuel. S/W request lift; A/D roll. Speed changes with thrust, drag and gravity.</p>
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
 
     <button id="missile-cancel" class="secondary-button" type="button" hidden>Cancel simulation</button>
     <div id="missile-status" role="status" aria-live="polite"></div></div>
-  </form><div class="missile-live-entry"><button id="missile-run" class="primary-button" type="submit" form="missile-form" disabled>Calculate</button><button id="missile-reset" class="secondary-button reset-button" type="button">Reset</button><button id="missile-live-start" type="button" class="primary-button">Fly live</button><label>Target load (g)<input id="missile-live-load" type="number" min="1.5" max="15" step="any" value="9"></label></div></aside>
+  </form><div class="missile-live-entry"><button id="missile-run" class="primary-button" type="submit" form="missile-form" disabled>Calculate</button><button id="missile-reset" class="secondary-button reset-button" type="button">Reset</button><button id="missile-live-start" type="button" class="primary-button">Fly live</button><label>Requested load (g)<input id="missile-live-load" type="number" min="1.5" max="15" step="any" value="9"></label></div></aside>
   <div class="missile-main">
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
@@ -123,6 +126,9 @@
       }
       meta.missiles=[...unique.values()];
       meta.missiles.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})||a.id.localeCompare(b.id));
+      const aircraftSelect=el('missile-target-aircraft'),previous=aircraftSelect.value;
+      aircraftSelect.replaceChildren(...(meta.target_aircraft||[]).map(a=>new Option(a.name,a.id)));
+      aircraftSelect.value=previous||(meta.target_aircraft?.some(a=>a.id==='f_16a_block_15_adf')?'f_16a_block_15_adf':meta.target_aircraft?.[0]?.id||'');
       populateMissiles();renderSelected();busy(false);
     }catch(error){meta=null;busy(false);el('missile-retry').hidden=false;showError('Could not load missile configurations. Check that the simulator server is running, then retry. '+error.message);}
     finally{loading=null;}})();return loading;
@@ -382,6 +388,8 @@
     const place=key=>{launcherAircraft[key]=scenario.launcher.aircraft_id||'';selectedMissiles=[key];renderSelected();filterMissiles();changed();busy(false);};
     if(versionOf(scenario.missile))(async()=>{await load();try{place(GameVersions.missileRow(meta,baseId(scenario.missile),versionOf(scenario.missile),rowLoaded));}catch(error){showError(error.message);}})();
     else place(baseId(scenario.missile));
+    const targetProfile=scenario.target_control?.aircraft_profile;
+    if(targetProfile){el('missile-target-aircraft').value=targetProfile.aircraft_id;el('missile-target-power').value=String(targetProfile.throttle);}
     const origin=scenario.launcher.position;
     // Full precision: near an envelope boundary a rounded position can change the outcome.
     el('missile-launch-position-1').value=String(origin[1]);
@@ -450,13 +458,14 @@
     async prepareLive(load) {
       if(batchRunning||!selectedMissiles.length)return null;
       if(!el('missile-form').reportValidity())return null;
+      if(!el('missile-target-aircraft').value){showError('No supported target aircraft data is available.');return null;}
       batchRunning=true;busy(true);el('missile-playback').hidden=true;el('missile-cancel').hidden=true;pause();showError('');
       await window.GameVersions?.rowsLoaded(meta);
       const submitted=inputs(),rows=[],failed=[];
       await Promise.all(submitted.missiles.map(async rowKey=>{
         try {
           const body=window.missileLiveCore.prepareBody(submitted,rowKey,baseId,launchers.launcher);
-          body.target_control={load_g:load};
+          body.target_control={load_g:load,aircraft_id:el('missile-target-aircraft').value,throttle:Number(el('missile-target-power').value)};
           const version=versionOf(rowKey)||'';
           const prepared=await request('/api/missiles/live/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},version);
           rows.push({rowKey,version,label:rowName(rowKey),prepared});
@@ -776,6 +785,7 @@
     const frames=flights.map(f=>playbackFrame(f,time,el('missile-view').value)),row=frames[focusIndex].sample;
     const finished=time>=result.elapsed_s;
     el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':(trackingLabels[row.tracking_state]||'—'));
+    if(Number.isFinite(row.target_speed_mps))el('missile-frame').textContent+=` · Target ${(row.target_speed_mps*3.6).toFixed(0)} km/h`;
     const steered=result.model?.target_motion?.kind==='steered';
     const longest=flights.reduce((a,b)=>a.elapsed_s>=b.elapsed_s?a:b);
     const targetPose=steered?window.missileLiveCore.targetFrame(longest.trajectory,time):null;

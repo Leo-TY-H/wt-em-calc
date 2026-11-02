@@ -1223,9 +1223,92 @@ V endpoint_value(const Endpoint& e) {
     return result;
 }
 
+// Typed form of missile_aircraft_motion.py. Tables are decoded once; the
+// midpoint integrator uses the same operations and rounding as the reference.
+struct AircraftMotion {
+    double mass,area,positive_g,negative_g,mne,vne,roll_rate,roll_reference,response;
+    double requested_g,command_g;
+    bool outside=false;
+    d3 p,v,u,f,r;
+    std::vector<d3> atmosphere;
+    std::vector<std::array<double,5>> aero;
+    std::vector<double> speeds;
+    std::vector<std::vector<double>> thrust;
+    explicit AircraftMotion(const V& motion) {
+        V data=at_key(motion,"aircraft");
+        mass=num_at(data,"mass_kg");area=num_at(data,"area_m2");
+        positive_g=num_at(data,"positive_g");negative_g=num_at(data,"negative_g");
+        mne=num_at(data,"mne");vne=num_at(data,"vne_mps");
+        roll_rate=num_at(data,"roll_rate_deg_s")*0.017453292519943295;
+        roll_reference=std::max(num_at(data,"roll_reference_mps"),1.);response=num_at(data,"response_s");
+        requested_g=num_at(motion,"requested_g");command_g=num_at(motion,"command_g");
+        p=vec_at<3>(motion,"p");v=vec_at<3>(motion,"dynamic_velocity");
+        f=vec_at<3>(motion,"f");u=vec_at<3>(motion,"u");r=vec_at<3>(motion,"r");
+        for(const auto& row:iter(at_key(data,"atmosphere")))atmosphere.push_back(vec<3>(row));
+        for(const auto& row:iter(at_key(data,"aero")))aero.push_back(vec<5>(row));
+        for(const auto& value:iter(at_key(data,"speeds")))speeds.push_back(num(value));
+        for(const auto& row:iter(at_key(data,"thrust"))){std::vector<double> values;for(const auto& value:iter(row))values.push_back(num(value));thrust.push_back(std::move(values));}
+    }
+    static double clamp01(double x){return std::max(0.,std::min(1.,x));}
+    template<size_t N> static std::pair<size_t,double> bracket(const std::vector<std::array<double,N>>& rows,double x){
+        size_t i=0;while(i+2<rows.size()&&x>rows[i+1][0])++i;
+        return {i,clamp01((x-rows[i][0])/(rows[i+1][0]-rows[i][0]))};
+    }
+    template<size_t N> static std::array<double,N-1> lookup(const std::vector<std::array<double,N>>& rows,double x){
+        auto b=bracket(rows,x);std::array<double,N-1> result;
+        for(size_t k=1;k<N;++k)result[k-1]=rows[b.first][k]+(rows[b.first+1][k]-rows[b.first][k])*b.second;
+        return result;
+    }
+    d3 acceleration(const d3& position,const d3& velocity,const d3& up){
+        double speed=std::sqrt(steering_dot(velocity,velocity)),height=std::max(0.,std::min(30000.,position[1]));
+        auto air=lookup(atmosphere,height);double rho=air[0],sound=air[1];auto polar=lookup(aero,speed/sound);
+        double qarea=.5*rho*speed*speed*area,weight=mass*9.81;
+        double lift=std::max(std::max(negative_g*weight,qarea*polar[2]),std::min(std::min(positive_g*weight,qarea*polar[3]),requested_g*weight));
+        double cl=lift/std::max(qarea,.000001),drag=qarea*(polar[0]+polar[1]*cl*cl);
+        auto b=bracket(atmosphere,height);size_t i=b.first,j=0;
+        while(j+2<speeds.size()&&speed>speeds[j+1])++j;
+        double fraction=clamp01((speed-speeds[j])/(speeds[j+1]-speeds[j]));
+        double a=thrust[i][j]+(thrust[i][j+1]-thrust[i][j])*fraction;
+        double c=thrust[i+1][j]+(thrust[i+1][j+1]-thrust[i+1][j])*fraction;
+        double power=a+(c-a)*b.second;d3 result;
+        for(int n=0;n<3;++n)result[n]=(power-drag)/mass*velocity[n]/std::max(speed,.000001)+lift/mass*up[n];
+        result[1]-=9.81;
+        outside=outside||speed<25.||speed>1000.||speed/sound>mne||speed*std::sqrt(rho/1.225)>vne||position[1]>30000.;
+        return result;
+    }
+    static d3 perpendicular(const d3& up,const d3& forward){
+        double projection=steering_dot(up,forward);d3 result;
+        for(int n=0;n<3;++n)result[n]=up[n]-projection*forward[n];return steering_unit(result);
+    }
+    void advance(SteeredPath& path,double old,double now,int el,int roll){
+        double dt=(now-old)/4.;SteeredPath::Segment seg{};seg.dynamic=true;seg.t0=old;seg.t1=now;
+        seg.p0=p;seg.velocity0=v;seg.quaternion0=frame_quaternion(f,u,r);
+        for(int substep=0;substep<4;++substep){
+            f=steering_unit(v);r=steering_cross(f,u);
+            double rho=lookup(atmosphere,std::max(0.,std::min(30000.,p[1])))[0];
+            double ias=std::sqrt(steering_dot(v,v))*std::sqrt(rho/1.225);
+            double effectiveness=std::min({1.,ias/roll_reference,roll_reference/std::max(ias,1.)});
+            double x=roll*roll_rate*effectiveness*dt,z=x*x;
+            double sn=x*(1.+z*(-1./6.+z*(1./120.+z*(-1./5040.+z*(1./362880.+z*(-1./39916800.+z*(1./6227020800.+z*(-1./1307674368000.+z/355687428096000.))))))));
+            double cs=1.+z*(-1./2.+z*(1./24.+z*(-1./720.+z*(1./40320.+z*(-1./3628800.+z*(1./479001600.+z*(-1./87178291200.+z/20922789888000.)))))));
+            for(int n=0;n<3;++n)u[n]=cs*u[n]+sn*r[n];
+            double demand=el>0?command_g:el<0?-std::min(command_g,-negative_g):1.;
+            requested_g+=(demand-requested_g)*(dt/(response+dt));
+            d3 a=acceleration(p,v,u),vm,pm;
+            for(int n=0;n<3;++n){vm[n]=v[n]+a[n]*dt*.5;pm[n]=p[n]+v[n]*dt*.5;}
+            d3 fm=steering_unit(vm),um=perpendicular(u,fm);a=acceleration(pm,vm,um);
+            for(int n=0;n<3;++n){p[n]=p[n]+vm[n]*dt;v[n]=v[n]+a[n]*dt;}
+            f=steering_unit(v);u=perpendicular(u,f);
+        }
+        r=steering_cross(f,u);acceleration(p,v,u);
+        seg.p1=p;seg.velocity=v;seg.quaternion=frame_quaternion(f,u,r);
+        path.segments.push_back(seg);path.last_time=now;
+    }
+};
+
 struct TypedRun {
     V w,config,setup;FlightProps P;Session S;TargetMotion motion;LaunchState launch;
-    std::unique_ptr<SteeredPath> path;
+    std::unique_ptr<SteeredPath> path;V dynamic_motion;std::unique_ptr<AircraftMotion> aircraft;
     bool inertial_enabled=false,early_exit=false,tracked_before=false,terminal=false,outcome_event=false,have_new=false;
     double straight_from=0,deadline=0,reach_radius=0,duration=0,traveled=0,best_distance=0,best_time=0;
     d3 straight_velocity{};std::vector<double> burn_end;TrackingStatus tracking;
@@ -1260,6 +1343,7 @@ struct TypedRun {
     }
     if(field(motion_value,"kind").as_string()=="steered") {
         path=std::make_unique<SteeredPath>(); motion.steered=path.get();
+        if(has(motion_value,"aircraft")){dynamic_motion=motion_value;aircraft=std::make_unique<AircraftMotion>(motion_value);}
         path->position=motion.position;path->velocity=motion.velocity;path->quaternion=motion.quaternion;path->p=motion.position;
         path->f=vec_at<3>(motion_value,"f0");path->u=vec_at<3>(motion_value,"u0");path->r=vec_at<3>(motion_value,"r0");
         path->V=num(at_key(motion_value,"V"));path->A=num(at_key(motion_value,"A"));
@@ -1306,7 +1390,10 @@ struct TypedRun {
         if(terminal || !error.empty())throw std::runtime_error("Session has ended");
         if(az < -1 || az > 1 || el < -1 || el > 1 || roll < -1 || roll > 1)throw std::runtime_error("Invalid live controls");
         if(path){
-            path->advance(S.body.time,add(S.body.time,STEP),az,el,roll);
+            if(aircraft){
+                if(az)throw std::runtime_error("Aircraft model supports pitch and roll inputs only");
+                aircraft->advance(*path,S.body.time,add(S.body.time,STEP),el,roll);
+            }else path->advance(S.body.time,add(S.body.time,STEP),az,el,roll);
             if(!input_log.empty()&&input_log.back()[1]==az&&input_log.back()[2]==el&&input_log.back()[3]==roll)++input_log.back()[0];
             else input_log.push_back({1,az,el,roll});
         }
@@ -1356,6 +1443,7 @@ struct TypedRun {
                 code = "unreachable"; label = "Miss \xe2\x80\x94 target is unreachable"; terminal = true;
             }
         }
+        if(aircraft && aircraft->outside && !terminal){code="target_envelope";label="Target left the supported aircraft envelope";terminal=true;}
         if(stop && !terminal){code="stopped";label="Stopped";terminal=true;}
         if (event) {
             seeker_transitions.push_back(make_dict({{"time_s", V(end.time)}, {"tracking", V()}, {"observation_available", V()},
@@ -1375,6 +1463,16 @@ struct TypedRun {
     }
     V finish(){
     if (!have_new) bail("No simulator step");
+    if(aircraft){
+        // Build the reference interpolation history once, at export time.
+        Args segments;segments.reserve(path->segments.size());
+        for(const auto& s:path->segments)segments.push_back(make_dict({
+            {"kind",V("aircraft")},{"t0",V(s.t0)},{"t1",V(s.t1)},
+            {"p0",list3(s.p0)},{"p1",list3(s.p1)},
+            {"v0",list3(s.velocity0)},{"v1",list3(s.velocity)},
+            {"q0",list4(s.quaternion0)},{"q1",list4(s.quaternion)}}));
+        dict_set(dynamic_motion,"segments",make_list(segments));dict_set(dynamic_motion,"last_time",V(path->last_time));
+    }
     Kw outcome{{"code", V(code)}, {"label", V(label)}};
     if (outcome_event) outcome.emplace_back("event", make_dict({{"position", list3(event_value.position)},
                                                                 {"direction", list3(event_value.direction)}, {"time", V(event_value.time)}}));
@@ -1395,8 +1493,8 @@ struct TypedRun {
         a[0]=b.time;for(int j=0;j<3;++j){a[1+j]=b.missile[j];a[4+j]=b.velocity[j];a[13+j]=target.position[j];a[16+j]=target.velocity[j];}
         for(int j=0;j<4;++j){a[7+j]=b.quaternion[j];a[19+j]=target.quaternion[j];}a[11]=b.speed;a[12]=b.mach;
         a[23]=tracking.state=="observed"?1:tracking.state=="inertial"?2:tracking.state=="coasting"?3:0;a[24]=terminal;a[25]=0;
-        const char* codes[]={"time_limit","proximity_event","ground","target_ground","lifetime","distance_limit","tracking_timeout","unreachable","stopped"};
-        for(int j=0;j<9;++j)if(std::string(code)==codes[j])a[25]=j;
+        const char* codes[]={"time_limit","proximity_event","ground","target_ground","lifetime","distance_limit","tracking_timeout","unreachable","stopped","target_envelope"};
+        for(int j=0;j<10;++j)if(std::string(code)==codes[j])a[25]=j;
         a[26]=best_distance;a[27]=best_time;for(int j=28;j<32;++j)a[j]=std::numeric_limits<double>::quiet_NaN();
         if(outcome_event){a[28]=event_value.time;for(int j=0;j<3;++j)a[29+j]=event_value.position[j];}return a;
     }

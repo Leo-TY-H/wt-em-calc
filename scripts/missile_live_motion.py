@@ -71,14 +71,23 @@ def steered_motion(target, control):
         projection = dot(right,f)
         r = unit([right[i]-projection*f[i] for i in range(3)])
         u = cross(r,f)
-    return dict(kind='steered', position=target['position'], velocity=v, quaternion=q,
+    motion = dict(kind='steered', position=target['position'], velocity=v, quaternion=q,
                 V=speed, A=acceleration, s=2.*sh*ch, c=1.-2.*sh*sh,
                 k1=2.*sh*ch/angle, k2=2.*sh*sh/angle, rs=2.*rh*rch,
                 rc=1.-2.*rh*rh, diag=math.sqrt(.5), f0=f[:], u0=u[:], r0=r[:],
                 p=target['position'][:], f=f, u=u, r=r, segments=[], last_time=0.)
+    if 'aircraft_profile' in control:
+        from missile_aircraft_motion import forces
+        motion.update(aircraft=control['aircraft_profile'],dynamic_velocity=v[:],command_g=load,requested_g=1.,actual_g=1.,outside=False)
+        if forces(motion,motion['p'],v,u,1.)['outside']: raise ValueError('Initial target state is outside the aircraft model envelope (speed, Mach, IAS or altitude)')
+    return motion
 
 
 def steered_advance(m, old, new, az, el, roll):
+    if 'aircraft' in m:
+        from missile_aircraft_motion import advance
+        advance(m,old,new,el,roll)
+        return
     segments = m['segments']
     p, f, u, r = m['p'], m['f'], m['u'], m['r']
     if az == 0 and el == 0 and roll == 0:
@@ -134,6 +143,10 @@ def steered_point(m, time):
     if segment['kind'] == 'constant_velocity':
         return linear_point(segment,time)
     fraction = (time-segment['t0'])/(segment['t1']-segment['t0'])
+    if segment['kind']=='aircraft':
+        q0=segment['q0'];q1=segment['q1'];sign=-1. if sum(q0[i]*q1[i] for i in range(4))<0 else 1.
+        q=[q0[i]+(sign*q1[i]-q0[i])*fraction for i in range(4)];length=math.sqrt(sum(x*x for x in q))
+        return dict(position=[f32(segment['p0'][i]+(segment['p1'][i]-segment['p0'][i])*fraction) for i in range(3)],velocity=[f32(segment['v0'][i]+(segment['v1'][i]-segment['v0'][i])*fraction) for i in range(3)],quaternion=[f32(x/length) for x in q])
     return dict(position=[f32(segment['p0'][i]+(segment['p1'][i]-segment['p0'][i])*fraction) for i in range(3)],
                 velocity=[f32(x) for x in segment['v1']], quaternion=segment['q1'][:])
 
