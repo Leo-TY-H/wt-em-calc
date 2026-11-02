@@ -330,11 +330,17 @@ No Python installation is needed. To update the app, close it and extract the ne
 
 In Missile simulator, select missiles, set the target speed and **Target load (g)**,
 then choose **Fly live**. S pitches up, W pitches down; the up/down arrows also
-control pitch. A/D or left/right roll, and Q/E turn
-relative to the target attitude. Space pauses, Escape stops, C cycles cameras,
+control pitch. A/D or left/right roll. Space pauses, Escape stops, C cycles cameras,
 1/2/3 select normal/half/quarter speed, and R starts another flight from the current
 setup. Touch controls provide the same commands. Loops and inverted flight are
 supported at constant speed; gravity and energy changes are excluded for the target.
+
+The default camera is the free/orbit overview (drag to orbit, wheel to zoom).
+C cycles to the target-follow view, then each active missile, then back to free view.
+The target view approximates War Thunder’s mouse-aim camera with a steady horizon,
+smoothed heading and pitch, and a small amount of bank. Framing is based on the
+[aircraft TPS settings](https://github.com/gszabi99/War-Thunder-Datamine/blob/546f90e35873876ecd24191a07df49633c8f2b91/aces.vromfs.bin_u/config/camera.blkx);
+the game’s complete runtime camera algorithm is not available in that configuration.
 
 Each selected game build runs its own browser engine with hash-checked inputs.
 The playback timeline stays hidden during live flight and appears when the run ends.
@@ -360,7 +366,8 @@ focus, touch and failure recovery. See LIVE-MISSILE-REPORT.md for acceptance sta
 alone is not acceptance.
 
 Generated `app/live/missile-engine.mjs`, `missile-engine.wasm`, and `manifest.json`
-must be copied together with `app/missile-models.json` into both the Pages staging
+must be copied together with `app/missile-models.json` and the live UI modules
+(including `app/missile-live-camera.js`) into both the Pages staging
 folder and Windows package. They are intentionally excluded from Git. This checkout
 does not contain `publish_release.py`; its external packaging owner must use this
 explicit asset list. Build native then WASM from the same release revision.

@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
 import {aircraftGeometry} from './missile-setup3d.js';
+import {TargetCamera,targetCameraFov} from './missile-live-camera.js';
 
 const core=window.missileLiveCore,instances=new Map(),keys=new core.Keys();
 const $=id=>document.getElementById(id),colors=['#38c9d7','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296','#f08070'];
@@ -72,8 +73,8 @@ function createView(){
   const pauseButton=button('Pause',()=>togglePause());button('Stop',()=>stop());button('Camera',()=>cycleCamera());
   for(const [label,scale] of [['1×',1],['½×',.5],['¼×',.25]])button(label,()=>{if(run)run.clock.scale=scale;});
   const pad=document.createElement('div');pad.className='missile-live-pad';pane.append(pad);
-  for(const [label,code] of [['↑','KeyS'],['↶','KeyA'],['↓','KeyW'],['↷','KeyD'],['←','KeyQ'],['→','KeyE']]){
-    const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.code=code;b.setAttribute('aria-label',({KeyS:'Pull up',KeyW:'Push down',KeyA:'Roll left',KeyD:'Roll right',KeyQ:'Turn left',KeyE:'Turn right'})[code]);pad.append(b);
+  for(const [label,code] of [['↑','KeyS'],['↶','KeyA'],['↓','KeyW'],['↷','KeyD']]){
+    const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.code=code;b.setAttribute('aria-label',({KeyS:'Pull up',KeyW:'Push down',KeyA:'Roll left',KeyD:'Roll right'})[code]);pad.append(b);
     b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.down({code},!!run);});
     for(const name of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(name,()=>keys.up({code}));
   }
@@ -97,7 +98,7 @@ function addTrail(object,position){const count=object.geometry.drawRange.count;i
 function pause(){if(!run)return;run.clock.pause();keys.clear();view.pauseButton.textContent='Resume';}
 function togglePause(){if(!run)return;if(run.clock.paused){run.clock.resume();view.pauseButton.textContent='Pause';}else pause();}
 function stop(){if(!run)return;if(!run.clock.steps){void finish(true);return;}run.stopRequested=true;run.clock.resume();}
-function cycleCamera(){if(!run)return;const choices=['target',...run.sessions.filter(s=>!s.terminal&&!s.error).map(s=>s.rowKey),'free'];run.camera=choices[(choices.indexOf(run.camera)+1)%choices.length];}
+function cycleCamera(){if(!run)return;const choices=['target',...run.sessions.filter(s=>!s.terminal&&!s.error).map(s=>s.rowKey),'free'];run.camera=choices[(choices.indexOf(run.camera)+1)%choices.length];run.targetCamera=new TargetCamera();}
 function render(alpha,dt){
   if(!run)return;
   const states=run.sessions.map(s=>core.interpolate(s.previous,s.current,alpha));
@@ -107,7 +108,7 @@ function render(alpha,dt){
   for(let i=0;i<states.length;i++){const s=states[i],session=run.sessions[i];session.mesh.position.set(...s.slice(1,4));session.mesh.quaternion.set(...s.slice(7,11));}
   const camera=view.camera;
   if(run.camera==='target'){
-    camera.up.set(0,1,0).applyQuaternion(q);camera.position.copy(target).add(new THREE.Vector3(-180,55,0).applyQuaternion(q));camera.lookAt(target.clone().add(new THREE.Vector3(100,0,0).applyQuaternion(q)));
+    run.targetCamera.update(camera,target,q,run.input[1],dt);
   }else if(run.camera==='free'){
     const o=view.orbit;camera.up.set(0,1,0);camera.position.copy(target).add(new THREE.Vector3(Math.cos(o.yaw)*Math.cos(o.pitch),Math.sin(o.pitch),Math.sin(o.yaw)*Math.cos(o.pitch)).multiplyScalar(o.distance));camera.lookAt(target);
   }else{
@@ -126,7 +127,9 @@ function render(alpha,dt){
   for(const obj of [run.target,...run.sessions.map(s=>s.mesh)])obj.scale.setScalar(1.25*Math.max(10,camera.position.distanceTo(obj.position)*.025));
   view.grid.position.set(Math.round(target.x/5000)*5000,0,Math.round(target.z/5000)*5000);
   const width=view.pane.clientWidth,height=view.pane.clientHeight,ratio=Math.min(devicePixelRatio||1,2),size=[width,height,ratio].join(':');
-  if(!width||!height)return;if(size!==view.size){view.size=size;view.renderer.setPixelRatio(ratio);view.renderer.setSize(width,height,false);camera.aspect=width/height;camera.updateProjectionMatrix();}
+  if(!width||!height)return;if(size!==view.size){view.size=size;view.renderer.setPixelRatio(ratio);view.renderer.setSize(width,height,false);}
+  const aspect=width/height,fov=run.camera==='target'?targetCameraFov(aspect):50;
+  if(camera.aspect!==aspect||camera.fov!==fov){camera.aspect=aspect;camera.fov=fov;camera.updateProjectionMatrix();}
   view.renderer.render(view.scene,camera);
   const velocity=targetState.slice(16,19),horizontal=Math.hypot(velocity[0],velocity[2]),climb=Math.atan2(velocity[1],horizontal)*180/Math.PI;
   run.heading.textContent=`${targetState[0].toFixed(2)} s · ${Math.abs(climb)>89.5?'—':((Math.atan2(velocity[2],velocity[0])*180/Math.PI+360)%360).toFixed(0)+'°'} · ${climb.toFixed(0)}° · ${run.input[0]||run.input[1]?run.load:1} g${run.clock.paused?' · Paused':''}`;
@@ -186,7 +189,7 @@ async function fly(){
     started.sort((a,b)=>prepared.submitted.missiles.indexOf(a.rowKey)-prepared.submitted.missiles.indexOf(b.rowKey));
     view.hud.replaceChildren();const heading=document.createElement('span');view.hud.append(heading);
     for(let i=0;i<started.length;i++){const session=started[i];session.mesh=mesh(window.missileModels.get(GameVersions.baseMissile(session.rowKey)),colors[i]);session.trail=trail(colors[i]);addTrail(session.trail,session.current.slice(1,4));session.chip=document.createElement('span');session.chip.style.color=colors[i];view.hud.append(session.chip);}
-    run={sessions:started,submitted:prepared.submitted,failed:prepared.failed,clock:new core.Clock(),log:[],input:[0,0,0],load,heading,camera:'target',target:mesh(window.missileModels.getTarget(),'#ffa66b'),targetTrail:trail('#ffa66b')};
+    run={sessions:started,submitted:prepared.submitted,failed:prepared.failed,clock:new core.Clock(),log:[],input:[0,0,0],load,heading,camera:'free',targetCamera:new TargetCamera(),target:mesh(window.missileModels.getTarget(),'#ffa66b'),targetTrail:trail('#ffa66b')};
     addTrail(run.targetTrail,started[0].current.slice(13,16));keys.clear();view.pauseButton.textContent='Pause';view.pane.hidden=false;
     $('missile-setup-pane').hidden=true;$('missile-chart').hidden=true;view.pane.focus();render(0,0);run.raf=requestAnimationFrame(frame);
   }catch(error){for(const session of started)try{session.engine.free(session.handle);}catch{}
@@ -200,4 +203,4 @@ window.addEventListener('keyup',event=>keys.up(event));window.addEventListener('
 document.addEventListener('visibilitychange',()=>{if(document.hidden)pause();});
 document.addEventListener('tool-tab-change',event=>{if(event.detail!=='missile')pause();});
 $('missile-live-start').addEventListener('click',()=>void fly());
-window.missileLive={fly,pause,stop,metrics,snapshot:()=>run?{time:run.sessions[0].current[0],camera:run.camera,cameraUp:view.camera.up.toArray(),targetUp:new THREE.Vector3(0,1,0).applyQuaternion(run.target.quaternion).toArray()}:null,info:()=>[...instances].map(([build,engine])=>({build,...engine.info()})),get active(){return !!run;}};
+window.missileLive={fly,pause,stop,metrics,snapshot:()=>run?{time:run.sessions[0].current[0],camera:run.camera,cameraUp:view.camera.up.toArray(),cameraPosition:view.camera.position.toArray(),cameraDirection:view.camera.getWorldDirection(new THREE.Vector3()).toArray(),cameraFov:view.camera.fov,targetPosition:run.target.position.toArray(),targetUp:new THREE.Vector3(0,1,0).applyQuaternion(run.target.quaternion).toArray()}:null,info:()=>[...instances].map(([build,engine])=>({build,...engine.info()})),get active(){return !!run;}};

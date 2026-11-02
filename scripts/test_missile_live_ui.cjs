@@ -6,7 +6,8 @@ const event=(code,extra={})=>({code,preventDefault(){this.prevented=true;},...ex
 test('codes, aliases, opposing keys, tap latch',()=>{
   const keys=new core.Keys();const e=event('KeyW');keys.down(e,true);keys.up(e);assert.equal(e.prevented,true);assert.deepEqual(keys.take(),[0,-1,0]);assert.deepEqual(keys.take(),[0,0,0]);
   keys.down(event('ArrowUp'),true);keys.down(event('KeyW'),true);keys.down(event('KeyS'),true);assert.deepEqual(keys.take(),[0,0,0]);
-  keys.clear();for(const code of ['KeyE','KeyS','KeyD'])keys.down(event(code),true);assert.deepEqual(keys.take(),[1,1,1]);
+  keys.clear();for(const code of ['KeyS','KeyD'])keys.down(event(code),true);assert.deepEqual(keys.take(),[0,1,1]);
+  keys.clear();for(const code of ['KeyQ','KeyE']){const e=event(code);assert.equal(keys.down(e,true),null);assert.equal(e.prevented,undefined);}assert.deepEqual(keys.take(),[0,0,0]);
 });
 test('repeats, modifiers, focus, inactive, restart',()=>{
   const keys=new core.Keys();for(const option of [{repeat:true},{ctrlKey:true},{metaKey:true},{altKey:true},{target:{closest:()=>true}}])assert.equal(keys.down(event('KeyW',option),true),null);

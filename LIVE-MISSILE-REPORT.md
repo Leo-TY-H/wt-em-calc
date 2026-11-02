@@ -159,3 +159,35 @@ and throughout live flight, then shown when the run ends. Live aircraft and miss
 meshes are 25% larger. Core/playback/launcher checks and two browser replay runs
 passed for the controls and timeline changes; the existing browser event checks
 also passed. The engine and its retained parity evidence are unchanged.
+
+
+## Free view and target camera follow-up
+
+Free/orbit overview is now the default for every flight. Q/E bindings and turn
+buttons are removed. The target-follow camera approximates the mouse-aim view:
+horizon-relative offset, smooth heading/pitch, very small bank influence, and a
+stable transition through vertical flight. It replaces the earlier attitude-locked
+camera; the original 84 attitude-lock checks above describe the initial revision.
+
+Reference: [aircraft TPS configuration, revision 546f90e](https://github.com/gszabi99/War-Thunder-Datamine/blob/546f90e35873876ecd24191a07df49633c8f2b91/aces.vromfs.bin_u/config/camera.blkx).
+The implementation uses its neutral/elevator offsets, look-ahead, distance multiplier
+and roll factor. Exponential smoothing and the pole transition are local approximations;
+the full game runtime controller is not exposed by the data. FOV is interpreted as
+horizontal in landscape and capped at 90 degrees vertically for narrow displays.
+Mouse aim steering is not added; keyboard/touch flight inputs retain their behavior.
+
+After implementation: 7 control groups, 5 camera geometry groups (2,882 loop
+samples and 361 roll samples), 17 playback checks, 84 browser camera samples,
+2 exported/native replay comparisons and 12 browser event checks passed. No browser
+errors. Desktop and phone screenshots inspected; `camera-update.json` retains the
+browser results. Physics binaries are unchanged.
+
+The first browser attempt preceded server readiness. Restarting without the previous
+`WT_EM_BACKEND=python` setting triggered an unintended EM build. The preview was
+restarted with that setting and tests passed. Cleanup of the owned `.native_em`
+scratch was rejected by automatic approval review ("blocked by policy"); 297 files,
+81,492,559 logical bytes remain. This raises retained generated workstream storage
+above the normal 100 MB ceiling; it is an unplanned overage, not an approved budget
+exception. No further builds are planned. Remove this scratch after cleanup is
+permitted; the running preview uses the Python EM backend. Exact storage accounting
+is recorded in the manifest. No camera verification evidence is omitted.

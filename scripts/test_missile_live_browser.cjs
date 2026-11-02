@@ -24,13 +24,26 @@ function save(name,data,kind='summary'){
       await page.waitForFunction(()=>window.missileLive.active||(!window.missileSimulator.isBusy()&&!document.getElementById('missile-error').hidden),null,{timeout:120000});
       assert(await page.evaluate(()=>window.missileLive.active),await page.locator('#missile-error').textContent());
       assert(await page.locator('#missile-playback').isHidden());
+      assert.equal((await page.evaluate(()=>window.missileLive.snapshot())).camera,'free');
+      assert.equal(await page.locator('.missile-live-pad [data-code=KeyQ],.missile-live-pad [data-code=KeyE]').count(),0);
       if(i<2){
+        await page.keyboard.press('c');
+        assert.equal((await page.evaluate(()=>window.missileLive.snapshot())).camera,'target');
+        let previousUp=null;
         await page.keyboard.down('s');
         for(let j=0;j<42;j++){
           await page.waitForTimeout(100);const state=await page.evaluate(()=>window.missileLive.snapshot());if(!state)break;
-          if(state.camera==='target'){assert(state.cameraUp.reduce((sum,v,k)=>sum+v*state.targetUp[k],0)>.999);report.cameraSamples++;}
+          assert.equal(state.camera,'target');
+          assert([...state.cameraUp,...state.cameraPosition,...state.cameraDirection].every(Number.isFinite));
+          assert(state.cameraUp[1]>0,'Camera horizon inverted');
+          if(previousUp)assert(state.cameraUp.reduce((sum,v,k)=>sum+v*previousUp[k],0)>.9,'Camera snapped at pole');
+          previousUp=state.cameraUp;report.cameraSamples++;
         }
         await page.keyboard.up('s');await page.keyboard.down('d');await page.waitForTimeout(500);await page.keyboard.up('d');
+        const rolled=await page.evaluate(()=>window.missileLive.snapshot());assert(rolled.cameraUp[1]>0);
+        await page.keyboard.press('c');assert.notEqual((await page.evaluate(()=>window.missileLive.snapshot())).camera,'target');
+        await page.keyboard.press('c');assert.equal((await page.evaluate(()=>window.missileLive.snapshot())).camera,'free');
+        await page.keyboard.press('c');
         if(i===0&&await page.evaluate(()=>window.missileLive.active))save('desktop.png',await page.screenshot(),'diagnostic');
         if(i===1&&await page.evaluate(()=>window.missileLive.active)){await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);save('phone.png',await page.screenshot(),'diagnostic');await page.setViewportSize({width:1440,height:1000});}
       }else await page.waitForTimeout(100);

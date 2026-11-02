@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const STEP=1/48,STATE_VERSION=1,STATE_SIZE=32;
-  const mapping={KeyW:[1,-1],ArrowUp:[1,1],KeyS:[1,1],ArrowDown:[1,-1],KeyA:[2,-1],ArrowLeft:[2,-1],KeyD:[2,1],ArrowRight:[2,1],KeyQ:[0,-1],KeyE:[0,1]};
+  const mapping={KeyW:[1,-1],ArrowUp:[1,1],KeyS:[1,1],ArrowDown:[1,-1],KeyA:[2,-1],ArrowLeft:[2,-1],KeyD:[2,1],ArrowRight:[2,1]};
   const actions={Space:'pause',Escape:'stop',KeyC:'camera',KeyR:'again',Digit1:1,Numpad1:1,Digit2:.5,Numpad2:.5,Digit3:.25,Numpad3:.25};
   const editing=target=>!!target?.closest?.('input,select,textarea,[contenteditable]:not([contenteditable="false"])');
   class Keys {
