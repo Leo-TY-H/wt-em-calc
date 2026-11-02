@@ -324,3 +324,41 @@ For Windows 10/11 x64:
 3. Launchers open using bundled data without checking for updates or requiring internet access. Run **Update Game Data.cmd** to refresh aircraft data when GitHub is accessible.
 
 No Python installation is needed. To update the app, close it and extract the new download into a new folder.
+
+
+## Live target flight
+
+In Missile simulator, select missiles, set the target speed and **Target load (g)**,
+then choose **Fly live**. W/S or up/down pitch, A/D or left/right roll, and Q/E turn
+relative to the target attitude. Space pauses, Escape stops, C cycles cameras,
+1/2/3 select normal/half/quarter speed, and R starts another flight from the current
+setup. Touch controls provide the same commands. Loops and inverted flight are
+supported at constant speed; gravity and energy changes are excluded for the target.
+
+Each selected game build runs its own browser engine with hash-checked inputs.
+Finished and stopped runs open in the existing playback and export. Replay the
+exported scenario through the usual jobs API; `target_control.inputs` is a run-length
+log of `[count, turn, pitch, roll]`. Use the base missile ID when replaying a versioned
+UI row and retain `launcher.aircraft_id` while removing the attached `aircraft` object.
+
+Build the native engine first with `python scripts/build_missile_engine.py`, activate
+Emscripten **4.0.10**, then run `python scripts/build_missile_wasm.py --assertions`.
+The builder uses Node Brotli for compressed-size reporting. It uses existing
+native generated sources and does not regenerate or invalidate the native build.
+The native `--mode live` and `scripts/missile_wasm/run_node.mjs` accept NDJSON
+start/step/result/free commands. The live state ABI is version 1, 32 doubles.
+
+Run `python scripts/test_missile_live.py`, `node scripts/test_missile_live_ui.cjs`,
+and the existing missile regression scripts after implementation. Full release
+acceptance additionally requires native/reference/WASM replay equivalence, browser
+keyboard and camera tests, multi-build input checks, and timing/memory measurements.
+Use `scripts/verify_missile_live_reference.py` for canonical JSON comparison across
+the full reference corpus and `scripts/test_missile_live_events.cjs` for browser
+focus, touch and failure recovery. See LIVE-MISSILE-REPORT.md for acceptance status; a successful build
+alone is not acceptance.
+
+Generated `app/live/missile-engine.mjs`, `missile-engine.wasm`, and `manifest.json`
+must be copied together with `app/missile-models.json` into both the Pages staging
+folder and Windows package. They are intentionally excluded from Git. This checkout
+does not contain `publish_release.py`; its external packaging owner must use this
+explicit asset list. Build native then WASM from the same release revision.

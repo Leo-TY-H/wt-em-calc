@@ -2,6 +2,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import json
+import hashlib
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -115,10 +117,14 @@ def _run(key, config, cancel):
             JOBS[key]['finished']=time.monotonic()
 
 
-def start(config):
+def checked_setup(config):
     if not isinstance(config,dict): raise ValueError('Expected a scenario object')
     if config.get('missile') not in {m['id'] for m in metadata()['missiles']}: raise ValueError('Select a supported missile')
-    config = launch_aircraft.trajectory(config)
+    return launch_aircraft.trajectory(config)
+
+
+def start(config):
+    config = checked_setup(config)
     with LOCK:
         if sum(job['status'] in ('queued','running') for job in JOBS.values())>=MAX_PENDING:
             raise ValueError('Missile simulation queue is full. Wait for the current run to finish.')
@@ -147,3 +153,50 @@ def cancel(key):
         process=job.get('process')
         if process is not None and process.poll() is None: process.terminate()
     return True
+
+
+@lru_cache(maxsize=1)
+def live_inputs():
+    """Only immutable bytes in the current engine input set may be served by hash."""
+    root = ROOT.parent
+    inputs = input_directory(ROOT)
+    paths = [inputs / 'launch-profiles/index.json', inputs / 'radar-launch-properties.json',
+             ROOT / 'missile_model/launch-spread-table.json', ROOT / 'missile_model/motor-deviation-table.json']
+    index = json.loads(paths[0].read_bytes())
+    paths.extend(inputs / 'launch-profiles' / row['path'] for row in index['profiles'])
+    manifest, blobs = {}, {}
+    for path in paths:
+        content = path.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        manifest[path.relative_to(root).as_posix()] = digest
+        blobs[digest] = content
+    identity = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+    return manifest, blobs, identity
+
+
+def live_input(digest):
+    if re.fullmatch('[0-9a-f]{64}', digest) is None: return None
+    return live_inputs()[1].get(digest)
+
+
+def prepare_live(request):
+    config = checked_setup(request)
+    if not isinstance(config.get('target_control'), dict): raise ValueError('Target control must be an object')
+    if config['target_control'].get('inputs') or 'stop_after_steps' in config['target_control']:
+        raise ValueError('A live start requires an empty input log and no stop step')
+    try:
+        validated = missile_engine.calculate('simulator-validate', config)
+        from build_missile_engine import executable, DIRECTORY
+        executable()
+        signature = json.loads((DIRECTORY / 'build-manifest.json').read_bytes())['signature']
+    except (RuntimeError, OSError) as error:
+        raise ValueError(str(error)) from error
+    manifest, _, identity = live_inputs()
+    inputs = input_directory(ROOT).relative_to(ROOT.parent).as_posix()
+    names = [inputs+'/launch-profiles/index.json', inputs+'/launch-profiles/'+validated['missile']+'.json',
+             'scripts/missile_model/launch-spread-table.json', 'scripts/missile_model/motor-deviation-table.json']
+    profile = next(row for row in metadata()['missiles'] if row['id'] == validated['missile'])
+    if profile['family'] == 'radar' or inputs == 'references/missile-inputs':
+        names.append(inputs+'/radar-launch-properties.json')
+    return dict(config=validated, aircraft=config.get('launcher', {}).get('aircraft'),
+                inputs={name: manifest[name] for name in names}, input_set=identity, engine_signature=signature)

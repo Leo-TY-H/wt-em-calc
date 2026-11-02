@@ -1,0 +1,19 @@
+.missile-live-entry{display:flex;gap:12px;align-items:end;margin:12px 0;flex-wrap:wrap}
+.missile-live-entry label{display:grid;gap:5px;color:#bbb;font-size:12px}
+.missile-live-entry input{width:90px;background:#111;color:#eee;border:1px solid #555;padding:8px}
+body .missile-live-entry>button{width:auto;margin:0;flex:1 1 76px;min-height:44px;padding:8px;font-size:10px;letter-spacing:.05em;background:#111;color:#eee;border:1px solid #555}
+#missile-live-start.primary-button{background:#111;color:#eee;border-color:#555}
+.missile-live-entry>#missile-run{order:0}.missile-live-entry>#missile-live-start{order:1}.missile-live-entry>#missile-reset{order:2}.missile-live-entry>label{order:3}
+.missile-live-pane{position:absolute;inset:0;background:#000;z-index:6;outline:none;min-height:360px}
+.missile-live-pane[hidden]{display:none}
+.missile-live-canvas{width:100%;height:100%;display:block;touch-action:none}
+.missile-live-hud{position:absolute;top:12px;left:12px;right:12px;pointer-events:none;font:12px/1.5 monospace;color:#eee;display:flex;flex-wrap:wrap;gap:8px}
+.missile-live-hud span{background:#111c;padding:5px 8px;border:1px solid #444}
+.missile-live-actions{position:absolute;bottom:12px;left:12px;display:flex;gap:6px;flex-wrap:wrap;max-width:65%}
+.missile-live-pane button{background:#111d;color:#eee;border:1px solid #666;padding:10px;touch-action:none;min-width:44px;min-height:44px}
+.missile-live-pad{position:absolute;bottom:12px;right:12px;display:grid;grid-template-columns:repeat(3,44px);gap:4px}
+.missile-live-pad button[data-code="KeyW"]{grid-column:2}.missile-live-pad button[data-code="KeyA"]{grid-column:1}
+.missile-live-pad button[data-code="KeyS"]{grid-column:2}.missile-live-pad button[data-code="KeyQ"]{grid-column:1}
+@media(pointer:fine){.missile-live-pad{opacity:.55}.missile-live-pad:hover{opacity:1}}
+@media(max-width:600px){.missile-live-hud{font-size:10px;gap:4px}.missile-live-actions{max-width:48%}.missile-live-pane button{padding:6px}}
+@media(max-width:760px){.missile-live-pane:not([hidden]){position:fixed;top:var(--header,56px);bottom:0;left:0;right:0;z-index:50;min-height:0}}

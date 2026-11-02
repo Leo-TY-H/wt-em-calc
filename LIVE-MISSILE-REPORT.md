@@ -1,0 +1,153 @@
+# Live missile implementation report
+
+The interactive game-target simulator is implemented in `WT-FM-LIVE` on branch
+`live-missile`, based on `origin/main` 11ddd6e5. Keyboard/touch controls, unrestricted
+attitude steering, eight concurrent browser sessions, cameras, pause/slow motion,
+canonical replay, playback and export share the existing missile engine.
+
+Verification began after the initial implementation pass, as requested. All functional checks below passed, including the final 720-case canonical
+Python reference sweep.
+Performance has one reported limitation: eight missiles under Chromium 4x CPU
+throttling exceed the planned 4 ms p99 engine-time target. No Worker was added.
+No release stamp, tag, merge, backend deployment or Pages deployment was performed.
+
+Preview: http://127.0.0.1:8799/ (server from this worktree).
+Evidence and desktop/phone screenshots: `outputs/live-missile/`.
+
+## Acceptance results
+
+| Plan item | Result and retained evidence |
+|---|---|
+| 1 Existing results | PASS: 681/681 profile/geometry evaluations, 24/24 simulator/escape/early-exit variants, and another 720/720 corpus setups equal the retained release. Standard envelope ray sets, plans and finals also match in all 20 alternating runs. `baseline.json`, `zero-input.json`, `envelope-performance.json`. |
+| 2 Zero input | PASS: 720/720 release documents equal zero-input steering after removing only the prescribed fields. Every removed target quaternion equals the setup quaternion. `zero-input.json`. |
+| 3 Reference / translated / typed | PASS: full reference/live sweep 720/720, with 744 typed compare reports and no declines. The strict canonical JSON sweep also passed 720/720 with 720 successful typed comparisons. `corpus.json`, `canonical-reference.json`. |
+| 4 Native live / replay | PASS: 720/720 on Windows and 720/720 on Linux; 108,678 steps per corpus, including stopped runs. `wasm-corpus.json`, `linux-corpus.json`. |
+| 5 No look-ahead | PASS: Python rejects queries after the final input; the production typed lookup rejects four ahead queries and permits two legal ones. Corpus runs have no look-ahead errors. `test_missile_live.py`, `test_missile_steered.cpp`. |
+| 6 WASM / native | PASS on the specified outcome gate: 720/720 outcomes and initial target quaternions match on each OS; maximum retained missile-position difference is 0 m. Full documents: 681/720 identical on Windows, 603/720 on Linux. Differences are detailed below. |
+| 7 Performance | REPORTED LIMIT: Chromium p99 0.8 ms normally, 5.8 ms at 4x throttle (target 4 ms). Firefox completed 14,400 steps for each of eight missiles. Envelope median differences are unresolved within run-to-run spread. `performance.json`, `envelope-performance.json`. |
+| 8 Page logic | PASS: 7 grouped core checks, including ten simulated minutes at all three speed scales; 17 playback checks. Browser event checks cover pause/key clearing, touch release, restart, setup errors and separate instances/routing for two fixture build labels. `events.json`. |
+| 9 Real browser | PASS: WebGL available; 50 runs, zero handles after each, zero allocated-heap growth from run 5 to 50, one live renderer, no page errors, 84 chase-camera attitude checks. Two exports replay with identical trajectories and outcomes. Refreshed desktop/390px phone screenshots inspected. `browser.json`. |
+| 10 Existing regressions | PASS: envelope search 37 tests, launcher aircraft 13, profile loading 6; UI envelope/launcher checks, models 16 checks (112 missiles/79 meshes), playback 17, plots 10. All 227 generated profiles unchanged. |
+| 11 Steering geometry | PASS: 7 grouped Python tests; all 12,498 steps in the 60 corpus logs plus 14,400 random steps checked for frame orthogonality and segment continuity. Loop diameter/return, later-loop f32-time tolerance, inverted right turn, roll, vertical setup, 2,000 quaternion frames and 10,001 polynomial samples pass. |
+
+HTTP checks also passed: immutable hash inputs, two malformed requests rejected,
+and a 201,875-byte replay request accepted and stopped at the requested step.
+
+## Numerical differences
+
+The WASM corpus has 39 non-identical documents against Windows and 117 against Linux.
+All target positions, target attitudes, missile positions and outcome codes are equal.
+Only derived telemetry angles and one closest-distance scalar differ:
+
+- Maximum angle-of-attack difference: 1.4210854715202004e-14 degrees.
+- Maximum thrust-vector telemetry difference: 1.7763568394002505e-15 degrees on
+  Windows; 2.220446049250313e-16 degrees on Linux.
+- Maximum closest-distance difference: 1.8189894035458565e-12 m (one case per OS).
+
+`wasm-differences.json` retains field counts, maxima and ten examples per OS.
+These are consistent with platform math-library rounding in derived scalar values;
+there is no measured flight-position or target-attitude divergence in this corpus.
+
+## Browser size and timing
+
+Emscripten 4.0.10, assertion/stack-check build; Playwright 1.51.1, Chromium 134 and
+Firefox 135. Chromium uses headless WebGL with SwiftShader. Only one timing job ran
+at a time; this worktree's reference sweep was suspended during timing and resumed.
+
+| Asset | Raw bytes | Brotli bytes |
+|---|---:|---:|
+| missile-engine.wasm | 22,298,691 | 2,347,165 |
+| missile-engine.mjs | 94,344 | 24,138 |
+
+The WASM is below the 25 MiB file-size gate.
+
+| Eight-session Chromium test | Frames | Engine steps | Median / frame | p99 / frame | Total engine time / step |
+|---|---:|---:|---:|---:|---:|
+| Normal CPU | 1,001 | 6,488 | 0.2 ms | 0.8 ms | 0.0329 ms |
+| 4x CPU throttle | 1,001 | 8,928 | 1.2 ms | 5.8 ms | 0.1724 ms |
+
+Local WASM download: 64.1 ms normally / 127.5 ms throttled. Combined download and
+streaming compilation: 71.0 / 169.4 ms. Compilation overlaps download, so an isolated
+compiler duration is not inferred. Firefox totals were 914-1,252 ms per 14,400 steps
+(0.0635-0.0869 ms/step), restarting sessions after natural termination as recorded.
+
+The initial bundle measurement was 0.7 / 6.9 ms p99; the final retest was
+0.8 / 5.8 ms. Both throttled measurements exceed the target. The initial scalar
+measurements remain in `initial-timing.json`.
+
+Standard envelope, four workers, five alternating repetitions per build:
+
+| Missile | Release median | Candidate median | Release / candidate spread | Conclusion |
+|---|---:|---:|---:|---|
+| AIM-9L | 0.43057 s | 0.42187 s | 0.06004 / 0.05130 s | Unresolved within spread |
+| AIM-120C-5 | 2.38329 s | 2.38810 s | 0.23996 / 0.16591 s | Unresolved within spread |
+
+## Reproduction and provenance
+
+Native signature: `34c53d4d5f4b8939759dddc08d531906814c55f414954b4d420defd6cc855f07`.
+WASM fingerprint: `69526f9dc4811ad8a41ec6dacb3d54a120e4c96b3bf08d293b23115aafa791db`.
+WASM SHA-256: `47d993c614deb6dc1a2de56cf3ad64a953a4869cf3fabe59035130e27a4f2200`.
+Windows executable SHA-256: `da389c0a2c85d2b456f64bbcf89dd29f1a6c60817a0c6ea7770916aac7554d51`.
+Linux executable SHA-256: `f2e30a4823cef661ac759a44709604994aaa628ffcca4ff9f16a64632cb648bd`.
+Baseline executable SHA-256: `47782fb6e5c35179407fc4557343857ffafbb8ed5b7f10a718f6f2800a9fe77b`.
+
+The retained release baseline is `../WT-FM-app` at 11ddd6e5. Baseline execution was
+deferred until final verification, using that unchanged executable. Sources and the
+seeded input generator are versioned; input hashes and retained paths are recorded
+in `outputs/live-missile/manifest.json`. No repository or checkpoint copy was made.
+
+Key commands (run from this worktree, using the shared Python environment):
+
+```text
+python scripts/build_missile_engine.py
+python scripts/build_missile_wasm.py --assertions
+python scripts/verify_missile_live_baseline.py
+python scripts/verify_missile_live_zero.py
+python scripts/verify_missile_live.py --reference
+python scripts/verify_missile_live_reference.py
+python scripts/verify_missile_live.py --wasm --report wasm-corpus.json
+python scripts/verify_missile_live.py --wasm --linux-native --report linux-corpus.json
+python scripts/inspect_missile_wasm_differences.py
+python scripts/test_missile_live.py
+node scripts/test_missile_live_ui.cjs
+node scripts/test_missile_live_browser.cjs
+node scripts/test_missile_live_events.cjs
+python scripts/run_live_performance.py
+```
+
+`build_missile_linux.py` runs under WSL against the existing generated sources.
+The typed look-ahead unit compiles with `g++ -std=c++17 -O2 -ffp-contract=off
+-I scripts/missile_native -I .native_missile_engine/generated
+scripts/test_missile_steered.cpp -o .linux_missile_engine/test-steered`.
+Browser scripts use `../tools/live-browser/node_modules/playwright` and
+`PLAYWRIGHT_BROWSERS_PATH=../tools/live-browser/browsers` (absolute path on Windows).
+The timing supervisor uses the existing default Python's psutil installation.
+
+## Integration and remaining decisions
+
+- The 4x-throttle p99 exceeds the planned threshold. Leo can decide whether a Worker
+  follow-up is warranted; the current implementation remains on the main thread.
+- `publish_release.py` is external to this checkout. README records the explicit
+  `app/live/*` generated-asset copy list for Pages and Windows packaging. Integration
+  with that external release script and live checks on deployed version servers
+  remain release work. Two local fixture build labels test client isolation only.
+- The original dirty `WT-FM-Reconstruction` and other worktrees are untouched.
+  Overlaps on ui-nav, envelope-refine, engine-ratings and perf were reviewed;
+  this branch uses released main and does not merge or rewrite those branches.
+- Target math lives in a separate translated module for maintainability. Windows
+  artifact paths replace the plan's `/mnt/project-files` paths. No new chat was made.
+- Benchmark evidence stays in one owned directory with 1 MB summary/run, 25 MB
+  diagnostic/run and 100 MB workstream limits. Native/WASM/Linux compilation each
+  declared a finite 600 MB intermediate ceiling before building. Owned intermediates
+  are removed after final validation; final engines and replay evidence remain.
+
+Compiler/runtime versions: MSVC tools 14.44.35207, WSL g++ 11.4.0, shared Python
+3.11.15 and Node 24.15.0. The final Node harness preserves the engine JSON verbatim
+for canonical comparison, including floating-point number spelling and signed zero.
+
+Retained generated engines, translation and benchmark evidence total approximately
+53.14 MB logical / 53.36 MB allocated. Exact file-root accounting
+is in the evidence manifest. Cleanup removed 319,636,914 bytes of owned intermediates,
+failed-startup scratch and superseded diagnostics. No owned scratch remains; installed
+tools are retained in `../tools`. Optional per-case rerun logs are omitted; exact
+acceptance counters, replay inputs and useful difference records are retained.

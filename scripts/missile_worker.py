@@ -46,6 +46,7 @@ from missile_tracking import describe as describe_tracking
 import missile_telemetry
 from missile_inputs import directory as input_directory
 from missile_fast import FastInteractionSession
+from missile_live_motion import steered_motion, steered_advance, steered_point, append_input
 from missile_backend import activate
 
 BACKEND = activate()
@@ -138,6 +139,7 @@ def escape_motion(target, escape, origin):
 
 def target_point(motion, time):
     """Target position, velocity and attitude at time: linear_point() or an escape_motion() path."""
+    if motion.get('kind') == 'steered': return steered_point(motion, time)
     if motion.get('kind') != 'escape': return linear_point(motion, time)
     if time <= motion['start']:
         position = [p + v * time for p, v in zip(motion['position'], motion['velocity'])]
@@ -193,6 +195,35 @@ def validate(request):
         if clean['target']['velocity'][1] != 0: raise ValueError('An escaping target must fly level')
         clean['escape'] = dict(load_g=number(escape.get('load_g'), 'Escape load factor', *ESCAPE_LOAD_G),
                                delay_s=number(escape.get('delay_s', 0.), 'Escape delay', *ESCAPE_DELAY_S))
+    if 'target_control' in request:
+        control = request['target_control']
+        if not isinstance(control, dict): raise ValueError('Target control must be an object')
+        if escape is not None: raise ValueError('Target control cannot be combined with escape')
+        if request.get('early_exit') is True: raise ValueError('Early exit is unavailable for a steered target')
+        clean['early_exit'] = False
+        load = number(control.get('load_g'), 'Target load', *ESCAPE_LOAD_G)
+        v = clean['target']['velocity']
+        if math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]) < 5.-1e-9:
+            raise ValueError('A steered target must fly at least 18 km/h')
+        log = control.get('inputs', [])
+        if not isinstance(log, list): raise ValueError('Target inputs must be a list')
+        maximum = math.ceil(clean['duration']/STEP)
+        total = 0
+        for row in log:
+            if not isinstance(row, list) or len(row) != 4:
+                raise ValueError('Each target input needs count, az, el and roll')
+            if any(isinstance(v, bool) or not isinstance(v, int) for v in row):
+                raise ValueError('Target inputs must be integers')
+            if row[0] < 1 or any(v not in (-1, 0, 1) for v in row[1:]):
+                raise ValueError('Target input count or direction out of range')
+            total += row[0]
+            if total > maximum: raise ValueError('Target input log exceeds duration')
+        clean['target_control'] = dict(load_g=load, inputs=deepcopy(log))
+        if 'stop_after_steps' in control:
+            n = control['stop_after_steps']
+            if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= maximum:
+                raise ValueError('Stop step must be an integer within the run')
+            clean['target_control']['stop_after_steps'] = n
     return clean
 
 
@@ -281,6 +312,8 @@ def simulation_setup(config):
     target_motion = (escape_motion(config['target'], escape, launch['position']) if escape is not None else
                      dict(kind='constant_velocity', position=config['target']['position'],
                           velocity=config['target']['velocity'], quaternion=quaternion(config['target']['angles'])))
+    if 'target_control' in config:
+        target_motion = steered_motion(config['target'], config['target_control'])
     limits = frame.limits
     return dict(profile=profile, launcher_aircraft=launcher_aircraft, launch=launch, frame=frame, session=session,
                 initialization=frame.website_initialization, escape=escape, target_motion=target_motion,
@@ -292,97 +325,162 @@ def simulation_setup(config):
                 inertial_enabled=bool(frame.flight.properties['rocket']['guidance'].get('inertialNavigation',False)))
 
 
-def simulate(request, progress=lambda _: None, cancelled=lambda: False):
-    from missile_envelope import unreachable
-    config = validate(request)
-    setup = simulation_setup(config)
-    frame, session, launch = setup['frame'], setup['session'], setup['launch']
-    initialization, target_motion = setup['initialization'], setup['target_motion']
-    straight_from, straight_velocity, burn_end = setup['straight_from'], setup['straight_velocity'], setup['burn_end']
-    limits, deadline, reach_radius = frame.limits, setup['deadline'], setup['reach_radius']
-    def target(t): return target_point(target_motion, t)
-    def targets(old, next_time):
-        new = target(next_time)
-        if frame.flight.family == 'optical': return [dict(position=new['position'], auxiliary=[0.,0.,0.], id=123)]
-        return [dict(id=123, unit=1, unit_type=1, scene=dict(old_target=target(old['time']), new_target=new))]
-    radar_step = (supported_radar_step(dict(launch, quaternion=quaternion(launch['angles'])),
-                                     immutable_properties=BACKEND != 'reference')
-                  if frame.flight.family=='radar' else None)
-    history = PointHistory(lambda t: target(t)['position'], lambda t: target(t)['quaternion'])
-    rows = []; transitions = []; traveled_distance = 0.
-    inertial_enabled = setup['inertial_enabled']
-    tracking_status = describe_tracking(frame.flight.family,session.frame.flight.state['guidance']['manager'],
-                                       inertial_enabled,initialization=initialization)
-    seeker_transitions = [dict(time_s=0.,**tracking_status)]
-    best = dict(distance_m=math.dist(frame.website_release['position'],config['target']['position']), time_s=0.)
-    tracked_before = initialization['tracking']
-    if tracked_before: transitions.append(dict(time_s=0., tracking=True))
-    def sample():
-        body = session.frame.flight.state['body']
-        return dict(time_s=body['time'], missile=body['position'][:], target=target(body['time'])['position'],
-                    velocity=body['velocity'][:], speed_mps=math.sqrt(sum(v*v for v in body['velocity'])),
-                    quaternion=body['quaternion'][:], mach=missile_telemetry.mach(body),
-                    traveled_distance_m=traveled_distance, **tracking_status)
-    rows.append(dict(sample(),telemetry=missile_telemetry.initial(frame.flight.properties)))
-    outcome = dict(code='time_limit', label='Time limit reached — unresolved')
-    count = math.ceil(config['duration'] / STEP)
-    for i in range(count):
-        if cancelled(): raise InterruptedError('Simulation cancelled')
-        old = sample(); now = add(old['time_s'], STEP)
-        before = deepcopy(session.frame.flight.state['body'])
-        controls = session.frame.flight.state['controls'][:]
-        missile_telemetry.begin_step()
-        result = session.advance(now, STEP, targets, collision_time=now, point_history=history,
-                                 flight_step=radar_step)
-        previous_tracking_status = tracking_status
+class Simulation:
+    def __init__(self, request):
+        from missile_envelope import unreachable
+        config = validate(request)
+        setup = simulation_setup(config)
+        frame, session, launch = setup['frame'], setup['session'], setup['launch']
+        initialization, target_motion = setup['initialization'], setup['target_motion']
+        straight_from, straight_velocity, burn_end = setup['straight_from'], setup['straight_velocity'], setup['burn_end']
+        limits, deadline, reach_radius = frame.limits, setup['deadline'], setup['reach_radius']
+        def target(t): return target_point(target_motion, t)
+        def targets(old, next_time):
+            new = target(next_time)
+            if frame.flight.family == 'optical': return [dict(position=new['position'], auxiliary=[0.,0.,0.], id=123)]
+            return [dict(id=123, unit=1, unit_type=1, scene=dict(old_target=target(old['time']), new_target=new))]
+        radar_step = (supported_radar_step(dict(launch, quaternion=quaternion(launch['angles'])),
+                                         immutable_properties=BACKEND != 'reference')
+                      if frame.flight.family=='radar' else None)
+        history = PointHistory(lambda t: target(t)['position'], lambda t: target(t)['quaternion'])
+        rows = []; transitions = []; traveled_distance = 0.
+        inertial_enabled = setup['inertial_enabled']
         tracking_status = describe_tracking(frame.flight.family,session.frame.flight.state['guidance']['manager'],
-            inertial_enabled,guidance=result['frame']['updates'][-1]['guidance'])
-        new = sample()
-        event = result.get('event')
-        endpoint = proximity_endpoint(event,old,new,target) if event else new
-        traveled_distance += math.dist(old['missile'], endpoint['missile'])
-        endpoint['traveled_distance_m'] = traveled_distance
-        distance, fraction = closest_segment(old['missile'],endpoint['missile'],old['target'],endpoint['target'])
-        if distance < best['distance_m']:
-            best = dict(distance_m=distance,time_s=old['time_s']+fraction*(endpoint['time_s']-old['time_s']))
-        if not event and new['tracking'] != tracked_before:
-            transitions.append(dict(time_s=new['time_s'], tracking=new['tracking']))
-            tracked_before = new['tracking']
-        terminal = False
-        if event:
-            outcome = dict(code='proximity_event', label='Target proximity event', event=event); terminal=True
-        elif new['missile'][1] <= 0:
-            outcome = dict(code='ground', label='Missile reached ground'); terminal=True
-        elif new['target'][1] <= 0:
-            outcome = dict(code='target_ground', label='Target reached ground — scenario ended'); terminal=True
-        elif session.frame.expiry_flag:
-            expiry = result['frame']['expiry']
-            code = 'lifetime' if expiry['time_expired'] else 'distance_limit' if expiry['distance_expired'] else 'tracking_timeout'
-            labels = dict(lifetime='Missile lifetime expired',distance_limit='Missile distance limit reached',tracking_timeout='Geometric tracking timeout')
-            outcome = dict(code=code,label=labels[code]); terminal=True
-        elif config['early_exit'] and i % 6 == 5 and new['time_s'] >= straight_from:
+                                           inertial_enabled,initialization=initialization)
+        seeker_transitions = [dict(time_s=0.,**tracking_status)]
+        best = dict(distance_m=math.dist(frame.website_release['position'],config['target']['position']), time_s=0.)
+        tracked_before = initialization['tracking']
+        if tracked_before: transitions.append(dict(time_s=0., tracking=True))
+        def sample():
             body = session.frame.flight.state['body']
-            if (all(c >= end + 1e-3 for c, end in zip(body['clocks'], burn_end))
-                    and unreachable(new['missile'], new['speed_mps'], new['target'], straight_velocity,
-                                    deadline - new['time_s'] + 2 * STEP, reach_radius,
-                                    limits['origin'], limits['distance_limit'])):
-                outcome = dict(code='unreachable', label='Miss — target is unreachable'); terminal=True
-        if event:
-            seeker_transitions.append(dict(time_s=endpoint['time_s'],tracking=None,
-                observation_available=None,tracking_state='event',loss_reason=None))
-        elif tracking_status != previous_tracking_status:
-            seeker_transitions.append(dict(time_s=new['time_s'],**tracking_status))
-        if i % 3 == 2 or terminal or i == count-1:
-            new['telemetry'] = (missile_telemetry.completed(session.frame.flight.properties,
-                before, controls, result['frame']['updates'][-1], STEP)
-                | missile_telemetry.controls(session.frame.flight.properties, controls, session.frame.flight.state['body']))
+            row = dict(time_s=body['time'], missile=body['position'][:], target=target(body['time'])['position'],
+                        velocity=body['velocity'][:], speed_mps=math.sqrt(sum(v*v for v in body['velocity'])),
+                        quaternion=body['quaternion'][:], mach=missile_telemetry.mach(body),
+                        traveled_distance_m=traveled_distance, **tracking_status)
+            if target_motion['kind'] == 'steered': row['target_quaternion'] = target(body['time'])['quaternion']
+            return row
+        rows.append(dict(sample(),telemetry=missile_telemetry.initial(frame.flight.properties)))
+        outcome = dict(code='time_limit', label='Time limit reached — unresolved')
+        count = math.ceil(config['duration'] / STEP)
+        i = 0
+        terminal = False
+        new = rows[0]
+        log = []
+        time_state = dict(time=0.)
+        def advance(az=0, el=0, roll=0, stop=False):
+            nonlocal i, terminal, new, tracking_status, tracked_before, traveled_distance, best, outcome
+            if terminal: raise ValueError('Simulation has ended')
+            if target_motion['kind'] == 'steered':
+                t = session.frame.flight.state['body']['time']
+                steered_advance(target_motion, t, add(t, STEP), az, el, roll)
+                append_input(log, az, el, roll)
+            old = sample(); now = add(old['time_s'], STEP)
+            before = deepcopy(session.frame.flight.state['body'])
+            controls = session.frame.flight.state['controls'][:]
+            missile_telemetry.begin_step()
+            result = session.advance(now, STEP, targets, collision_time=now, point_history=history,
+                                     flight_step=radar_step)
+            previous_tracking_status = tracking_status
+            tracking_status = describe_tracking(frame.flight.family,session.frame.flight.state['guidance']['manager'],
+                inertial_enabled,guidance=result['frame']['updates'][-1]['guidance'])
+            new = sample()
+            event = result.get('event')
+            endpoint = proximity_endpoint(event,old,new,target) if event else new
+            if event and target_motion['kind'] == 'steered': endpoint['target_quaternion'] = target(event['time'])['quaternion']
+            traveled_distance += math.dist(old['missile'], endpoint['missile'])
+            endpoint['traveled_distance_m'] = traveled_distance
+            distance, fraction = closest_segment(old['missile'],endpoint['missile'],old['target'],endpoint['target'])
+            if distance < best['distance_m']:
+                best = dict(distance_m=distance,time_s=old['time_s']+fraction*(endpoint['time_s']-old['time_s']))
+            if not event and new['tracking'] != tracked_before:
+                transitions.append(dict(time_s=new['time_s'], tracking=new['tracking']))
+                tracked_before = new['tracking']
+            terminal = False
             if event:
-                new['traveled_distance_m'] = old['traveled_distance_m'] + math.dist(old['missile'],new['missile'])
-            if event and rows[-1]['time_s']==endpoint['time_s']: rows[-1]=endpoint
-            else: rows.append(endpoint)
-        if i % 24 == 23: progress(dict(time_s=now, duration_s=config['duration'], fraction=min(1.,now/config['duration'])))
+                outcome = dict(code='proximity_event', label='Target proximity event', event=event); terminal=True
+            elif new['missile'][1] <= 0:
+                outcome = dict(code='ground', label='Missile reached ground'); terminal=True
+            elif new['target'][1] <= 0:
+                outcome = dict(code='target_ground', label='Target reached ground — scenario ended'); terminal=True
+            elif session.frame.expiry_flag:
+                expiry = result['frame']['expiry']
+                code = 'lifetime' if expiry['time_expired'] else 'distance_limit' if expiry['distance_expired'] else 'tracking_timeout'
+                labels = dict(lifetime='Missile lifetime expired',distance_limit='Missile distance limit reached',tracking_timeout='Geometric tracking timeout')
+                outcome = dict(code=code,label=labels[code]); terminal=True
+            elif config['early_exit'] and i % 6 == 5 and new['time_s'] >= straight_from:
+                body = session.frame.flight.state['body']
+                if (all(c >= end + 1e-3 for c, end in zip(body['clocks'], burn_end))
+                        and unreachable(new['missile'], new['speed_mps'], new['target'], straight_velocity,
+                                        deadline - new['time_s'] + 2 * STEP, reach_radius,
+                                        limits['origin'], limits['distance_limit'])):
+                    outcome = dict(code='unreachable', label='Miss — target is unreachable'); terminal=True
+            if stop and not terminal:
+                outcome = dict(code='stopped', label='Stopped'); terminal = True
+            if event:
+                seeker_transitions.append(dict(time_s=endpoint['time_s'],tracking=None,
+                    observation_available=None,tracking_state='event',loss_reason=None))
+            elif tracking_status != previous_tracking_status:
+                seeker_transitions.append(dict(time_s=new['time_s'],**tracking_status))
+            if i % 3 == 2 or terminal or i == count-1:
+                new['telemetry'] = (missile_telemetry.completed(session.frame.flight.properties,
+                    before, controls, result['frame']['updates'][-1], STEP)
+                    | missile_telemetry.controls(session.frame.flight.properties, controls, session.frame.flight.state['body']))
+                if event:
+                    new['traveled_distance_m'] = old['traveled_distance_m'] + math.dist(old['missile'],new['missile'])
+                if event and rows[-1]['time_s']==endpoint['time_s']: rows[-1]=endpoint
+                else: rows.append(endpoint)
+            time_state['time'] = new['time_s']
+            i += 1
+            terminal = terminal or i >= count
+            return terminal
+        def document():
+            if i == 0: raise ValueError('No simulator step')
+            config_copy = canonical_config(config, log, outcome)
+            return simulation_document(config_copy, setup, rows, transitions, seeker_transitions, best, outcome, new)
+        self.time_state = time_state
+        self.advance = advance
+        self.result = document
+        self.config = config
+        self.count = count
+
+    def step(self, az=0, el=0, roll=0, stop=False):
+        return self.advance(az, el, roll, stop)
+
+    def document(self):
+        return self.result()
+
+
+def canonical_config(config, log, outcome):
+    if 'target_control' not in config: return config
+    result = deepcopy(config)
+    control = result['target_control']
+    control['inputs'] = deepcopy(log)
+    control.pop('stop_after_steps', None)
+    if outcome['code'] == 'stopped': control['stop_after_steps'] = sum(row[0] for row in log)
+    return result
+
+
+def simulate(request, progress=lambda _: None, cancelled=lambda: False):
+    run = Simulation(request)
+    control = run.config.get('target_control', {})
+    log = control.get('inputs', [])
+    entry = 0
+    remaining = 0
+    az = el = roll = 0
+    for i in range(run.count):
+        if cancelled(): raise InterruptedError('Simulation cancelled')
+        if remaining == 0:
+            if entry < len(log):
+                remaining, az, el, roll = log[entry]
+                entry += 1
+            else: az = el = roll = 0
+        if remaining: remaining -= 1
+        terminal = run.step(az, el, roll, i+1 == control.get('stop_after_steps'))
+        if i % 24 == 23:
+            time = run.time_state['time']
+            progress(dict(time_s=time, duration_s=run.config['duration'], fraction=min(1.,time/run.config['duration'])))
         if terminal: break
-    return simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new)
+    return run.document()
 
 
 def simulation_document(config, setup, rows, transitions, seeker_transitions, best, outcome, new):
@@ -399,7 +497,8 @@ def simulation_document(config, setup, rows, transitions, seeker_transitions, be
                            initialization=initialization,
                            radar_support='ideal_recovered_provider' if frame.flight.family=='radar' else None,
                            component_provenance='2.59.0.34 core and 2.59.0.38 shared arithmetic, with scoped 2.59.0.87 projectile-loader corrections; whole-build equivalence unproven',
-                           target_motion='constant_velocity' if escape is None else dict(escape, kind='level_break_away'),
+                           target_motion=(dict(config['target_control'], kind='steered') if 'target_control' in config else
+                                          'constant_velocity' if escape is None else dict(escape, kind='level_break_away')),
                            geometry='point_target',
                            telemetry=dict(force_sampling='Final integration substep; force_time_s records its evaluation time. Thrust is the actual propulsion update held over that step.',
                                aerodynamic_forces='Magnitudes of pre-fin translational drag/lift including body perturbation scaling; Cd is the pre-fin drag coefficient.',

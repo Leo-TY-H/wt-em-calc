@@ -2,6 +2,8 @@
 #include "runtime.h"
 #include "engine_stdlib.h"
 #include "engine_kernels.h"
+#include "typed_engine.h"
+#include <cmath>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -130,7 +132,8 @@ int main(int argc,char**argv){
    // Load modules outside the invocation cleanup boundary.
    import_module(mode=="envelope"||mode=="envelope-setup"||mode=="evaluate"?"missile_envelope":mode=="call"?member(request,"module").as_string():"missile_worker");
    InvocationGuard scope;V result;
-   if(mode=="envelope")result=envelope(request);
+   if(mode=="simulator-validate")result=invoke("missile_worker","validate",{request});
+   else if(mode=="envelope")result=envelope(request);
    else if(mode=="envelope-setup"){V c=invoke("missile_envelope","validate",{request}),a=invoke("missile_envelope","azimuths",{c});result=make_dict({{"config",c},{"azimuths_deg",a},{"mirrored",invoke("missile_envelope","mirrored",{c})},{"rays_total",int(iter(member(c,"layers_m")).size()*iter(a).size()*(member(c,"escape").is_none()?1:2))}});}
    else if(mode=="evaluate")result=invoke("missile_envelope","evaluate",{member(request,"missile"),member(request,"launcher"),member(request,"target"),dict_get(request,"early_exit",true),dict_get(request,"reach_m")});
    else if(mode=="call"){Kw kwargs;V k=dict_get(request,"kwargs",make_dict());for(auto& p:k.node()->entries)kwargs.emplace_back(p.first.as_string(),p.second);result=call(attr(import_module(member(request,"module").as_string()),member(request,"function").as_string()),iter(dict_get(request,"args",make_list())),kwargs);}
@@ -138,6 +141,21 @@ int main(int argc,char**argv){
    else throw PyError("ValueError","Unknown calculation mode");
    send("result",result);
   };
+  if(mode=="live"){
+   import_module("missile_worker");std::string line;
+   while(std::getline(std::cin,line)){
+    try{InvocationGuard scope;V command=json_parse(line),reply;
+     if(contains(command,"start")){int h=live_start_native(item(command,"start"));if(h<0)throw PyError("RuntimeError",live_last_error());reply=make_dict({{"handle",h}});}
+     else if(contains(command,"step")){Args a=iter(item(command,"step"));if(a.size()!=5)throw PyError("ValueError","Step needs handle, az, el, roll, stop");
+      int status=live_step_native(int(a[0].as_int()),int(a[1].as_int()),int(a[2].as_int()),int(a[3].as_int()),truth(a[4]));if(status<0)throw PyError("RuntimeError",live_last_error());
+      Args state;for(int i=0;i<LIVE_STATE_SIZE;++i)state.push_back(std::isfinite(live_state_native()[i])?V(live_state_native()[i]):V());reply=make_dict({{"status",status},{"state",make_list(state)}});}
+     else if(contains(command,"result")){const char* value=live_result_native(int(item(command,"result").as_int()));if(!value)throw PyError("RuntimeError",live_last_error());reply=json_parse(value);}
+     else if(contains(command,"free")){live_free_native(int(item(command,"free").as_int()));reply=make_dict({{"open_handles",int(live_open_handles())}});}
+     else throw PyError("ValueError","Unknown live command");
+     std::cout<<json_dump(reply,false,false)<<std::endl;
+    }catch(const std::exception& e){std::cout<<json_dump(make_dict({{"error",e.what()}}),false,false)<<std::endl;}
+   }return 0;
+  }
   if(batch){std::string line;while(std::getline(std::cin,line)){if(line.empty())continue;try{run(line);}catch(const PyError&e){send("error",e.kind+": "+e.what());}}}
   else{std::string data(std::istreambuf_iterator<char>(std::cin),{});run(data);}
   return 0;

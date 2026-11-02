@@ -17,10 +17,12 @@ def command(mode):
     setting = os.environ.get('WT_MISSILE_ENGINE', 'native')
     if setting not in ('native', 'python'):
         raise ValueError('Unknown WT_MISSILE_ENGINE')
-    if mode not in ('simulator', 'envelope', 'envelope-setup'):
+    if mode not in ('simulator', 'envelope', 'envelope-setup', 'simulator-validate', 'live'):
         raise ValueError('Unknown missile calculation mode')
     if setting == 'python':
-        if mode == 'envelope-setup':
+        if mode == 'simulator-validate':
+            return [sys.executable, '-X', 'utf8', '-c', "import sys,json;sys.path.insert(0,sys.argv[1]);from missile_worker import validate;print(json.dumps(dict(type='result',result=validate(json.load(sys.stdin)))))", str(ROOT)]
+        if mode in ('envelope-setup', 'live'):
             raise ValueError('Envelope setup transport is native only')
         name = 'missile_worker.py' if mode == 'simulator' else 'missile_envelope_worker.py'
         return [sys.executable, '-X', 'utf8', str(ROOT / name)]

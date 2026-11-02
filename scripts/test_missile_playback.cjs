@@ -19,7 +19,7 @@ const el = id => {
   return elements.get(id);
 };
 const plotUpdates = [], cursorUpdates = [], scheduled = [];
-const context = {el, console, visuals, window:{missilePlot},drawAxes(){}, Plotly: {
+const context = {el, console, visuals, window:{missilePlot,missileLiveCore:require('../app/missile-live-core.js')},drawAxes(){}, Plotly: {
   restyle(node, data, indices) {plotUpdates.push(plain({data, indices,camera:node._fullLayout?.scene?.camera}));},
   relayout(node, data) {cursorUpdates.push(plain(data));}
 }, requestAnimationFrame(fn) {scheduled.push(fn);}};
@@ -157,4 +157,14 @@ check('Single-sample and duplicate-time trajectories remain finite', () => {
   const one=flight([0]);setup([one]);assert.deepEqual(plain(api.playbackFrame(one,.5,'3d').position),[0,10,0]);
   const duplicate=flight([0,0,.0625]);setup([duplicate]);api.frame(.02);close(plotUpdates.at(-1).data.x[1][0],3.2);
 });
+
+
+check('Steered target playback follows recorded rows',()=>{
+  const data=plain(flight([0,1]));data.model={target_motion:{kind:'steered'}};
+  data.trajectory[0].target=[0,100,0];data.trajectory[1].target=[50,200,70];
+  for(const row of data.trajectory)row.target_quaternion=[0,0,0,1];
+  setup([data]);api.frame(.5);const {data:update}=plotUpdates.at(-1);
+  assert.deepEqual(update.x.at(-1),[25]);assert.deepEqual(update.y.at(-1),[35]);assert.deepEqual(update.z.at(-1),[150]);
+});
+
 console.log(JSON.stringify({status:'passed',checks:passed,display_frames_per_second_tested:60,source:'app/missiles.js',browser_rendering_tested:false}));

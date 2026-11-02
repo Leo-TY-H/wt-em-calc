@@ -22,17 +22,23 @@ struct FlightProps {
     ProximityProps proximity{};
     OpticalProps optical{}; RadarProps radar{};
 };
+struct SteeredPath;
 struct TargetMotion {
     d3 position, velocity; d4 quaternion;
     // missile_worker.escape_motion fields (no-escape zone); constant velocity when escape is false.
     bool escape = false;
     double start = 0., end = 0., heading = 0., sine = 0., cosine = 0., rate = 0., radius = 0., speed = 0., roll = 0.;
     d3 turn_point{}, exit_point{}, run{}; d4 run_quaternion{};
+    SteeredPath* steered = nullptr;
 };
 struct TargetPoint { d3 position, velocity; d4 quaternion; };
+} // namespace typed
+#include "typed_steered.h"
+namespace typed {
 // flight_session.linear_point for the constant-velocity target (epoch 0), or
 // missile_worker.target_point on an escape path.
 inline TargetPoint target_at(const TargetMotion& m, double time) {
+    if (m.steered) return m.steered->at(time);
     TargetPoint p;
     if (!m.escape) {
         double delta = time - 0.;
