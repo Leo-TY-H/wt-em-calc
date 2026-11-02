@@ -281,3 +281,22 @@ Evidence: `aircraft-validation.json`, `aircraft-legacy-regression.json`,
 `outputs/live-missile`. Initial build/test/startup failures and their corrections
 are recorded in `aircraft-implementation.json`. Native/WASM builds have a recorded
 1.4 GB temporary workstream ceiling, including prior blocked-cleanup scratch.
+
+## Aircraft nozzle adapter correction
+
+The error `PL-12A: Only forward selected nozzles` originated in live target
+preparation: the catalog accepted general nozzles, while the new profile builder
+used an older forward-only adapter. It now uses the catalog's existing general
+nozzle adapter with neutral controls and retains the installed forward thrust
+component. J-15T and J-16's authored 2-degree yaw / 4-degree pitch installations
+are handled without discarding their angles. This remains a point-mass model;
+nozzle moments and transverse thrust are not integrated.
+
+After implementation, all three regression groups passed: forward F-16/Gripen
+profiles remain exactly equal at both power settings; canted nozzle thrust agrees
+with the analytical forward projection at three operating points and both power
+settings; PL-12A preparation succeeds for J-10C/J-15T/J-16. Three real-browser
+PL-12A flights passed with keyboard pitch/roll, identical native replays, freed
+handles and no page errors. Evidence is in `nozzle-validation.json` and
+`nozzle-browser.json` under `outputs/live-missile`. No engine rebuild or new compiler
+scratch was needed; existing build artifacts and prior scratch remain unchanged.
