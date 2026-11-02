@@ -329,13 +329,15 @@ No Python installation is needed. To update the app, close it and extract the ne
 ## Live target flight
 
 In Missile simulator, select missiles, set the target speed and **Target load (g)**,
-then choose **Fly live**. W/S or up/down pitch, A/D or left/right roll, and Q/E turn
+then choose **Fly live**. S pitches up, W pitches down; the up/down arrows also
+control pitch. A/D or left/right roll, and Q/E turn
 relative to the target attitude. Space pauses, Escape stops, C cycles cameras,
 1/2/3 select normal/half/quarter speed, and R starts another flight from the current
 setup. Touch controls provide the same commands. Loops and inverted flight are
 supported at constant speed; gravity and energy changes are excluded for the target.
 
 Each selected game build runs its own browser engine with hash-checked inputs.
+The playback timeline stays hidden during live flight and appears when the run ends.
 Finished and stopped runs open in the existing playback and export. Replay the
 exported scenario through the usual jobs API; `target_control.inputs` is a run-length
 log of `[count, turn, pitch, roll]`. Use the base missile ID when replaying a versioned

@@ -72,8 +72,8 @@ function createView(){
   const pauseButton=button('Pause',()=>togglePause());button('Stop',()=>stop());button('Camera',()=>cycleCamera());
   for(const [label,scale] of [['1×',1],['½×',.5],['¼×',.25]])button(label,()=>{if(run)run.clock.scale=scale;});
   const pad=document.createElement('div');pad.className='missile-live-pad';pane.append(pad);
-  for(const [label,code] of [['↑','KeyW'],['↶','KeyA'],['↓','KeyS'],['↷','KeyD'],['←','KeyQ'],['→','KeyE']]){
-    const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.code=code;b.setAttribute('aria-label',({KeyW:'Pull up',KeyS:'Push down',KeyA:'Roll left',KeyD:'Roll right',KeyQ:'Turn left',KeyE:'Turn right'})[code]);pad.append(b);
+  for(const [label,code] of [['↑','KeyS'],['↶','KeyA'],['↓','KeyW'],['↷','KeyD'],['←','KeyQ'],['→','KeyE']]){
+    const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.code=code;b.setAttribute('aria-label',({KeyS:'Pull up',KeyW:'Push down',KeyA:'Roll left',KeyD:'Roll right',KeyQ:'Turn left',KeyE:'Turn right'})[code]);pad.append(b);
     b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.down({code},!!run);});
     for(const name of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(name,()=>keys.up({code}));
   }
@@ -123,7 +123,7 @@ function render(alpha,dt){
     }
     camera.up.copy(view.up);camera.position.copy(position).addScaledVector(direction,-80);camera.lookAt(target);
   }
-  for(const obj of [run.target,...run.sessions.map(s=>s.mesh)])obj.scale.setScalar(Math.max(10,camera.position.distanceTo(obj.position)*.025));
+  for(const obj of [run.target,...run.sessions.map(s=>s.mesh)])obj.scale.setScalar(1.25*Math.max(10,camera.position.distanceTo(obj.position)*.025));
   view.grid.position.set(Math.round(target.x/5000)*5000,0,Math.round(target.z/5000)*5000);
   const width=view.pane.clientWidth,height=view.pane.clientHeight,ratio=Math.min(devicePixelRatio||1,2),size=[width,height,ratio].join(':');
   if(!width||!height)return;if(size!==view.size){view.size=size;view.renderer.setPixelRatio(ratio);view.renderer.setSize(width,height,false);camera.aspect=width/height;camera.updateProjectionMatrix();}

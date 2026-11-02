@@ -68,7 +68,7 @@
       <div id="missile-chart" aria-label="Interactive 3D missile and target trajectories" hidden></div>
       <svg id="missile-flight-axes" class="missile-axes" viewBox="0 0 72 72" aria-hidden="true" hidden></svg>
     </div>
-    <div class="missile-playback"><button id="missile-play" class="play-button" type="button" aria-label="Play" title="Play" disabled>${PLAY_ICON}</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
+    <div id="missile-playback" class="missile-playback" hidden><button id="missile-play" class="play-button" type="button" aria-label="Play" title="Play" disabled>${PLAY_ICON}</button><input id="missile-time" type="range" aria-label="Trajectory time" min="0" max="0" value="0" step="1" disabled><output id="missile-time-label">0.00 s</output><select id="missile-play-speed" aria-label="Playback speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="10">10×</option></select><p id="missile-frame" class="missile-frame-readout"></p></div>
     <p id="missile-slice-note" class="hint missile-plot-note" hidden>2D slices project the full trajectories onto the selected plane.</p></section>
     <details id="missile-flight-data" class="missile-flight-data" open hidden><summary>Telemetry <span id="missile-flight-name"></span></summary>
       <div class="missile-telemetry-picks"><div id="missile-telemetry-chips" class="contour-levels" aria-label="Plotted quantities"></div>
@@ -437,6 +437,7 @@
         flights=completed;resultColors=flights.map(f=>flightColors[missiles.indexOf(f.scenario.missile)]);focusIndex=0;result=flights[0];await render();
         window.GameVersions?.changes(el('missile-version-changes'),missiles.map(id=>({id:baseId(id),kind:'missile',version:versionOf(id),name:meta.missiles.find(m=>m.id===id)?.base_name||meta.missiles.find(m=>m.id===id)?.name||id})));
       }
+      el('missile-playback').hidden=!flights.length;
       el('missile-status').textContent=cancelled?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'';
       if(failed.length)showError(failed.join(' · '));
       el('missile-stale').hidden=completed.length===submitted.missiles.length&&JSON.stringify(inputs())===JSON.stringify(submitted);
@@ -449,7 +450,7 @@
     async prepareLive(load) {
       if(batchRunning||!selectedMissiles.length)return null;
       if(!el('missile-form').reportValidity())return null;
-      batchRunning=true;busy(true);el('missile-cancel').hidden=true;pause();showError('');
+      batchRunning=true;busy(true);el('missile-playback').hidden=true;el('missile-cancel').hidden=true;pause();showError('');
       await window.GameVersions?.rowsLoaded(meta);
       const submitted=inputs(),rows=[],failed=[];
       await Promise.all(submitted.missiles.map(async rowKey=>{
@@ -468,7 +469,7 @@
       await showFlights(submitted,completed,failed,cancelled);
       if(!completed.length)showPanes(plotView);
     },
-    endLive(){batchRunning=false;busy(false);showPanes(plotView);}
+    endLive(){batchRunning=false;busy(false);el('missile-playback').hidden=!flights.length;showPanes(plotView);}
   });
   el('missile-cancel').addEventListener('click',async()=>{
     if(window.missileLive?.active){window.missileLive.stop();return;}

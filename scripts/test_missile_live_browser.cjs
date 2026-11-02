@@ -14,6 +14,7 @@ function save(name,data,kind='summary'){
   try{
     await page.goto(process.env.LIVE_URL||'http://127.0.0.1:8799');await page.waitForFunction(()=>window.missileLive&&window.missileSimulator);
     assert(await page.evaluate(()=>!!document.createElement('canvas').getContext('webgl2')),'WebGL unavailable');
+    assert(await page.locator('#missile-playback').isHidden());
     const meta=await (await page.request.get('/api/missiles/meta')).json();
     for(let i=0;i<runCount;i++){
       const missile=i===1?'us_aim_120c_5':'us_aim9l_sidewinder';
@@ -22,18 +23,20 @@ function save(name,data,kind='summary'){
       await page.locator('#missile-live-start').click();
       await page.waitForFunction(()=>window.missileLive.active||(!window.missileSimulator.isBusy()&&!document.getElementById('missile-error').hidden),null,{timeout:120000});
       assert(await page.evaluate(()=>window.missileLive.active),await page.locator('#missile-error').textContent());
+      assert(await page.locator('#missile-playback').isHidden());
       if(i<2){
-        await page.keyboard.down('w');
+        await page.keyboard.down('s');
         for(let j=0;j<42;j++){
           await page.waitForTimeout(100);const state=await page.evaluate(()=>window.missileLive.snapshot());if(!state)break;
           if(state.camera==='target'){assert(state.cameraUp.reduce((sum,v,k)=>sum+v*state.targetUp[k],0)>.999);report.cameraSamples++;}
         }
-        await page.keyboard.up('w');await page.keyboard.down('d');await page.waitForTimeout(500);await page.keyboard.up('d');
+        await page.keyboard.up('s');await page.keyboard.down('d');await page.waitForTimeout(500);await page.keyboard.up('d');
         if(i===0&&await page.evaluate(()=>window.missileLive.active))save('desktop.png',await page.screenshot(),'diagnostic');
         if(i===1&&await page.evaluate(()=>window.missileLive.active)){await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);save('phone.png',await page.screenshot(),'diagnostic');await page.setViewportSize({width:1440,height:1000});}
       }else await page.waitForTimeout(100);
       if(await page.evaluate(()=>window.missileLive.active))await page.keyboard.press('Escape');
       await page.waitForFunction(()=>!window.missileLive.active&&!window.missileSimulator.isBusy(),null,{timeout:120000});
+      assert(await page.locator('#missile-playback').isVisible());
       const info=await page.evaluate(()=>window.missileLive.info());assert(info.every(x=>x.open_handles===0));report.handles.push(info.map(x=>x.open_handles));report.heap.push(info.reduce((n,x)=>n+x.heap_bytes,0));report.runs++;
       if(i<2){
         const doc=await page.evaluate(async()=>JSON.parse(await (await fetch(document.getElementById('missile-download').href)).text()));
