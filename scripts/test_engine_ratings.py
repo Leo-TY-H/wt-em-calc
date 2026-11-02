@@ -1,5 +1,5 @@
 """Engine ratings: ported files, exact counters, the game's engine selection, Bf 109 F-4 values, monotonicity, radiator
-and heat plots, API.
+and heat plots, the tables by gauge reading and by setting (recovery times checked by plain stepping), API.
 
 Fleet checks read references/jet-catalog/fm when it is there and are skipped otherwise.
 """
@@ -20,7 +20,7 @@ import orjson
 
 import engine_ratings as er
 import thermal_validated as tv
-from thermal_core import f, mul, rates
+from thermal_core import endurance_step, f, mul, rates
 from thermal_counters import evolve, ticks_from_zero
 from thermal_properties import safe
 
@@ -28,10 +28,37 @@ HERE = Path(__file__).resolve().parent
 FM = HERE.parent / 'references/jet-catalog/fm'
 F4 = FM / 'bf-109f-4.blkx'
 DT = f(1 / 48)
+THROTTLES = [20., 94., 96., 100., 110.]
 
 
 def fm(name):
     return orjson.loads((FM / f'{name}.blkx').read_bytes())
+
+
+def f4_block():
+    """The Bf 109 F-4's loaded Temperature block, its WorkTime and RecoverTime rates and its two channels' Load rows."""
+    r = er.construct(er.loader_block(fm('bf-109f-4')['Engine0']['Temperature']), False, True, er.powf, er.expf, er.logf)
+    return r, [w for w, _ in r['loads']], [x for _, x in r['loads']], [r['water_rows'], r['oil_rows']]
+
+
+def stepped(tables, work, recover, temps, counters, n):
+    """The port's endurance_step, one update at a time, n updates at fixed temperatures (K, one per channel): the
+    counters after them and the first update that overflows a counter (None)."""
+    for k in range(1, n + 1):
+        counters, worst, _, _ = endurance_step(tables, work, recover, temps, counters, 1., [0.] * len(tables), DT)
+        if worst > 0.: return counters, k
+    return counters, None
+
+
+def lasts_again(tables, work, recover, hot, cool, need, wait):
+    """Plain stepping: from fresh, need - 1 updates at `hot`, `wait` at `cool`, then whether `need` more at `hot` pass
+    without an overflow before the last of them (the update that lasts `need`)."""
+    counters, k = stepped(tables, work, recover, hot, [[0.] * len(work) for _ in tables], need - 1)
+    assert k is None
+    counters, k = stepped(tables, work, recover, cool, counters, wait)
+    assert k is None
+    _, k = stepped(tables, work, recover, hot, counters, need)
+    return k is None or k >= need
 
 
 def brute(rates_, horizon):
@@ -227,12 +254,18 @@ class Selection(unittest.TestCase):
         self.assertEqual(er.heat_scale(dict(rec, boost_controlled=True), f(1.1)), 1.)
 
     def test_heat_groups(self):
-        point = lambda rpm, *heat: dict(rpm=rpm, manifold_ata=1.3, heat_c=list(heat))
+        point = lambda rpm, *heat, lasts=(60., 120.): dict(rpm=rpm, manifold_ata=1.3, heat_c=list(heat), lasts_s=list(lasts))
         a = [None, point(2500., 90., 80.)]
+        table = lambda t: [dict(mode='auto', hot='WEP', rows=[dict(label='100%', temps_c=[t, 80.], boils=False, lasts_s=60., back_s=None)])]
         curves = {0: a, 1: [None, point(2500.001, 90.00004, 80.)], 2: [None, point(2500., 90.01, 80.)], 3: [point(2500., 90., 80.)] * 2,
-                  4: [None, point(2500., 90., None)]}
-        self.assertEqual([g['engines'] for g in er.grouped(curves)], [[0, 1], [2], [3], [4]])
-        self.assertIs(er.grouped(curves)[0]['points'], a)
+                  4: [None, point(2500., 90., None)], 5: [None, point(2500., 90., 80., lasts=(60., 60.))], 6: [None, point(2500., 90., 80.)],
+                  7: [None, point(2500., 90., 80.)]}
+        tables = {**{i: table(90.) for i in curves}, 1: table(90.00004), 6: table(91.), 7: None}
+        groups = er.grouped(curves, tables)
+        # Twins within rounding share; another heat index, lasts or table (another thermal block) splits.
+        self.assertEqual([g['engines'] for g in groups], [[0, 1], [2], [3], [4], [5], [6], [7]])
+        self.assertIs(groups[0]['points'], a)
+        self.assertEqual([g['tables'] for g in groups[5:]], [table(91.), None])
 
     def test_no_load_rows(self):
         tree = dict(Engine0=dict(engine(), Controls=dict(hasRadiatorControl=True, hasOilRadiatorControl=True)))
@@ -265,23 +298,107 @@ class BfF4(unittest.TestCase):
             self.assertGreater(er.first_damage(rows['water_rows'], work, recover, t), r['minutes'] * 2880)
             self.assertLessEqual(er.first_damage(rows['water_rows'], work, recover, er.next32(t)), r['minutes'] * 2880)
 
-    def test_recovery(self):
+    def test_gauge(self):
         (e,) = er.evaluate(fm('bf-109f-4'))['engines']
-        self.assertEqual([(b['fill_s'], b['empty_s']) for b in e['buckets']],
-                         [(172939 / 48, 86458 / 48), (86458 / 48, 43218 / 48), (15362 / 48, 9120 / 48), (8640 / 48, 6240 / 48), (2881 / 48, 1440 / 48)])
-        self.assertEqual([[round(t['full_c'], 4) for t in b['channels']] for b in e['buckets']],
-                         [[80., 60.], [90., 80.], [95., 85.], [98., 88.], [105., 95.]])
-        self.assertEqual([[round(t['drains_c'], 2) for t in b['channels']] for b in e['buckets']],
-                         [[86.67, 73.33], [93.33, 83.33], [96.88, 86.88], [102.06, 92.06], [111.67, 101.67]])
-        # Each is the last float32 temperature with the property: the next one up loses it.
-        rows = er.construct(er.loader_block(fm('bf-109f-4')['Engine0']['Temperature']), False, True, er.powf, er.expf, er.logf)
-        work = [w for w, _ in rows['loads']]; recover = [r for _, r in rows['loads']]
-        for j, b in zip(range(1, 6), e['buckets']):
-            for table, t in zip((rows['water_rows'], rows['oil_rows']), b['channels']):
-                rate = lambda x: er.rates(table, work, recover, x)[j]
-                drains, full = t['drains_c'] + er.K, t['full_c'] + er.K
-                self.assertTrue(rate(drains) < 0. <= rate(er.next32(drains)))
-                self.assertTrue(rate(full) == f(-recover[j]) < rate(er.next32(full)))
+        water, oil = e['gauge']
+        self.assertEqual([b['lasts_s'] * 48 for b in water['bands']], [172939, 86458, 15362, 8640, 2881])
+        self.assertEqual([b['lasts_s'] for b in oil['bands']], [b['lasts_s'] for b in water['bands']])
+        self.assertEqual([b['to_c'] for b in water['bands']], [94.16668701171875, 97.08102416992188, 103.71578979492188, 112.7779541015625, None])
+        self.assertEqual([b['above_c'] for b in water['bands']], [e['channels'][0]['continuous']['max_c']] + [b['to_c'] for b in water['bands'][:-1]])
+        self.assertEqual([b['to_c'] - o['to_c'] for b, o in zip(water['bands'][:-1], oil['bands'][:-1])], [10.] * 4)
+        self.assertEqual([b['recover_s'] * 48 for b in water['bands']], [86458, 43217, 9120, 6240, 1440])
+        self.assertEqual([round(b['recover_c'], 4) for b in water['bands']], [80.0008, 86.6838, 95.0001, 96.539, 105.0003])
+        self.assertEqual((water['boils_c'], oil['boils_c']), (None, None))
+        r, work, recover, (rows, _) = f4_block()
+        ticks = lambda t: er.first_damage(rows, work, recover, t)
+        for b in water['bands']:
+            top = rows[-1][0] if b['to_c'] is None else b['to_c'] + er.K
+            with self.subTest(band=b['lasts_s']):
+                self.assertEqual(ticks(top), b['lasts_s'] * 48)                 # the band's time is its top's
+                if b['to_c'] is not None: self.assertLess(ticks(er.next32(top)), b['lasts_s'] * 48)
+        # Plain stepping on the 3:00 band (the WEP band of the automatic radiator): all of it is back after 6240
+        # updates at the recovery temperature, not after 6239, nor one float32 step warmer (98.0 C gives 483 of 8640).
+        band = water['bands'][3]; hot, cool = [band['to_c'] + er.K], band['recover_c'] + er.K
+        self.assertTrue(lasts_again([rows], work, recover, hot, [cool], 8640, 6240))
+        self.assertFalse(lasts_again([rows], work, recover, hot, [cool], 8640, 6239))
+        self.assertFalse(lasts_again([rows], work, recover, hot, [er.next32(cool)], 8640, 6240))
+        counters, _ = stepped([rows], work, recover, hot, [[0.] * len(work)], 8639)
+        counters, _ = stepped([rows], work, recover, [f(98. + er.K)], counters, 6240)
+        self.assertEqual(stepped([rows], work, recover, hot, counters, 8640)[1], 483)
+
+    def test_throttle_tables(self):
+        # Engine states at 20, 94, 96, 100% and WEP: 100% and WEP at the Mode2 and Mode3 operating points (within 0.1 C of
+        # the heat index the solver gives at 1,000 m, 300 km/h TAS); 20-96% interpolated from 1800 rpm 0.6 ata, not solved.
+        fmtree = fm('bf-109f-4'); (rec, r, channels), = er.heat_bases(fmtree).values()
+        throttles = THROTTLES
+        states = [(1940, .74), (2458, 1.258), (2472, 1.2719999999999998), (2500, 1.2999999999999998), (2700, 1.42)]
+        xs = [mul(mul(er.heat_scale(rec, f(t / 100.)), f(ata)), f(rpm * math.pi / 30.)) for t, (rpm, ata) in zip(throttles, states)]
+        points = [dict(rpm=rpm, manifold_ata=ata, heat_c=er.settled(r, x, 1000., channels)) for (rpm, ata), x in zip(states, xs)]
+        auto, opened = er.throttle_tables(rec, r, channels, throttles, points, xs, 1000.)
+        row = lambda m: [(q['label'], q['lasts_s'] and q['lasts_s'] * 48, q['back_s'] and q['back_s'] * 48) for q in m['rows']]
+        self.assertEqual((auto['mode'], auto['hot'], opened['mode'], opened['hot']), ('auto', 'WEP', 'open', 'WEP'))
+        self.assertEqual(row(auto), [('≤ 20%', None, 6240), ('≤ 94%', 172939, 6240), ('100%', 86458, 6240), ('WEP', 8640, None)])
+        self.assertEqual(row(opened), [('≤ 20%', None, 9120), ('100%', 172939, 9120), ('WEP', 15362, None)])
+        # Automatic: the top of each target band (resting), clamped by the closed radiator at 20%.
+        self.assertEqual([[round(t, 4) for t in q['temps_c']] for q in auto['rows']],
+                         [[81.6898, 73.0908], [93.7249, 83.7249], [96.4521, 86.4521], [106.4521, 96.4521]])
+        self.assertEqual([q['temps_c'] for q in opened['rows'][1:]], [[f(t + er.K) - er.K for t in p['heat_c']] for p in points[3:]])
+        # Plain stepping, both channels: after a full WEP run on the automatic radiator, 100% gives all of WEP back
+        # after 6240 updates and not after 6239.
+        _, work, recover, tables = f4_block()
+        hot, cool = [[t + er.K for t in auto['rows'][k]['temps_c']] for k in (3, 2)]
+        self.assertTrue(lasts_again(tables, work, recover, hot, cool, 8640, 6240))
+        self.assertFalse(lasts_again(tables, work, recover, hot, cool, 8640, 6239))
+
+    def test_back(self):
+        # A drained counter is fine after 1921 updates; a second one filling past its cap first, or one that cannot
+        # drain from above its cap, never gives it back.
+        self.assertEqual(er.back([(f(.9), f(-.01), f(.5))]), 1921)
+        self.assertTrue(er.fine(f(.9), f(-.01), f(.5), 1921) and not er.fine(f(.9), f(-.01), f(.5), 1920))
+        self.assertIsNone(er.back([(f(.9), f(-.01), f(.5)), (f(.4), f(.01), f(.5))]))
+        self.assertIsNone(er.back([(f(.9), 0., f(.5))]))
+        self.assertIsNone(er.back([(f(.9), f(.01), f(.5))]))
+        self.assertIsNone(er.back([(f(.1), f(-.01), None)]))
+        self.assertEqual(er.back([(f(.4), f(.01), f(.5))]), 0)
+
+    def test_throttle_table_cases(self):
+        def tables(edit=lambda t: None, slots={}, closed=er.settled):
+            tree = copy.deepcopy(fm('bf-109f-4')); edit(tree['Engine0']['Temperature'])
+            (rec, r, channels), = er.heat_bases(tree).values(); r['slots'].update(slots)
+            states = [(1940, .74), (2458, 1.258), (2472, 1.2719999999999998), (2500, 1.2999999999999998), (2700, 1.42)]
+            xs = [mul(mul(er.heat_scale(rec, f(t / 100.)), f(ata)), f(rpm * math.pi / 30.)) for t, (rpm, ata) in zip(THROTTLES, states)]
+            points = [dict(rpm=rpm, manifold_ata=ata, heat_c=er.settled(r, x, 1000., channels)) for (rpm, ata), x in zip(states, xs)]
+            with patch.object(er, 'settled', closed):
+                return r, points, er.throttle_tables(rec, r, channels, THROTTLES, points, xs, 1000.)
+        row = lambda m: [(q['label'], q['lasts_s'] and round(q['lasts_s'] * 48), q['back_s'] and round(q['back_s'] * 48)) for q in m['rows']]
+        loads = lambda key, dk: lambda t: [t[k].update({key: t[k][key] + dk}) for k in t if k.startswith('Load')]
+        # Load rows 30 K up: WEP never damages, so there is no wait to show.
+        _, _, (auto, opened) = tables(lambda t: (loads('WaterTemperature', 30.)(t), loads('OilTemperature', 30.)(t)))
+        self.assertEqual((auto['hot'], opened['hot']), (None, None))
+        self.assertEqual(row(auto), [('100%', None, None), ('WEP', None, None)])
+        # Oil Load rows 3 K down: oil binds below 100% and its recovery is the longer one.
+        _, _, (auto, opened) = tables(loads('OilTemperature', -3.))
+        self.assertEqual(row(auto), [('≤ 20%', 418911, 6240), ('≤ 94%', 86458, 13596), ('100%', 15362, None), ('WEP', 8640, None)])
+        _, work, recover, _ = f4_block()
+        r, _, _ = tables(loads('OilTemperature', -3.)); both = [r['water_rows'], r['oil_rows']]
+        hot, cool = [[t + er.K for t in auto['rows'][k]['temps_c']] for k in (3, 1)]
+        self.assertTrue(lasts_again(both, work, recover, hot, cool, 8640, 13596))
+        self.assertFalse(lasts_again(both, work, recover, hot, cool, 8640, 13595))
+        # A hotter WEP Mode row: the open radiator runs above the WEP target, and so does the automatic one.
+        _, points, (auto, opened) = tables(lambda t: t['Mode3'].update(WaterTemperature=112.))
+        self.assertGreater(points[-1]['heat_c'][0], 106.4521)
+        self.assertEqual(auto['rows'][-1]['temps_c'][0], f(points[-1]['heat_c'][0] + er.K) - er.K)
+        self.assertEqual(auto['rows'][-1]['temps_c'][0], opened['rows'][-1]['temps_c'][0])
+        # Water boiling at 100 C: rows that reach it are held just below it and boil.
+        boil = f(100. + er.K)
+        r, _, (auto, opened) = tables(slots={'0x1d0': boil})
+        self.assertEqual([q['boils'] for q in auto['rows']], [False, False, False, True])
+        self.assertEqual(auto['rows'][-1]['temps_c'][0], er.prev32(boil) - er.K)
+        self.assertEqual(er.held_s(r, 0, 106., boil), er.held_s(r, 0, er.prev32(boil) - er.K))
+        self.assertEqual(er.held_s(r, 1, 106., None), er.held_s(r, 1, 106.))
+        # No closed value: no cooler bound, nothing raises.
+        _, _, (auto, _) = tables(closed=lambda r, x, altitude_m, channels, opening=(1., 1.): [None] * channels)
+        self.assertEqual(row(auto), [('≤ 94%', 172939, 6240), ('100%', 86458, 6240), ('WEP', 8640, None)])
 
     def test_automatic_radiator(self):
         (e,) = er.evaluate(fm('bf-109f-4'))['engines']
@@ -387,9 +504,16 @@ class Fleet(unittest.TestCase):
                 if e['radiator']:
                     with self.subTest(fm=path.stem, radiator=e['radiator']['channels']):
                         self.assertTrue(all(math.isfinite(v) for row in e['radiator']['factor'] for v in row))
-                for b in e['buckets']:
-                    with self.subTest(fm=path.stem, bucket=b):
-                        self.assertTrue(all(t['drains_c'] >= t['full_c'] for t in b['channels'] if t['full_c'] is not None))
+                for c, g in zip(e['channels'], e['gauge']):
+                    if g is None: continue
+                    with self.subTest(fm=path.stem, gauge=c['label']):
+                        bands = g['bands']
+                        self.assertTrue(all(a['lasts_s'] > b['lasts_s'] for a, b in zip(bands, bands[1:])))
+                        self.assertTrue(all(b['to_c'] is None or b['above_c'] < b['to_c'] for b in bands))
+                        self.assertTrue(all(b['to_c'] is not None for b in bands[:-1]))
+                        self.assertEqual([b['above_c'] for b in bands[1:]], [b['to_c'] for b in bands[:-1]])
+                        for b in bands:
+                            if b['recover_c'] is not None: self.assertTrue(b['recover_s'] >= 0 and (b['to_c'] is None or b['recover_c'] <= b['to_c']))
         times.sort()
         print(f"\n{counts['fms']} FMs, {counts['engines']} engines ({counts['verified']} verified, {counts['excluded']} excluded); "
               f"median {times[len(times) // 2] * 1e3:.0f} ms, max {times[-1] * 1e3:.0f} ms; port only: {', '.join(sorted(set(counts['port_only']))) or 'none'}",
@@ -451,6 +575,14 @@ class Heat(unittest.TestCase):
         shown = [points[t] for t in (50., 100., 110.)]
         heats = '; '.join('%.1f/%.1f' % tuple(p['heat_c']) for p in shown)
         states = ', '.join('%.0f rpm %.2f ata' % (p['rpm'], p['manifold_ata']) for p in shown)
+        self.assertEqual(points[100.]['lasts_s'], [172939 / 48] * 2)
+        auto, opened = group['tables']
+        lasts = lambda m: [(q['label'], q['lasts_s'] and round(q['lasts_s'] * 48)) for q in m['rows']]
+        # Oil never damages up to 32% (closed radiator, below its target) and 88% (open); automatic 34% first damages
+        # after about 55 h, open 90% after about 20 h (the solver's states, 2026-11-02).
+        self.assertEqual(lasts(auto), [('≤ 32%', None), ('≤ 94%', 172939), ('100%', 86458), ('WEP', 8640)])
+        self.assertEqual(lasts(opened), [('≤ 88%', None), ('100%', 172939), ('WEP', 15362)])
+        self.assertEqual([round(q['back_s'] * 48) for m in (auto, opened) for q in m['rows'][:-1]], [6240] * 3 + [9120] * 2)
         print(f'\nBf 109 F-4 at 50/100/110%: heat index water/oil {heats} C; {states}', file=sys.stderr)
 
 
@@ -486,6 +618,7 @@ class Api(unittest.TestCase):
             body = json.loads(urlopen(base + name + '?ratings=30,10').read())
             self.assertEqual((body['aircraft_id'], body['ratings_min']), (name, [30., 10.]))
             self.assertIn('game_data', body)
+            self.assertTrue(all('gauge' in e for e in body['engines'] if 'excluded' not in e))
             if name == 'bf-109f-4':
                 heat = json.loads(urlopen(base + name + '/heat').read())
                 self.assertEqual((heat['aircraft_id'], heat['engines'][0]['engines']), (name, [0]))

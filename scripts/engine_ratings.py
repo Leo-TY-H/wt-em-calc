@@ -3,9 +3,9 @@
 Per distinct engine and temperature channel (water or cylinder head, and oil), with the temperature held constant:
 the hottest temperature sustainable indefinitely (no load counter can ever overflow, whatever its history) and, for
 each rating of R minutes, the hottest one at which fresh counters give no damage within R minutes; the automatic
-radiator's resting temperatures and how long they last; how fast each load counter fills and drains, and below which
-temperatures it drains; and the time to first damage against temperature for the
-chart. All of it is the float32 arithmetic of the research ports (R = research/thermal-fatigue-2026-10-29):
+radiator's resting temperatures and how long they last; by gauge reading (Leo, 2026-11-02: pilot-direct), the bands of
+equal time to first damage and how cool and for how long to get each one's time back; and the time to first damage
+against temperature for the chart. All of it is the float32 arithmetic of the research ports (R = research/thermal-fatigue-2026-10-29):
 thermal_properties.construct loads the engine's Temperature block, thermal_core.rates gives each load counter's rate
 at a temperature and thermal_counters.ticks_from_zero the exact tick its counter first overflows. No limit reads a
 loader value that depends on expf/powf/logf (R/thermal_properties.py:68-71,122-133 use none), so the Python
@@ -14,7 +14,9 @@ atmosphere. No modification carries a thermal block, so the limits do not depend
 
 Plots (Leo, 2026-11-01): each controllable radiator's factor on the cooling coefficient against opening, and the
 heat index against throttle (heat(): the settled temperature at full cooling, from the engine state the Engine
-performance page solves). These read slots and use expf/powf, so they carry the stand-ins' rounding (display only).
+performance page solves); from the same sweep, the tables by setting (throttle_tables: automatic and open radiators,
+how long each lasts and how long until WEP is back). These read slots and use expf/powf, so they carry the
+stand-ins' rounding (display only).
 """
 import functools
 import json
@@ -369,14 +371,14 @@ def radiator(r, rec, channels, work, recover):
     one, wep = f(1.), f(1.1)
     reach = lambda x: x <= one or rec['wep'] and (x == wep and rec['boost_delivered'] if rec['boost_controlled'] else x <= wep)
     tables = (r['water_rows'], r['oil_rows'])
-    boiling = [r['slots'][hex(0x1d0 + 4 * c)] if liquid else None for c, liquid in enumerate((rec['liquid0'], True))]
+    boil = boiling(r, rec, channels)
     out = []
     for x in sorted({row[0] for row in rows} | {one} | ({wep} if rec['wep'] else set())):
         if not reach(x): continue
         targets = [target(rows, x, c) if c in auto else None for c in range(channels)]; held = [None] * channels; boils = False
         for c in auto:
             held[c] = resting(targets[c])
-            if boiling[c] is not None and held[c] >= boiling[c]: held[c] = prev32(boiling[c]); boils = True
+            held[c], hot = clamped(held[c], boil[c]); boils = boils or hot
         ticks = [n for n in (first_damage(tables[c], work, recover, held[c]) for c in auto) if n is not None]
         out.append(dict(coordinate=x, label='WEP' if x == wep and rec['wep'] else '%d%%' % round(x * 100),
                         targets_c=[celsius(t) for t in targets], held_c=[celsius(t) for t in held],
@@ -384,28 +386,124 @@ def radiator(r, rec, channels, work, recover):
     return out
 
 
-def recovery(r, channels, work, recover):
-    """Each load counter: its fill time from empty at the full work rate, its empty time from full at the full recover
-    rate (exact float32 ticks), and per channel the hottest temperature at which it drains at all and the hottest at
-    which it drains at the full rate (it sits above the band's point, R/thermal_core.py:31-33). Rates do not decrease
-    with temperature, so both are bisections; at the first load row every counter drains at its full rate and at the
-    last every counter fills (R/thermal_core.py:21-29). A load row without WorkTime (Load0's default 1e9 s,
-    R/thermal_properties.py:126-127) is no counter to show."""
-    out = []
-    for j, (w, x) in enumerate(zip(work, recover)):
-        if not w > 1e-8: continue
-        fill = ticks_from_zero(w, DT)
-        n, state, _ = evolve(1., f(-x), DT) if x > 0. else (None, 'stall', 1.)
-        temps = []
-        for rows in (r['water_rows'], r['oil_rows'])[:channels]:
-            if len(rows) < 2: temps.append(dict(drains_c=None, full_c=None)); continue
-            lo, hi = rows[0][0], rows[-1][0]
-            rate = lambda t, rows=rows: rates(rows, work, recover, t)[j]
-            full = f(-x)
-            temps.append(dict(drains_c=celsius(largest_true(lambda t: rate(t) < 0., lo, hi)) if rate(lo) < 0. else None,
-                              full_c=celsius(largest_true(lambda t: rate(t) <= full, lo, hi)) if x > 0. and rate(lo) <= full else None))
-        out.append(dict(fill_s=None if fill is None else fill / 48., empty_s=n / 48. if state == 'zero' else None, channels=temps))
-    return out
+# ---- Pilot tables (Leo, 2026-11-02): by gauge reading and by setting ----------------------------------------------
+# Exact float32 counter evolution (thermal_counters.evolve) at constant rates, phase by phase: a counter's value after
+# m updates, how long it then lasts at another rate, and the fewest updates at one set of rates after which every
+# counter lasts a given time again at another.
+LIMIT = round(CAP_S * 48)           # the longest wait searched: 10 h of updates
+
+
+def after(c, rate, m):
+    """A counter's value after m updates at a constant rate from c (clamped to [0, 1] as the game does), or None if it
+    overflows on the way."""
+    if m <= 0: return c
+    n, state, v = evolve(c, rate, DT, horizon=m)
+    return None if state == 'overflow' else 0. if state == 'zero' else v
+
+
+def lasts_from(c, rate):
+    """Updates from counter value c to its overflow (the overflow update) at a constant rate, or None (never)."""
+    if not rate > 0.: return None
+    n, state, _ = evolve(c, rate, DT)
+    return n if state == 'overflow' else None
+
+
+@functools.lru_cache(maxsize=4096)       # channels often share rates at their band tops (oil = water - 10 K)
+def cap(rate, need):
+    """The largest float32 counter value from which a counter at `rate` lasts at least `need` updates (1 where it never
+    overflows), or None where even an empty one does not."""
+    ok = lambda c: (lambda n: n is None or n >= need)(lasts_from(c, rate))
+    if ok(1.): return 1.
+    if not ok(0.): return None
+    tiny = unbits(1)
+    return largest_true(ok, tiny, 1.) if ok(tiny) else 0.
+
+
+def first_m(pred, limit=LIMIT):
+    """Smallest m in [0, limit] with pred(m), for pred false and then true; None if pred(limit) is false."""
+    if pred(0): return 0
+    a, b = 0, 1
+    while not pred(b):
+        if b >= limit: return None
+        a, b = b, min(2 * b, limit)
+    while b - a > 1:
+        m = (a + b) // 2
+        if pred(m): b = m
+        else: a = m
+    return b
+
+
+def fine(c, rate, top, m):
+    """A counter (value c, constant rate) is at or below its cap after m updates, without overflowing."""
+    v = after(c, rate, m)
+    return v is not None and v <= top
+
+
+def back(counters, limit=LIMIT):
+    """Fewest updates m after which every counter (value, rate, cap) is at or below its cap, or None (not within the
+    limit). The rates are constant within a phase, so a draining counter is fine from some m on and a filling one up to
+    some m."""
+    need, until = 0, limit
+    for c, rate, top in counters:
+        if top is None: return None
+        if c <= top:
+            if rate > 0.:
+                passes = first_m(lambda m: not fine(c, rate, top, m), limit)
+                if passes is not None: until = min(until, passes - 1)
+            continue
+        if not rate < 0.: return None
+        m = first_m(lambda m: fine(c, rate, top, m), limit)
+        if m is None: return None
+        need = max(need, m)
+    return need if need <= until else None
+
+
+def counter_rates(rows, work, recover, t):
+    return rates(rows, work, recover, t)[:len(work)]
+
+
+def used(rows, work, recover, t, ticks):
+    """Every counter of a channel after `ticks` updates held at t (float32 K) from fresh."""
+    return [after(0., rate, ticks) for rate in counter_rates(rows, work, recover, t)]
+
+
+def gauge(r, c, liquid, work, recover):
+    """By gauge reading: the held temperatures of one channel in bands of equal time to first damage from a fresh
+    engine and, for each band, how cool to get and for how long to have all of its time back.
+
+    The time to first damage does not increase with temperature and sits at a counter's full-work fill time on each
+    plateau, so after the continuous limit there is one band per distinct fill time n, longest first, up to the hottest
+    temperature that still lasts n updates (its time is that temperature's: the band's minimum). Recovery: every
+    counter after one update short of that time at the band's top (a full use), then the fewest updates at a cooler
+    temperature after which the band lasts its time again (back). That is fastest at or below the first load row (every
+    counter at its full recover rate); the hottest temperature with the same time is a bisection, as back does not
+    decrease with temperature. Liquid channels end just below boiling (channel)."""
+    rows = r['water_rows'] if c == 0 else r['oil_rows']; s = r['slots']
+    if len(rows) < 2: return None
+    lo, hi = rows[0][0], rows[-1][0]
+    boil = s[hex(0x1d0 + 4 * c)] if liquid else None
+    top = min(hi, prev32(boil)) if liquid else hi
+    if top < lo: return None
+    ticks = lambda t: first_damage(rows, work, recover, t)
+    lasting = lambda n: lambda t: (lambda k: k is None or k >= n)(ticks(t))
+    below = top if ticks(top) is None else largest_true(lambda t: ticks(t) is None, lo, top)
+    bands = []
+    for n in sorted({n for n in (ticks_from_zero(w, DT) for w in work if w > 1e-8) if n is not None}, reverse=True):
+        if below >= top: break
+        t = top if lasting(n)(top) else largest_true(lasting(n), below, top)
+        if t <= below: continue
+        k = ticks(t)
+        state = used(rows, work, recover, t, k - 1)
+        caps = [cap(rate, k) for rate in counter_rates(rows, work, recover, t)]
+        phase = lambda tc: list(zip(state, counter_rates(rows, work, recover, tc), caps))
+        wait = back(phase(lo))
+        # Not slower than at the first load row: every counter is fine after exactly that many updates.
+        same = lambda tc: all(fine(v, rate, q, wait) for v, rate, q in phase(tc))
+        cool = None if wait is None else t if same(t) else largest_true(same, lo, t)
+        bands.append(dict(above_c=celsius(below), to_c=None if t >= hi else celsius(t), lasts_s=k / 48.,
+                          recover_c=celsius(cool), recover_s=None if wait is None else wait / 48.))
+        below = t
+    return dict(bands=bands, boils_c=celsius(boil) if liquid and top < hi else None)
 
 
 # ---- Radiator and heat ------------------------------------------------------------------------------------------
@@ -466,9 +564,10 @@ def heat_scale(rec, throttle):
     return add(mul(add(mul(m, 9.999998092651367), -9.999998092651367), sub(throttle, 1.)), 1.) if throttle < f(1.1) else m
 
 
-def settled(r, x, altitude_m, channels):
+def settled(r, x, altitude_m, channels, opening=(1., 1.)):
     """Heat index (C) of each channel at heat coordinate x: the temperature at which the update leaves it unchanged
-    (R/thermal_temperature.py:47-80, dT/dt = 0) at full cooling: radiator open (E = 1), thermostat open, full fluid,
+    (R/thermal_temperature.py:47-80, dT/dt = 0) at full cooling: radiator open (E = 1; `opening` sets each channel's
+    radiator for the closed bound of throttle_tables), thermostat open, full fluid,
     fast flight (the flow term decays to nothing: the sink is the ambient) and the ambient AMBIENT, with the air
     density at altitude_m. There dT/dt = [(Ta - T)k + (D - (T - Ta))h]/inertia, so T = Ta + hD/(h + k): float64 from
     the float32 terms. At a Mode row above the thermostat setpoint, or on an air-cooled head, this is that row's
@@ -480,7 +579,7 @@ def settled(r, x, altitude_m, channels):
     for c in (0, 1):
         level = add(mul(sub(1., s[hex(0x1a0 + 4 * c)]), 1.), s[hex(0x1a0 + 4 * c)])
         thermostat = add(mul(sub(1., s[hex(0x198 + 4 * c)]), 1.), s[hex(0x198 + 4 * c)])
-        q.append(mul(mul(thermostat, mul(level, powf(rho, s[hex(0x1c8 + 4 * c)]))), radiator_factor(s, c, 1.)))
+        q.append(mul(mul(thermostat, mul(level, powf(rho, s[hex(0x1c8 + 4 * c)]))), radiator_factor(s, c, opening[c])))
     out = []
     for c in range(channels):
         if not any(m[2 + 2 * c] for m in r['modes']): out.append(None); continue
@@ -495,6 +594,102 @@ HEAT_ALTITUDE_M, HEAT_SPEED_KMH = 1000., 300.   # the Engine performance page's 
 HEAT_STEP = 2.                                  # throttle %
 
 
+def boiling(r, rec, channels):
+    """Each channel's boiling point (K), None on an air-cooled head (channel 0 is liquid by liquid0, oil always)."""
+    return [r['slots'][hex(0x1d0 + 4 * c)] if liquid else None for c, liquid in enumerate((rec['liquid0'], True)[:channels])]
+
+
+def clamped(t, boil):
+    """A held temperature (float32 K) and whether it boils: a liquid channel is clamped at its boiling point and boils
+    (R/thermal_temperature.py:81-82), taken just below it as channel() and radiator() do."""
+    return (prev32(boil), True) if boil is not None and t >= boil else (t, False)
+
+
+def held_s(r, c, temperature_c, boil=None):
+    """Seconds to first damage from a fresh engine with channel c held at temperature_c (clamped below boil), None
+    where it never comes or there is no value."""
+    if temperature_c is None: return None
+    work = [w for w, _ in r['loads']]; recover = [x for _, x in r['loads']]
+    n = first_damage((r['water_rows'], r['oil_rows'])[c], work, recover, clamped(f(temperature_c + K), boil)[0])
+    return None if n is None else n / 48.
+
+
+def throttle_tables(rec, r, channels, throttles, points, coordinates, altitude_m):
+    """By setting, at the heat sweep's altitude and speed: what each channel settles at, how long to first damage from a
+    fresh engine, and how long after a full run at the hottest setting (WEP, or 100% without it) it lasts that long
+    again. Modes: the automatic radiator, and radiators fully open (one mode, 'fixed', where the pilot moves none).
+
+    Radiator open is the heat index. Automatic: each controlled channel rests at the top of its target band
+    (resting(target), as radiator()), unless even the open radiator runs hotter (then it is the heat index) or the
+    closed one cooler (the heat index with that channel's radiator closed, both controlled channels closed: the
+    hottest bound, as the cross term only adds cooling for an opener radiator); an uncontrolled channel stays open
+    (R/validate_input_construction.py:66-67). A linked radiator follows the larger demand (R/REPORT.md:417-418), so
+    its cooler channel only runs cooler than shown. Target coordinate as radiator(): the throttle up to 100%, 1.1 at WEP.
+
+    Rows: for the no-damage level and then each counter's fill time, longest first, the highest swept throttle up to
+    which every solved point lasts at least that long ('<= t%': its hottest temperatures and shortest time), then 100%
+    and WEP. The wait is back(): every counter of each channel one update short of the hottest row's time, then the
+    row's temperatures; it rounds up to whole seconds on the page. A hottest row that never damages has no wait. A
+    liquid channel at or above its boiling point is held just below it and the row boils (clamped)."""
+    work = [w for w, _ in r['loads']]; recover = [x for _, x in r['loads']]
+    tables = (r['water_rows'], r['oil_rows'])[:channels]
+    control = list(rec['radiator_control'] or (False, False))[:channels]
+    if not all(len(rows) >= 2 for rows in tables): return None
+    one, wep = f(1.), f(1.1)
+    reach = lambda x: x <= one or rec['wep'] and (x == wep and rec['boost_delivered'] if rec['boost_controlled'] else x <= wep)
+    auto = bool(r['radiator_rows']) and any(control)
+    boil = boiling(r, rec, channels)
+    ticks = lambda temps: min((n for n in (first_damage(rows, work, recover, t) for rows, t in zip(tables, temps)) if n is not None), default=None)
+    sweep = {'auto': [], 'open': []}
+    for t, p, x in zip(throttles, points, coordinates):
+        x_t = f(t / 100.)
+        if p is None or x is None or any(v is None for v in p['heat_c'][:channels]) or not reach(x_t): continue
+        if t > 100. and not (rec['wep'] and x_t == wep): continue           # 100% and WEP: the pilot's settings
+        opened = [f(v + K) for v in p['heat_c'][:channels]]
+        sweep['open'].append((t, opened))
+        if auto:   # no closed value (no heat calibration): no cooler bound
+            closed = [math.inf if v is None else f(v + K) for v in settled(r, x, altitude_m, channels, [0. if on else 1. for on in control] + [1.] * (2 - channels))]
+            temps = [min(max(resting(target(r['radiator_rows'], x_t, c)), o), k) if control[c] else o
+                     for c, (o, k) in enumerate(zip(opened, closed))]
+            sweep['auto'].append((t, temps))
+    held = lambda temps: [clamped(t, b) for t, b in zip(temps, boil)]
+    sweep = {mode: [(t, [h for h, _ in held(temps)], any(b for _, b in held(temps))) for t, temps in run] for mode, run in sweep.items()}
+    levels = [None] + sorted({n for n in (ticks_from_zero(w, DT) for w in work if w > 1e-8) if n is not None}, reverse=True)
+    lasting = lambda n, level: n is None if level is None else n is None or n >= level
+    out = []
+    for mode, run in sweep.items():
+        if not run or mode == 'auto' and not auto: continue
+        flat = [(t, temps, ticks(temps), boils) for t, temps, boils in run]
+        grid = [q for q in flat if q[0] <= 100.]
+        rows, reached = [], -1.
+        for level in levels:
+            prefix = []
+            for q in grid:
+                if not lasting(q[2], level): break
+                prefix.append(q)
+            if not prefix or prefix[-1][0] <= reached or prefix[-1][0] >= 100.: continue
+            reached = prefix[-1][0]
+            temps = [max(q[1][c] for q in prefix) for c in range(channels)]
+            times = [q[2] for q in prefix]
+            rows.append(dict(label='≤ %d%%' % round(reached), temps=temps, boils=any(q[3] for q in prefix),
+                             n=None if all(n is None for n in times) else min(n for n in times if n is not None)))
+        rows += [dict(label='%d%%' % round(t) if t <= 100. else 'WEP', temps=temps, n=n, boils=boils)
+                 for t, temps, n, boils in flat if t == 100. or t > 100.]
+        hot = rows[-1] if rows and rows[-1]['label'] in ('WEP', '100%') and rows[-1]['n'] is not None else None
+        if hot:
+            k = hot['n']
+            state = [used(rows_c, work, recover, t, k - 1) for rows_c, t in zip(tables, hot['temps'])]
+            caps = [[cap(rate, k) for rate in counter_rates(rows_c, work, recover, t)] for rows_c, t in zip(tables, hot['temps'])]
+            for row in rows[:-1]:
+                wait = back([(v, rate, q) for c, (rows_c, t) in enumerate(zip(tables, row['temps']))
+                             for v, rate, q in zip(state[c], counter_rates(rows_c, work, recover, t), caps[c])])
+                row['back_s'] = None if wait is None else wait / 48.
+        out.append(dict(mode=mode if control and any(control) else 'fixed', hot=hot['label'] if hot else None,
+                        rows=[dict(label=row['label'], temps_c=[celsius(t) for t in row['temps']], boils=row['boils'],
+                                   lasts_s=None if row['n'] is None else row['n'] / 48., back_s=row.get('back_s')) for row in rows]))
+    return out or None
+
+
 def heat_bases(fm):
     """{engine index: (record, construct result, channels)} of the ordinary engines whose Mode rows load unfiltered."""
     out = {}
@@ -507,25 +702,34 @@ def heat_bases(fm):
     return out
 
 
+def alike(a, b, tol=.005):
+    """Equal to the page's precision: the same shape, numbers within tol (C; seconds are whole updates, 1/48 s apart,
+    so within tol they are equal)."""
+    if isinstance(a, dict): return isinstance(b, dict) and a.keys() == b.keys() and all(alike(a[k], b[k], tol) for k in a)
+    if isinstance(a, (list, tuple)): return isinstance(b, (list, tuple)) and len(a) == len(b) and all(alike(x, y, tol) for x, y in zip(a, b))
+    if isinstance(a, float) and isinstance(b, (int, float)) and not isinstance(b, bool): return abs(a - b) <= tol
+    return a == b
+
+
 def same_curve(a, b):
     """Two engines' heat curves equal to the plot's precision: the same points solved, RPM within 0.05, manifold within
-    1e-4 ata and heat index within 0.005 C. Twins with counter-rotating propellers differ only by solver rounding
-    (0.001 rpm and 4e-5 C, 2026-11-01)."""
+    1e-4 ata, heat index within 0.005 C and the same time to first damage. Twins with counter-rotating propellers differ
+    only by solver rounding (0.001 rpm and 4e-5 C, 2026-11-01)."""
     close = lambda x, y, tol: (x is None) == (y is None) and (x is None or abs(x - y) <= tol)
     return len(a) == len(b) and all(
         (p is None) == (q is None) and (p is None or close(p['rpm'], q['rpm'], .05) and close(p['manifold_ata'], q['manifold_ata'], 1e-4)
-                                        and len(p['heat_c']) == len(q['heat_c']) and all(close(x, y, .005) for x, y in zip(p['heat_c'], q['heat_c'])))
+                                        and alike(p['heat_c'], q['heat_c']) and alike(p['lasts_s'], q['lasts_s']))
         for p, q in zip(a, b))
 
 
-def grouped(curves):
-    """[{engines, points}]: engines in order, each joining the first group whose curve is the same (same_curve); a group
-    shows its first engine's points."""
+def grouped(curves, tables):
+    """[{engines, points, tables}]: engines in order, each joining the first group whose curve (same_curve) and tables
+    are the same; a group shows its first engine's. Engines with different thermal blocks split even on one curve."""
     groups = []
     for i, points in sorted(curves.items()):
-        group = next((g for g in groups if same_curve(g['points'], points)), None)
+        group = next((g for g in groups if same_curve(g['points'], points) and alike(g['tables'], tables[i])), None)
         if group: group['engines'].append(i)
-        else: groups.append(dict(engines=[i], points=points))
+        else: groups.append(dict(engines=[i], points=points, tables=tables[i]))
     return groups
 
 
@@ -539,6 +743,7 @@ def _heat(path, stamp, aircraft_id, altitude_m, speed_kmh):
     top = 100. if aircraft_id in ep.without_wep() else 110.
     throttles = [top * i / round(top / HEAT_STEP) for i in range(round(top / HEAT_STEP) + 1)]
     curves = {i: [] for i in bases} if prop else {}
+    coordinates = {i: [] for i in curves}
     count = len(contiguous(fm, 'Engine'))
     with ep.LOCK:
         for t in throttles if curves else ():
@@ -548,16 +753,23 @@ def _heat(path, stamp, aircraft_id, altitude_m, speed_kmh):
             engines = chart.engine.properties['engines'] if row else []
             pistons = [j for j, e in enumerate(engines) if e['family'] in (0, 1)]
             for i, (rec, r, channels) in bases.items():
-                point = None
+                point = x = None
                 # The solver lists every FM engine in order; the heat input is the engine's own compressor output
                 # (Engine+0x12c, R/UPSTREAM-THERMAL-TRACE.md:58-60), the state's manifold, at its angular speed.
                 if len(engines) == count and i in pistons:
                     rpm, manifold = row['rpm'][i], row['manifold_ata'][pistons.index(i)]
                     if math.isfinite(rpm) and math.isfinite(manifold):
                         x = mul(mul(heat_scale(rec, f(t / 100.)), f(manifold)), f(rpm * math.pi / 30.))
-                        point = dict(rpm=rpm, manifold_ata=manifold, heat_c=settled(r, x, altitude_m, channels))
-                curves[i].append(point)
-    return dict(throttle_percent=throttles, altitude_m=altitude_m, speed_kmh=speed_kmh, engines=grouped(curves))
+                        heat_c = settled(r, x, altitude_m, channels)
+                        boil = boiling(r, rec, channels)
+                        point = dict(rpm=rpm, manifold_ata=manifold, heat_c=heat_c, lasts_s=[held_s(r, c, v, boil[c]) for c, v in enumerate(heat_c)])
+                curves[i].append(point); coordinates[i].append(x)
+    tables = {}
+    for i in curves:
+        rec, r, channels = bases[i]
+        try: tables[i] = throttle_tables(rec, r, channels, throttles, curves[i], coordinates[i], altitude_m)
+        except DATA_ERRORS: tables[i] = None
+    return dict(throttle_percent=throttles, altitude_m=altitude_m, speed_kmh=speed_kmh, engines=grouped(curves, tables))
 
 
 def heat(aircraft_id, altitude_m=HEAT_ALTITUDE_M, speed_kmh=HEAT_SPEED_KMH):
@@ -603,7 +815,7 @@ def engine(rec, ratings):
     # update processes properties[0x140]+1 channels (R/REPORT.md:80-83,290-300). Oil is always a liquid channel.
     liquid, labels = (rec['liquid0'], True), ('Water' if water else 'Head', 'Oil')
     channels = [channel(r, c, liquid[c], labels[c], work, recover, ratings) for c in ((0, 1) if r['has_oil'] else (0,))]
-    return dict(out, channels=channels, buckets=recovery(r, len(channels), work, recover),
+    return dict(out, channels=channels, gauge=[gauge(r, c, liquid[c], work, recover) for c in range(len(channels))],
                 automatic=[] if special else radiator(r, rec, len(channels), work, recover),
                 radiator=radiator_curves(r, rec, len(channels)))
 
