@@ -53,10 +53,10 @@
     ${stateFields('target','Target aircraft')}
     <div class="missile-run-panel">
     <p id="missile-ready" class="hint"></p>
-    <div class="action-row"><button id="missile-run" class="primary-button" type="submit" disabled>Calculate</button><button id="missile-reset" class="secondary-button reset-button" type="button">Reset</button></div>
+
     <button id="missile-cancel" class="secondary-button" type="button" hidden>Cancel simulation</button>
     <div id="missile-status" role="status" aria-live="polite"></div></div>
-  </form></aside>
+  </form><div class="missile-live-entry"><button id="missile-run" class="primary-button" type="submit" form="missile-form" disabled>Calculate</button><button id="missile-reset" class="secondary-button reset-button" type="button">Reset</button><button id="missile-live-start" type="button" class="primary-button">Fly live</button><label>Target load (g)<input id="missile-live-load" type="number" min="1.5" max="15" step="any" value="9"></label></div></aside>
   <div class="missile-main">
     <div id="missile-error" class="error" role="alert" hidden></div>
     <div id="missile-stale" class="notice" hidden>Inputs changed. Run again to update the trajectories.</div>
@@ -334,6 +334,7 @@
     onCamera:eye=>drawAxes(eye,'missile-axes'),onDrag:applySetupDrag})||null;
   if(setupScene)visuals?.load().then(()=>setupScene.setModel(visuals.getTarget()));
   function busy(value) {
+    el('missile-live-start').disabled=value||!selectedMissiles.length;
     el('missile-run').disabled=value||!meta||!selectedMissiles.length||selectedMissiles.some(id=>!launchers.valid(meta,id,launchers.resolve(meta,id,launcherAircraft[id])));
     el('missile-cancel').hidden=!value;el('missile-reset').disabled=value;
     root.querySelectorAll('[data-preset]').forEach(button=>button.disabled=value);
@@ -424,21 +425,53 @@
       await Promise.all(Array.from({length:concurrency},async()=>{
         while(!cancelRequested&&next<submitted.missiles.length)await runFlight(next++);
       }));
-      completed.sort((a,b)=>submitted.missiles.indexOf(a.scenario.missile)-submitted.missiles.indexOf(b.scenario.missile));
-      if(completed.length){
-        const {missiles,...shared}=submitted;
-        comparison={requested_missiles:missiles,shared_conditions:shared,complete:completed.length===missiles.length,cancelled:cancelRequested,errors:failed};
-        flights=completed;resultColors=flights.map(f=>flightColors[missiles.indexOf(f.scenario.missile)]);focusIndex=0;result=flights[0];await render();
-        window.GameVersions?.changes(el('missile-version-changes'),missiles.map(id=>({id:baseId(id),kind:'missile',version:versionOf(id),name:meta.missiles.find(m=>m.id===id)?.base_name||meta.missiles.find(m=>m.id===id)?.name||id})));
-      }
-      el('missile-status').textContent=cancelRequested?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'';
-      if(failed.length)showError(failed.join(' · '));
-      el('missile-stale').hidden=completed.length===submitted.missiles.length&&JSON.stringify(inputs())===JSON.stringify(submitted);
-      el('missile-stale').textContent=!completed.length?(flights.length?'No new flights completed. Previous results are still displayed.':'No flights completed. Run again to compare the selected missiles.'):completed.length<submitted.missiles.length?'Comparison incomplete. Only completed flights are shown; run again to compare all selected missiles.':'Inputs changed. Run again to update the trajectories.';
+      await showFlights(submitted,completed,failed,cancelRequested);
     }catch(error){showError(error.message);el('missile-status').textContent='Simulation did not complete.';}
     finally{activeJobs.clear();batchRunning=false;busy(false);}
   });
+  async function showFlights(submitted,completed,failed,cancelled) {
+      completed.sort((a,b)=>submitted.missiles.indexOf(a.scenario.missile)-submitted.missiles.indexOf(b.scenario.missile));
+      if(completed.length){
+        const {missiles,...shared}=submitted;
+        comparison={requested_missiles:missiles,shared_conditions:shared,complete:completed.length===missiles.length,cancelled:cancelled,errors:failed};
+        flights=completed;resultColors=flights.map(f=>flightColors[missiles.indexOf(f.scenario.missile)]);focusIndex=0;result=flights[0];await render();
+        window.GameVersions?.changes(el('missile-version-changes'),missiles.map(id=>({id:baseId(id),kind:'missile',version:versionOf(id),name:meta.missiles.find(m=>m.id===id)?.base_name||meta.missiles.find(m=>m.id===id)?.name||id})));
+      }
+      el('missile-status').textContent=cancelled?`Comparison cancelled · ${completed.length}/${submitted.missiles.length} flights complete.`:failed.length?`${completed.length}/${submitted.missiles.length} flights complete.`:'';
+      if(failed.length)showError(failed.join(' · '));
+      el('missile-stale').hidden=completed.length===submitted.missiles.length&&JSON.stringify(inputs())===JSON.stringify(submitted);
+      el('missile-stale').textContent=!completed.length?(flights.length?'No new flights completed. Previous results are still displayed.':'No flights completed. Run again to compare the selected missiles.'):completed.length<submitted.missiles.length?'Comparison incomplete. Only completed flights are shown; run again to compare all selected missiles.':'Inputs changed. Run again to update the trajectories.';
+  }
+  Object.assign(window.missileSimulator,{
+    isBusy:()=>batchRunning,
+    isLiveResult:()=>flights.length>0&&flights.every(f=>f.model?.target_motion?.kind==='steered'),
+    liveError:showError,
+    async prepareLive(load) {
+      if(batchRunning||!selectedMissiles.length)return null;
+      if(!el('missile-form').reportValidity())return null;
+      batchRunning=true;busy(true);el('missile-cancel').hidden=true;pause();showError('');
+      await window.GameVersions?.rowsLoaded(meta);
+      const submitted=inputs(),rows=[],failed=[];
+      await Promise.all(submitted.missiles.map(async rowKey=>{
+        try {
+          const body=window.missileLiveCore.prepareBody(submitted,rowKey,baseId,launchers.launcher);
+          body.target_control={load_g:load};
+          const version=versionOf(rowKey)||'';
+          const prepared=await request('/api/missiles/live/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},version);
+          rows.push({rowKey,version,label:rowName(rowKey),prepared});
+        } catch(error){failed.push(rowName(rowKey)+': '+error.message);}
+      }));
+      return {submitted,rows,failed};
+    },
+    async showLiveFlights(submitted,entries,failed,cancelled) {
+      const completed=entries.map(entry=>window.missileLiveCore.handoff(entry,rowName(entry.rowKey)));
+      await showFlights(submitted,completed,failed,cancelled);
+      if(!completed.length)showPanes(plotView);
+    },
+    endLive(){batchRunning=false;busy(false);showPanes(plotView);}
+  });
   el('missile-cancel').addEventListener('click',async()=>{
+    if(window.missileLive?.active){window.missileLive.stop();return;}
     cancelRequested=true;
     el('missile-status').textContent='Cancelling comparison…';
     await Promise.all([...activeJobs].map(async id=>{try{await request('/api/missiles/jobs/'+id+'/cancel',{method:'POST'},jobVersions.get(id));}catch(error){showError(error.message);}}));
@@ -742,7 +775,10 @@
     const frames=flights.map(f=>playbackFrame(f,time,el('missile-view').value)),row=frames[focusIndex].sample;
     const finished=time>=result.elapsed_s;
     el('missile-frame').textContent=`${missileName(result.scenario.missile)} · `+(finished?`${result.outcome.label} at ${result.elapsed_s.toFixed(2)} s`:row.kind==='proximity_event'?'Target proximity event':(trackingLabels[row.tracking_state]||'—'));
-    const targetPosition=result.scenario.target.position.map((v,i)=>v+result.scenario.target.velocity[i]*time);
+    const steered=result.model?.target_motion?.kind==='steered';
+    const longest=flights.reduce((a,b)=>a.elapsed_s>=b.elapsed_s?a:b);
+    const targetPose=steered?window.missileLiveCore.targetFrame(longest.trajectory,time):null;
+    const targetPosition=targetPose?targetPose.position:result.scenario.target.position.map((v,i)=>v+result.scenario.target.velocity[i]*time);
     const positions=[...frames.map(f=>f.position),targetPosition];
     const projected=Object.fromEntries(Object.entries(projectedPositions(positions)).map(([axis,values])=>[axis,values.map(v=>[v])]));
     const geometry=Object.fromEntries(Object.keys(projected).map(axis=>[axis,[...frames.map(f=>f.trail[axis]),...projected[axis]]]));
@@ -756,7 +792,7 @@
     const targetModel=visuals?.getTarget();
     if(targetModel){
       const view=el('missile-view').value,chart=el('missile-chart');
-      const shape=visuals.geometry(targetModel,targetPosition,visuals.targetAttitude(result.scenario.target),visuals.displayLength(targetModel,chart,view,flightBounds),view);
+      const shape=visuals.geometry(targetModel,targetPosition,(targetPose?.quaternion||visuals.targetAttitude(result.scenario.target)),visuals.displayLength(targetModel,chart,view,flightBounds),view);
       for(const axis of Object.keys(shape))geometry[axis][2*flights.length]=shape[axis];
     }
     // Trails and markers move together in one plot update; the target path is static.

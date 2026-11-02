@@ -12,7 +12,7 @@ const degrees=value=>`${+value.toFixed(1)}°`;
 
 window.missileSetup3d={create};
 
-function aircraftGeometry(model) {
+export function aircraftGeometry(model) {
   if(!model) {
     // Without the game's mesh, a dart along +X of unit length.
     const cone=new THREE.ConeGeometry(.16,1,12);cone.rotateZ(-Math.PI/2);return cone.toNonIndexed();

@@ -577,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
     def file(self,path):
         if not path.is_file():return self.respond(dict(error='Not found'),404)
         data=path.read_bytes();self.send_response(200)
-        mime=mimetypes.guess_type(str(path))[0] or 'application/octet-stream'
+        mime={'.wasm':'application/wasm','.mjs':'text/javascript'}.get(path.suffix) or mimetypes.guess_type(str(path))[0] or 'application/octet-stream'
         self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)))
         self.send_header('Cache-Control','no-cache');self.send_header('X-Content-Type-Options','nosniff')
         self.end_headers();self.wfile.write(data)
@@ -595,6 +595,13 @@ class Handler(BaseHTTPRequestHandler):
             from engagement_research_service import metadata
             try:return self.respond(metadata())
             except (ValueError,OSError) as error:return self.respond(dict(error=str(error)),400)
+        if path.startswith('/api/missiles/inputs/'):
+            from missile_service import live_input
+            data=live_input(path.removeprefix('/api/missiles/inputs/'))
+            if data is None:return self.respond(dict(error='Not found'),404)
+            self.send_response(200);self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length',str(len(data)));self.send_header('Cache-Control','public, max-age=31536000, immutable')
+            self.end_headers();self.wfile.write(data);return
         if path=='/api/missiles/meta':
             from missile_service import metadata
             return self.respond(metadata())
@@ -744,6 +751,7 @@ class Handler(BaseHTTPRequestHandler):
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
         names.update({'/engine.js':'engine.js','/engine.css':'engine.css','/versions.js':'versions.js','/versions.css':'versions.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
+        names.update({f'/{name}':name for name in ('missile-live.js','missile-live-core.js','missile-live.css','live/missile-engine.mjs','live/missile-engine.wasm','live/manifest.json')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
         names.update({f'/icons/neothunderism-{asset}':f'icons/neothunderism-{asset}' for asset in ('mark.svg','mark.png','app.svg','favicon.svg')})
@@ -757,9 +765,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(dict(error='Local or configured public origin required'),403)
         try:
             length=int(self.headers.get('Content-Length','0'))
-            if length<0 or length>32768:raise ValueError('Request too large')
+            limit=1_000_000 if path=='/api/missiles/jobs' else 32768
+            if length<0 or length>limit:raise ValueError('Request too large')
             body=json.loads(self.rfile.read(length) or b'{}')
             if not isinstance(body,dict):raise ValueError('Expected a JSON object')
+            if length>32768 and 'target_control' not in body:raise ValueError('Request too large')
+            if path=='/api/missiles/live/prepare':
+                from missile_service import prepare_live
+                return self.respond(prepare_live(body))
             if path=='/api/engagement-research/run':
                 from engagement_research_service import run
                 return self.respond(run(body))
