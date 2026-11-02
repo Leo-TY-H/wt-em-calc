@@ -206,3 +206,22 @@ runs passed 10 mouse-look checks and 84 loop-camera samples; both exports replay
 with identical trajectories. All 12 browser event checks passed. No page errors.
 The refreshed phone screenshot was inspected; results are in `mouse-look.json`.
 The previously recorded temporary EM build remains untouched.
+
+
+## Confined mouse look follow-up
+
+Mouse look now starts only after clicking the scene and successfully acquiring
+browser pointer lock. The cursor is hidden and cannot drift outside the simulation
+while looking. Esc ends capture; ordinary uncaptured motion cannot steer the view.
+Capture failure displays a retry hint and leaves mouse look inactive. Pausing,
+camera switching and ending the flight also release capture; pending requests are
+invalidated so delayed completion cannot capture the cursor after leaving the view.
+Touch dragging and the default free view are unchanged.
+
+After implementation, 6 camera and 7 control groups passed. Two browser flights
+passed 18 mouse-look/capture checks, including movement beyond the canvas, denied
+capture, and release on Esc and pause. All 84 camera samples, 2 identical native
+replays and 12 event checks passed, with no page errors. The first capture-denial
+assertion sampled residual recenter smoothing too early; waiting for the camera
+to settle fixed the test without changing the implementation. Evidence is retained
+in `mouse-capture.json`; no new build scratch was generated.

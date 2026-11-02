@@ -337,8 +337,10 @@ supported at constant speed; gravity and energy changes are excluded for the tar
 
 The default camera is the free/orbit overview (drag to orbit, wheel to zoom).
 C cycles to the target-follow view, then each active missile, then back to free view.
-In target view, move the mouse over the scene to look independently of the aircraft;
-click the scene to capture the mouse for continuous turning, then Esc to release it.
+In target view, click the scene to start mouse look. The cursor is captured and
+hidden while looking, so it cannot leave the simulation. Esc releases it and ends
+mouse look. Mouse movement outside capture does not change the camera; if capture
+is unavailable, the scene displays a retry message.
 Touch users can drag the scene. The selected direction stays fixed while the aircraft
 maneuvers. **Center view** restores automatic following. Flight steering stays on
 the keyboard/touch controls.
