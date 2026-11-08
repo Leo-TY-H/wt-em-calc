@@ -25,7 +25,12 @@
     // shaft power, jets' and turboprops' (turbine) TSFC and rockets' fuel flow against throttle.
     sfc: {label: 'SFC', y: r => r.bsfc ?? r.tsfc, sweep: 'sfc'},
     // 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve, not the engine at angle of attack 0.
-    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true}};
+    sep: {label: 'SEP', title: 'SEP in level flight (m/s)', y: r => r.ps_mps, digits: 2, unit: ' m/s', level: true},
+    // The mixture lever settings that give full power (Leo, 2026-11-08; engine_performance.mixture_band): a band from
+    // the leanest (lean) to the richest (y), with the power left at 100% (power).
+    mixture: {label: 'Mixture for full power', title: 'Mixture (%)', y: r => r.mixture_rich_percent?.[0], lean: r => r.mixture_lean_percent?.[0],
+      power: r => r.mixture_power_percent?.[0], upperLean: r => r.mixture_upper_lean_percent?.[0], upperRich: r => r.mixture_upper_rich_percent?.[0],
+      digits: 0, unit: '%', props: true, band: true}};
   const AXES = {altitude: {label: 'Altitude', x: r => r.altitude_m, title: 'Altitude (m)', unit: ' m'},
     speed: {label: 'Speed', x: r => r.speed_kmh, title: 'True airspeed (km/h)', unit: ' km/h'}};
   const GOVERNOR = {'target RPM': 'Holding RPM', 'minimum pitch': 'Fine pitch stop', 'maximum pitch': 'Coarse pitch stop',
@@ -377,29 +382,46 @@
     if (shown.axis === 'sfc') return renderSfc(list);
     // A plot of another group keeps the one calculated until the next Calculate.
     let q = group(el('engine-quantity').value) === shown.group ? el('engine-quantity').value : shown.quantity;
-    if (!available(q, list)) { q = shown.level ? 'sep' : 'thrust'; el('engine-quantity').value = q; }
-    const axis = shown.axis, quantity = QUANTITIES[q], x = AXES[axis], traces = [];
+    // Mixture stays chosen without a lever to show: the plot says which aircraft have none.
+    if (!available(q, list) && q !== 'mixture') { q = shown.level ? 'sep' : 'thrust'; el('engine-quantity').value = q; }
+    const axis = shown.axis, quantity = QUANTITIES[q], x = AXES[axis], traces = [], noLever = new Set(), older = new Set();
     for (const d of list) {
       const modes = d.result.modes;
       for (const mode of modes) {
-        const rows = mode[axis], y = rows.map(r => r.solved ? quantity.y(r, d.result) ?? null : null);
-        // An entry without this quantity (a jet's power) draws nothing and takes no legend row.
-        if (!y.some(Number.isFinite)) continue;
+        const rows = mode[axis], value = f => rows.map(r => r.solved ? f(r, d.result) ?? null : null), y = value(quantity.y);
+        // An entry without this quantity (a jet's power) draws nothing and takes no legend row. Under the mixture plot it
+        // is named: no lever, or rows from a calculator without the band (another build's server).
+        if (!y.some(Number.isFinite)) {
+          const solved = rows.filter(r => r.solved);
+          if (quantity.band && solved.length) (!propeller(aircraftOf(d.entry)) || solved.every(r => Array.isArray(r.mixture_rich_percent)) ? noLever : older).add(entryName(d));
+          continue;
+        }
         // Hover every 1 km/h or 1 m along the drawn curve (Leo, 2026-10-29): between solved points its own straight
         // segments (the refinement keeps them within 0.05% of the plotted range); a click solves the exact point.
-        const hx = [], hy = [];
+        // Each series sampled the same way: the plotted value, and for the mixture band its lean edge, the power at 100%
+        // and the full-power piece above a gap (null where there is none).
+        const series = [y, ...(quantity.band ? [quantity.lean, quantity.power, quantity.upperLean, quantity.upperRich].map(value) : [])];
+        const hx = [], hs = series.map(() => []);
         rows.forEach((r, i) => {
-          const x0 = x.x(r), x1 = i + 1 < rows.length ? x.x(rows[i + 1]) : x0, y0 = y[i], y1 = y[i + 1];
-          hx.push(x0); hy.push(y0);
-          if (!Number.isFinite(y0) || !Number.isFinite(y1)) return;
-          for (let v = Math.floor(x0) + 1; v < x1; v++) { hx.push(v); hy.push(y0 + (y1 - y0) * (v - x0) / (x1 - x0)); }
+          const x0 = x.x(r), x1 = i + 1 < rows.length ? x.x(rows[i + 1]) : x0;
+          hx.push(x0); series.forEach((s, k) => hs[k].push(s[i]));
+          if (!Number.isFinite(y[i]) || !Number.isFinite(y[i + 1])) return;
+          // Where a type 1 mixer's full-power piece above a gap joins the one below, the richest edge jumps (the Mosquito
+          // near 6 km): no line joins the two rows (Leo, 2026-11-08).
+          if (quantity.band && Number.isFinite(series[3][i]) !== Number.isFinite(series[3][i + 1]) && Math.abs(y[i + 1] - y[i]) > .5) {
+            hx.push((x0 + x1) / 2); series.forEach((s, k) => hs[k].push(null)); return;
+          }
+          for (let v = Math.floor(x0) + 1; v < x1; v++) {
+            hx.push(v); series.forEach((s, k) => hs[k].push(Number.isFinite(s[i]) && Number.isFinite(s[i + 1]) ? s[i] + (s[i + 1] - s[i]) * (v - x0) / (x1 - x0) : null));
+          }
         });
-        traces.push({type: 'scatter', mode: 'lines', x: hx, y: hy,
-          name: entryName(d), meta: {entry: d.entry.id, mode: mode.key}, line: {color: d.color, width: 2.4}, connectgaps: false,
+        const name = entryName(d), meta = {entry: d.entry.id, mode: mode.key};
+        if (quantity.band) { traces.push(...bandTraces(d, name, meta, hx, hs, x.unit)); continue; }
+        traces.push({type: 'scatter', mode: 'lines', x: hx, y: hs[0], name, meta, line: {color: d.color, width: 2.4}, connectgaps: false,
           hoverlabel: {bordercolor: d.color},
           hovertemplate: `${escapeText(mode.label)}<br>%{y:,.${quantity.digits}f}${quantity.unit}<br>%{x:,.0f}${x.unit}<extra></extra>`});
         // Supercharger gear changes over altitude: a mark where each new gear starts.
-        if (axis === 'altitude' && d.result.stages.some(n => n > 1)) {
+        if (axis === 'altitude' && !quantity.band && d.result.stages.some(n => n > 1)) {
           const marks = rows.filter((r, i) => r.solved && i && rows[i - 1].solved && String(r.gear) !== String(rows[i - 1].gear));
           if (marks.length) traces.push({type: 'scatter', mode: 'markers', x: marks.map(x.x), y: marks.map(r => quantity.y(r, d.result)), showlegend: false,
             meta: {entry: d.entry.id, mode: mode.key}, marker: {color: d.color, size: 9, symbol: 'diamond-open', line: {width: 2}},
@@ -417,7 +439,43 @@
       yaxis: {...axisStyle, title: {text: quantity.title, standoff: 8, font: {size: 13}}, rangemode: ['efficiency', 'sep'].includes(q) ? 'normal' : 'tozero', zeroline: !!quantity.level, zerolinecolor: 'rgba(240,240,250,.35)'},
       legend: {orientation: 'h', x: 0, y: 1.02, yanchor: 'bottom', font: {size: 12}, bgcolor: 'rgba(0,0,0,0)', itemdoubleclick: false},
       uirevision: `${axis}-${q}`, dragmode: 'pan', modebar: {bgcolor: 'rgba(0,0,0,0)', color: '#8a8a96', activecolor: '#f0f0fa'}};
+    if (quantity.band) {
+      // The lever runs from 0 to 120% (the game caps it there); 100% marked. Filled traces would reverse the legend.
+      Object.assign(layout.yaxis, {range: [0, 125], ticksuffix: '%', tickvals: [0, 20, 40, 60, 80, 100, 120]});
+      layout.legend.traceorder = 'normal';
+      layout.shapes = [{type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 100, y1: 100, line: {color: 'rgba(240,240,250,.35)', width: 1, dash: 'dash'}}];
+      // Entries drawn without a band, named below the x axis title, a few to a line.
+      const lines = [['No mixture lever', noLever], ["Not in this build's calculator", older]].filter(([, names]) => names.size).flatMap(([label, names]) =>
+        [...names].reduce((out, n, i) => (i % 3 ? out[out.length - 1].push(n) : out.push([n]), out), []).map((part, i) => (i ? '' : label + ': ') + part.map(escapeText).join(', ')));
+      if (lines.length) {
+        layout.annotations = [{xref: 'paper', yref: 'paper', x: 0, y: 0, xanchor: 'left', yanchor: 'top', yshift: -46, showarrow: false, align: 'left',
+          font: {size: 12, color: '#8a8a96'}, text: lines.join('<br>')}];
+        layout.margin.b += 18 * lines.length;
+      }
+    }
     draw(list, traces, layout, (mode, p, d) => mode[axis].find(r => x.x(r) === p.x) || exact(d, axis, p.x));
+  }
+  // The mixture band of one entry: for each run of solved rows and each full-power piece, its lean edge and
+  // then its richest setting filled down to it, so a fill never spans a gap or reaches another entry's trace. One
+  // legend row per entry, toggling all of its pieces. hs: plotted (richest), lean, power at 100%, upper lean, upper rich.
+  function bandTraces(d, name, meta, hx, hs, unit) {
+    const out = [], legendgroup = `${meta.entry}-${meta.mode}`;
+    const runs = (lo, hi) => hx.reduce((list, _, i) => {
+      if (!Number.isFinite(lo[i]) || !Number.isFinite(hi[i])) return list;
+      if (i && Number.isFinite(lo[i - 1]) && Number.isFinite(hi[i - 1])) list[list.length - 1][1] = i + 1; else list.push([i, i + 1]);
+      return list;
+    }, []);
+    for (const [lo, hi, text] of [[hs[1], hs[0], 'Full power'], [hs[3], hs[4], 'Full power again']])
+      for (const [a, b] of runs(lo, hi)) {
+        const xs = hx.slice(a, b), los = lo.slice(a, b);
+        // Both edges solid (Leo, 2026-11-08).
+        out.push({type: 'scatter', mode: 'lines', x: xs, y: los, showlegend: false, legendgroup, meta, line: {color: d.color, width: 2.4}, hoverinfo: 'skip'});
+        out.push({type: 'scatter', mode: 'lines', x: xs, y: hi.slice(a, b), name, legendgroup, showlegend: !out.some(t => t.showlegend), meta,
+          line: {color: d.color, width: 2.4}, fill: 'tonexty', fillcolor: rgba(d.color, .12), hoverlabel: {bordercolor: d.color},
+          customdata: xs.map((_, i) => [los[i], hs[2][a + i]]),
+          hovertemplate: `${escapeText(name)}<br>${text} from %{customdata[0]:.0f}% to %{y:.0f}% mixture<br>At 100%: %{customdata[1]:.0f}% power<br>%{x:,.0f}${unit}<extra></extra>`});
+      }
+    return out;
   }
   // The exact state at a clicked point between solved ones: the server solves it as the sweep solves its points.
   async function exact(d, axis, at) {
@@ -514,7 +572,10 @@
       [aircraftOf(d.entry)?.propulsion === 'turboprop' ? 'Turbine TSFC' : 'TSFC', Number.isFinite(r.tsfc) ? `${fmt(r.tsfc, 4)} kg/kgf·h at ${fmt(r.turbine_thrust_kgf, 1)} kgf` : null],
       ['Fuel flow', Number.isFinite(r.fuel_kgh) ? fmt(r.fuel_kgh, 0) + ' kg/h' + (r.engine_fuel_kgh?.length > 1 ? ` (${list(r.engine_fuel_kgh, 0)})` : '') : null],
       ['RPM', list(r.rpm, 0)], ['RPM limit', list(result.rpm_limit, 0)],
-      ['Manifold pressure', list(r.manifold_ata, 3, ' ata')], ['Supercharger gear', result.stages.some(n => n > 1) ? r.gear.join(' / ') : null]])}${prop ? section('PROPELLER', [
+      ['Manifold pressure', list(r.manifold_ata, 3, ' ata')], ['Supercharger gear', result.stages.some(n => n > 1) ? r.gear.join(' / ') : null],
+      ['Mixture for full power', r.mixture_rich_percent?.some(Number.isFinite) ? r.mixture_rich_percent.map((v, i) => !Number.isFinite(v) ? 'no lever' :
+        `${fmt(r.mixture_lean_percent[i], 0)}–${fmt(v, 0)}%` + (Number.isFinite(r.mixture_upper_rich_percent?.[i]) ? ` and ${fmt(r.mixture_upper_lean_percent[i], 0)}–${fmt(r.mixture_upper_rich_percent[i], 0)}%` : '')).join(' / ') : null],
+      ['Power at 100% mixture', r.mixture_power_percent?.some(Number.isFinite) ? list(r.mixture_power_percent, 1, '%') : null]])}${prop ? section('PROPELLER', [
       ['Efficiency', Number.isFinite(r.efficiency) ? fmt(r.efficiency, 1) + '%' : null],
       ['Blade angle', r.pitch_deg.map((v, i) => fmt(v, 2) + '°' + (Number.isFinite(r.pitch_percent?.[i]) ? ' / ' + fmt(r.pitch_percent[i], 0) + '%' : '')).join(' · ')],
       ['Propeller control', d.entry.pitch === 'auto' ? 'Automatic' : d.entry.pitch + '% manual'],
@@ -526,7 +587,7 @@
   function download(kind) {
     const list = displayed(); if (!list.length) return;
     const join = v => Array.isArray(v) ? v.map(x => Number.isFinite(x) ? +x.toFixed(4) : x ?? '').join('/') : Number.isFinite(v) ? +v.toFixed(4) : v ?? '';
-    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'fuel_kgh', 'engine_fuel_kgh', 'piston_power_hp', 'bsfc', 'turbine_thrust_kgf', 'tsfc', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach'];
+    const columns = ['altitude_m', 'speed_kmh', 'ias_kmh', 'mach', 'ps_mps', 'alpha_deg', 'thrust_kgf', 'power_hp', 'engine_power_hp', 'efficiency', 'fuel_kgh', 'engine_fuel_kgh', 'piston_power_hp', 'bsfc', 'turbine_thrust_kgf', 'tsfc', 'rpm', 'pitch_deg', 'pitch_percent', 'manifold_ata', 'gear', 'governor', 'tip_mach', 'mixture_lean_percent', 'mixture_rich_percent', 'mixture_power_percent', 'mixture_upper_lean_percent', 'mixture_upper_rich_percent'];
     // SFC curves: one row per point of each engine's curve.
     const sfcColumns = ['engines', 'shaft_hp', 'bsfc', 'throttle_percent', 'tsfc', 'fuel_kgs'];
     const text = kind === 'json' ? JSON.stringify(list.map(d => ({entry: d.index + 1, propeller_pitch: d.entry.pitch, ...d.result})), null, 1) : shown.axis === 'sfc' ?

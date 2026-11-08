@@ -21,6 +21,7 @@ import numpy as np
 
 from component_assembly import f32
 from em_solver import AIRCRAFT, settings
+from em_speed_limits import speed_limits, sweep_excluded_kmh
 
 KGF = 9.80665
 # The game engine model's own horsepower, used for every hp on the site (Leo, 2026-10-29): 746 W (piston torque_base =
@@ -87,6 +88,44 @@ def solver(name, altitude, throttle, pitch, mass='{}'):
     return chart
 
 
+# The mixture lever's top and step (aces.exe mixture axis 0x141604EE0: each engine's command is max(0, min(1.2,
+# setting)), 0x14714D9CC, held in steps of 0.005, 0x14714E8C8; WT-FM-MOUSE-AIM scripts/native_engine_axis_handlers.py).
+MIXTURE_LEVER_MAX, MIXTURE_LEVER_STEP = 1.2, .005
+
+
+def mixture_band(ep, lever, body_u, height):
+    """Where the mixture lever gives full power (Leo, 2026-11-08), from the game's mixture law (piston_model.mixture) at
+    this inlet pressure P (ambient plus ram on the forward speed, before the supercharger, so neither throttle nor gear
+    enters). The engine's supply is lever x AltitudePressureToP0: rich of P, power falls as P / supply; lean of P it stays
+    full while supply > P / 4, and the engine stops below 0.03. So with b = P / AltitudePressureToP0, type 2 is at full
+    power for a lever in (max(b / 4, 0.03 / scale), b]. Type 1 reads the lever as at least 100%: full power up to 100%,
+    and above it on the same interval, which can leave a gap above 100% (a small AltitudePressureToP0, such as the
+    Mosquito's 0.118). Returns the full-power settings as (lean, rich) of the piece holding the lowest setting, the power
+    at 100% (percent of full), and (lean, rich) of a piece above a gap or None; or None without a lever (Mixer
+    IsControllable false, or type 0) or with no full-power setting."""
+    from piston_model import inlet_pressure, mixture
+    if not lever or ep['mixer_type'] not in (1, 2):return None
+    inlet = inlet_pressure(height, body_u, ep['ram_recovery'])
+    scale = float(ep['mixer_scale'])
+    balanced, top = float(inlet) / scale, MIXTURE_LEVER_MAX
+    full = (max(.25 * balanced, .03 / scale), min(balanced, top))
+    if ep['mixer_type'] == 1:
+        # A gap above 100% narrower than one lever step holds no setting the game can take.
+        full = (max(full[0], 1.), full[1])
+        pieces = [(0., full[1])] if full[0] < 1. + MIXTURE_LEVER_STEP and full[1] > 1. else [(0., 1.)] + ([full] if full[0] < full[1] else [])
+    else:
+        pieces = [full] if full[0] < full[1] else []
+    if not pieces:return None
+    percent = lambda piece:(piece[0] * 100., piece[1] * 100.)
+    return (*percent(pieces[0]), float(mixture(ep, inlet, 1.)['multiplier']) * 100., percent(pieces[1]) if len(pieces) > 1 else None)
+
+
+def mixture_levers(chart):
+    """Whether each engine has a mixture lever (the FM's Mixer IsControllable), in engine order."""
+    from jet_catalog import engines
+    return [bool(e.get('Mixer', {}).get('IsControllable')) for _, e in engines(chart.fm)]
+
+
 def propeller_row(chart, speed_kmh, report):
     from em_operating import flight_condition
     from prop_admission import evaluate as admission
@@ -128,6 +167,9 @@ def propeller_row(chart, speed_kmh, report):
                for i in turbines]
     turbine_n = sum(x['thrust'] for x in scalars)
     exact = all(x['consumption'] == state['engines'][i]['consumption'] for x, i in zip(scalars, turbines))
+    levers = mixture_levers(chart)
+    mixtures = [mixture_band(p['engines'][i]['properties'], levers[i] if i < len(levers) else False, velocity[0], chart.config['altitude_m'])
+                for i in pistons]
     return dict(thrust_kgf=thrust / KGF, power_hp=power / GAME_HP if power > 0. or pistons else None,
                 engine_power_hp=[e.get('torque', 0.) * e['omega'] / GAME_HP for e in state['engines']],
                 fuel_kgh=sum(fuel), engine_fuel_kgh=fuel,
@@ -141,6 +183,10 @@ def propeller_row(chart, speed_kmh, report):
                 manifold_ata=[float(state['engines'][i].get('manifold', math.nan)) for i in pistons],
                 gear=[int(state['engines'][i].get('gear', 0)) + 1 for i in pistons],
                 governor=list(prop['stationarity'].get('governor_status') or ()), tip_mach=tips,
+                mixture_lean_percent=[m and m[0] for m in mixtures], mixture_rich_percent=[m and m[1] for m in mixtures],
+                mixture_power_percent=[m and m[2] for m in mixtures],
+                mixture_upper_lean_percent=[m and m[3] and m[3][0] for m in mixtures],
+                mixture_upper_rich_percent=[m and m[3] and m[3][1] for m in mixtures],
                 mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
 
 
@@ -199,8 +245,10 @@ def level_row(chart, speed_kmh, near):
     """SEP in 1 g level flight (Leo, 2026-10-28): the EM plotter's point solve at 1 g, seeded from a nearby solved point
     as em_server.solve_point seeds a clicked one; kept when the chart admits it and no engine over-revs (Leo, 2026-10-29).
     Returns (row, seed): seed holds what em_sampling.continuation_initial reads from the point."""
+    from altitude_chart import settle
     from em_sampling import continuation_initial
-    try:p = chart.solve(speed_kmh, 1., continuation_initial(chart, near, list(near['solution'])) if near is not None else None)
+    # Above 9,900 m a state ending its step a hair upward is rejected; the altitude envelope's nudge lands it on the other side.
+    try:p = settle(chart, chart.solve, speed_kmh, chart.solve(speed_kmh, 1., continuation_initial(chart, near, list(near['solution'])) if near is not None else None))
     except ValueError:return None, None
     prop = p.get('propulsion') or {}
     if not p.get('valid') or any(r > l * (1 + 1e-6) for r, l in zip(prop.get('engine_rpm') or (), prop.get('engine_rpm_threshold') or ())):
@@ -249,7 +297,8 @@ def march(xs, at, starts, blank):
 # The plotted quantities (Leo, 2026-10-28: power, thrust, efficiency, SEP; RPM, blade pitch and manifold only in details;
 # 2026-10-29: fuel flow; SFC, over throttle).
 CURVES = {'power':lambda r:r.get('power_hp'), 'thrust':lambda r:r.get('thrust_kgf'), 'efficiency':lambda r:r.get('efficiency'),
-          'fuel':lambda r:r.get('fuel_kgh'), 'sep':lambda r:r.get('ps_mps')}
+          'fuel':lambda r:r.get('fuel_kgh'), 'sep':lambda r:r.get('ps_mps'),
+          'mixture':lambda r:(r.get('mixture_rich_percent') or [None])[0]}
 
 
 def curves_for(quantity):
@@ -371,8 +420,24 @@ def refined(rows, at, x, step, curves):
     return out
 
 
+def past_limit(chart, speed_kmh):
+    """Whether a true airspeed is past the aircraft's limits at the chart's altitude: states there are not results (Leo,
+    2026-10-31: the range has no cap, the aircraft's limits still apply). The EM chart's own: VNE, Mach, flap limits for
+    the selected flaps, and the speeds where the selected wing sweep is unavailable."""
+    limit = speed_limits(chart.fm, chart.config)
+    return (limit['enforced'] and speed_kmh > limit['speed_kmh']) or any(a < speed_kmh < b for a, b in sweep_excluded_kmh(chart.fm, chart.config))
+
+
+def within_limit(chart, speeds):
+    """A speed sweep's range (min, max), ending just inside the aircraft's lowest limit, so its points stay as dense
+    whatever range was asked for."""
+    limit, (low, high) = speed_limits(chart.fm, chart.config), speeds
+    return (low, min(high, limit['sample_speed_kmh'])) if limit['enforced'] and limit['sample_speed_kmh'] > low else speeds
+
+
 def axial_point(chart, height, speed, propulsion, report):
     """An engine sweep row: the axial state at angle of attack 0, unsolved where the EM plotter's reference is."""
+    if past_limit(chart, speed):return dict(altitude_m=height, speed_kmh=speed, solved=False)
     try:value = (jet_row(chart, speed) if propulsion == 'jet' else rocket_row(chart, speed) if propulsion == 'rocket' else
                  propeller_row(chart, speed, report))
     except (ValueError, ArithmeticError, np.linalg.LinAlgError):value = None
@@ -381,6 +446,7 @@ def axial_point(chart, height, speed, propulsion, report):
 
 def level_point(chart, height, speed, near):
     """A level-flight sweep row and its continuation seed."""
+    if past_limit(chart, speed):return dict(altitude_m=height, speed_kmh=speed, solved=False), None
     try:value, seed = level_row(chart, speed, near)
     except (ArithmeticError, np.linalg.LinAlgError):value = seed = None
     return dict(value or {}, altitude_m=height, speed_kmh=speed, solved=value is not None), seed
@@ -457,11 +523,11 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
     plotted CURVES key the refinement follows (None: all of them)."""
     entry, prop = admitted(name, throttle, pitch)
     started = time.perf_counter()
-    altitudes, speeds = sweeps(entry['propulsion'], altitudes, speeds)
     curves = curves_for(quantity)
     spec = (name, throttle, pitch, mass, bool(level), report)
     with LOCK:
         chart = solver(name, altitude_m, throttle, pitch, mass)
+        altitudes, speeds = sweeps(entry['propulsion'], altitudes, within_limit(chart, speeds or SPEEDS.get(entry['propulsion'], (0., 800.))))
         mode = dict(key='throttle', label=f'{throttle:g}%', level=bool(level))
         for axis, xs, fixed in (('altitude', altitudes, speed_kmh), ('speed', speeds, altitude_m)):
             if sweep not in (None, axis):continue
@@ -504,7 +570,7 @@ def request(body, report=None):
         if (not isinstance(r, list) or len(r) != 2 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in r)
                 or not 0 <= r[0] < r[1] <= high):raise ValueError(key + ' must be two increasing values from 0' + (f' to {int(high)}' if high < math.inf else ''))
         return float(r[0]), float(r[1])
-    # True airspeed has no upper limit (Leo, 2026-10-30): a sweep stays at most 800 steps and ends where states stop solving.
+    # The page's true airspeed range has no cap (Leo, 2026-10-30): a sweep stays at most 800 steps and ends at the aircraft's limits.
     altitudes, speeds = span('altitude_range', 18000.), span('speed_range', math.inf)
     quantity = body.get('quantity')
     if quantity is not None and quantity not in CURVES and quantity != 'sfc':raise ValueError('Unknown quantity')
