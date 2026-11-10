@@ -87,10 +87,8 @@ load, and releases that cap only after the pull has been held for a while.
 The release starts `overloadTimeRange[0] / overloadTimeRate` seconds into the
 pull, read from the gameplay defaults and the flight model's `Instructor`
 block (defaults 0.9 / 0.45 = 2 s; never when the rate is zero or the range
-starts at 1 or more). The chart draws both states. Where the release starts
-after 10 s or more, or never, the protected limit is the envelope and the
-released limit is a dashed line above it (**Instructor limit after N s**;
-none when it is never released).
+starts at 1 or more). Where the release starts after 10 s or more, or never,
+the protected limit is the envelope and the released limit is not drawn.
 Where it starts sooner, the released limit is the envelope and the protected
 limit is a dashed line inside it (**Instructor wing protection, first N s**).
 The game's release timer runs only while the wing's breaking-load AoA lies

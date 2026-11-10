@@ -465,7 +465,8 @@ def secondary_pass(name, cfg, tracer, solver, binds, loops, extra, report, cance
     from em_trim_work import Work, use
     state = getattr(solver, 'instructor_protection', None)
     if state is None or not WING.rule(solver):return dict(ran=False, reason='no wing protection')
-    if math.isinf(solver.protection_release_s):return dict(ran=False, reason='never released')
+    # Leo 2026-11-10: no 'Instructor limit after N s' line; only short-release aircraft get the dashed protection line
+    if state == 'held' or math.isinf(solver.protection_release_s):return dict(ran=False, reason='protection held: no released line')
     if not binds:return dict(ran=False, reason='protection never binds')
     other = 'released' if state == 'held' else 'held'
     cfg2 = settings(dict(cfg, instructor_protection=other))
