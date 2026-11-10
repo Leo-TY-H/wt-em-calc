@@ -306,6 +306,9 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
     cdef double tr[3]
     cdef double deflection, axial_force, direction, reaction, normalized, damp, momentum, a, b, c, d, t
     cdef double first, thrust2, torque2
+    # Match Python float ** in the wake flux. A volatile exponent prevents
+    # GCC from replacing libm pow with multiplication (one-ulp ARM drift).
+    cdef volatile double flux_exponent = 2.
     cdef int i, k
     local_flow32(p, velocity, body_omega, local, local_w, &transverse_sq, &transverse)
     disc = M_PI*.25*pow(p.diameter, 2.)
@@ -339,7 +342,7 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
         st.equilibrium_flow[0] = x;st.equilibrium_flow[1] = induced_flow(thrust, ambient+.5*x, density, disc, airflow[2])
         st.equilibrium_flow[2] = 0.
     else:
-        flux = sqrt(pow(local[0]+.5*x, 2.)+transverse_sq)*disc*density
+        flux = sqrt(pow(local[0]+.5*x, flux_exponent)+transverse_sq)*disc*density
         divisor = pow(p.diameter*.5, 2.)*flux*.5
         st.equilibrium_flow[0] = x; st.equilibrium_flow[1] = 0.
         st.equilibrium_flow[2] = clamp64(torque/divisor if fabs(divisor) > 4e-19 else 0., 0., 20.)
