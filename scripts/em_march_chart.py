@@ -442,7 +442,12 @@ def protection_scan(solver, columns, failures=None):
         d = lim.get('released_limit_deg', lim['free_limit_deg'])-lim['held_limit_deg']
         if d <= 1e-6:continue
         if state == 'held':binds |= c.get('boundary_reason') == 'Instructor pitch' and bool(lim['releasable'])
-        else:binds |= d > ctl['effective_angle_limits_deg'][1]-max(ctl['adjusted_wing_angles_deg'])-.05
+        else:
+            # the upper margin of the admission: with the tailplane cap where it is the smaller term (the readout
+            # effective_angle_limits_deg is the acceleration margin alone)
+            upper = ctl['effective_angle_limits_deg'][1]
+            if ctl.get('tail_cap_limiting'):upper = max(ctl['adjusted_wing_angles_deg'])+ctl['tail_cap_margin_deg']
+            binds |= d > upper-max(ctl['adjusted_wing_angles_deg'])-.05
     return bool(binds)
 
 

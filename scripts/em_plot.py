@@ -563,6 +563,11 @@ def add_boundary_limits(aircraft, source):
             label=search if column['boundary_status']=='plot ceiling' else boundary_limit_label(
                 column['boundary'],column.get('boundary_reason'))
             if label=='AoA limiter (Instructor)' and capped(column):label='AoA limiter (Instructor wing protection)'
+            # the tailplane cap of the Instructor's stick solve is the smaller term of the upper margin and the margin
+            # that ends the column (instructor_aoa.controller_limits: angle_margin = min(lower, upper) / 10)
+            ctl=column['boundary'].get('instructor') or {}
+            tail_cap=ctl.get('tail_cap_limiting') and ctl.get('tail_cap_margin_deg',1e30)/10.<=ctl.get('angle_margin',-1e30)
+            if label.startswith('AoA limiter (Instructor') and tail_cap:label='AoA limiter (Instructor tail-plane cap)'
             run.append((column['speed_kmh'],label))
         else:
             if run:groups.append(dict(run))

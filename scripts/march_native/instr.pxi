@@ -104,6 +104,7 @@ cdef struct InstrRes:
     double sticks[3]
     double low, high
     double effective[2]
+    bint tail_limiting      # tail_cap_limiting: the tailplane cap is the smaller term of the upper margin
     double adjusted[2]
     double rate
     double demand_angle[2]
@@ -1243,6 +1244,7 @@ cdef class Instructor:
             delivered_pitch=delivered_pitch,
             required_pitch=delivered_pitch, angle_limits_deg=[r.low, r.high] if self.aoa_limit else None,
             effective_angle_limits_deg=[r.effective[0], r.effective[1]], adjusted_wing_angles_deg=[r.adjusted[0], r.adjusted[1]],
+            tail_cap_margin_deg=r.bal[1].tail_margin, tail_cap_limiting=bool(r.tail_limiting),
             native_angle_rate_rad_s=r.rate, model='effective AoA schedule with reduced moment balance',
             rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
             overload_policy='wing protection held (overload timer 0)' if self.overload_held
@@ -1285,8 +1287,8 @@ cdef class Instructor:
         cdef Allocation alloc
         cdef double a_r, e_r, cos_dihedral, q, low, high, factor, scale, vv, valid_lo, lower, upper, normalized, kd, damping
         cdef double x0, y0, x1, y1, kpd, mass_scale, effective_area, rudder_trim, pitch_rate, gear_fraction
-        cdef double low_inverse, high_inverse, low_held, high_held
-        cdef bint valid, independent
+        cdef double low_inverse, high_inverse, low_held, high_held, upper_margin
+        cdef bint valid, independent, tail_limiting
         cdef int i
         tas = inp.tas;speed_squared = inp.speed_squared;mach = inp.mach;ias_u = inp.ias_u
         wing_angles[0] = inp.wing_angles[0];wing_angles[1] = inp.wing_angles[1]
@@ -1363,7 +1365,11 @@ cdef class Instructor:
                 self.required_acceleration(ip, delivered[1], &bal[i])
             margins_angle[0] = (demand_acc[0]-bal[0].acceleration)/kp
             margins_angle[1] = (bal[1].acceleration-demand_acc[1])/kp
-            if self.tail_clamp:margins_angle[1] = pmin(margins_angle[1], bal[1].tail_margin)
+            # the acceleration margin alone (the readout r.effective) and whether the tailplane cap is the smaller term
+            upper_margin = margins_angle[1];tail_limiting = False
+            if self.tail_clamp:
+                tail_limiting = bal[1].tail_margin < margins_angle[1]
+                margins_angle[1] = pmin(margins_angle[1], bal[1].tail_margin)
         else:
             # autotrim without the Instructor (instructor_aoa.controller_limits): no AoA limit
             for i in range(2):
@@ -1371,6 +1377,7 @@ cdef class Instructor:
                 bal[i].tail_margin = 1e30
                 bal[i].direct = False
             margins_angle[0] = margins_angle[1] = 1e30     # instructor_aoa.NO_INSTRUCTOR_MARGIN
+            upper_margin = 1e30;tail_limiting = False
         independent = True
         for i in range(3):
             if self.alloc_props.trim_available[i] and not (ranges[2*i] == -1. and ranges[2*i+1] == 1.):
@@ -1395,7 +1402,8 @@ cdef class Instructor:
             mechanical = vv if i == 0 else pmin(mechanical, vv)
         r.angle_margin = pmin(margins_angle[0], margins_angle[1])/10.
         r.mechanical = mechanical
-        r.effective[0] = pmin(adjusted[0], adjusted[1])-margins_angle[0];r.effective[1] = pmax(adjusted[0], adjusted[1])+margins_angle[1]
+        r.effective[0] = pmin(adjusted[0], adjusted[1])-margins_angle[0];r.effective[1] = pmax(adjusted[0], adjusted[1])+upper_margin
+        r.tail_limiting = tail_limiting
         for i in range(3):
             r.bounds[i][0] = alloc.bounds[i][0];r.bounds[i][1] = alloc.bounds[i][1]
             r.trim[i] = alloc.trim[i];r.sticks[i] = alloc.sticks[i]

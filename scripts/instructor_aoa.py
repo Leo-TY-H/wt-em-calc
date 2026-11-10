@@ -35,6 +35,9 @@ def controller_limits(solver, value, speed=None):
     targets = demands = limits = None
     balances = []
     margins_angle = [NO_INSTRUCTOR_MARGIN, NO_INSTRUCTOR_MARGIN]
+    # the upper acceleration margin alone (deg of wing AoA: the readout effective_angle_limits_deg), the tailplane cap
+    # margin (deg of tail angle) and whether the cap is the smaller term on the upper side
+    upper_margin, tail_cap, tail_limiting = NO_INSTRUCTOR_MARGIN, instructor_aoa_balance.NO_TAIL_CAP, False
     if instructor:
         common = dict(rho=fixed['rho'], speed_squared=state['wrapper']['speed_squared'],
             area=state['wing_area'], dihedral=state['dihedral'], strength=state['strength'],
@@ -58,9 +61,11 @@ def controller_limits(solver, value, speed=None):
                                                   state['predictor'], state['delivered'][1]))
         margins_angle = [(demands[0]['target_acceleration']-balances[0]['acceleration']) / kp,
                         (balances[1]['acceleration']-demands[1]['target_acceleration']) / kp]
+        upper_margin, tail_cap = margins_angle[1], balances[1]['tail_cap_margin_deg']
         # the tailplane cap of the stick solve (instructor_aoa_balance.TAIL_CLAMP): upper side only, deg of tail angle
         if instructor_aoa_balance.TAIL_CLAMP:
-            margins_angle[1] = min(margins_angle[1], balances[1]['tail_cap_margin_deg'])
+            tail_limiting = tail_cap < margins_angle[1]
+            margins_angle[1] = min(margins_angle[1], tail_cap)
     ground = [solver.fm['AvailableControls'].get('has'+axis+'TrimGroundControl', False)
               for axis in ('Aileron', 'Elevator', 'Rudder')]
     controls = dict(solver.controls, trim_available=trim_retained(
@@ -83,7 +88,8 @@ def controller_limits(solver, value, speed=None):
     angle_margin = min(margins_angle) / 10.
     margins = {'Instructor effective AoA': angle_margin,
                'control authority with auto trim': mechanical}
-    effective = [min(adjusted)-margins_angle[0], max(adjusted)+margins_angle[1]]
+    # the wing-AoA limits of the acceleration margins; the tailplane cap (a tail angle) is reported beside them
+    effective = [min(adjusted)-margins_angle[0], max(adjusted)+upper_margin]
     out = dict(converged=auto['success'] or independent, margin=min(margins.values()), margins=margins,
         authority_mode=solver.config.get('instructor_authority_mode','native'),
         envelope_margin=angle_margin, pitch_margin=angle_margin, angle_margin=angle_margin,
@@ -94,6 +100,7 @@ def controller_limits(solver, value, speed=None):
         delivered_pitch=state['delivered'][1],
         required_pitch=state['delivered'][1], angle_limits_deg=limits if instructor else None,
         effective_angle_limits_deg=effective, adjusted_wing_angles_deg=adjusted,
+        tail_cap_margin_deg=tail_cap, tail_cap_limiting=tail_limiting,
         native_angle_rate_rad_s=fixed['rate'],
         model='effective AoA schedule with reduced moment balance' if instructor else 'autotrim authority (Instructor off)',
         rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
