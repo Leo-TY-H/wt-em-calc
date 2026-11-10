@@ -101,7 +101,7 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "0a059de46c5d4d9896f6f9bfa787ee69667233a48e9028bd842e05e9f27fa38d",
+ "python_sha256": "042f977a1c96b03be3ff1afc71a4a1791a731ecd53a17254a713a3ab559d27bc",
  "verification": {
   "date": "2026-11-10",
   "aircraft": [
@@ -121,7 +121,8 @@
    "f_104a:rb",
    "mirage_2000c_s5:rb",
    "ariete:rb",
-   "rafale_c_f3:rb"
+   "rafale_c_f3:rb",
+   "f_104a:sb"
   ],
   "checks": {
    "bi:sb": {
@@ -1297,9 +1298,18 @@
       }
      ]
     }
+   },
+   "f_104a:sb": {
+    "operating_point": {
+     "checked": 12,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
    }
   },
-  "finish_rows": 11959,
+  "finish_rows": 12748,
   "method": "scripts/verify_march_native.py"
  }
 }

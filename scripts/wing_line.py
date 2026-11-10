@@ -37,8 +37,11 @@ G = 9.8100004196167
 
 
 def rule(solver):
-    """The wing is a line, not a cut: Flutter on, under the march chart's admission rule (solver.soft_admission)."""
-    return RULE and bool(solver.config['structural_limits']) and bool(getattr(solver, 'soft_admission', False))
+    """The wing is a line, not a cut: Flutter on and the Instructor on, under the march chart's admission rule
+    (solver.soft_admission). Without the Instructor nothing limits a full pull near the wing, so the wing stays the
+    boundary there (Leo 2026-11-10: the F-104A full-real envelope ran to 22 g)."""
+    return (RULE and bool(solver.config['structural_limits']) and bool(solver.config.get('instructor'))
+            and bool(getattr(solver, 'soft_admission', False)))
 
 
 def break_seconds(ratio):
