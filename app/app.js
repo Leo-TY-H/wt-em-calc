@@ -83,7 +83,7 @@ const nameCode=n=>(String(n).match(/\[([^\]]*)\]/)||[])[1]||'';
 const sortName=n=>cleanName(n).replace(/^[^\p{L}\p{N}]+/u,'');
 const conditionsFrom=c=>Object.fromEntries(conditionKeys.map(k=>[k,c[k]??({experimental_instantaneous_aero:false,experimental_lateral_trim:'full',mach_curve_mode:'auto'}[k]??state.meta.defaults[k])]));
 // control_mode stays on the page; the server takes the Instructor, autotrim and torque/gyro it sets.
-const requestConditions=c=>{const values={...c,...fixedSolverConditions};delete values.mach_curve_mode;delete values.control_mode;return values;};
+const requestConditions=c=>{const values={...c,...fixedSolverConditions};delete values.mach_curve_mode;delete values.control_mode;if(values.instructor_protection==null)delete values.instructor_protection;return values;};
 // Preserve actual result settings for display and stale-result comparisons.
 // Editing or copying settings applies the fixed browser model to every entry.
 // Autotrim defaults to the Instructor setting (settings saved before the switch); torque/gyro follows
