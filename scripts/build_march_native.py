@@ -3,7 +3,7 @@
   python scripts/build_march_native.py [--force]
 
 Same conventions as build_em_backend.py: Cython with strict floating point
-(/O2 /fp:strict on Windows; -O3 -ffp-contract=off -fno-fast-math elsewhere),
+(/O2 /fp:strict on Windows; strict GCC arithmetic and libm pow elsewhere),
 a new library directory per build (a loaded DLL is never overwritten), an
 import probe, then an atomic manifest. Docker and the Windows package build it
 ahead of time; development checkouts build it on first use. If it cannot be
@@ -23,7 +23,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRECTORY = ROOT/'.native_march'
-COMPILE_ARGS = ['/O2', '/fp:strict'] if os.name == 'nt' else ['-O3', '-ffp-contract=off', '-fno-fast-math']
+# Python's float ** calls libm pow. GCC otherwise replaces pow(x, 2.) with
+# x*x even without fast-math, which can differ by one ulp on Linux ARM and
+# break exact propulsion/finish-row parity. Keep the baseline operation.
+COMPILE_ARGS = ['/O2', '/fp:strict'] if os.name == 'nt' else ['-O3', '-ffp-contract=off', '-fno-fast-math', '-fno-builtin-pow']
 
 
 @contextmanager
