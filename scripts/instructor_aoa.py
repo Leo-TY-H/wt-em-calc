@@ -4,6 +4,7 @@ from instructor_protection import angle_targets, predicted_wing_angles, pitch_de
 from instructor_settings import trim_retained
 from instructor_predictor_inputs import pack_pitch_inputs
 from instructor_pitch_predictor import unpack_inputs
+import instructor_aoa_balance
 from instructor_aoa_balance import required_acceleration
 from instructor_static_trim import static_trim, trim_independent_authority
 
@@ -57,6 +58,9 @@ def controller_limits(solver, value, speed=None):
                                                   state['predictor'], state['delivered'][1]))
         margins_angle = [(demands[0]['target_acceleration']-balances[0]['acceleration']) / kp,
                         (balances[1]['acceleration']-demands[1]['target_acceleration']) / kp]
+        # the tailplane cap of the stick solve (instructor_aoa_balance.TAIL_CLAMP): upper side only, deg of tail angle
+        if instructor_aoa_balance.TAIL_CLAMP:
+            margins_angle[1] = min(margins_angle[1], balances[1]['tail_cap_margin_deg'])
     ground = [solver.fm['AvailableControls'].get('has'+axis+'TrimGroundControl', False)
               for axis in ('Aileron', 'Elevator', 'Rudder')]
     controls = dict(solver.controls, trim_available=trim_retained(

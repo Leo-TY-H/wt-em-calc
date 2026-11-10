@@ -68,6 +68,7 @@ cdef struct MachW:
 
 cdef struct Balance:
     double acceleration, tail_force, zero_force, tail_angle, flow
+    double tail_margin      # tail_cap_margin_deg (instructor_aoa_balance.NO_TAIL_CAP = 1e30: no cap)
     bint direct
 
 
@@ -449,7 +450,7 @@ cdef class Instructor:
     cdef bint overload, overload_held, overload_released
     cdef double overload_reserve
     cdef double overload_range[2]
-    # the stabilizer AoA clamp of the stick solve (instructor_aoa_balance.TAIL_CLAMP; WT_INSTRUCTOR_TAIL_CLAMP=0: off)
+    # the tailplane cap of the stick solve (instructor_aoa_balance.TAIL_CLAMP; WT_INSTRUCTOR_TAIL_CLAMP=0: off)
     cdef bint tail_clamp
     cdef double elevator_wing_aoa
     cdef Primary sel           # selected_properties(fm) for the Instructor authority ranges
@@ -757,10 +758,9 @@ cdef class Instructor:
         cdef double working, sn, cs, vx, vy, axial = 0., swirl = 0., qvx, wash, k, spin, dynamic, taq
         cdef double center, positive, negative, command, a, e, cladd, bias, angle, vstab_drag, other, extra, flow
         cdef double td, required, tail_cl, tail_force, lever, left[2], right[2], wing_force[2], zero_force, tail_out[2]
-        cdef double need_force, need_cl, need, game, game_force, shift, side
+        cdef double reach
         cdef double products[4]
         cdef bint inv[3]
-        cdef bint solved, saturated
         cdef bint convert = self.fl_7c0a
         cdef const double* f = self.f
         if ip[0] != 1.:raise ValueError('Expected mode 1')
@@ -823,22 +823,15 @@ cdef class Instructor:
         if b.legacy_balance_shift:
             lever = S(c.tail_lever, A(M(F(sin(M(fabs(working), RAD_W))), .5), ip[0x1c//4]))
         out.acceleration = (zero_force-tail_force)*lever/F(self.pitch_inertia)
-        if self.tail_clamp:
-            # instructor_aoa_balance.TAIL_CLAMP (Leo 2026-11-10): the game's tail angle for the target acceleration ip[8]
-            # (saturating at the tail polar's critical angles), clamped to 0.97 x its Mach-0 critical angles (ip[0x14],
-            # ip[0x18]); where that binds on the pull side the margin is the delivered tail angle against the bound angle
-            b.target_acceleration = ip[0x8//4]
-            pitch_balance(&b, wing_force, &need_force)
-            need_cl = A(DIVF(need_force, taq), M(c.tail_cl[1 if td < 0. else 0], td))
-            need = inverse_rotated_cl(&c.tail, need_cl, working if convert else 0., convert, &solved)
-            saturated = not solved and (need == c.tail.aoaCritH or need == c.tail.aoaCritL)
-            game = pmin(pmax(need, ip[0x14//4]), ip[0x18//4])
-            if (saturated or (solved and game != need)) and game*lever > 0.:
-                calc_c(&c.tail, game, working if convert else game, 0., 1., tail_out)
-                game_force = M(taq, S(tail_out[1], M(c.tail_cl[1 if td < 0. else 0], td)))
-                shift = fabs((game_force-tail_force)*lever/F(self.pitch_inertia))
-                side = (game-required)*lever
-                out.acceleration = ip[0x8//4]+(shift if side > 0. else -shift if side < 0. else 0.)
+        # instructor_aoa_balance.TAIL_CLAMP (Leo 2026-11-10): the delivered tail angle against the pull-side bound of the
+        # game's stick solve (0.97 x the Mach-0 critical angle, ip[0x14]/ip[0x18], or the current-Mach critical angle)
+        out.tail_margin = 1e30
+        if self.tail_clamp and c.has_sensitivity:
+            reach = DIVF(negative if self.fl_7c54 else positive, c.area_sensitivity_scale)
+            if reach > 0.:
+                out.tail_margin = S(required, pmax(ip[0x14//4], c.tail.aoaCritL))
+            elif reach < 0.:
+                out.tail_margin = S(pmin(ip[0x18//4], c.tail.aoaCritH), required)
         out.tail_force = tail_force;out.zero_force = zero_force;out.tail_angle = required;out.flow = flow
         return 0
 
@@ -1237,7 +1230,7 @@ cdef class Instructor:
         balances = [dict(acceleration=r.bal[i].acceleration, tail_force=r.bal[i].tail_force,
                          zero_acceleration_tail_force=r.bal[i].zero_force, tail_angle_deg=r.bal[i].tail_angle,
                          tail_angle_bounds_deg=[self.tail_bounds[0], self.tail_bounds[1]], flow_angle_deg=r.bal[i].flow,
-                         direct_predictor=bool(r.bal[i].direct)) for i in range(2)]
+                         direct_predictor=bool(r.bal[i].direct), tail_cap_margin_deg=r.bal[i].tail_margin) for i in range(2)]
         success = r.success
         if not self.aoa_limit:demands = None;balances = []
         return dict(converged=success or r.independent, margin=pmin(angle_margin, mechanical), margins=margins,
@@ -1370,10 +1363,12 @@ cdef class Instructor:
                 self.required_acceleration(ip, delivered[1], &bal[i])
             margins_angle[0] = (demand_acc[0]-bal[0].acceleration)/kp
             margins_angle[1] = (bal[1].acceleration-demand_acc[1])/kp
+            if self.tail_clamp:margins_angle[1] = pmin(margins_angle[1], bal[1].tail_margin)
         else:
             # autotrim without the Instructor (instructor_aoa.controller_limits): no AoA limit
             for i in range(2):
                 bal[i].acceleration = bal[i].tail_force = bal[i].zero_force = bal[i].tail_angle = bal[i].flow = float('nan')
+                bal[i].tail_margin = 1e30
                 bal[i].direct = False
             margins_angle[0] = margins_angle[1] = 1e30     # instructor_aoa.NO_INSTRUCTOR_MARGIN
         independent = True
