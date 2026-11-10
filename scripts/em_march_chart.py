@@ -424,7 +424,7 @@ def protection_scan(solver, columns, failures=None):
     margin moves exactly by the change of the limit; 0.05 deg slack). A column whose evaluation fails is skipped
     (its error text appended to ``failures``)."""
     state = getattr(solver, 'instructor_protection', None)
-    if not (WING.RULE and WING.rule(solver) and state):return False
+    if not (WING.RULE and state):return False
     binds = False
     for c in columns:
         if not ok(c):continue
@@ -464,7 +464,7 @@ def secondary_pass(name, cfg, tracer, solver, binds, loops, extra, report, cance
     from em_solver import settings
     from em_trim_work import Work, use
     state = getattr(solver, 'instructor_protection', None)
-    if state is None or not WING.rule(solver):return dict(ran=False, reason='no wing protection')
+    if state is None:return dict(ran=False, reason='no wing protection')
     # Leo 2026-11-10: no 'Instructor limit after N s' line; only short-release aircraft get the dashed protection line
     if state == 'held' or math.isinf(solver.protection_release_s):return dict(ran=False, reason='protection held: no released line')
     if not binds:return dict(ran=False, reason='protection never binds')
@@ -582,7 +582,7 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                 **({'wing_protection': dict(state=solver.instructor_protection, threshold_s=WING.HOLD_S,
                                             release_start_s=None if math.isinf(solver.protection_release_s)
                                             else float(solver.protection_release_s))}
-                   if WING.rule(solver) and getattr(solver, 'instructor_protection', None) else {}),
+                   if getattr(solver, 'instructor_protection', None) else {}),
                 # The complete curve solver record (knots, withheld checks, ends) for exports and replay.
                 curves=None if curves is None else {k: v for k, v in curves.items() if k not in ('seeds',)},
                 envelope_trace=dict(segments=envelope['segments'], mach_seams_kmh=envelope['mach_seams_kmh'],

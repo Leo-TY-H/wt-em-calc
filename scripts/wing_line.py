@@ -32,6 +32,9 @@ import math
 import os
 
 RULE = os.environ.get('WT_WING_LINE', '1') != '0'
+# Leo 2026-11-10 (later the same day): the wing's breaking load stays the drawn limit in every mode, also where the
+# achievable pull is above it. WT_WING_AS_LINE=1 brings back the wing as a line with the boundary past it.
+LINE = os.environ.get('WT_WING_AS_LINE', '0') == '1'
 HOLD_S = 10.               # release start (s) from which the protected limit is the chart boundary
 G = 9.8100004196167
 
@@ -40,7 +43,7 @@ def rule(solver):
     """The wing is a line, not a cut: Flutter on and the Instructor on, under the march chart's admission rule
     (solver.soft_admission). Without the Instructor nothing limits a full pull near the wing, so the wing stays the
     boundary there (Leo 2026-11-10: the F-104A full-real envelope ran to 22 g)."""
-    return (RULE and bool(solver.config['structural_limits']) and bool(solver.config.get('instructor'))
+    return (RULE and LINE and bool(solver.config['structural_limits']) and bool(solver.config.get('instructor'))
             and bool(getattr(solver, 'soft_admission', False)))
 
 
