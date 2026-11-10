@@ -96,7 +96,7 @@ const instructorAuthorityLabel=c=>c.instructor_authority_mode==='direct'?'Direct
 // Tail-plane cap of the Instructor's stick solve (record fields tail_cap_limiting and tail_cap_margin_deg, degrees of tail angle):
 // reported where it is the smaller term of the upper margin; it is the limiting constraint where it is also the smallest margin.
 const tailCapRows=i=>i?.tail_cap_limiting&&Number.isFinite(i.tail_cap_margin_deg)?[['Tail-plane cap',i.tail_cap_margin_deg>=0?fmt(i.tail_cap_margin_deg,3)+'° of tail angle left':'exceeded by '+fmt(-i.tail_cap_margin_deg,3)+'° of tail angle']]:[];
-const instructorLimitingLabel=i=>i.limiting==='Instructor effective AoA'&&i.tail_cap_limiting&&i.tail_cap_margin_deg/10<=i.angle_margin+1e-12?'Instructor tail-plane cap':i.limiting;
+const instructorLimitingLabel=i=>i.limiting==='Instructor effective AoA'&&i.tail_cap_limiting&&Number.isFinite(i.tail_cap_margin_deg)&&i.tail_cap_margin_deg/10<=i.angle_margin+1e-12?'Instructor tail-plane cap':i.limiting;
 const ammunitionFor=(aircraft,vehicle)=>aircraft?.ammunition?.variants?.[vehicle]||aircraft?.ammunition;
 function normalizeManualControls(values,aircraft){
   const caps=aircraft.manual_controls||{};

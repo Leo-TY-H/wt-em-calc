@@ -3,13 +3,35 @@
 The source predictor supplies both residuals and admission guards. Numerical
 correction is shared with the stationary aircraft and propulsion equations;
 there is no alternative finite-iteration model after a failed correction.
+
+A failed correction is restarted, with the same equations, corrector settings
+and admission test, from its returned wing angle and tail force with the
+elevator command placed on each side of zero (RESTART_COMMANDS, in order).
+The first correction starts at command exactly 0, where the control travel
+has a kink: one-sided derivative samples taken there can describe the wrong
+side of a root that exists (Rafale C at 5,000 m, 899-909 km/h). The first
+admitted restart is returned; when none is admitted the first correction is
+returned as before. Counts after a restart:
+  evaluations                         distinct predictor states evaluated by
+                                      the whole solve (seeds, first
+                                      correction and every restart);
+  correction.nfev / .evaluations /    objective samples / all samples /
+    .derivative_evaluations           derivative samples summed over the
+                                      first correction and every restart;
+  correction.restart_attempts         restarts run (0, 1 or 2);
+  correction.restart_command          command the returned restart started
+                                      from, None when the first is returned.
+Termination, residual, closure ratio and coordinates describe the returned
+correction. The native twin (march_native/instr.pxi trim_solve) follows this
+operation for operation.
 """
 import numpy as np
 
 from instructor_autotrim import autotrim_predictor
 from instructor_pitch_predictor import prepare_geometry
 
-REVISION = 'steady-authority-moment-initialization-v4'
+REVISION = 'steady-authority-moment-initialization-v5'
+RESTART_COMMANDS = (-.01, .01)
 
 
 def solve(model, ip, state):
@@ -66,19 +88,47 @@ def solve(model, ip, state):
     # Defer this import: compiled Instructor wrappers import this Python module
     # during backend activation, before all aircraft modules are installed.
     from em_stationary_corrector import Corrector
-    corrector = Corrector(evaluate, (lower,upper), [.002,2e-5,.0002],
-        branch=lambda value:value['proposal_branch'],
-        scale=[10.,1.,.2], step_limit=[8.,.3,.4],
-        residual_scale=[20./weight,20./moment_scale,2e-6])
-    fit = corrector.solve(initial, max_nfev=120,
-                          numerical_target=None, reuse_jacobian=True)
-    value = evaluate(fit.x)
+    from em_trim_numerics import UnevaluableTrial
+
+    def correct(start):
+        corrector = Corrector(evaluate, (lower,upper), [.002,2e-5,.0002],
+            branch=lambda value:value['proposal_branch'],
+            scale=[10.,1.,.2], step_limit=[8.,.3,.4],
+            residual_scale=[20./weight,20./moment_scale,2e-6])
+        fit = corrector.solve(start, max_nfev=120,
+                              numerical_target=None, reuse_jacobian=True)
+        value = evaluate(fit.x)
+        auto = value['auto']
+        eq = auto['equilibrium']
+        success = (auto['success'] and abs(eq['lift_error_n']) < 20.
+            and abs(eq['moment_error_nm']) < 20. and abs(eq['command_error']) < 2e-6
+            and abs(auto['output'][1]) <= 1. and np.isfinite(fit.x).all())
+        return fit, value, success
+
+    fit, value, success = correct(initial)
+    nfev, samples = fit.nfev, fit.evaluations
+    restart_command, restart_attempts = None, 0
+    if not success and np.isfinite(fit.x).all():
+        first = fit.x
+        for command in RESTART_COMMANDS:
+            restart_attempts += 1
+            try:
+                again = correct([first[0], first[1], command])
+            except UnevaluableTrial:
+                # Only the first sample of a correction can raise this (later
+                # unevaluable trials are skipped inside it): one objective
+                # sample was spent and this restart is not admitted.
+                nfev += 1
+                samples += 1
+                continue
+            nfev += again[0].nfev
+            samples += again[0].evaluations
+            if again[2]:
+                fit, value, success = again
+                restart_command = command
+                break
     auto = value['auto']
     eq = auto['equilibrium']
-
-    success = (auto['success'] and abs(eq['lift_error_n']) < 20.
-        and abs(eq['moment_error_nm']) < 20. and abs(eq['command_error']) < 2e-6
-        and abs(auto['output'][1]) <= 1. and np.isfinite(fit.x).all())
     return dict(success=bool(success), method='shared correction of simultaneous one-g relation',
         equilibrium=eq, trim=[auto['output'][2], auto['output'][1], 0.],
         one_g_alpha_deg=auto['output'][0], evaluations=calls,
@@ -88,9 +138,10 @@ def solve(model, ip, state):
         search_bounds=[lower,upper],
         search_bound_scope='Finite binary32 predictor states and retained command bound; no coverage proof',
         local_admission=bool(success),coverage_complete=False,
-        correction=dict(termination=fit.termination,nfev=fit.nfev,
-            evaluations=fit.evaluations,derivative_evaluations=fit.derivative_evaluations,
+        correction=dict(termination=fit.termination,nfev=nfev,
+            evaluations=samples,derivative_evaluations=samples-nfev,
             residual_max=float(np.max(abs(value['residual']),initial=0.)),
             return_metric=fit.return_metric,closure_ratio=fit.closure_ratio,
-            numerical_target_reached=fit.success),
+            numerical_target_reached=fit.success,
+            restart_command=restart_command,restart_attempts=restart_attempts),
         revision=REVISION)

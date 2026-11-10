@@ -416,6 +416,12 @@ cdef class TrimCorrector(NativeCorrector):
         return OK
 
 
+cdef inline bint trim_admitted(const Auto* au, const double* x) noexcept:
+    # instructor_trim_equilibrium.solve.correct: the success test of one correction
+    return (au.success and fabs(au.lift_error) < 20. and fabs(au.moment_error) < 20. and fabs(au.command_error) < 2e-6
+            and fabs(au.output[1]) <= 1. and isfinite(x[0]) and isfinite(x[1]) and isfinite(x[2]))
+
+
 cdef class Instructor:
     """instructor_at(value, speed) for one solver (steady effective-AoA schedule)."""
     cdef Model model
@@ -1015,9 +1021,12 @@ cdef class Instructor:
         cdef TrimCorrector tc
         cdef double weight, moment_scale, cl, slope, angle, tail, lift_slope, adjusted, finite32
         cdef double initial[3]
+        cdef double start[3]
         cdef Result res
+        cdef Result again
         cdef Predictor pred
-        cdef int slot, seed, seeded
+        cdef int slot = 0, seed, seeded, other, nfev = 0, samples = 0, restart_attempts = 0
+        cdef bint success = False
         cdef const Polar* p
         self.geometry(ip, &c)
         weight = pmax(fabs(ip[0x2c//4]), 1.)
@@ -1055,6 +1064,30 @@ cdef class Instructor:
                         initial[0] = pmin(p.aoaCritH, pmax(p.aoaCritL, adjusted))
         pred.valid = False
         tc.solve(initial, 120, 0, &pred, False, &res)
+        restart_command = None
+        if res.termination != -1:
+            slot = tc.lookup(res.x)
+            success = trim_admitted(&tc.memo[slot].auto, res.x)
+            nfev = res.nfev;samples = res.evaluations
+            if not success and isfinite(res.x[0]) and isfinite(res.x[1]) and isfinite(res.x[2]):
+                # The restart of a failed correction (instructor_trim_equilibrium.solve): the same corrector and memo
+                # from the returned wing angle and tail force of the first correction, the command on each side of 0.
+                # A new Python Corrector differs from this one only in counters that solve() reads as differences.
+                from instructor_trim_equilibrium import RESTART_COMMANDS
+                for command in RESTART_COMMANDS:
+                    restart_attempts += 1
+                    start[0] = res.x[0];start[1] = res.x[1];start[2] = command
+                    tc.solve(start, 120, 0, &pred, False, &again)
+                    if again.termination == -1:
+                        # UnevaluableTrial at the first sample: one objective sample spent, not admitted
+                        nfev += 1;samples += 1
+                        continue
+                    nfev += again.nfev;samples += again.evaluations
+                    other = tc.lookup(again.x)
+                    if trim_admitted(&tc.memo[other].auto, again.x):
+                        res = again;slot = other;success = True;restart_command = command
+                        break
+        # The Python jacobian charges these as it samples; here the totals of the first correction and the restarts.
         if tc.derivative_samples:charge(K_DERIV, tc.derivative_samples)
         if tc.nominal_comparisons:charge(K_NOMCMP, tc.nominal_comparisons)
         if tc.nominal_restorations:charge(K_NOMRES, tc.nominal_restorations)
@@ -1063,11 +1096,9 @@ cdef class Instructor:
         if res.termination == -1:
             from em_trim_numerics import UnevaluableTrial
             raise UnevaluableTrial('Nonfinite stationary residual; correction unresolved')
-        slot = tc.lookup(res.x)
+        # No lookup after this point: a new memo entry can move the block these point into.
         cdef Auto* au = &tc.memo[slot].auto
         r = tc.memo[slot].r
-        success = (au.success and abs(au.lift_error) < 20. and abs(au.moment_error) < 20. and abs(au.command_error) < 2e-6
-                   and abs(au.output[1]) <= 1. and isfinite(res.x[0]) and isfinite(res.x[1]) and isfinite(res.x[2]))
         from instructor_trim_equilibrium import REVISION
         f32max = np.nextafter(float(np.finfo(np.float32).max), 0.)
         lower = [-f32max, -f32max/weight, -1.];upper = [f32max, f32max/weight, 1.]
@@ -1082,11 +1113,12 @@ cdef class Instructor:
             search_bounds=[lower, upper],
             search_bound_scope='Finite binary32 predictor states and retained command bound; no coverage proof',
             local_admission=bool(success), coverage_complete=False,
-            correction=dict(termination=TERMINATIONS[res.termination], nfev=res.nfev,
-                evaluations=res.evaluations, derivative_evaluations=res.evaluations-res.nfev,
+            correction=dict(termination=TERMINATIONS[res.termination], nfev=nfev,
+                evaluations=samples, derivative_evaluations=samples-nfev,
                 residual_max=rmax,
                 return_metric='scaled_linf_then_l2', closure_ratio=res.closure_ratio,
-                numerical_target_reached=bool(res.success)),
+                numerical_target_reached=bool(res.success),
+                restart_command=restart_command, restart_attempts=restart_attempts),
             revision=REVISION)
 
     # ---------------------------------------------------------------- the controller
