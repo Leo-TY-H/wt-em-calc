@@ -16,8 +16,8 @@ from instructor_reduced import pitch_balance, tail_flow, legacy_wake_factor, inv
 # stick against that of the game's stick, as without the clamp), so the Instructor margin changes sign where the
 # delivered stick passes the game's stick. Only a bound on the pull side is applied (bound angle x tail lever > 0):
 # the push-side bound moves the lower stick bound, which a held pull never meets. A failed tail inverse (the game
-# then uses angle 0) keeps the unclamped margin. WT_INSTRUCTOR_TAIL_CLAMP=0 restores the deployed margin.
-TAIL_CLAMP = os.environ.get('WT_INSTRUCTOR_TAIL_CLAMP', '1') != '0'
+# then uses angle 0) keeps the unclamped margin. WT_INSTRUCTOR_TAIL_CLAMP=1 enables it (default off = the deployed margin).
+TAIL_CLAMP = os.environ.get('WT_INSTRUCTOR_TAIL_CLAMP', '0') == '1'  # off by default: it breaks canard and tailless aircraft (Rafale, F-16XL) until the margin is reworked; =1 turns it on
 
 
 def required_acceleration(model, ip, state, delivered_pitch):

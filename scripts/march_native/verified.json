@@ -101,9 +101,9 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "756db80c23acf1f9be7ca7e4644a3b9e395af9f61edf909e85f2ba94613824d6",
+ "python_sha256": "0a059de46c5d4d9896f6f9bfa787ee69667233a48e9028bd842e05e9f27fa38d",
  "verification": {
-  "date": "2026-11-09",
+  "date": "2026-11-10",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
@@ -120,7 +120,8 @@
    "a6m2_zero:sb-right",
    "f_104a:rb",
    "mirage_2000c_s5:rb",
-   "ariete:rb"
+   "ariete:rb",
+   "rafale_c_f3:rb"
   ],
   "checks": {
    "bi:sb": {
@@ -134,8 +135,8 @@
    },
    "f_16xl:rb": {
     "instructor": {
-     "checked": 2488,
-     "mismatched": 1144,
+     "checked": 2414,
+     "mismatched": 1110,
      "decision": 0,
      "worst": {
       "/static_trim/coordinates[]": 3.497202527569243e-15
@@ -257,7 +258,7 @@
    },
    "a6m2_zero:sb": {
     "operating_point": {
-     "checked": 286,
+     "checked": 290,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -266,11 +267,11 @@
    },
    "ki_61_1a_otsu:rb": {
     "instructor": {
-     "checked": 1597,
-     "mismatched": 1111,
+     "checked": 1548,
+     "mismatched": 1113,
      "decision": 0,
      "worst": {
-      "/static_trim/coordinates[]": 1.84297022087776e-14
+      "/static_trim/coordinates[]": 1.5654144647214707e-14
      },
      "examples": [
       {
@@ -338,7 +339,7 @@
       },
       {
        "speed": 131.94395376925996,
-       "load": 9.429649871280272,
+       "load": 9.42964987440555,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -359,7 +360,7 @@
       },
       {
        "speed": 131.94395376925996,
-       "load": 9.429649871280272,
+       "load": 9.42964987440555,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -381,7 +382,7 @@
      ]
     },
     "operating_point": {
-     "checked": 84,
+     "checked": 46,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -390,7 +391,7 @@
    },
    "f_14a_early:rb": {
     "instructor": {
-     "checked": 1091,
+     "checked": 1115,
      "mismatched": 240,
      "decision": 0,
      "worst": {
@@ -504,8 +505,8 @@
    },
    "bf-109f-4:real": {
     "instructor": {
-     "checked": 763,
-     "mismatched": 488,
+     "checked": 754,
+     "mismatched": 483,
      "decision": 0,
      "worst": {
       "/static_trim/coordinates[]": 7.716050021144838e-15
@@ -534,7 +535,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 12.016790992049447,
+       "load": 12.016790992048964,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -555,7 +556,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 12.016790992049447,
+       "load": 12.016790992048964,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -576,7 +577,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 4.055640688430951,
+       "load": 4.0556406884307785,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -597,7 +598,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 4.055640688430951,
+       "load": 4.0556406884307785,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -619,7 +620,7 @@
      ]
     },
     "operating_point": {
-     "checked": 159,
+     "checked": 111,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -628,7 +629,7 @@
    },
    "ki_61_1a_ko:sb": {
     "operating_point": {
-     "checked": 139,
+     "checked": 152,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -637,8 +638,8 @@
    },
    "bf-109f-4:rb": {
     "instructor": {
-     "checked": 1080,
-     "mismatched": 696,
+     "checked": 1083,
+     "mismatched": 698,
      "decision": 0,
      "worst": {
       "/static_trim/coordinates[]": 7.716050021144838e-15
@@ -667,7 +668,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 12.016790992049447,
+       "load": 12.016790992048964,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -688,7 +689,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 12.016790992049447,
+       "load": 12.016790992048964,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -709,7 +710,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 4.055640688430951,
+       "load": 4.0556406884307785,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -730,7 +731,7 @@
       },
       {
        "speed": 219.4434580078125,
-       "load": 4.055640688430951,
+       "load": 4.0556406884307785,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
@@ -770,11 +771,11 @@
    },
    "a6m5hei:rb": {
     "instructor": {
-     "checked": 1115,
-     "mismatched": 815,
+     "checked": 1113,
+     "mismatched": 825,
      "decision": 0,
      "worst": {
-      "/static_trim/coordinates[]": 1.1546319456101628e-14
+      "/static_trim/coordinates[]": 1.2434497875801753e-14
      },
      "examples": [
       {
@@ -795,80 +796,85 @@
       },
       {
        "speed": 215.83234350585937,
-       "load": 13.88845735268559,
+       "load": 4.2074492098266285,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
-         "-1.3501856045384264",
-         "-1.350185604538427"
+         "-1.3501363129243613",
+         "-1.3501363129243587"
         ],
         [
          "/static_trim/coordinates[1]",
-         "-0.03858306717509192",
-         "-0.038583067175092196"
+         "-0.03858645545520845",
+         "-0.038586455455208286"
         ],
         [
          "/static_trim/coordinates[2]",
-         "-0.12761623668801372",
-         "-0.12761623668801353"
+         "-0.12759662282122716",
+         "-0.127596622821227"
         ]
        ]
       },
       {
        "speed": 215.83234350585937,
-       "load": 13.88845735268559,
+       "load": 4.2074492098266285,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
-         "-1.3501856045384264",
-         "-1.350185604538427"
+         "-1.3501363129243613",
+         "-1.3501363129243587"
         ],
         [
          "/static_trim/coordinates[1]",
-         "-0.03858306717509192",
-         "-0.038583067175092196"
+         "-0.03858645545520845",
+         "-0.038586455455208286"
         ],
         [
          "/static_trim/coordinates[2]",
-         "-0.12761623668801372",
-         "-0.12761623668801353"
+         "-0.12759662282122716",
+         "-0.127596622821227"
         ]
        ]
       },
       {
        "speed": 215.83234350585937,
-       "load": 1.0,
+       "load": 9.03558427005879,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
-         "-1.3501450066507625",
-         "-1.350145006650761"
+         "-1.3501631793366133",
+         "-1.3501631793366125"
         ],
         [
          "/static_trim/coordinates[1]",
-         "-0.03858583918272881",
-         "-0.03858583918272867"
+         "-0.038584571471565805",
+         "-0.038584571471565444"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.12760935749708535",
+         "-0.12760935749708538"
         ]
        ]
       },
       {
        "speed": 215.83234350585937,
-       "load": 11.499601940439035,
+       "load": 9.03558427005879,
        "diffs": [
         [
          "/static_trim/coordinates[0]",
-         "-1.3501743110611204",
-         "-1.3501743110611195"
+         "-1.3501631793366133",
+         "-1.3501631793366125"
         ],
         [
          "/static_trim/coordinates[1]",
-         "-0.03858384686900265",
-         "-0.038583846869002014"
+         "-0.038584571471565805",
+         "-0.038584571471565444"
         ],
         [
          "/static_trim/coordinates[2]",
-         "-0.12761387311823225",
-         "-0.1276138731182324"
+         "-0.12760935749708535",
+         "-0.12760935749708538"
         ]
        ]
       }
@@ -877,7 +883,7 @@
    },
    "bf-109f-4:sb-right": {
     "operating_point": {
-     "checked": 63,
+     "checked": 117,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -886,7 +892,7 @@
    },
    "a6m2_zero:sb-right": {
     "operating_point": {
-     "checked": 57,
+     "checked": 197,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -895,7 +901,7 @@
    },
    "f_104a:rb": {
     "instructor": {
-     "checked": 1523,
+     "checked": 1541,
      "mismatched": 1102,
      "decision": 0,
      "worst": {
@@ -969,7 +975,7 @@
    },
    "mirage_2000c_s5:rb": {
     "instructor": {
-     "checked": 1861,
+     "checked": 1875,
      "mismatched": 957,
      "decision": 0,
      "worst": {
@@ -1083,7 +1089,7 @@
    },
    "ariete:rb": {
     "instructor": {
-     "checked": 1592,
+     "checked": 1584,
      "mismatched": 1168,
      "decision": 0,
      "worst": {
@@ -1199,9 +1205,101 @@
      "worst": {},
      "examples": []
     }
+   },
+   "rafale_c_f3:rb": {
+    "instructor": {
+     "checked": 2009,
+     "mismatched": 1182,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 2.55351295663786e-15
+     },
+     "examples": [
+      {
+       "speed": 361.1111111111111,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.059463803849489766",
+         "0.059463803849489884"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0487539354111901",
+         "-0.04875393541119008"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 14.718659353509745,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.05946263136725492",
+         "0.05946263136725481"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.04872814673529691",
+         "-0.048728146735296914"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 14.718659353509745,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.05946263136725492",
+         "0.05946263136725481"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.04872814673529691",
+         "-0.048728146735296914"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 15.735866999563225,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0594630022496032",
+         "0.05946300224960371"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.10213402296598897",
+         "0.10213402296598904"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 15.735866999563225,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0594630022496032",
+         "0.05946300224960371"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.10213402296598897",
+         "0.10213402296598904"
+        ]
+       ]
+      }
+     ]
+    }
    }
   },
-  "finish_rows": 10864,
+  "finish_rows": 11959,
   "method": "scripts/verify_march_native.py"
  }
 }
