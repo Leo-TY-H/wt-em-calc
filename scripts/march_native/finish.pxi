@@ -165,6 +165,9 @@ cdef class Finisher:
     # Over-rev (Leo 2026-10-26, option C; WT_OVERREV=0 restores the S16 rule): under the chart rule an engine over
     # RPMMaxAllowed is no rejection ('engine RPM limit'); the state carries its RPM (overrev.py)
     cdef public bint overrev
+    # Wing line (Leo 2026-11-10; WT_WING_LINE=0 restores the wing cut): under the chart rule the wing force is no
+    # rejection ('wing force limit'); the state keeps its structural flag and wing load ratios (wing_line.py)
+    cdef public bint wing_line
     cdef public bint is_prop, python_admission
     cdef object admission_revision
     cdef PropModel pm
@@ -215,6 +218,8 @@ cdef class Finisher:
         self.brake_choice = self.brake and braking_choice(solver)
         from overrev import rule as overrev_rule
         self.overrev = self.is_prop and overrev_rule(solver)
+        from wing_line import rule as wing_rule
+        self.wing_line = bool(wing_rule(solver))
         self.request_cache = {}
 
     def set_prop(self, PropModel pm, layout):
@@ -519,7 +524,9 @@ cdef class Finisher:
             f.has_sweep_range = True;f.sweep_range[0] = sweep_range[0];f.sweep_range[1] = sweep_range[1]
             if not sweep_range[0]-1e-7 <= self.solver.model['sweep'] <= sweep_range[1]+1e-7:self.add_reason(f, R_SWEEP)
         if self.structural:
-            for i in range(f.nstructural):self.add_reason(f, f.structural[i])
+            # wing line: the wing force is charted as a line, not a rejection (em_solver.certify)
+            for i in range(f.nstructural):
+                if f.structural[i] != R_WING or not self.wing_line:self.add_reason(f, f.structural[i])
         if self.flaps_available:
             from flap_model import violations as flap_violations
             for text in flap_violations(self.solver.flap_profile, self.flaps_percent, e.air.ias_u, e.air.mach, self.structural,

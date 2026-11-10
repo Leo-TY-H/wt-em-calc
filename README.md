@@ -4,11 +4,16 @@ closure through one evaluator and one shared numerical corrector.
 
 Charts use the **alpha-march chart solver** by default (`chart_solver="march"`).
 At each speed it starts from admitted level flight and raises alpha until the
-first physical limit; that state is the envelope point. A speed tracer places
+first limit reached with full pitch held in a sustained turn (the Instructor's
+AoA limit, control authority, stall, pitch response or a structural speed
+limit); that state is the envelope point. The wing's breaking load is not one
+of these limits: it is charted as a line inside the envelope, not a cut (see
+**Wing breaks (wing load)** below). A speed tracer places
 the columns (corners, edges and withheld midpoint checks). The selected SEP
 levels are then solved directly from the same columns and checked between
 knots with withheld exact solves. Every drawn state is an admitted full-model
-state with the unchanged physical checks, at zero prescribed sideslip. The
+state with the unchanged physical checks, at zero prescribed sideslip; the
+wing load is reported on every state and no longer rejects it. The
 envelope tolerance is 0.15 deg/s at standard precision and the curve tolerance
 is three times the chart curve tolerance. A compiled evaluate-and-correct loop
 (`scripts/march_native`, built into `.native_march/`) reproduces the Python
@@ -74,6 +79,28 @@ autotrim only is RB realistic controls, and both off is full real or SB, where
 the pilot trims freely. Torque/gyro follows autotrim in the browser (on exactly
 when autotrim is off); the API keeps `torque_gyro` independent. Settings
 without `autotrim` follow `instructor`.
+
+**Instructor wing protection.** With Flutter on (and the aircraft's
+`limitOverload` true) the game's Instructor caps its AoA limit at the reserve
+factor (`overloadMult`) times the AoA at which the wing reaches its breaking
+load, and releases that cap only after the pull has been held for a while.
+The release starts `overloadTimeRange[0] / overloadTimeRate` seconds into the
+pull, read from the gameplay defaults and the flight model's `Instructor`
+block (defaults 0.9 / 0.45 = 2 s; never when the rate is zero or the range
+starts at 1 or more). The chart draws both states. Where the release starts
+after 10 s or more, or never, the protected limit is the envelope and the
+released limit is a dashed line above it (**Instructor limit after N s**;
+none when it is never released).
+Where it starts sooner, the released limit is the envelope and the protected
+limit is a dashed line inside it (**Instructor wing protection, first N s**).
+The game's release timer runs only while the wing's breaking-load AoA lies
+inside the Instructor's base limit, so where the wing cannot be overloaded the
+cap is permanent in both states (F-104A: 0.77 × the critical angle at low
+speed). No dashed line is drawn where the two states give the same limit.
+Inside the Instructor's stick solve the game also clamps the required
+stabilizer AoA to 0.97 × the tail polar's critical angles; the chart's
+Instructor margin applies the same clamp (`WT_INSTRUCTOR_TAIL_CLAMP=0` turns
+it off).
 
 Autotrim applies the game's authored payload multiplier when calculating
 centre of gravity and inertia; total payload mass is unchanged. This follows
@@ -190,8 +217,10 @@ separate from numerical error and chart interpolation tolerances. Refinement
 comparisons include both samples' numerical allowances; contour and interpolation
 inversions stop at output accuracy rather than invisible decimal precision. The solver
 retains strict forward-flow, bank, stall, Instructor, control and structural
-checks, bounded governor equilibrium, manual-pitch shaft closure, and signed
-propeller absorbed power. Continuation selects an admitted local branch;
+speed checks, bounded governor equilibrium, manual-pitch shaft closure, and signed
+propeller absorbed power. On march charts and clicked points the wing load is
+charted as a line instead of a limit; the previous sampler still rejects
+states over the wing's breaking load. Continuation selects an admitted local branch;
 bounded discovery supplies seeds when ordinary correction fails. Full governor
 ordering and aircraft preference across all competing branches remain unproved.
 
@@ -266,6 +295,8 @@ During that baseline search, fixed target RPM allows engine torque and atmospher
 Blade geometry and Mach-independent polar parameters are prepared once per flight condition. The compiled wake loop and evaluator reuse private residual, flow and coefficient buffers; Mach-dependent coefficients are recalculated at every trial. Returned results remain detached from scratch storage. The Python backend runs the same wake algorithm, with the same convergence, cancellation and work-limit checks.
 
 Flap charts show a dashed **Flap deployment limit** when inhibited outward travel prevents deployment before the selected extension's hold limit. Above the dashed line, the chart assumes prior deployment; the envelope still ends at the applicable automatic-retraction or structural limit. Limits are converted to true airspeed at the selected altitude. The chart's flap percentage is actual extension: automatic IAS/Mach schedules clamp the requested target before the flaps move. For example, a MiG-29 (9-12A) takeoff request can deploy only 20% at high speed, starting from retracted; it does not require full takeoff extension first. No separate deployment line is drawn when deployment and hold limits coincide.
+
+**Wing breaks (wing load).** With Flutter on, the envelope is what holding full pitch gives, and the red **Wing breaks (wing load)** line inside it marks where the more loaded half-wing reaches its breaking load (wing load ratio 1). Above the line the game breaks an intact wing after about 0.47 / (ratio − 1) s: the stress fills in 0.3 / (ratio − 1) s, then each 48 Hz step breaks the wing with a chance of (ratio − 1) / 8 (2% over: about 23 s; 5%: 9 s; 10%: 5 s). Hovering the line gives the time to break when the envelope above it is held, the envelope's own hover gives it wherever the wing is over its limit there, and the details of a clicked point past the line show a **Wing load** row with the load and the time. SEP contours continue past the line, dotted and fainter (**Past the wing line**). A long-dashed line in the aircraft's colour is the Instructor's other wing-protection state, labelled **Instructor limit after N s** or **Instructor wing protection, first N s** (see Instructor wing protection above). The red line is drawn only inside the envelope. With Flutter off there is no wing line, no Instructor wing protection and no dashed line. Charts computed by the previous sampler, or by the Python march when the compiled loop is unavailable, still end at the wing's breaking load (**Structure (wing load)**) and have no wing line. `WT_WING_LINE=0` restores the wing as a cut for every chart, with the Instructor's protection released; `WT_INSTRUCTOR_TAIL_CLAMP=0` turns the Instructor's tail clamp off. Both are read when the server starts.
 
 The **Altitude envelope** page (under Flight Model Calculator) shares the EM page's sidebar, aircraft cards and settings popup. It draws SEP of 1 g level flight over true airspeed and altitude: SEP contours, the best-climb speed (dotted) and the edge of level flight, whose hover names the limit that ends it. The speed and altitude ranges are in the sidebar and start at 100 to 2,500 km/h and 0 to 10,000 m (up to 18,000 m is available); click a line for the full state there. Contour levels are chosen from the SEP the chart finds (even steps from 0 to just under the best SEP, two wider ones below 0) until you add or remove one, and then stay as you set them. Every sample is the EM plotter's own point, solved at that altitude by the compiled point solver (`scripts/altitude_chart.py`); rows are added where SEP or the edges differ from what the rows around them predict, and SEP jumps within a row are closed in on. Above 9,900 m the game takes vertical speed off every upward-moving step, so a level state that ends its step a hair upward is moved to the side that does not ascend, which changes its SEP by under 0.01 m/s. Where the slow or fast end reads "Level flight unresolved beyond here" the solver found no level state past it (the Instructor's own solve, or a trim that does not close), with no physical limit named; it is the same point solve the EM plotter uses.
 

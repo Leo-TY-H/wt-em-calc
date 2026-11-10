@@ -70,7 +70,7 @@ if (window.location.protocol === 'file:') window.location.replace('http://127.0.
 <label class="field">Additional mass at CG<div class="input-unit"><input id="extra-mass" type="number" min="0" max="5000" step="any" value="0"><span>kg</span></div></label>
 </div>
 <details id="legacy-modes" hidden><summary>Legacy modes</summary>
-<div class="field">Flutter<div class="mode-switch" role="radiogroup" aria-label="Flutter"><label><input id="flutter-on" type="radio" name="flutter" value="on" checked><span>On</span></label><label><input id="flutter-off" type="radio" name="flutter" value="off"><span>Off</span></label></div><small>The fixed search region always respects the selected aircraft’s structural load and speed limits. Off applies only to diagnostics with that search region disabled.</small></div>
+<div class="field">Flutter<div class="mode-switch" role="radiogroup" aria-label="Flutter"><label><input id="flutter-on" type="radio" name="flutter" value="on" checked><span>On</span></label><label><input id="flutter-off" type="radio" name="flutter" value="off"><span>Off</span></label></div><small>On: the chart marks where the wing breaks (red line) and ends at the structural speed limits. Off: no wing line, no Instructor wing protection, no structural speed limits.</small></div>
 </details>
 <div class="apply-settings"><button id="apply-settings-to-all" type="button">Apply these settings to all added aircraft</button><span id="apply-settings-status" class="hint" role="status" aria-live="polite"></span></div>
 </fieldset></div>

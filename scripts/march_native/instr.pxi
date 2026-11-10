@@ -443,6 +443,14 @@ cdef class Instructor:
     cdef double load_factor_limit[2]
     cdef double pitch_coeff[4]
     cdef double tail_bounds[2]
+    # Wing protection state of the chart (Leo 2026-11-10; instructor_aoa.controller_limits, wing_line.py): overload =
+    # a state is set (solver.instructor_protection 'held' | 'released') and limitOverload: the reserve cap with the
+    # overload timer at 0; released: the base limit on each side where the wing-strength AoA is inside it
+    cdef bint overload, overload_held, overload_released
+    cdef double overload_reserve
+    cdef double overload_range[2]
+    # the stabilizer AoA clamp of the stick solve (instructor_aoa_balance.TAIL_CLAMP; WT_INSTRUCTOR_TAIL_CLAMP=0: off)
+    cdef bint tail_clamp
     cdef double elevator_wing_aoa
     cdef Primary sel           # selected_properties(fm) for the Instructor authority ranges
     cdef Primary alloc_props   # solver.controls with the retained-trim availability
@@ -482,7 +490,7 @@ cdef class Instructor:
         m = solver.model;fm = m['fm'];ad = fm['Aerodynamics'];g = m['geometry'];mass = solver.mass
         cfg = solver.config
         import instructor_steady_aoa
-        if instructor_steady_aoa.REVISION != 'steady-effective-aoa-fixed-autotrim-v9':
+        if instructor_steady_aoa.REVISION != 'steady-effective-aoa-fixed-autotrim-v10':
             raise InstructorUnsupported('Instructor revision')
         self.authority_revision = authority_revision
         self.authority_mode = cfg.get('instructor_authority_mode', 'native')
@@ -541,6 +549,17 @@ cdef class Instructor:
         self.load_factor_limit[0] = lf[0];self.load_factor_limit[1] = lf[1]
         pc = list(map(f32, props.get('constPitchDerrCoeffMultByClLinearRatio', [0., 1., .01, 2.])))
         for i in range(4):self.pitch_coeff[i] = pc[i]
+        protection = getattr(solver, 'instructor_protection', None)
+        self.overload = protection is not None and bool(props.get('limitOverload', True))
+        self.overload_held = protection == 'held';self.overload_released = protection == 'released'
+        self.overload_reserve = 0.;self.overload_range[0] = self.overload_range[1] = 0.
+        if self.overload:
+            om = list(map(f32, props.get('overloadMult', [.85, .92, .85, .92])))
+            tr = list(map(f32, props.get('overloadTimeRange', [.9, 1.])))
+            if len(om) < 2 or len(tr) != 2:raise InstructorUnsupported('overload protection layout')
+            self.overload_reserve = om[1];self.overload_range[0] = tr[0];self.overload_range[1] = tr[1]
+        import instructor_aoa_balance
+        self.tail_clamp = bool(getattr(instructor_aoa_balance, 'TAIL_CLAMP', True))
         tail0 = mach_polar(m['polars']['HorStabPlane'][0][1], 0.)
         self.tail_bounds[0] = F(tail0['aoaCritL']*F(.97));self.tail_bounds[1] = F(tail0['aoaCritH']*F(.97))
         self.elevator_wing_aoa = m['controls']['Elevator']['wing_aoa']
@@ -738,8 +757,10 @@ cdef class Instructor:
         cdef double working, sn, cs, vx, vy, axial = 0., swirl = 0., qvx, wash, k, spin, dynamic, taq
         cdef double center, positive, negative, command, a, e, cladd, bias, angle, vstab_drag, other, extra, flow
         cdef double td, required, tail_cl, tail_force, lever, left[2], right[2], wing_force[2], zero_force, tail_out[2]
+        cdef double need_force, need_cl, need, game, game_force, shift, side
         cdef double products[4]
         cdef bint inv[3]
+        cdef bint solved, saturated
         cdef bint convert = self.fl_7c0a
         cdef const double* f = self.f
         if ip[0] != 1.:raise ValueError('Expected mode 1')
@@ -802,6 +823,22 @@ cdef class Instructor:
         if b.legacy_balance_shift:
             lever = S(c.tail_lever, A(M(F(sin(M(fabs(working), RAD_W))), .5), ip[0x1c//4]))
         out.acceleration = (zero_force-tail_force)*lever/F(self.pitch_inertia)
+        if self.tail_clamp:
+            # instructor_aoa_balance.TAIL_CLAMP (Leo 2026-11-10): the game's tail angle for the target acceleration ip[8]
+            # (saturating at the tail polar's critical angles), clamped to 0.97 x its Mach-0 critical angles (ip[0x14],
+            # ip[0x18]); where that binds on the pull side the margin is the delivered tail angle against the bound angle
+            b.target_acceleration = ip[0x8//4]
+            pitch_balance(&b, wing_force, &need_force)
+            need_cl = A(DIVF(need_force, taq), M(c.tail_cl[1 if td < 0. else 0], td))
+            need = inverse_rotated_cl(&c.tail, need_cl, working if convert else 0., convert, &solved)
+            saturated = not solved and (need == c.tail.aoaCritH or need == c.tail.aoaCritL)
+            game = pmin(pmax(need, ip[0x14//4]), ip[0x18//4])
+            if (saturated or (solved and game != need)) and game*lever > 0.:
+                calc_c(&c.tail, game, working if convert else game, 0., 1., tail_out)
+                game_force = M(taq, S(tail_out[1], M(c.tail_cl[1 if td < 0. else 0], td)))
+                shift = fabs((game_force-tail_force)*lever/F(self.pitch_inertia))
+                side = (game-required)*lever
+                out.acceleration = ip[0x8//4]+(shift if side > 0. else -shift if side < 0. else 0.)
         out.tail_force = tail_force;out.zero_force = zero_force;out.tail_angle = required;out.flow = flow
         return 0
 
@@ -1215,7 +1252,8 @@ cdef class Instructor:
             effective_angle_limits_deg=[r.effective[0], r.effective[1]], adjusted_wing_angles_deg=[r.adjusted[0], r.adjusted[1]],
             native_angle_rate_rad_s=r.rate, model='effective AoA schedule with reduced moment balance',
             rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
-            overload_policy='transient reserve omitted; physical strength retained')
+            overload_policy='wing protection held (overload timer 0)' if self.overload_held
+                            else 'wing protection released or off; wing strength charted')
 
     cdef dict limits_dict(self, const InstrRes* r, double delivered_pitch):
         """limits() result of one native state (one phase) from its stored admission."""
@@ -1223,7 +1261,7 @@ cdef class Instructor:
         a = result['adjusted_wing_angles_deg']
         result['adjusted_wing_angles_deg'] = [min(a), max(a)]
         result.update(model='Steady effective AoA schedule (approximation)' if self.aoa_limit else 'Autotrim authority (Instructor off)',
-                      model_revision='steady-effective-aoa-fixed-autotrim-v9', pitch_predictor_recheck=False)
+                      model_revision='steady-effective-aoa-fixed-autotrim-v10', pitch_predictor_recheck=False)
         result['authority_revision'] = self.authority_revision
         return result
 
@@ -1254,6 +1292,7 @@ cdef class Instructor:
         cdef Allocation alloc
         cdef double a_r, e_r, cos_dihedral, q, low, high, factor, scale, vv, valid_lo, lower, upper, normalized, kd, damping
         cdef double x0, y0, x1, y1, kpd, mass_scale, effective_area, rudder_trim, pitch_rate, gear_fraction
+        cdef double low_inverse, high_inverse, low_held, high_held
         cdef bint valid, independent
         cdef int i
         tas = inp.tas;speed_squared = inp.speed_squared;mach = inp.mach;ias_u = inp.ias_u
@@ -1286,12 +1325,24 @@ cdef class Instructor:
         a_r = M(M(F(delivered[0]), F(sensitivity)), F(14.))
         e_r = M(M(F(self.elevator_wing_aoa), F(delivered[1])), F(-18.))
         adjusted[0] = S(F(wing_angles[0]), A(e_r, a_r));adjusted[1] = A(F(wing_angles[1]), S(a_r, e_r))
-        # angle_targets(..., mode_lane=True, overload_enabled=False)
+        # angle_targets(..., timer=0., dt=0., mode_lane=True, overload_enabled=protection is not None) and the
+        # 'released' rule of instructor_aoa.controller_limits
         factor = self.crit_mult[0]
         low = M(p.aoaCritL, factor);high = M(p.aoaCritH, factor)
         base_limits = [low, high]
         cos_dihedral = F(cos(M(F(self.dihedral), F(.01745329238474369))))
         q = M(M(.5, F(rho)), F(speed_squared))
+        if self.overload:
+            # the reserve cap at overload timer 0 (with timer 0 and dt 0 the timer stays 0 with or without the trigger);
+            # 'released': the base limit on each side where the wing-strength AoA is inside it (only there the game's
+            # release timer runs), else the same cap. The load-factor limit below applies in every state.
+            scale = F(2./pmax(1., M(M(q, F(self.wing_area)), cos_dihedral)))
+            low_inverse = inverse_cl(&p, M(F(self.strength[0]), scale), &valid)
+            high_inverse = inverse_cl(&p, M(F(self.strength[1]), scale), &valid)
+            low_held = remap(0., self.overload_range[0], self.overload_range[1], pmax(low, M(low_inverse, self.overload_reserve)), low)
+            high_held = remap(0., self.overload_range[0], self.overload_range[1], pmin(high, M(high_inverse, self.overload_reserve)), high)
+            if not (self.overload_released and low_inverse > low):low = low_held
+            if not (self.overload_released and high_inverse < high):high = high_held
         if self.limit_load_factor:
             effective_area = S(M(cos_dihedral, F(self.wing_area)), M(A(self.tail_area_pair[0], self.tail_area_pair[1]), .5))
             mass_scale = F(F(self.w_mass)/pmax(1., M(q, effective_area)))
@@ -1425,7 +1476,7 @@ cdef class Instructor:
             min(min(item['adjusted_wing_angles_deg']) for item in results),
             max(max(item['adjusted_wing_angles_deg']) for item in results)]
         result.update(model='Steady effective AoA schedule (approximation)' if self.aoa_limit else 'Autotrim authority (Instructor off)',
-                      model_revision='steady-effective-aoa-fixed-autotrim-v9', pitch_predictor_recheck=False)
+                      model_revision='steady-effective-aoa-fixed-autotrim-v10', pitch_predictor_recheck=False)
         result['authority_revision'] = self.authority_revision
         value['instructor'] = result
         return result

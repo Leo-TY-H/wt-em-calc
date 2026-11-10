@@ -332,9 +332,10 @@ def smooth_surface(data,aircraft,*,surface_format='lists'):
 
 def plot_turn_ceiling(aircraft):
     def edge_points(row):
+        # (with the dashed line of the Instructor's other wing protection state, em_march_chart.secondary_outline)
         return (row.get('boundary') or
                 [c['boundary'] for c in row.get('columns',[]) if c.get('boundary')] or
-                [p for p in row['points'] if p['valid']])
+                [p for p in row['points'] if p['valid']])+(row.get('secondary_boundary') or {}).get('points',[])
     max_turn=max((p['turn_dps'] for row in aircraft for p in edge_points(row)
                   if p.get('turn_dps') is not None and math.isfinite(p['turn_dps'])),default=0.)
     return max(10.,float(math.ceil(max_turn*1.05+1.)))
@@ -395,7 +396,7 @@ def preview_payload(data):
     # Contours consume arrays directly; the preview does not export its surface.
     enrich(data,surface_format='arrays')
     chart={k:v for k,v in data.items() if k!='aircraft'}
-    chart['aircraft']=[{k:v for k,v in a.items() if k not in ('columns','surface','boundary_columns','curve_knots','curve_components','curves')}
+    chart['aircraft']=[{k:v for k,v in a.items() if k not in ('columns','surface','boundary_columns','curve_knots','curve_components','curves','secondary_envelope')}
                        for a in data['aircraft']]
     add_boundary_hover(chart,data)
     return chart
@@ -407,7 +408,7 @@ def export_csv(data):
           'valid','local_valid','status','chart_usable','chart_status','converged','reasons','alpha_deg','bank_deg','sideslip_deg','sideslip_attitude_deg','ias_kmh','mach','force_error_g',
           'angular_error_rad_s2','history_error','stall_margin_deg','vertical_step_velocity_mps',
           'commands','authority_margin','force_n','moment_nm','engine_force_n','sweep_percent','sweep_available_percent',
-          'flaps_requested_percent','flaps_percent','gear_percent','instructor_enabled','instructor','prolonged_pull','propulsion','local_response']
+          'flaps_requested_percent','flaps_percent','gear_percent','instructor_enabled','instructor','prolonged_pull','propulsion','local_response','wing_load_ratios']
     writer=csv.DictWriter(out,fieldnames=fields);writer.writeheader()
     for aircraft in data['aircraft']:
         march=aircraft.get('chart_solver')=='march'
@@ -442,17 +443,32 @@ def export_figure(data, path, selected=None, levels=None, format=None):
     with plt.rc_context({'font.family':[SYMBOL_FAMILY,'DejaVu Sans'],
                          'font.size':10,'svg.fonttype':'path'}):
         fig,ax=plt.subplots(figsize=(11,7))
-        fig.subplots_adjust(left=.09,right=.97,bottom=.10,top=.87 if len(aircraft)>4 else .90)
+        # Wing line (Leo 2026-11-10): the legend also names the wing line (once) and each dashed Instructor line
+        wing_named=False
+        entries=(len(aircraft)+any(a.get('wing_line') for a in aircraft)
+                 +sum(bool((a.get('secondary_boundary') or {}).get('points')) for a in aircraft))
+        fig.subplots_adjust(left=.09,right=.97,bottom=.10,top=.87 if entries>4 else .90)
         for a in aircraft:
             color={'f_16a_block_15_adf':'#007f92','f_16xl':'#007f92','j6k1':'#bd581c','saab_jas39c':'#bd581c'}.get(a['id'],a['color'])
             if a.get('chart_solver')=='march':
                 from em_march_chart import contours as march_contours
-                for line in march_contours(a,[n for n in contour_levels(a,data) if n!=0]):
-                    ax.plot(line['x'],line['y'],color=color if len(aircraft)>1 else '#526174',lw=1.5,linestyle='dashed')
-                    if len(line['x'])>5:
+                # Every level from the solved curves, SEP 0 heavier; the pieces past the wing line (past_wing) dotted
+                # and fainter, without a label
+                sustained=[]
+                for line in march_contours(a,contour_levels(a,data)):
+                    zero=line['level']==0;past=bool(line.get('past_wing'))
+                    ax.plot(line['x'],line['y'],color=color if zero or len(aircraft)>1 else '#526174',lw=4 if zero else 1.5,
+                            linestyle=':' if past else 'dashed',alpha=.55 if past else None)
+                    if past:continue
+                    if zero:sustained+=list(zip(line['x'],line['y']))
+                    elif len(line['x'])>5:
                         i=len(line['x'])//2
                         ax.text(line['x'][i],line['y'][i],f"SEP {line['level']:g}",fontsize=8,ha='center',va='center',
                                 bbox=dict(facecolor='white',edgecolor='none',alpha=.75,pad=1))
+                if sustained:
+                    px,py=sustained[len(sustained)//2]
+                    ax.text(px,py,'SEP 0',color=color,fontsize=8,ha='center',va='center',
+                            bbox=dict(facecolor='white',edgecolor='none',alpha=.8,pad=.8))
                 x=y=z=None
             else:x,y,z=matrices(data,a)
             if z is not None and z.count()>3 and np.ma.max(z)>np.ma.min(z):
@@ -463,6 +479,17 @@ def export_figure(data, path, selected=None, levels=None, format=None):
             boundary=a['boundary']
             ax.plot([p['speed_kmh'] for p in boundary],[np.nan if p['turn_dps'] is None else p['turn_dps'] for p in boundary],
                     '-',color=color,lw=2.8,zorder=3.5,clip_on=False,label=a['name'])
+            # Wing line: where the wing breaks (red), and the Instructor's other wing protection state (long dashes)
+            nullable=lambda points:[np.nan if p.get('turn_dps') is None else p['turn_dps'] for p in points]
+            wing=a.get('wing_line') or []
+            if wing:
+                ax.plot([p['speed_kmh'] for p in wing],nullable(wing),'-',color='#d62728',lw=2,zorder=3.6,
+                        label='_nolegend_' if wing_named else 'Wing breaks (wing load)')
+                wing_named=True
+            second=a.get('secondary_boundary') or {}
+            if second.get('points'):
+                ax.plot([p['speed_kmh'] for p in second['points']],nullable(second['points']),linestyle=(0,(7,3)),
+                        color=color,lw=2,zorder=3.4,label=second.get('label') or 'Instructor wing protection')
             for label in speed_boundary_labels(a,data):
                 cfg=data['settings']
                 left=label['speed_kmh']>cfg['speed_min_kmh']+.75*(cfg['speed_max_kmh']-cfg['speed_min_kmh'])
@@ -482,7 +509,7 @@ def export_figure(data, path, selected=None, levels=None, format=None):
 
             roots={p['speed_kmh']:p for p in a.get('sustained',[])}
             root_curve=a.get('sustained_curve',dict(x=data['speeds_kmh'],y=[roots[v]['turn_dps'] if v in roots else np.nan for v in data['speeds_kmh']]))
-            if 0. in contour_levels(a,data):
+            if 0. in contour_levels(a,data) and a.get('chart_solver')!='march':
                 ax.plot(root_curve['x'],root_curve['y'],
                         color=color,lw=4,linestyle='--',label='_nolegend_')
                 visible=[(x,y) for x,y in zip(root_curve['x'],root_curve['y']) if x is not None and y is not None and np.isfinite(y)]
@@ -503,7 +530,7 @@ def export_figure(data, path, selected=None, levels=None, format=None):
                xlabel='True airspeed (km/h)',ylabel='Turn rate (°/s)')
         fig.suptitle('Energy–maneuverability',x=.5,y=.98,fontsize=12)
         ax.grid(alpha=.15)
-        fig.legend(loc='upper center',bbox_to_anchor=(.5,.945),ncol=min(4,len(aircraft)),frameon=False,fontsize=9)
+        fig.legend(loc='upper center',bbox_to_anchor=(.5,.945),ncol=min(4,entries),frameon=False,fontsize=9)
         fig.savefig(path,dpi=180,format=format);plt.close(fig)
 
 
@@ -523,10 +550,19 @@ def boundary_limit_label(state, reason=None):
 def add_boundary_limits(aircraft, source):
     search='Search limit; aircraft limit not established'
     groups=[];run=[]
+    # Wing line (Leo 2026-11-10, wing_line.py): where the Instructor limit of the chart's protection state is the wing
+    # protection cap (below the limit without it, column['protection']) the limiter is named as such
+    state=(source.get('wing_protection') or {}).get('state')
+    def capped(column):
+        limits=column.get('protection')
+        if not state or not limits:return False
+        used=limits['held_limit_deg'] if state=='held' else limits.get('released_limit_deg',limits['free_limit_deg'])
+        return used<limits['free_limit_deg']-1e-6
     for column in source.get('boundary_columns',source.get('columns',[]))+[None]:
         if column is not None and column.get('boundary') and column['boundary_status'] in ('verified limit','plot ceiling'):
             label=search if column['boundary_status']=='plot ceiling' else boundary_limit_label(
                 column['boundary'],column.get('boundary_reason'))
+            if label=='AoA limiter (Instructor)' and capped(column):label='AoA limiter (Instructor wing protection)'
             run.append((column['speed_kmh'],label))
         else:
             if run:groups.append(dict(run))
@@ -724,7 +760,7 @@ def prepare_exports(data, *, started_at=None, include_exports=True):
 
     chart={k:v for k,v in data.items() if k!='aircraft'};chart['aircraft']=[]
     for aircraft in data['aircraft']:
-        item={k:v for k,v in aircraft.items() if k not in ('columns','surface','points','sustained','boundary_columns','cells','curve_knots','curve_components','curves')}
+        item={k:v for k,v in aircraft.items() if k not in ('columns','surface','points','sustained','boundary_columns','cells','curve_knots','curve_components','curves','secondary_envelope')}
         details=aircraft['points']+aircraft.get('sustained',[])
         points[aircraft['id']]=details if include_exports else _public_values(details)
         def brief(point,index):

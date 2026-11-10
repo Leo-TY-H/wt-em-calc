@@ -3,7 +3,10 @@
 For each aircraft (``compute``):
 1. envelope: ``em_march.MarchTracer`` places speed columns (sweep, corners,
    edges, withheld midpoint checks); every column is an alpha march from level
-   flight to the first limit reached (Leo, 2026-10-17);
+   flight to the first limit reached (Leo, 2026-10-17); under the wing rule
+   (wing_line.py, Leo 2026-11-10) the wing breaking load is no limit but a
+   charted line, and a second envelope pass (secondary_pass) solves the
+   Instructor's other wing protection state for the dashed line;
 2. SEP curves: ``em_march_curves.MarchCurveSolver`` in column mode on the
    verified columns, with withheld exact checks of every knot interval;
 3. the compiled loop (``em_march_native``) where it covers the call.
@@ -12,7 +15,8 @@ Policy and tolerances (speed plan, Leo 2026-10-17/18): zero prescribed
 sideslip (``sideslip_recovery`` False); envelope tolerance 0.15 deg/s at the
 standard 0.5 m/s chart precision (scaled with the chart's turn tolerance for
 other precisions); curve tolerance 3x the chart curve tolerance; physical
-admission unchanged; every drawn state is an admitted full-model state.
+admission unchanged except the wing force under the wing rule (a line, not a
+rejection); every drawn state is an admitted full-model state.
 
 What the chart shows:
 - the outline is PCHIP in limiting load through verified boundary columns,
@@ -66,6 +70,10 @@ def s16_on():
 # the chart carries where over-rev starts (overrev_lines) and, on every over-rev row, contour and outline point, the
 # seconds the game gives that engine (overrev.py)
 from overrev import RULE as OVERREV
+# Wing line (Leo 2026-11-10; WT_WING_LINE=0 restores the wing cut): the wing breaking load is a charted line, not a limit
+# (column['wing_line'], aircraft['wing_line']); SEP contours are split on it (past_wing); the Instructor's other wing
+# protection state is a second envelope pass drawn dashed (secondary_envelope, secondary_boundary) (wing_line.py)
+import wing_line as WING
 CURVE_WIDE_SLIDE = int(os.environ.get('WT_OVERREV_CURVE_SLIDE', '28'))   # MarchEngine.wide_slide bits for the curve engine
 ENVELOPE_TOLERANCE_DPS = .15   # at the standard chart precision (turn tolerance 0.02 deg/s)
 CURVE_SCALE = 3.
@@ -239,6 +247,8 @@ def assemble(config, rows, started, preview=False):
         data['assumptions'].append(f"Additional global search ceiling: {config['global_load_cap_g']:g} g; not a proved physical limit.")
     if OVERREV and any(a.get('overrev_lines') is not None for a in rows):
         data['assumptions'].append(OVERREV_ASSUMPTION)
+    if any((a.get('envelope_trace') or {}).get('wing_line') for a in rows):
+        data['assumptions'].append(WING_ASSUMPTION)
     if preview:data['preview'] = True
     return data
 
@@ -246,6 +256,11 @@ def assemble(config, rows, started, preview=False):
 OVERREV_ASSUMPTION = ('Engine over-rev (RPM above RPMMaxAllowed) is charted, not a limit; a line marks where it starts. With '
                       'Engine_Overheat on (Realistic, Simulator) the game stops an over-revving engine after the seconds '
                       'given (steady RPM, fresh engine) and adds its over-rev torque, as charted')
+WING_ASSUMPTION = ('The wing breaking load (wing load ratio 1) is charted as a line, not a limit: beyond it the game breaks '
+                   'an intact wing after about 0.47 / (ratio - 1) s (0.3/(ratio-1) s, then a chance of (ratio-1)/8 per 48 Hz '
+                   'step). Instructor wing protection: where its release starts after 10 s or more the protected limit is '
+                   'the envelope and the released limit is dashed above it; otherwise the released limit is the envelope '
+                   'and the protected limit is dashed inside')
 
 
 # ----- one aircraft --------------------------------------------------------------
@@ -283,15 +298,16 @@ def march_aircraft(name, condition, index, report, cancelled, show):
     import gc
     collecting = gc.isenabled()
     gc.disable()
+    extra = []   # the solvers march_solvers adds (the second envelope pass of the Instructor's other wing protection state)
     try:
-        return march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started)
+        return march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started, extra)
     finally:
-        for s in (solver, curve_solver):
+        for s in (solver, curve_solver, *extra):
             N.detach(s);s.__dict__.pop('soft_admission', None)
         if collecting:gc.enable()
 
 
-def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started):
+def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancelled, show, started, extra=None):
     import em_march as M
     import em_march_curves as C
     import em_march_native as N
@@ -316,9 +332,21 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         with use(total):envelope = tracer.run()
     envelope_cpu = time.process_time()-t0;envelope_wall = time.perf_counter()-w0
     envelope_work = dict(total.counts)
+    # Wing line (Leo 2026-11-10): every verified column's wing-line point. Native columns carry theirs (NTracer.record,
+    # the wing event); a column without one (a production-fallback column) takes the interpolation between its samples
+    if WING.rule(solver):
+        for c in envelope['columns']:
+            if tracer.ok(c) and 'wing_line' not in c:
+                point = WING.column_point(c)
+                if point:c['wing_line'] = point
     verified = curve_columns(envelope, tracer)
     row = aircraft_row(name, index, cfg, solver, envelope, None, tracer)
     show(row)
+    # whether the Instructor's other wing protection state moves the boundary anywhere (one evaluation per column;
+    # columns whose evaluation fails are skipped and counted: never a reason to lose the chart)
+    w0 = time.perf_counter();scan_failures = []
+    with use(Work({})):binds = protection_scan(solver, envelope['columns'], scan_failures) if engine is not None else False
+    scan_wall = time.perf_counter()-w0
     N.attach(curve_solver)
     if getattr(curve_solver, 'native_loop', None) is not None:loops.append(curve_solver.native_loop)
     curves = C.MarchCurveSolver(name, cfg, solver=curve_solver, columns=verified,
@@ -352,13 +380,27 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
     if result is not None and str(result.get('status', '')).startswith('exhausted'):
         raise RuntimeError('SEP curve budget exhausted: '+result['status'])
     row = aircraft_row(name, index, cfg, solver, envelope, result, tracer)
+    # Leo 2026-11-10: the envelope of the Instructor's other wing protection state (the dashed line), envelope only. A
+    # failure of this pass only drops the dashed line (never a baseline fallback of the chart)
+    secondary = dict(ran=False, reason='compiled march unavailable')
+    if engine is not None:
+        try:
+            secondary = secondary_pass(name, cfg, tracer, solver, binds, loops, extra if extra is not None else [],
+                                       report, cancelled)
+        except (InterruptedError, KeyboardInterrupt, MemoryError):
+            raise
+        except Exception as error:
+            secondary = dict(ran=False, reason='failed: '+type(error).__name__+': '+str(error)[:160])
+    if secondary.get('ran'):row['secondary_envelope'] = secondary.pop('envelope')
+    secondary.update(scan_wall_s=scan_wall, scan_failures=len(scan_failures), **({'scan_failure': scan_failures[0]} if scan_failures else {}))
     ee, ce = envelope_work.get('aircraft_evaluations', 0), (result or {}).get('work', {}).get('aircraft_evaluations', 0)
     row['chart_solver_work'] = dict(evaluations=ee+ce, envelope_evaluations=ee, curve_evaluations=ce,
                                     envelope_cpu_s=envelope_cpu, curve_cpu_s=curve_cpu, elapsed_s=time.monotonic()-started,
                                     envelope_wall_s=envelope_wall, curve_wall_s=curve_wall,
                                     columns=len(envelope['columns']), work_by_role=envelope['work_by_role'],
                                     march=M.stats(), native=N.summary(loops), native_status=native,
-                                    curve_status=(result or {}).get('status'))
+                                    curve_status=(result or {}).get('status'),
+                                    **({'secondary': secondary} if WING.RULE else {}))
     if engine is not None:
         timers = dict(envelope=dict(solve_s=engine.t_solve, finish_s=engine.t_finish, rows_s=engine.t_rows, point_s=engine.t_point, python_s=engine.t_python, ledger_s=engine.t_ledger, tangent_s=engine.t_tangent))
         if curve_engine is not None:
@@ -371,6 +413,90 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
         row['chart_solver_work']['native_python'] = dict(envelope=engine.python_counts(),
                                                          curves=curve_engine.python_counts() if curve_engine is not None else None)
     return row
+
+
+def protection_scan(solver, columns, failures=None):
+    """Leo 2026-11-10: True where the Instructor's other wing protection state (wing_line.py) moves the boundary of a
+    verified column; every such column gets column['protection'] (wing_line.protection_limits at its boundary state:
+    one evaluation, no admission). The two states differ only where the cap can be released (released_limit_deg above
+    held_limit_deg). A 'held' chart: the column ends on the Instructor's limit and the game's release timer runs at
+    that state. A 'released' chart: the cap lies below the boundary state's AoA (inside the limit the upper Instructor
+    margin moves exactly by the change of the limit; 0.05 deg slack). A column whose evaluation fails is skipped
+    (its error text appended to ``failures``)."""
+    state = getattr(solver, 'instructor_protection', None)
+    if not (WING.RULE and WING.rule(solver) and state):return False
+    binds = False
+    for c in columns:
+        if not ok(c):continue
+        ctl = c['boundary'].get('instructor') or {}
+        if not ctl.get('converged') or not ctl.get('effective_angle_limits_deg') or not ctl.get('adjusted_wing_angles_deg'):continue
+        try:
+            lim = WING.protection_limits(solver, c['boundary'])
+        except (InterruptedError, MemoryError):
+            raise
+        except Exception as error:
+            if failures is not None:failures.append('%g km/h: %s: %s' % (c['speed_kmh'], type(error).__name__, str(error)[:120]))
+            continue
+        if not all(isinstance(v, bool) or math.isfinite(v) for v in lim.values()):continue
+        c['protection'] = lim
+        d = lim.get('released_limit_deg', lim['free_limit_deg'])-lim['held_limit_deg']
+        if d <= 1e-6:continue
+        if state == 'held':binds |= c.get('boundary_reason') == 'Instructor pitch' and bool(lim['releasable'])
+        else:binds |= d > ctl['effective_angle_limits_deg'][1]-max(ctl['adjusted_wing_angles_deg'])-.05
+    return bool(binds)
+
+
+SECONDARY_COLUMN = ('speed_kmh', 'boundary_status', 'boundary_reason', 'boundary_slope', 'boundary_slope_kind', 'wing_line')
+SECONDARY_POINT = ('speed_kmh', 'load_g', 'turn_dps', 'ps_mps', 'alpha_deg', 'wing_load_ratios', 'envelope_limit', 'valid')
+
+
+def secondary_pass(name, cfg, tracer, solver, binds, loops, extra, report, cancelled):
+    """Leo 2026-11-10: the envelope of the Instructor's other wing protection state (wing_line.py): a second,
+    envelope-only native trace on a fresh solver of the same settings with instructor_protection forced to the other
+    state (the native Instructor is built once per solver, so the state is never flipped on a live one). Returns
+    dict(ran=False, reason) or dict(ran=True, state, wall_s, columns, evaluations, envelope): 'envelope' is the row's
+    'secondary_envelope' (slim columns, the trace's run data and its unresolved speeds: what runs() and run_loads read).
+    Not run without a protection state, where the protection is never released, or where the other state moves no
+    column's boundary (protection_scan). The new solver is appended to ``extra`` (the caller detaches it)."""
+    import em_march as M
+    import em_march_native as N
+    import em_sampling as S
+    from em_solver import settings
+    from em_trim_work import Work, use
+    state = getattr(solver, 'instructor_protection', None)
+    if state is None or not WING.rule(solver):return dict(ran=False, reason='no wing protection')
+    if math.isinf(solver.protection_release_s):return dict(ran=False, reason='never released')
+    if not binds:return dict(ran=False, reason='protection never binds')
+    other = 'released' if state == 'held' else 'held'
+    cfg2 = settings(dict(cfg, instructor_protection=other))
+
+    def on_column(tracer, phase, speed, why):
+        if cancelled and cancelled():raise InterruptedError('Calculation cancelled')
+    tracer2 = M.MarchTracer(name, cfg2, turn_tolerance=tracer.ttol, max_step_kmh=MAX_STEP_KMH, on_column=on_column)
+    solver2 = S.worker_solver(name, tracer2.cj);extra.append(solver2)
+    solver2.soft_admission = True
+    N.attach(solver2)
+    engine2 = N.engine(solver2)
+    if engine2 is None:return dict(ran=False, reason='compiled march unavailable')
+    loops.append(solver2.native_loop)
+    report(dict(phase='Instructor wing protection line', aircraft=name, fraction=.99))
+    work = Work({});w0 = time.perf_counter()
+    with use(work):
+        native_tracer = solver2.native_loop.m.NTracer(engine2, name, cfg2, tracer2.cj, tracer2.ttol, tracer2.vtol,
+                                                      tracer2.place_tol, tracer2.max_step, tracer2.max_depth,
+                                                      tracer2.march_tol, tracer2.on_column)
+        env2 = native_tracer.run()
+        columns = sorted((native_tracer.record(c) for c in env2['columns']), key=lambda c: c['speed_kmh'])
+    slim = [dict({k: c[k] for k in SECONDARY_COLUMN if c.get(k) is not None},
+                 boundary={k: c['boundary'].get(k) for k in SECONDARY_POINT} if c.get('boundary') else None) for c in columns]
+    trace = dict(segments=env2['segments'], mach_seams_kmh=env2['mach_seams_kmh'], sweep_gaps_kmh=env2.get('sweep_gaps_kmh', []),
+                 events=env2['events'],
+                 # (the traced forward-IAS and engine RPM edges: this state's outline ends at its own corner, drawn_runs)
+                 **{k: env2[k] for k in ('ias_trace', 'rpm_trace') if env2.get(k)})
+    return dict(ran=True, state=other, wall_s=time.perf_counter()-w0, columns=len(slim),
+                evaluations=work.counts.get('aircraft_evaluations', 0),
+                envelope=dict(state=other, columns=slim, envelope_trace=trace,
+                              interpolation=dict(unresolved_speed_intervals=unresolved_intervals(env2, slim))))
 
 
 def level_flights(envelope):
@@ -451,11 +577,18 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
                 # Over-rev (Leo 2026-10-26): where an engine starts to over-rev
                 **({'overrev_lines': overrev_lines(envelope, columns, (curves or {}).get('sep_jumps'))}
                    if overrev_row(solver, points) else {}),
+                # Wing line (Leo 2026-11-10): the Instructor's wing protection state of this chart (wing_line.protection)
+                **({'wing_protection': dict(state=solver.instructor_protection, threshold_s=WING.HOLD_S,
+                                            release_start_s=None if math.isinf(solver.protection_release_s)
+                                            else float(solver.protection_release_s))}
+                   if WING.rule(solver) and getattr(solver, 'instructor_protection', None) else {}),
                 # The complete curve solver record (knots, withheld checks, ends) for exports and replay.
                 curves=None if curves is None else {k: v for k, v in curves.items() if k not in ('seeds',)},
                 envelope_trace=dict(segments=envelope['segments'], mach_seams_kmh=envelope['mach_seams_kmh'],
                                     sweep_gaps_kmh=envelope.get('sweep_gaps_kmh', []),
                                     soft_limits=bool(getattr(solver, 'soft_admission', False)),
+                                    # the wing rule was on: the wing breaking load is a line (columns' 'wing_line')
+                                    **({'wing_line': WING.rule(solver)} if WING.RULE else {}),
                                     events=envelope['events'], checks=len(envelope['checks']),
                                     speed_limit=envelope['speed_limit'], turn_tolerance_dps=tracer.ttol,
                                     placement_tolerance_kmh=tracer.place_tol,
@@ -1039,6 +1172,8 @@ def contours(aircraft, levels=None):
     checked = set(aircraft.get('interpolation', {}).get('checked_sep_levels_mps', []))
     wanted = checked if levels is None else checked & {float(v) for v in levels}
     out = []
+    # Wing line (Leo 2026-11-10): a path is split where it crosses the drawn wing line; the pieces above carry past_wing
+    at = wing_turns(aircraft)
     for comp in aircraft.get('curve_components', []):
         if comp['level'] not in wanted:continue
         pieces = polyline(comp)
@@ -1047,7 +1182,7 @@ def contours(aircraft, levels=None):
             if len(piece) > 1:
                 path = dict(level=float(comp['level']), x=[p[0] for p in piece], y=[p[1] for p in piece])
                 if OVERREV:contour_overrev(path, comp, i == fold)
-                out.append(path)
+                out += [path] if at is None else split_past_wing(path, at)
     return out
 
 
@@ -1266,9 +1401,255 @@ def outline_overrev(aircraft):
             p['percent_over'] = record['percent_over'][k];p['overrev_s'] = record['overrev_s'][k]
 
 
+# ----- wing line and Instructor wing protection (Leo 2026-11-10, wing_line.py) -----------------------
+def chart_grid(data):
+    """The chart's dense speed grid (as outline's)."""
+    cfg = data['settings']
+    nx = 2*cfg.get('surface_resolution', 601)-1
+    if data.get('preview'):nx = min(nx, 241)
+    return np.linspace(cfg['speed_min_kmh'], cfg['speed_max_kmh'], nx)
+
+
+def edge_trace(aircraft):
+    """The traced forward-IAS or engine RPM edge that closes the outline's last run (outline's S15/S16 choice), or None."""
+    trace = aircraft.get('envelope_trace') or {}
+    edge = trace.get('ias_trace') if s15_on() else None
+    if edge is not None and edge.get('status') != 'traced':edge = None
+    rpm = trace.get('rpm_trace') if s16_on() else None
+    if rpm is not None and rpm.get('status') == 'traced' and (edge is None or rpm['foot_kmh'] < edge['foot_kmh']):edge = rpm
+    return edge
+
+
+def drawn_runs(aircraft):
+    """runs(aircraft) as outline draws them: the run that reaches a traced edge (edge_trace) ends at the edge's corner
+    (the columns past it stand on the edge itself) and the runs wholly past the corner are left out."""
+    pieces, edge = runs(aircraft), edge_trace(aircraft)
+    if edge is None:return pieces
+    corner = edge['corner']['speed_kmh']+1e-3
+    host = max((k for k, run in enumerate(pieces) if run[0]['speed_kmh'] <= corner
+                and run[-1]['speed_kmh'] >= edge['start_kmh']-1e-9), default=None)
+    if host is None:return pieces
+    out = []
+    for k, run in enumerate(pieces):
+        if k > host and run[0]['speed_kmh'] > corner:continue
+        out.append(([c for c in run if c['speed_kmh'] <= corner] or run) if k == host else run)
+    return out
+
+
+def boundary_ratio(column):
+    """A column's wing load ratio (the highest of wing_load_ratios) at its boundary state; NaN where it carries none."""
+    ratios = (column.get('boundary') or {}).get('wing_load_ratios')
+    return float(max(ratios)) if ratios else math.nan
+
+
+def wing_knot(column):
+    """The wing-line load of a verified column (column['wing_line']), kept between its lower edge (level flight over a
+    soft limit: the states below it lie outside the outline) and its boundary; None without a record."""
+    load = (column.get('wing_line') or {}).get('load_g')
+    if load is None or not math.isfinite(load):return None
+    low = max(1., float((column.get('lower_edge') or {}).get('load_g') or 1.))
+    return min(max(float(load), low), float(column['boundary']['load_g']))
+
+
+def wing_outline(data, aircraft):
+    """The drawn wing line (aircraft['wing_line']): where the wing load ratio is 1 inside the outline. Per drawn outline
+    run and stretch of neighbouring columns with a wing-line point: PCHIP in load through the points, never above the
+    outline's own load (run_loads). Where the neighbouring column of the run has no point and the boundary's wing load
+    ratio passes 1 between the two, the line starts on the boundary at the speed where that ratio (linear in speed) is
+    1. Points dict(speed_kmh, load_g, turn_dps, break_s_at_boundary: the game's expected seconds to break the wing
+    held at the boundary above, wing_line.break_seconds, None where the boundary ratio is not above 1); a
+    dict(speed_kmh, turn_dps=None) between stretches. Rebuilt from the columns on every call."""
+    from scipy.interpolate import PchipInterpolator
+    grid = chart_grid(data)
+    out = []
+    for run in drawn_runs(aircraft):
+        speeds = np.array([c['speed_kmh'] for c in run], dtype=float)
+        ratios = np.array([boundary_ratio(c) for c in run], dtype=float)
+        known = np.isfinite(ratios)
+        marks = [wing_knot(c) for c in run]
+        k = 0
+        while k < len(run):
+            if marks[k] is None:
+                k += 1;continue
+            j = k
+            while j+1 < len(run) and marks[j+1] is not None:j += 1
+            knots = [(float(speeds[i]), marks[i]) for i in range(k, j+1)]
+            for near, far in ((k, k-1), (j, j+1)):
+                if not 0 <= far < len(run) or not ratios[far] <= 1. < ratios[near]:continue
+                v = float(speeds[far]+(speeds[near]-speeds[far])*(1.-ratios[far])/(ratios[near]-ratios[far]))
+                if abs(v-speeds[near]) < 1e-9:continue
+                point = (v, float(run_loads(run, np.array([v]))[0]))
+                if far < near:knots.insert(0, point)
+                else:knots.append(point)
+            k = j+1
+            if len(knots) < 2:continue
+            kv = np.array([q[0] for q in knots], dtype=float);kn = np.array([q[1] for q in knots], dtype=float)
+            xs = np.unique(np.r_[grid[(grid > kv[0]) & (grid < kv[-1])], kv])
+            loads = np.maximum(1., np.minimum(PchipInterpolator(kv, kn)(xs), run_loads(run, xs)))
+            rates = turn_rate(xs, loads)
+            top = np.interp(xs, speeds[known], ratios[known]) if known.any() else np.full(len(xs), np.nan)
+            if not (np.isfinite(loads).all() and np.isfinite(rates).all()):continue
+            if out:out.append(dict(speed_kmh=float(.5*(out[-1]['speed_kmh']+xs[0])), turn_dps=None))
+            out += [dict(speed_kmh=float(x), load_g=float(n), turn_dps=float(t),
+                         break_s_at_boundary=WING.break_seconds(r) if r == r else None)
+                    for x, n, t, r in zip(xs.tolist(), loads.tolist(), rates.tolist(), top.tolist())]
+    return out
+
+
+def outline_wing(aircraft):
+    """Wing line: the outline points held past the wing's breaking load get 'wing_load_ratio' (the verified columns'
+    boundary ratios, linear in speed inside each run) and 'wing_break_s' (wing_line.break_seconds); points with a ratio
+    at or below 1, gaps, leaning edges and the feet of vertical edges get nothing (the twin of outline_overrev)."""
+    points = [p for p in aircraft.get('boundary', []) if p.get('turn_dps') is not None and not p.get('leaning_edge')
+              and not (p.get('vertical_edge') and p['turn_dps'] == 0.)]
+    for run in runs(aircraft):
+        pairs = [(c['speed_kmh'], boundary_ratio(c)) for c in run]
+        pairs = [(v, r) for v, r in pairs if r == r]
+        if not pairs:continue
+        for p in points:
+            v = p.get('sample_speed_kmh', p['speed_kmh'])
+            if not run[0]['speed_kmh']-1e-9 <= v <= run[-1]['speed_kmh']+1e-9:continue
+            r = float(np.interp(v, [a for a, _ in pairs], [b for _, b in pairs]))
+            s = WING.break_seconds(r)
+            if s is not None:p['wing_load_ratio'] = r;p['wing_break_s'] = float(s)
+
+
+def wing_turns(aircraft):
+    """The drawn wing line as a function: speeds (array) -> its turn rate (linear between the drawn points of each
+    stretch, NaN where no stretch covers the speed); None without a line."""
+    stretches, piece = [], []
+    for p in (aircraft.get('wing_line') or [])+[dict(turn_dps=None)]:
+        if p.get('turn_dps') is not None:
+            piece.append((p['speed_kmh'], p['turn_dps']));continue
+        if len(piece) >= 2:stretches.append((np.array([q[0] for q in piece], dtype=float), np.array([q[1] for q in piece], dtype=float)))
+        piece = []
+    if not stretches:return None
+
+    def at(x):
+        x = np.asarray(x, dtype=float);out = np.full(x.shape, np.nan)
+        for xs, ts in stretches:
+            sel = (x >= xs[0]) & (x <= xs[-1])
+            if sel.any():out[sel] = np.interp(x[sel], xs, ts)
+        return out
+    return at
+
+
+def split_past_wing(path, at):
+    """A contour path in pieces by the side of the wing line (``at``: wing_turns): the pieces above it carry
+    past_wing=True. Neighbouring pieces share the crossing point, which lies on the drawn line (bisection along the
+    path's segment); where the line ends between two points (no line on one side) the cut is that point itself. The
+    over-rev record ('percent_over', 'overrev_s') is sliced with the path, the crossing taking its neighbour's value
+    in each piece. Pieces of fewer than 2 points are dropped; a path wholly on or below the line is returned as it is."""
+    x = np.asarray(path['x'], dtype=float);y = np.asarray(path['y'], dtype=float)
+    d = y-at(x)
+    past = np.isfinite(d) & (d > 1e-9)
+    if not past.any():return [path]
+    extras = [k for k in ('percent_over', 'overrev_s') if k in path]
+
+    def start(flag):
+        piece = dict(level=path['level'], x=[], y=[], **{k: [] for k in extras})
+        if flag:piece['past_wing'] = True
+        return piece
+
+    def add(piece, px, py, i):
+        piece['x'].append(float(px));piece['y'].append(float(py))
+        for k in extras:piece[k].append(path[k][i])
+    out = [];piece = start(bool(past[0]))
+    for i in range(len(x)):
+        if i and past[i] != past[i-1]:
+            if np.isfinite(d[i-1]) and np.isfinite(d[i]):
+                lo, hi, t = 0., 1., min(1., max(0., d[i-1]/(d[i-1]-d[i])))
+                for _ in range(50):
+                    mid = .5*(lo+hi)
+                    f = y[i-1]+mid*(y[i]-y[i-1])-float(at(np.array([x[i-1]+mid*(x[i]-x[i-1])]))[0])
+                    if f != f:break     # the line ends inside this segment: the linear estimate
+                    if (f > 1e-9) == bool(past[i-1]):lo = mid
+                    else:hi = mid
+                else:
+                    t = .5*(lo+hi)
+                cx, cy = x[i-1]+t*(x[i]-x[i-1]), y[i-1]+t*(y[i]-y[i-1])
+                add(piece, cx, cy, i-1)
+                out.append(piece);piece = start(bool(past[i]))
+                add(piece, cx, cy, i)
+            elif np.isfinite(d[i]):
+                # no line at the point before: the piece above starts on that point
+                out.append(piece);piece = start(bool(past[i]))
+                add(piece, x[i-1], y[i-1], i-1)
+            else:
+                # no line at this point: the piece above ends on it
+                add(piece, x[i], y[i], i)
+                out.append(piece);piece = start(bool(past[i]))
+        add(piece, x[i], y[i], i)
+    out.append(piece)
+    return [p for p in out if len(p['x']) > 1]
+
+
+def secondary_outline(data, aircraft):
+    """The dashed line of the Instructor's other wing protection state (aircraft['secondary_boundary']) from the second
+    envelope pass (aircraft['secondary_envelope'], secondary_pass): the outline interpolant (run_loads) of its own
+    runs, kept only where it differs from the chart's boundary by more than the envelope's turn tolerance (with one
+    coincident point either side). A 'held' chart (the line is the limit after the release) also needs the game's
+    release timer to run at the boundary there (the columns' protection['releasable'], linear in speed). Points
+    dict(speed_kmh, load_g, turn_dps, and wing_break_s where the line's own states are past the wing's breaking load);
+    a dict(speed_kmh, turn_dps=None) between stretches. Removed where nothing remains or no second pass ran."""
+    aircraft.pop('secondary_boundary', None)
+    second = aircraft.get('secondary_envelope')
+    if not second:return
+    protection = aircraft.get('wing_protection') or {}
+    primary = protection.get('state') or ('released' if second.get('state') == 'held' else 'held')
+    tolerance = (aircraft.get('envelope_trace') or {}).get('turn_tolerance_dps', ENVELOPE_TOLERANCE_DPS)
+    grid = chart_grid(data)
+    own = runs(aircraft)
+    gate = None
+    if primary == 'held':
+        marks = sorted((c['speed_kmh'], float(bool(c['protection'].get('releasable'))))
+                       for c in aircraft.get('columns', []) if ok(c) and c.get('protection'))
+        if marks:gate = [m[0] for m in marks], [m[1] for m in marks]
+    points = []
+    for run in drawn_runs(second):
+        if len(run) < 2:continue
+        speeds = np.array([c['speed_kmh'] for c in run], dtype=float)
+        xs = np.unique(np.r_[grid[(grid > speeds[0]) & (grid < speeds[-1])], speeds])
+        loads = run_loads(run, xs)
+        base = np.full(len(xs), np.nan)
+        for other in own:
+            sel = (xs >= other[0]['speed_kmh']) & (xs <= other[-1]['speed_kmh'])
+            if sel.any():base[sel] = run_loads(other, xs[sel])
+        rates = turn_rate(xs, loads)
+        with np.errstate(invalid='ignore'):
+            differ = np.isfinite(base) & np.isfinite(rates) & (np.abs(rates-turn_rate(xs, base)) > tolerance)
+        if gate is not None:differ &= np.interp(xs, gate[0], gate[1]) >= .5
+        keep = differ.copy();keep[1:] |= differ[:-1];keep[:-1] |= differ[1:]
+        keep &= np.isfinite(loads) & np.isfinite(rates)
+        pairs = [(c['speed_kmh'], boundary_ratio(c)) for c in run]
+        pairs = [(v, r) for v, r in pairs if r == r]
+        ratio = np.interp(xs, [a for a, _ in pairs], [b for _, b in pairs]) if pairs else np.full(len(xs), np.nan)
+        stretch = []
+        for x, n, t, r, on in zip(xs.tolist()+[None], loads.tolist()+[None], rates.tolist()+[None], ratio.tolist()+[None],
+                                  keep.tolist()+[False]):
+            if on:
+                s = WING.break_seconds(r) if r == r else None
+                stretch.append(dict(speed_kmh=float(x), load_g=float(n), turn_dps=float(t), **({} if s is None else {'wing_break_s': float(s)})))
+                continue
+            if len(stretch) >= 2:
+                if points:points.append(dict(speed_kmh=float(.5*(points[-1]['speed_kmh']+stretch[0]['speed_kmh'])), turn_dps=None))
+                points += stretch
+            stretch = []
+    if not points:return
+    seconds = protection.get('release_start_s')
+    aircraft['secondary_boundary'] = dict(state=second.get('state'), seconds=seconds, label=WING.secondary_label(primary, seconds),
+                                          points=points)
+
+
 def enrich(data, aircraft):
     aircraft['boundary'] = outline(data, aircraft)
     if OVERREV and aircraft.get('overrev_lines') is not None:outline_overrev(aircraft)
+    # Wing line (Leo 2026-11-10), before the contours (they are split on the drawn line)
+    line = wing_outline(data, aircraft) if any(c.get('wing_line') for c in aircraft.get('columns', [])) else []
+    if line:aircraft['wing_line'] = line
+    else:aircraft.pop('wing_line', None)
+    if (aircraft.get('envelope_trace') or {}).get('wing_line'):outline_wing(aircraft)
+    secondary_outline(data, aircraft)
     aircraft['contours'] = contours(aircraft, data['settings'].get('sep_contour_levels_mps'))
     zeros = [p for p in aircraft['contours'] if p['level'] == 0.]
     aircraft['sustained_curve'] = dict(x=[x for p in zeros for x in [*p['x'], None]], y=[y for p in zeros for y in [*p['y'], None]])

@@ -3312,6 +3312,45 @@ cdef class NTracer:
     # ------------------------------------------------------------------ column records
     @cython.boundscheck(True)
     @cython.wraparound(True)
+    cdef object wing_point(self, NColumn col):
+        """Wing line (Leo 2026-11-10, wing_line.py): the column's point where the highest wing load ratio is 1, or None
+        where its admitted states do not cross it. The pair is wing_line.column_point's (the first two neighbours in load
+        with ratio <= 1 < ratio); the point is the wing event (event 2: ratio 1 - 5e-5) corrected at the column speed from
+        the nearer state of the pair, kept where it is admitted and lies between the two; otherwise the linear
+        interpolation in load between them (column_point's arithmetic)."""
+        cdef int a = -1, b = -1, prev = -1, sid, seed, p
+        cdef double ra, rb, na, nb, aa, ab, pa, pb, t, n
+        for sid in col.points:
+            if not (self.eng.st[sid].valid and self.eng.st[sid].has_wing and fabs(self.eng.st[sid].speed-col.speed) <= 1e-9):
+                continue
+            if (prev >= 0 and self.eng.st[prev].wing_max <= 1. and 1. < self.eng.st[sid].wing_max
+                    and self.eng.st[sid].load > self.eng.st[prev].load):
+                a = prev;b = sid
+                break
+            prev = sid
+        if a < 0:return None
+        # (the engine's state array can move in a correction: the pair's numbers first)
+        ra = self.eng.st[a].wing_max;rb = self.eng.st[b].wing_max;na = self.eng.st[a].load;nb = self.eng.st[b].load
+        aa = self.eng.st[a].alpha;ab = self.eng.st[b].alpha;pa = self.eng.st[a].ps;pb = self.eng.st[b].ps
+        seed = a if 1.-ra <= rb-1. else b
+        try:
+            p = self.eng.correct(seed, self.eng.st[seed].sol, self.eng.st[seed].load, True, FIX_EVENT, 0., 2, 0, 0, 30, 0, 2e-6,
+                                 col.speed, NULL, NULL)
+        except (ValueError, RuntimeError, ArithmeticError, InstructorUnsupported, NativeMarchUnsupported):
+            p = -1
+        self.eng.flush_counts()
+        if (p >= 0 and self.eng.st[p].valid and aa-1e-6 <= self.eng.st[p].alpha <= ab+1e-6
+                and na-1e-9 <= self.eng.st[p].load <= nb+1e-9):
+            return dict(speed_kmh=float(col.speed), load_g=self.eng.st[p].load, turn_dps=self.eng.st[p].turn,
+                        ps_mps=self.eng.st[p].ps if isfinite(self.eng.st[p].ps) else None, alpha_deg=self.eng.st[p].alpha,
+                        wing_load_ratio=self.eng.st[p].wing_max, method='wing event')
+        t = (1.-ra)/(rb-ra);n = na+t*(nb-na)
+        return dict(speed_kmh=float(col.speed), load_g=n, turn_dps=turn_rate(col.speed, n),
+                    ps_mps=pa+t*(pb-pa) if isfinite(pa) and isfinite(pb) else None, alpha_deg=aa+t*(ab-aa),
+                    wing_load_ratio=1., method='interpolated')
+
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
     def record(self, NColumn col):
         """The column dict of the production column shape (as march_worker + sample_with_history built it)."""
         cdef int sid
@@ -3329,6 +3368,10 @@ cdef class NTracer:
             if out.get('boundary_status') != col.status_name() or out.get('boundary_reason') != col.reason:
                 raise RuntimeError('native march column status differs from its record: %r %r / %r %r' % (
                     out.get('boundary_status'), out.get('boundary_reason'), col.status_name(), col.reason))
+        if self.eng.wing_line and col.march and col.boundary >= 0 and col.status in (STATUS_VERIFIED, STATUS_CEILING):
+            # wing line: the column's wing-line point (the load where the highest wing load ratio is 1), where it has one
+            wing = self.wing_point(col)
+            if wing is not None:out['wing_line'] = wing
         if col.role is not None:
             if out.get('lower_boundary') is None and out.get('points'):
                 out['lower_boundary'] = next((p for p in out['points'] if abs(p['load_g']-1.) <= 1e-9 and p.get('valid')), None)

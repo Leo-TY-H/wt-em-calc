@@ -314,6 +314,10 @@ cdef class MarchEngine:
     # Over-rev (Leo 2026-10-26, option C; WT_OVERREV=0 restores S16): an engine over RPMMaxAllowed is no chart limit
     # (Finisher.overrev); the tracer draws the iso-line RPM = RPMMaxAllowed where over-rev starts (NTracer.overrev_trace)
     cdef public bint overrev
+    # Wing line (Leo 2026-11-10; WT_WING_LINE=0 restores the wing cut): the wing force is no chart limit
+    # (Finisher.wing_line): no wing margin and no wing face in the march (structural is off for them); every state keeps
+    # its wing load ratio, and the tracer solves each column's wing-line point (NTracer.wing_point)
+    cdef public bint wing_line
     # overrev follow-up: where the wider blocking-jump search of the sliding state is tried (bits: 1 the column's alpha
     # march, 2 its level flight, 4 the curve rescue, 8 the curve 1 g solves, 16 the point solver, 32 the tracer's level
     # probes); all with the over-rev rule, WT_OVERREV_SLIDE=<mask> for diagnostics
@@ -351,7 +355,8 @@ cdef class MarchEngine:
         self.P.instr_event = instructor_event
         if self.fin.instructor is not None:(<Instructor>self.fin.instructor).loop_stats = loop.stats
         cfg = solver.config
-        self.instructor = bool(cfg['autotrim']);self.structural = bool(cfg['structural_limits'])
+        self.instructor = bool(cfg['autotrim']);self.wing_line = bool(self.fin.wing_line)
+        self.structural = bool(cfg['structural_limits']) and not self.wing_line
         self.native_instructor = self.instructor and self.cc.finisher is not None and self.cc.finisher.instructor is not None
         self.is_prop = bool(solver.is_prop);self.roll_leveling = bool(solver.fm.get('RollLeveling', True))
         self.sep_tol = cfg['sep_tolerance_mps']

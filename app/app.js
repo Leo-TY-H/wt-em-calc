@@ -466,6 +466,20 @@ function overrevText(percent,seconds){
   return Number.isFinite(percent)?`<br>Over-rev +${fmt(percent,1)}%${Number.isFinite(seconds)?` · engine quits after ${fmt(seconds,0)} s`:''}`:'';
 }
 const pathOverrev=path=>path.x.map((_,i)=>overrevText(path.percent_over?.[i],path.overrev_s?.[i]));
+// The wing is a line, not a cut (Leo, 2026-11-10). Past it the game breaks an intact wing held at load ratio r after
+// about 0.3/(r-1) s (stress fills) + 1/(6(r-1)) s (mean wait at a chance of (r-1)/8 per 48 Hz step); the same rule as
+// wing_line.break_seconds in the solver.
+const WING_RED='#ff5a4f';
+const wingBreakSeconds=r=>Number.isFinite(r)&&r>1?(0.3+1/6)/(r-1):null;
+const breakText=s=>s<10?fmt(s,1)+' s':s<120?fmt(s,0)+' s':s<3600?fmt(s/60,0)+' min':'over 1 h';
+const wingOverText=s=>Number.isFinite(s)?`<br>Wing over its limit · breaks after about ${breakText(s)}`:'';
+// Shared legend keys of the wing line and the dashed Instructor lines (they are the same for every aircraft).
+function wingKeys(displayed,data){
+  if(altitudeChart(data))return [];
+  const labels=[...new Set(displayed.map(a=>a.secondary_boundary?.points?.length?a.secondary_boundary.label:null).filter(Boolean))];
+  return [...(displayed.some(a=>a.wing_line?.length)?[{name:'Wing breaks (wing load)',line:{color:WING_RED,width:2.4}}]:[]),
+    ...labels.map(name=>({name:escapeText(name),line:{color:'rgba(240,240,250,.6)',width:2.4,dash:'longdash'}}))];
+}
 function sustainedCurve(aircraft,data){
   // Both preview and completed curves follow the currently selected contour.
   const paths=aircraft.contours.filter(c=>c.level===0);
@@ -483,7 +497,7 @@ function chartYRange(aircraft,data){
   return [data.settings.altitude_min_m,top+(top-data.settings.altitude_min_m)*.02];
 }
 function envelopeTop(aircraft){
-  const peak=Math.max(0,...aircraft.flatMap(a=>[...(a.boundary||[]),...(a.points||[]).filter(chartUsable)].map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
+  const peak=Math.max(0,...aircraft.flatMap(a=>[...(a.boundary||[]),...(a.secondary_boundary?.points||[]),...(a.points||[]).filter(chartUsable)].map(p=>Number.isFinite(p.turn_dps)?p.turn_dps:0)));
   return Math.max(10,Math.ceil(peak*1.05+1));
 }
 function contourLabels(displayed,data,view){
@@ -491,7 +505,7 @@ function contourLabels(displayed,data,view){
   // overlaps another, avoids the envelopes and every other line where its own line leaves room, and is
   // slanted along its contour. Text is an annotation (rotatable); an invisible marker keeps hover and click.
   const chart=$('chart'),size=chart._fullLayout?._size;
-  const width=size?.w||Math.max(300,(chart.clientWidth||1000)-80),height=size?.h||Math.max(200,(chart.clientHeight||700)-54-Math.max(40,displayed.length*22));
+  const width=size?.w||Math.max(300,(chart.clientWidth||1000)-80),height=size?.h||Math.max(200,(chart.clientHeight||700)-54-Math.max(40,(displayed.length+wingKeys(displayed,data).length)*22));
   const [x0,x1]=view?.x||[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],[y0,y1]=view?.y||chartYRange(displayed,data),cell=6;
   const px=(x,y)=>[(x-x0)/(x1-x0)*width,(y1-y)/(y1-y0)*height];
   const lines=new Map(),shown=displayed.filter(a=>!state.hiddenVehicles.has(a.id));
@@ -508,6 +522,8 @@ function contourLabels(displayed,data,view){
     mark(a.id+'|envelope',edge.map(q=>q.speed_kmh),edge.map(q=>q.turn_dps));
     for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,path.x,path.y);
     for(const line of a.overrev_lines||[])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
+    // The wing line and the dashed Instructor line (null rates are gaps, skipped by mark).
+    if(!altitudeChart(data))for(const points of [a.wing_line,a.secondary_boundary?.points])if(points?.length)mark(a.id+'|line',points.map(q=>q.speed_kmh),points.map(q=>q.turn_dps));
     if(a.best_climb)mark(a.id+'|line',a.best_climb.speed_kmh,a.best_climb.altitude_m);
   }
   const placed=[],inside=(x,y)=>x>=4&&y>=4&&x<=width-4&&y<=height-4;
@@ -520,7 +536,9 @@ function contourLabels(displayed,data,view){
   for(const level of state.contourLevels)for(const [index,a] of shown.entries()){
     const text=`SEP ${level>0?'+':''}${level}`,w=text.length*6.6+6,h=15,own=a.id+'|'+level;
     let best=null;
-    for(const path of a.contours.filter(q=>q.level===level&&q.x.length>2)){
+    // Labels sit on the pieces inside the wing line; a level with no room there is labelled past it.
+    const pieces=a.contours.filter(q=>q.level===level&&q.x.length>2);
+    for(const past of [false,true])for(const path of best?[]:pieces.filter(q=>!!q.past_wing===past)){
       const pts=path.x.map((x,i)=>Number.isFinite(x)&&Number.isFinite(path.y[i])?px(x,path.y[i]):null);
       const along=[0];for(let i=1;i<pts.length;i++)along.push(along[i-1]+(pts[i]&&pts[i-1]?Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]):0));
       const total=along.at(-1);if(total<w*1.5)continue;
@@ -653,11 +671,15 @@ function renderChart(){
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
       if(!state.contourLevels.includes(level))continue;
       if(level===0&&a.sustained?.length>1)continue;
-      const x=[],y=[],over=[];for(const path of a.contours.filter(c=>c.level===level)){x.push(...path.x,null);y.push(...path.y,null);over.push(...pathOverrev(path),'');}
-      traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
-        line:{color:rgba(a.color,level===0?.95:displayed.length===1?.75:.46),width:level===0?3.6:2.2,dash:'dash'},
-        text:altitude?undefined:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
-        hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>${place}${altitude?'':'<br>Turn radius %{text}'}%{customdata}<extra></extra>`,showlegend:false});
+      // Pieces past the wing line (past_wing) are dotted and fainter (Leo, 2026-11-10): every SEP contour is already dashed.
+      for(const past of [false,true]){
+        const paths=a.contours.filter(c=>c.level===level&&!!c.past_wing===past);if(!paths.length)continue;
+        const x=[],y=[],over=[];for(const path of paths){x.push(...path.x,null);y.push(...path.y,null);over.push(...pathOverrev(path),'');}
+        traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+          line:{color:rgba(a.color,(level===0?.95:displayed.length===1?.75:.46)*(past?.55:1)),width:level===0?3.6:2.2,dash:past?'dot':'dash'},
+          text:altitude?undefined:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
+          hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>${place}${altitude?'':'<br>Turn radius %{text}'}%{customdata}${past?'<br>Past the wing line':''}<extra></extra>`,showlegend:false});
+      }
     }
     // SEP jump lines are not drawn (Leo, 2026-10-26); contours still end where SEP jumps (a.sep_jumps stays in the data).
     for(const line of a.overrev_lines||[]){
@@ -671,8 +693,25 @@ function renderChart(){
     }
     traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
       name:legendName(a.name)+(a.version_label?' · '+a.version_label:''),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
-      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)]),
+      customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)+wingOverText(p.wing_break_s)]),
       hovertemplate:altitude?`%{customdata[2]}<br>AoA %{customdata[0]}<br>Altitude %{y:,.0f} m<br>Speed %{x:.0f} km/h<extra></extra>`:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
+    if(!altitude&&a.wing_line?.length){
+      // Where the wing reaches its breaking load (wing load ratio 1), red for every aircraft; gaps are null rates. The
+      // hover gives the time to break when the load above it, at the envelope, is held. Four customdata entries: the
+      // click handler reads arrays of three as stored samples.
+      traces.push({type:'scatter',mode:'lines',x:a.wing_line.map(p=>p.speed_kmh),y:a.wing_line.map(p=>p.turn_dps??null),
+        name:`${a.name} · wing breaks`,meta:{id:a.id,kind:'wing'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:WING_RED,width:2.4,dash:'solid'},
+        customdata:a.wing_line.map(p=>[fmt(p.load_g,2),turnRadius(p.speed_kmh,p.turn_dps),Number.isFinite(p.break_s_at_boundary)?`<br>Held at the envelope above: breaks after about ${breakText(p.break_s_at_boundary)}`:'',0]),
+        hovertemplate:`Wing breaks (wing load)<br>%{customdata[0]} g · radius %{customdata[1]}<br>${place}%{customdata[2]}<extra></extra>`});
+    }
+    if(!altitude&&a.secondary_boundary?.points?.length){
+      // The Instructor's other wing-protection state (held or released), long dashes in the aircraft's colour.
+      const other=a.secondary_boundary;
+      traces.push({type:'scatter',mode:'lines',x:other.points.map(p=>p.speed_kmh),y:other.points.map(p=>p.turn_dps??null),
+        name:`${a.name} · ${other.label}`,meta:{id:a.id,kind:'secondary'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:rgba(a.color,.95),width:2.4,dash:'longdash'},
+        customdata:other.points.map(p=>[wingOverText(p.wing_break_s),0]),
+        hovertemplate:`${escapeText(other.label)}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[0]}<extra></extra>`});
+    }
     if(altitude&&a.best_climb?.speed_kmh.length)traces.push({type:'scatter',mode:'lines',x:a.best_climb.speed_kmh,y:a.best_climb.altitude_m,name:`${a.name} · best climb`,meta:{id:a.id,kind:'best-climb'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
       line:{color:rgba(a.color,.8),width:1.6,dash:'dot'},customdata:a.best_climb.ps_mps,hovertemplate:`Best climb speed<br>SEP %{customdata:.1f} m/s<br>${place}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
@@ -708,6 +747,9 @@ function renderChart(){
         hovertemplate:`${(data.stationary_full_chart||data.stationary_baseline_chart)?'Unresolved':'Rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
     }
   }
+  // Legend keys without a group: one for the wing line, one per dashed Instructor label (a legend click ignores them).
+  const keys=wingKeys(displayed,data);
+  for(const key of keys)traces.push({type:'scatter',mode:'lines',x:[null],y:[null],name:key.name,line:key.line,showlegend:true,hoverinfo:'skip'});
   const sepLabels=contourLabels(displayed,data);traces.push(...sepLabels.traces);
   // Tooltips carry no aircraft name (Leo, 2026-10-26); the border takes the aircraft's colour instead.
   for(const trace of traces){const owner=displayed.find(a=>a.id===trace.legendgroup);if(owner)trace.hoverlabel={...trace.hoverlabel,bordercolor:owner.color};}
@@ -717,7 +759,7 @@ function renderChart(){
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
-    margin:{l:58,r:22,t:Math.max(40,displayed.length*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
+    margin:{l:58,r:22,t:Math.max(40,(displayed.length+keys.length)*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
     xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
     yaxis:{title:{text:altitude?'Altitude (m)':'Turn rate (°/s)',standoff:8,font:{size:13}},range:[ymin,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:altitude?1000:5,tickformat:altitude?',d':undefined,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
@@ -761,6 +803,13 @@ function renderChart(){
       const a=data.aircraft.find(a=>a.id===p.data.meta.id);
       const position=a&&projectedPoint(event,[{x:a.boundary.map(q=>q.speed_kmh),y:a.boundary.map(q=>q.turn_dps)}]);
       if(position)return solveAt(a,position,{boundary:true},showRejected);
+    }
+    if(p.data.meta?.kind==='wing'){
+      // The wing line is solved where it is clicked; the dashed Instructor line falls to the nearest sample below
+      // (the point solver runs the chart's main Instructor state).
+      const a=data.aircraft.find(a=>a.id===p.data.meta.id);
+      const position=a&&projectedPoint(event,[{x:a.wing_line.map(q=>q.speed_kmh),y:a.wing_line.map(q=>q.turn_dps)}]);
+      if(position)return solveAt(a,position,{wing:true},showRejected);
     }
     if(altitude){
       // Everything else on this chart (the best-climb and over-rev lines) is solved where it is clicked.
@@ -831,12 +880,14 @@ async function inspect(a,p,clicked){
   $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${altitude?fmt(p.altitude_m,0)+' m':fmt(p.turn_dps,2)+' °/s'}`;
   // Only exceptions get a status tag; a normal solved point needs none (Leo, 2026-10-26).
   $('point-status').innerHTML=clicked?.nearest||!chartUsable(p)?`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`:'';
-  const where=clicked&&`${clicked.boundary?'the envelope':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
+  const where=clicked&&`${clicked.boundary?'the envelope':clicked.wing?'the wing line':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
   const note=clicked?.nearest?`<div class="point-note">Clicked ${where}. The details are for the nearest solved point; this server cannot solve the clicked point.</div>`:'';
   // A third row entry hides that row on the page; it stays in the markup (Leo, 2026-10-23).
   const dl=rows=>'<dl>'+rows.map(([k,v,hide])=>`<dt${hide?' hidden':''}>${k}</dt><dd${hide?' hidden':''}>${v}</dd>`).join('')+'</dl>';
   if(p.not_evaluated){$('point-content').innerHTML=dl([['Not calculated',escapeText(p.reasons.join(', '))]])+note;return;}
   if(!chartUsable(p)&&p.status==='unresolved'&&!p.component_forces){$('point-content').innerHTML=dl([['Calculation',escapeText(p.search_unresolved||p.chart_status||'No numerical candidate established')]])+note;return;}
+  // Past the wing line (Flutter on): the larger half-wing load against its breaking load, and the game's time to break.
+  const wingRatio=Math.max(...(p.wing_load_ratios||[0])),wingBreak=resultConditions(a).structural_limits===false?null:wingBreakSeconds(wingRatio);
   const forces=Object.entries(p.component_forces).filter(([k])=>!['parasite','chute'].includes(k));
   const names={left_wing:'Left wing',right_wing:'Right wing',left_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Left canard':'Left tail',right_hstab:(a.aircraft_id||a.id)==='saab_jas39c'?'Right canard':'Right tail',vstab:'Vertical tail',fuselage:'Fuselage'};
   // Grouped (Leo, 2026-10-27): Flight (with lift and drag), Attitude & controls, Engine (with thrust) side by side;
@@ -855,13 +906,14 @@ async function inspect(a,p,clicked){
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ...(altitude?[['Altitude',fmt(p.altitude_m,0)+' m']]:[['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)]]),
-    ['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],...liftDrag(p)])}${section('ATTITUDE & CONTROLS',[
+    ['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],...liftDrag(p),
+    ...(wingBreak!=null?[['Wing load',`${fmt(wingRatio*100,1)}% of the breaking load · breaks after about ${breakText(wingBreak)}`]]:[])])}${section('ATTITUDE & CONTROLS',[
     ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Angle of sideslip',sideslip(p)],...(altitude?[]:[['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')]]),...controlDeflections(p),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}${section('ENGINE',engine)}<div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
     ['Control authority margin',fmt(p.authority_margin*100,2)+'%'],
     ...(p.history_closure_required===false?[['Aerodynamic history','Not part of this experimental model']]:[]),
     ...(p.symmetry_projection?[['Roll/yaw balance','Assumed ideal support; physical control authority not established']]:[]),
-    ['Flutter',resultConditions(a).structural_limits===false?'Off · structural limits disabled':'On · structural limits enforced'],
+    ['Flutter',resultConditions(a).structural_limits===false?'Off · no wing line, speed limits off':'On · wing line and speed limits'],
     ...(instructorEvidence(a)?[['Instructor evidence',escapeText(instructorEvidence(a))]]:[]),
     ...(resultConditions(a).instructor?[['Instructor control authority',instructorAuthorityLabel(resultConditions(a))]]:[]),
     ...(p.prolonged_pull?[['Boundary definition','Stationary full-pull reference · selected power'],['Full-pull check',escapeText(p.prolonged_pull.status)],['Full capability',escapeText(p.prolonged_pull.capability_status||'Not certified by the stationary check')],['Native overload timer',fmt(p.prolonged_pull.overload_timer,4)]]:[]),
@@ -877,7 +929,7 @@ async function inspect(a,p,clicked){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / limit',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',entryModeLabel(a)],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div hidden><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
+    ['Wing load / breaking load',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',entryModeLabel(a)],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div hidden><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;
