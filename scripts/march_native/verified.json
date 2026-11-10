@@ -1,5 +1,5 @@
 {
- "native_sha256": "d747ee101c2ac0d63d07f95fb495f8ca4b3cdc115295c05cc891624afc4043c2",
+ "native_sha256": "b3642dfa3710d45e6a74e63e5e8f6fcc76e40cc151063e9d4947a2318fa1fdd5",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -101,7 +101,7 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "0a059de46c5d4d9896f6f9bfa787ee69667233a48e9028bd842e05e9f27fa38d",
+ "python_sha256": "1653b41cc2808f1d58788b83671f4a4bfdc9afa001ce6776ad04dcdc0b673380",
  "verification": {
   "date": "2026-11-10",
   "aircraft": [
@@ -121,7 +121,9 @@
    "f_104a:rb",
    "mirage_2000c_s5:rb",
    "ariete:rb",
-   "rafale_c_f3:rb"
+   "rafale_c_f3:rb",
+   "saab_jas39c:rb",
+   "typhoon_fgr4:rb"
   ],
   "checks": {
    "bi:sb": {
@@ -1297,9 +1299,240 @@
       }
      ]
     }
+   },
+   "saab_jas39c:rb": {
+    "instructor": {
+     "checked": 1954,
+     "mismatched": 946,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 1.4654943925052066e-14
+     },
+     "examples": [
+      {
+       "speed": 361.1111111111111,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.082624950740057",
+         "0.08262495074005693"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.22605936680285832",
+         "0.2260593668028582"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "0.04664992779559569",
+         "0.046649927795595576"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 9.757840079730816,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.08262407753839296",
+         "0.08262407753839279"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.22605897394072394",
+         "0.22605897394072402"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 9.757840079730816,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.08262407753839296",
+         "0.08262407753839279"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.22605897394072394",
+         "0.22605897394072402"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 13.983148723569217,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.08262315332048502",
+         "0.08262315332048342"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.22605848558900632",
+         "0.2260584855890061"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "0.046649735543493186",
+         "0.04664973554349321"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 13.983148723569217,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.08262315332048502",
+         "0.08262315332048342"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.22605848558900632",
+         "0.2260584855890061"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "0.046649735543493186",
+         "0.04664973554349321"
+        ]
+       ]
+      }
+     ]
+    },
+    "operating_point": {
+     "checked": 121,
+     "mismatched": 0,
+     "decision": 0,
+     "worst": {},
+     "examples": []
+    }
+   },
+   "typhoon_fgr4:rb": {
+    "instructor": {
+     "checked": 1845,
+     "mismatched": 1125,
+     "decision": 0,
+     "worst": {
+      "/static_trim/coordinates[]": 2.55351295663786e-15
+     },
+     "examples": [
+      {
+       "speed": 361.1111111111111,
+       "load": 1.0,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0750147291552374",
+         "0.07501472915523698"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.07778290280223822",
+         "0.07778290280223803"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.06363760817784447",
+         "-0.06363760817784461"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 14.305504136189063,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0750595319195544",
+         "0.07505953191955306"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.07780825847642403",
+         "0.07780825847642367"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0635908752833908",
+         "-0.06359087528339101"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 14.305504136189063,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0750595319195544",
+         "0.07505953191955306"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.07780825847642403",
+         "0.07780825847642367"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0635908752833908",
+         "-0.06359087528339101"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 10.537693259604955,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0750389627527438",
+         "0.07503896275274552"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.07779534340991125",
+         "0.07779534340991137"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0636160505020637",
+         "-0.06361605050206365"
+        ]
+       ]
+      },
+      {
+       "speed": 361.1111111111111,
+       "load": 10.537693259604955,
+       "diffs": [
+        [
+         "/static_trim/coordinates[0]",
+         "0.0750389627527438",
+         "0.07503896275274552"
+        ],
+        [
+         "/static_trim/coordinates[1]",
+         "0.07779534340991125",
+         "0.07779534340991137"
+        ],
+        [
+         "/static_trim/coordinates[2]",
+         "-0.0636160505020637",
+         "-0.06361605050206365"
+        ]
+       ]
+      }
+     ]
+    }
    }
   },
-  "finish_rows": 11959,
+  "finish_rows": 13795,
   "method": "scripts/verify_march_native.py"
  }
 }
