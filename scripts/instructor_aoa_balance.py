@@ -1,9 +1,23 @@
 import math
+import os
 from component_assembly import f32, add, sub, mul
 from polar_f32 import calc_c
 from instructor_pitch_predictor import prepare_mode1, deflection, RAD
 from instructor_protection import divide
-from instructor_reduced import pitch_balance, tail_flow, legacy_wake_factor
+from instructor_reduced import pitch_balance, tail_flow, legacy_wake_factor, inverse_rotated_cl
+
+# Stabilizer AoA clamp of the Instructor's stick solve (Leo 2026-11-10). The game's mode-1 trim solve (aces.exe
+# 1430D0E80) finds the tail angle that gives the target pitch acceleration (its tail polar at the current Mach, which
+# saturates at that polar's critical angles), clamps it to 0.97 x the tail polar's Mach-0 critical angles (maxss/minss
+# at 1430D5565/556B; ip[0x14], ip[0x18]; the same line as instructor_pitch_predictor.py:163) and returns the stick
+# that puts the tail there. Where that clamp or the saturation binds, the stick bound is the stick of the bound angle,
+# not the stick of the target acceleration: required_acceleration then returns the target acceleration plus the
+# signed acceleration gap between the delivered tail angle and the bound angle (the acceleration of the delivered
+# stick against that of the game's stick, as without the clamp), so the Instructor margin changes sign where the
+# delivered stick passes the game's stick. Only a bound on the pull side is applied (bound angle x tail lever > 0):
+# the push-side bound moves the lower stick bound, which a held pull never meets. A failed tail inverse (the game
+# then uses angle 0) keeps the unclamped margin. WT_INSTRUCTOR_TAIL_CLAMP=0 restores the deployed margin.
+TAIL_CLAMP = os.environ.get('WT_INSTRUCTOR_TAIL_CLAMP', '1') != '0'
 
 
 def required_acceleration(model, ip, state, delivered_pitch):
@@ -78,6 +92,22 @@ def required_acceleration(model, ip, state, delivered_pitch):
     if inputs['legacy_balance_shift']:
         lever = sub(c['tail_lever'], add(mul(f32(math.sin(mul(abs(working), RAD))), .5), ip[0x1c]))
     acceleration = (balance['tail_force'] - tail_force) * lever / f32(state['pitch_inertia'])
+    if TAIL_CLAMP:
+        # the game's tail angle for the target acceleration ip[8] (pitch_predictor lines 156-163), then its clamp
+        need_cl = add(divide(pitch_balance(**dict(inputs, target_acceleration=ip[8]))['tail_force'], taq),
+                      mul(c['tail_cl'][int(td < 0.)], td))
+        need, solved = inverse_rotated_cl(c['tail'], need_cl, working if convert else 0., convert)
+        saturated = not solved and (need == c['tail']['aoaCritH'] or need == c['tail']['aoaCritL'])
+        game = min(max(need, ip[0x14]), ip[0x18])
+        if (saturated or (solved and game != need)) and game * lever > 0.:
+            # bound angle in force: the delivered stick is inside while its tail angle is on the allowed side of the
+            # game's angle (the tail force rises with the tail angle below its critical angle; the sign follows the
+            # angles, so a delivered tail past its critical angle stays outside)
+            game_force = mul(taq, sub(calc_c(c['tail'], game, working if convert else game)[1],
+                                      mul(c['tail_cl'][int(td < 0.)], td)))
+            shift = abs((game_force - tail_force) * lever / f32(state['pitch_inertia']))
+            side = (game - required) * lever
+            acceleration = ip[8] + (shift if side > 0. else -shift if side < 0. else 0.)
     return dict(acceleration=acceleration, tail_force=tail_force,
                 zero_acceleration_tail_force=balance['tail_force'], tail_angle_deg=required,
                 tail_angle_bounds_deg=[ip[0x14], ip[0x18]], flow_angle_deg=flow,

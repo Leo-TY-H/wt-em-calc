@@ -368,7 +368,11 @@ class Curve:
             'Instructor pitch':abs((point.get('instructor') or {}).get('envelope_margin',float('inf'))),
             'pitch response':abs((point.get('pitch_response') or {}).get('margin',float('inf'))),
             'control':abs(point.get('authority_margin',float('inf')))}
-        return sorted(self.events(point),key=lambda item:
+        events=self.events(point)
+        # Leo 2026-11-10: under the wing rule (wing_line.py) the wing force is no face to recover to
+        from wing_line import rule as wing_rule
+        if wing_rule(self.solver):events=[e for e in events if e[0]!='wing force']
+        return sorted(events,key=lambda item:
             getattr(item[2],'stationary_distance',margins.get(item[0],float('inf'))))
 
 

@@ -546,6 +546,7 @@
 !/scripts/vehicle_names.py
 !/scripts/windows_instructor_source.py
 !/scripts/wing_area_normalization.py
+!/scripts/wing_line.py
 !/scripts/wing_model.py
 !/scripts/wing_stages.py
 !/scripts/wing_sweep.py

@@ -35,10 +35,12 @@ from kinematics import airborne_step, altitude_velocity_correction
 from mass_model import aircraft_properties, evaluate as mass_evaluate, tank_configuration
 from polar_runtime import flap_polar, evaluate as mach_polar
 from primary_controls import selected_properties as control_properties, authority_ranges, steady_commands
+from wing_line import rule as wing_rule, protection as wing_protection
 
 ROOT = Path(__file__).resolve().parents[1]
 AIRCRAFT = LazyCatalog()
 # S8: the march chart's soft limits (solver.soft_admission): engine RPM and the forward-IAS limits
+# Leo 2026-11-10: under the same rule the wing force is no reason at all (wing_line.rule: charted as a line)
 SOFT_REASONS = frozenset(('engine RPM limit', 'IAS limit', 'flap automatic retraction', 'flap IAS limit'))
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
@@ -49,7 +51,7 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='stationary',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='stable',
                 experimental_instantaneous_aero=False,experimental_lateral_trim='full',stationary_execution='baseline',
                 stationary_governor_mode='pitch_stops',enable_exports=False,
-                chart_solver=os.environ.get('WT_EM_CHART_SOLVER','march'),sideslip_recovery=True)
+                chart_solver=os.environ.get('WT_EM_CHART_SOLVER','march'),sideslip_recovery=True,instructor_protection=None)
 
 # chart_solver='march' (default since S4): alpha-march envelope plus direct SEP
 # curves (em_march_chart) on the stationary equations, with the compiled loop
@@ -163,6 +165,9 @@ def settings(values=None):
         raise ValueError('Unknown stationary chart execution mode')
     if result['chart_solver'] not in ('march','baseline'):raise ValueError('Unknown chart solver')
     if not isinstance(result['sideslip_recovery'],bool):raise ValueError('sideslip_recovery must be true or false')
+    # Instructor wing protection state of the chart (Leo 2026-11-10, wing_line.protection): None chooses it from the
+    # aircraft's release start; 'held' / 'released' force it (the chart's second envelope pass)
+    if result['instructor_protection'] not in (None,'held','released'):raise ValueError('Unknown Instructor wing protection state')
     from em_model_experiments import MODES
     if not isinstance(result['experimental_instantaneous_aero'],bool):raise ValueError('Instantaneous aerodynamics must be true or false')
     if result['experimental_lateral_trim'] not in MODES:raise ValueError('Unknown experimental lateral trim mode')
@@ -362,6 +367,8 @@ class TrimSolver:
         self.radiator,self.oil_radiator=radiator_positions(self.config,AIRCRAFT[name].get('manual_controls',{}))
         from flap_model import profile as flap_profile
         self.flap_profile=flap_profile(self.fm)
+        # Instructor wing protection of this chart: 'held' | 'released' | None, and its release start in seconds
+        self.instructor_protection,self.protection_release_s=wing_protection(self.fm,self.config)
         self.instructor_profile=instructor_profile(self.fm,self.config)
         self.model=at_sweep(prepare(self.fm),self.config['sweep_percent']/100.); self.controls=control_properties(self.fm)
         # Selected weapon loadout: store payloads, drag area (FM+0x8448) and drop tanks.
@@ -1002,7 +1009,9 @@ class TrimSolver:
         if aero['air']['mach']>strength['mach']:structural.append('Mach limit')
         sweep_range=available_sweep(self.fm,self.sweep_rows,aero['air']['mach']) if self.has_sweep else (0.,1.)
         if self.has_sweep and not sweep_range[0]-1e-7<=self.model['sweep']<=sweep_range[1]+1e-7:reasons.append('sweep unavailable')
-        if self.config['structural_limits']:reasons+=structural
+        # Leo 2026-11-10: under the wing rule (wing_line.py) the wing force is charted as a line, not a rejection;
+        # structural_flags and wing_load_ratios stay on every point
+        if self.config['structural_limits']:reasons+=[r for r in structural if r!='wing force limit'] if wing_rule(self) else structural
         from flap_model import violations as flap_violations
         reasons+=flap_violations(self.flap_profile,self.config['flaps_percent'],
             aero['air']['ias_u'],aero['air']['mach'],self.config['structural_limits'],

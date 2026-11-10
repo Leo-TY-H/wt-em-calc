@@ -114,8 +114,12 @@ def preliminary(solver, speed):
     """
     if (not solver.config.get('aircraft_search_region',False) or
             solver.config.get('reference_load_cap',False) or solver.config.get('sampling')=='regular'):return None
+    # Leo 2026-11-10: under the wing rule (wing_line.py) the wing strength does not bound the search, so the boundary
+    # past the wing line is not clipped as 'plot ceiling'
+    from wing_line import rule as wing_rule
+    line=wing_rule(solver);cut=bool(solver.config['structural_limits']) and not line
     key=(float(speed),solver.weight,solver.mass.get('nitro_mass',0.),solver.flaps,solver.config['altitude_m'],
-         solver.config['structural_limits'],solver.config['throttle'],solver.config['afterburner'])
+         cut,solver.config['throttle'],solver.config['afterburner'])
     if not hasattr(solver,'_aircraft_regions'):solver._aircraft_regions=OrderedDict()
     cache=solver._aircraft_regions
     if key in cache:
@@ -138,7 +142,7 @@ def preliminary(solver, speed):
         areas=secondary['areas'];polars=secondary['polars']
         wing_force=q*geometry['area']*peak(wing)
         structural=math.inf
-        if solver.config['structural_limits']:
+        if cut:
             angle=min(80.,max(0.,wing['aoaCritH']+abs(geometry['incidence'])))
             structural=2.*max(geometry['strength']['force'])/math.cos(math.radians(angle))
         tail=q*(sum(areas[k] for k in ('left_main','right_main','left_elevator','right_elevator'))*peak(polars['hstab'])+
@@ -154,7 +158,8 @@ def preliminary(solver, speed):
         limit=max(1.1,FORCE_MARGIN*estimate+LOAD_MARGIN_G)
         note=dict(revision=REVISION,estimated_load_g=estimate,initial_load_g=limit,
             force_margin=FORCE_MARGIN,load_margin_g=LOAD_MARGIN_G,certifies_exclusion=False,predetermined=True,
-            basis='preliminary Mach/flap lifting surfaces, selected mass, wing strength and propulsion',
+            basis='preliminary Mach/flap lifting surfaces, selected mass and propulsion' if line
+                  else 'preliminary Mach/flap lifting surfaces, selected mass, wing strength and propulsion',
             force_estimates_g=dict(zip(('wing','tail','fuselage','engine'),(x/solver.weight for x in forces))))
     cache[key]=note
     if len(cache)>512:cache.popitem(last=False)

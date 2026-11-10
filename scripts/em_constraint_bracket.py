@@ -13,6 +13,9 @@ def refine(solver,speed,low,high):
 
 
     initial=(low['load_g'],high['load_g']);evaluations=0
+    # Leo 2026-11-10: no wing margin under the wing rule (wing_line.py: the wing is a line, not a limit)
+    from wing_line import rule as wing_rule
+    wing_cut=bool(solver.config['structural_limits']) and not wing_rule(solver)
     def margins(point):
         result={'control':point['authority_margin'],'stall':point['stall_margin_deg']/10.}
         pitch=point.get('pitch_response')
@@ -22,7 +25,7 @@ def refine(solver,speed,low,high):
             rpm=[1.-value/(limit*(1.+1e-6)) for value,limit in
                  zip(prop.get('engine_rpm',()),prop.get('engine_rpm_threshold',()))]
             if rpm:result['engine RPM']=min(rpm)
-        if solver.config['structural_limits']:result['wing force']=1.-max(point['wing_load_ratios'])
+        if wing_cut:result['wing force']=1.-max(point['wing_load_ratios'])
         if solver.config['autotrim']:
             ctl=point.get('instructor')
             if ctl is not None:

@@ -25,17 +25,28 @@ def controller_limits(solver, value, speed=None):
     # Autotrim without the Instructor (realistic controls): the fixed one-g
     # trim bounds the controls, and there is no AoA limit.
     instructor = solver.config.get('instructor', True)
-    targets = demands = None
+    # Wing protection state of the chart (Leo 2026-11-10, wing_line.py): 'held' = the game's limits with the overload
+    # timer at 0 (the reserve cap wherever it applies); 'released' = the game's steady state after the release, the
+    # base limit on each side where the wing-strength AoA is inside it (only there the release timer can run), else
+    # the same cap; None (Instructor or Flutter off, limitOverload false, WT_WING_LINE=0) = the deployed limits with
+    # the overload reserve omitted. The load-factor limit applies in every state.
+    protection = getattr(solver, 'instructor_protection', None)
+    targets = demands = limits = None
     balances = []
     margins_angle = [NO_INSTRUCTOR_MARGIN, NO_INSTRUCTOR_MARGIN]
     if instructor:
-        targets = angle_targets(fixed['polar'], state['properties'], adjusted,
-            rho=fixed['rho'], speed_squared=state['wrapper']['speed_squared'],
+        common = dict(rho=fixed['rho'], speed_squared=state['wrapper']['speed_squared'],
             area=state['wing_area'], dihedral=state['dihedral'], strength=state['strength'],
             mass=state['wrapper']['mass'], tail_area_pair=state['tail_area_pair'],
-            timer=0., dt=0., mode_lane=True, overload_enabled=False)
+            timer=0., dt=0., mode_lane=True)
+        targets = angle_targets(fixed['polar'], state['properties'], adjusted, overload_enabled=protection is not None, **common)
+        limits = targets['angle_limits']
+        inverse, base = targets['inverse_strength_angles'], targets['base_angle_limits']
+        if protection == 'released' and inverse is not None and (inverse[0] > base[0] or inverse[1] < base[1]):
+            free = angle_targets(fixed['polar'], state['properties'], adjusted, overload_enabled=False, **common)['angle_limits']
+            limits = [free[0] if inverse[0] > base[0] else limits[0], free[1] if inverse[1] < base[1] else limits[1]]
         demands = pitch_demands(fixed['polar'], state['properties'], adjusted,
-            targets['angle_limits'], reference_speed=state['reference_speed'],
+            limits, reference_speed=state['reference_speed'],
             tas=state['wrapper']['tas'], ias=fixed['ias'], rate=fixed['rate'])
         kp = state['reference_speed'] / max(5., state['wrapper']['tas'])
         for demand in demands:
@@ -77,11 +88,12 @@ def controller_limits(solver, value, speed=None):
         sticks=allocation['sticks'] if auto['success'] else None, static_trim=auto,
         control_authority_trim_independent=independent,
         delivered_pitch=state['delivered'][1],
-        required_pitch=state['delivered'][1], angle_limits_deg=targets['angle_limits'] if instructor else None,
+        required_pitch=state['delivered'][1], angle_limits_deg=limits if instructor else None,
         effective_angle_limits_deg=effective, adjusted_wing_angles_deg=adjusted,
         native_angle_rate_rad_s=fixed['rate'],
         model='effective AoA schedule with reduced moment balance' if instructor else 'autotrim authority (Instructor off)',
         rate_demands=demands, reduced_balances=balances, history_independent=True, exact_native_controller=False,
-        overload_policy='transient reserve omitted; physical strength retained')
+        overload_policy='wing protection held (overload timer 0)' if protection == 'held'
+                        else 'wing protection released or off; wing strength charted')
     value['instructor'] = out
     return out

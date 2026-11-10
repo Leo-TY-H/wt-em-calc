@@ -117,7 +117,8 @@ def compute_cached(config,progress=None,cancelled=None,preview=None):
 
 def outline_column(column):
     keys=('speed_kmh','boundary','lower_boundary','boundary_status','boundary_reason','load_search_limit','aircraft_search_region','mach_branch','discontinuity')
-    return dict({k:column.get(k) for k in keys},
+    # 'protection': the Instructor wing protection limits at the boundary (wing_line.protection_limits), where charted
+    return dict({k:column.get(k) for k in keys},**({'protection':column['protection']} if column.get('protection') else {}),
                 points=[p for p in column['points'] if p['load_g']==1.])
 
 
@@ -581,8 +582,10 @@ def predict_limit(solver,speed,level,seed):
         guess[1]=math.degrees(math.acos(1/estimate))
 
 
+    # Leo 2026-11-10: no wing-force column seed under the wing rule (wing_line.py: the wing is a line, not a limit)
+    from wing_line import rule as wing_rule
     wing_cap=(1./max(level['wing_load_ratios']) if solver.is_prop and solver.engine.automatic and solver.config['structural_limits']
-              and max(level['wing_load_ratios'])>0. else float('inf'))
+              and not wing_rule(solver) and max(level['wing_load_ratios'])>0. else float('inf'))
     if not limits and estimate>wing_cap:kind='wing force'
     target=min(estimate,wing_cap) if kind=='wing force' and not limits else estimate
     high_load=min(64.,max(2.,min(estimate*1.2,wing_cap*1.05) if kind=='wing force' else estimate*1.2))

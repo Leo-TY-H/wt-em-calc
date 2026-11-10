@@ -52,6 +52,8 @@ import time
 
 import numpy as np
 
+from wing_line import rule as wing_rule
+
 G = 9.8100004196167
 MAX_STEP_DEG = 8.
 APPROACH_DEG = 2.  # a predicted margin crossing farther than this is approached, not jumped to
@@ -89,7 +91,8 @@ def margins(solver, p):
     out = {}
     if p.get('stall_margin_deg') is not None:out['stall'] = p['stall_margin_deg']/10.
     if p.get('authority_margin') is not None and not solver.config['autotrim']:out['control'] = p['authority_margin']
-    if solver.config['structural_limits'] and p.get('wing_load_ratios'):out['wing force'] = 1.-max(p['wing_load_ratios'])
+    # Leo 2026-11-10: no wing margin under the wing rule (wing_line.py: the wing is a line, not a limit)
+    if solver.config['structural_limits'] and not wing_rule(solver) and p.get('wing_load_ratios'):out['wing force'] = 1.-max(p['wing_load_ratios'])
     pr = p.get('pitch_response')
     if pr is not None and pr.get('margin') is not None and math.isfinite(pr['margin']):out['pitch response'] = pr['margin']
     if p.get('stationary_governor_mode') == 'pitch_stops':
