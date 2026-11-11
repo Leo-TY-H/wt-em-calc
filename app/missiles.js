@@ -82,6 +82,7 @@
   </div>`;
   const apiBase=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   async function request(path, options={}, version) {
+    await window.GameVersions?.load();
     const response=await (window.GameVersions?.enabled()?GameVersions.request(path,options,version):fetch(apiBase?apiBase+path:'.'+path,options));
     const body=await response.json();
     if(!response.ok) throw new Error(body.error||`Request failed (${response.status})`);

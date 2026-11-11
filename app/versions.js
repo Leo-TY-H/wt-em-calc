@@ -7,16 +7,18 @@ window.GameVersions=(()=>{
   const base=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   const root=path=>base?base+path:'.'+path;
   const START_LIMIT_S=120,START_POLL_MS=400;
-  let list=null,history=null;
+  let list=null,history=null,loading=null;
   const metas=new Map(),starts=new Map();
 
   const escapeHtml=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const enabled=()=>!!list;
   const build=version=>list?.builds.find(b=>b.id===version);
   // Identical builds share one server: the one holding their data.
-  const server=version=>build(version)?.data_build||version;
+  const server=version=>{const id=version||list?.default;return build(id)?.data_build||id;};
   const isDefault=version=>!version||!list||server(version)===server(list.default);
-  const url=(path,version)=>root(isDefault(version)?path:`/v/${encodeURIComponent(server(version))}${path}`);
+  // The user's default can be newer than the unversioned API's current dataset.
+  const isPrimary=version=>!list||server(version)===server(list.primary);
+  const url=(path,version)=>root(isPrimary(version)?path:`/v/${encodeURIComponent(server(version))}${path}`);
   const channelName={live:'Live',dev:'Dev'};
   const label=version=>{
     const id=version||list?.default;
@@ -31,14 +33,20 @@ window.GameVersions=(()=>{
     return list&&id&&id.split('.').slice(0,2).join('.')!==list.rules?`Calculated with ${list.rules} game rules`:'';
   };
 
-  async function load(){
-    try{
+  function load(){
+    return loading??=(async()=>{try{
       const response=await fetch(root('/api/versions'));
       if(!response.ok)return null;
       const value=await response.json();
-      if(value.builds?.length&&value.default)list=value;
+      if(value.builds?.length&&value.default){
+        const newer=(a,b)=>{const x=a.split('.').map(Number),y=b.split('.').map(Number);
+          for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0;}return false;};
+        const latest=value.builds.filter(b=>b.available).reduce((best,b)=>!best||newer(b.id,best.id)?b:best,null);
+        list={...value,primary:value.default,default:latest?.id||value.default};
+      }
     }catch{list=null;}
     return list;
+    })();
   }
   function loadHistory(){
     history??=fetch(root('/api/version-history')).then(r=>r.ok?r.json():null).catch(()=>null);
@@ -47,14 +55,14 @@ window.GameVersions=(()=>{
   // The meta of a build whose server has answered; null for the default build, which the page already holds.
   const meta=version=>isDefault(version)?null:metas.get(server(version))?.value||null;
   async function requestMeta(id){
-    const response=await fetch(root(`/v/${encodeURIComponent(id)}/api/meta`));
+    const response=await fetch(url('/api/meta',id));
     if([502,503,504].includes(response.status))throw Object.assign(new Error('Not running'),{starting:true});
     if(!response.ok)throw new Error(`Build ${id} did not answer (${response.status})`);
     return response.json();
   }
   // Resolves once the build's server answers, starting it if needed.
   function ensure(version){
-    if(isDefault(version))return Promise.resolve(null);
+    if(isPrimary(version)&&isDefault(version))return Promise.resolve(null);
     const id=server(version),known=metas.get(id);
     if(known)return known;
     const waiting=(async()=>{
@@ -78,7 +86,7 @@ window.GameVersions=(()=>{
   const forget=version=>metas.delete(server(version));
   // A request to a build's server: it starts the server if needed, and again if it was stopped while idle.
   async function request(path,options,version){
-    if(isDefault(version))return fetch(url(path,version),options);
+    if(isPrimary(version))return fetch(url(path,version),options);
     await ensure(version);
     let response=null;
     try{response=await fetch(url(path,version),options);}catch(cause){if(!(cause instanceof TypeError))throw cause;}

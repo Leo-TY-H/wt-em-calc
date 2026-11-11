@@ -29,7 +29,7 @@ async function api(path, options={}, version) {
   for(let attempt=0;attempt<attempts;attempt++){
     let response,body;
     try{
-      response=await (version&&window.GameVersions?.enabled()?GameVersions.request(path,options,version):fetch(apiUrl(path,version),options));
+      response=await (window.GameVersions?.enabled()?GameVersions.request(path,options,version):fetch(apiUrl(path,version),options));
       // Proxy outage responses may be HTML or have no body at all.
       if([502,503,504].includes(response.status)&&!pageLoad){
         throw Object.assign(new Error('The calculation server is temporarily unavailable.'),{retryable:true});
@@ -1334,7 +1334,9 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
 (async()=>{try{
   $('calculate').disabled=true;
   // Symbol glyphs are cosmetic; a missing font must not disable the calculator.
-  [state.meta]=await Promise.all([api('/api/meta?refresh=1'),document.fonts?.load('14px WTSymbols','▄').catch(()=>[]),window.GameVersions?.load()]);
+  await window.GameVersions?.load();
+  const defaultMeta=await window.GameVersions?.ensure();
+  [state.meta]=await Promise.all([defaultMeta||api('/api/meta?refresh=1'),document.fonts?.load('14px WTSymbols','▄').catch(()=>[])]);
   $('calculate').disabled=false;
   state.meta.defaults=requestConditions({...state.meta.defaults,default_ammunition:true,aircraft:[]});
   populateAircraft();populate(state.meta.defaults);addDevAircraft();
