@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026.11.11.4
+
+- Short-release aircraft (release start at most 10 seconds) use the released Instructor pull boundary everywhere, without reapplying the wing-protection cap when the in-game release conditions are absent. Other limits and longer-release aircraft retain their existing behavior.
+
+
 ## 2026.11.11.3
 
 - Aircraft added or duplicated in Engine Performance now keep valid, unique entry IDs when switching to EM or altitude diagrams, so those calculations accept the shared aircraft list.

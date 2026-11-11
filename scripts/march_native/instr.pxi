@@ -454,7 +454,7 @@ cdef class Instructor:
     cdef double tail_bounds[2]
     # Wing protection state of the chart (Leo 2026-11-10; instructor_aoa.controller_limits, wing_line.py): overload =
     # a state is set (solver.instructor_protection 'held' | 'released') and limitOverload: the reserve cap with the
-    # overload timer at 0; released: the base limit on each side where the wing-strength AoA is inside it
+    # overload timer at 0; released: omit the reserve cap unconditionally (chart policy)
     cdef bint overload, overload_held, overload_released
     cdef double overload_reserve
     cdef double overload_range[2]
@@ -499,7 +499,7 @@ cdef class Instructor:
         m = solver.model;fm = m['fm'];ad = fm['Aerodynamics'];g = m['geometry'];mass = solver.mass
         cfg = solver.config
         import instructor_steady_aoa
-        if instructor_steady_aoa.REVISION != 'steady-effective-aoa-fixed-autotrim-v10':
+        if instructor_steady_aoa.REVISION != 'steady-effective-aoa-unconditional-short-release-v11':
             raise InstructorUnsupported('Instructor revision')
         self.authority_revision = authority_revision
         self.authority_mode = cfg.get('instructor_authority_mode', 'native')
@@ -1289,7 +1289,7 @@ cdef class Instructor:
         a = result['adjusted_wing_angles_deg']
         result['adjusted_wing_angles_deg'] = [min(a), max(a)]
         result.update(model='Steady effective AoA schedule (approximation)' if self.aoa_limit else 'Autotrim authority (Instructor off)',
-                      model_revision='steady-effective-aoa-fixed-autotrim-v10', pitch_predictor_recheck=False)
+                      model_revision='steady-effective-aoa-unconditional-short-release-v11', pitch_predictor_recheck=False)
         result['authority_revision'] = self.authority_revision
         return result
 
@@ -1360,20 +1360,15 @@ cdef class Instructor:
         base_limits = [low, high]
         cos_dihedral = F(cos(M(F(self.dihedral), F(.01745329238474369))))
         q = M(M(.5, F(rho)), F(speed_squared))
-        r.protection_branch = 0
-        if self.overload:
-            # the reserve cap at overload timer 0 (with timer 0 and dt 0 the timer stays 0 with or without the trigger);
-            # 'released': the base limit on each side where the wing-strength AoA is inside it (only there the game's
-            # release timer runs), else the same cap. The load-factor limit below applies in every state.
+        # Match instructor_aoa.controller_limits: released has no speed-dependent
+        # trigger or reapplication. Keep a constant branch key for its stencils.
+        r.protection_branch = 3 if self.overload_released else 0
+        if self.overload and not self.overload_released:
             scale = F(2./pmax(1., M(M(q, F(self.wing_area)), cos_dihedral)))
             low_inverse = inverse_cl(&p, M(F(self.strength[0]), scale), &valid)
             high_inverse = inverse_cl(&p, M(F(self.strength[1]), scale), &valid)
-            low_held = remap(0., self.overload_range[0], self.overload_range[1], pmax(low, M(low_inverse, self.overload_reserve)), low)
-            high_held = remap(0., self.overload_range[0], self.overload_range[1], pmin(high, M(high_inverse, self.overload_reserve)), high)
-            if self.overload_released and low_inverse > low:r.protection_branch |= 1
-            else:low = low_held
-            if self.overload_released and high_inverse < high:r.protection_branch |= 2
-            else:high = high_held
+            low = remap(0., self.overload_range[0], self.overload_range[1], pmax(low, M(low_inverse, self.overload_reserve)), low)
+            high = remap(0., self.overload_range[0], self.overload_range[1], pmin(high, M(high_inverse, self.overload_reserve)), high)
         if self.limit_load_factor:
             effective_area = S(M(cos_dihedral, F(self.wing_area)), M(A(self.tail_area_pair[0], self.tail_area_pair[1]), .5))
             mass_scale = F(F(self.w_mass)/pmax(1., M(q, effective_area)))
@@ -1515,7 +1510,7 @@ cdef class Instructor:
             min(min(item['adjusted_wing_angles_deg']) for item in results),
             max(max(item['adjusted_wing_angles_deg']) for item in results)]
         result.update(model='Steady effective AoA schedule (approximation)' if self.aoa_limit else 'Autotrim authority (Instructor off)',
-                      model_revision='steady-effective-aoa-fixed-autotrim-v10', pitch_predictor_recheck=False)
+                      model_revision='steady-effective-aoa-unconditional-short-release-v11', pitch_predictor_recheck=False)
         result['authority_revision'] = self.authority_revision
         value['instructor'] = result
         return result

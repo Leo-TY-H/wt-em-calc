@@ -258,8 +258,8 @@ OVERREV_ASSUMPTION = ('Engine over-rev (RPM above RPMMaxAllowed) is charted, not
                       'given (steady RPM, fresh engine) and adds its over-rev torque, as charted')
 WING_ASSUMPTION = ('The wing breaking load (wing load ratio 1) is charted as a line, not a limit: beyond it the game breaks '
                    'an intact wing after about 0.47 / (ratio - 1) s (0.3/(ratio-1) s, then a chance of (ratio-1)/8 per 48 Hz '
-                   'step). Instructor wing protection: where its release starts after 10 s or more the protected limit is '
-                   'the envelope and the released limit is dashed above it; otherwise the released limit is the envelope '
+                   'step). Instructor wing protection: where its release starts after more than 10 s the protected limit is '
+                   'the envelope and the released limit is dashed above it; otherwise the unconditional released limit is the envelope '
                    'and the protected limit is dashed inside')
 
 
@@ -418,7 +418,7 @@ def march_solvers(name, index, cfg, tracer, solver, curve_solver, report, cancel
 def protection_scan(solver, columns, failures=None):
     """Leo 2026-11-10: True where the Instructor's other wing protection state (wing_line.py) moves the boundary of a
     verified column; every such column gets column['protection'] (wing_line.protection_limits at its boundary state:
-    one evaluation, no admission). The two states differ only where the cap can be released (released_limit_deg above
+    one evaluation, no admission). The two states differ where the reserve cap lowers the free limit (released_limit_deg above
     held_limit_deg). A 'held' chart: the column ends on the Instructor's limit and the game's release timer runs at
     that state. A 'released' chart: the cap lies below the boundary state's AoA (inside the limit the upper Instructor
     margin moves exactly by the change of the limit; 0.05 deg slack). A column whose evaluation fails is skipped

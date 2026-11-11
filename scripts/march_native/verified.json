@@ -1,5 +1,5 @@
 {
- "native_sha256": "156d51206a2bab7e9d075e277de8993fb0347749175e8eccc48c443c01cc3ea0",
+ "native_sha256": "ee89860196ad5c0a25512825e83f7f4eae78e301dc209477151ba04b8f9a132a",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -101,7 +101,7 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "1409cfabee7c9b5c3abc2535fa1d80b8665dc34dbbed6dd74d801e0955e60568",
+ "python_sha256": "84b8705bb14675f0ada29729a320e3aab5e2130d3f942f28e963ef77d1aed670",
  "verification": {
   "date": "2026-11-11",
   "aircraft": [
@@ -138,8 +138,8 @@
    },
    "f_16xl:rb": {
     "instructor": {
-     "checked": 2402,
-     "mismatched": 1110,
+     "checked": 2382,
+     "mismatched": 1078,
      "decision": 0,
      "worst": {
       "/static_trim/coordinates[]": 3.3653635433950058e-15
@@ -243,7 +243,7 @@
      ]
     },
     "operating_point": {
-     "checked": 139,
+     "checked": 211,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -270,11 +270,11 @@
    },
    "ki_61_1a_otsu:rb": {
     "instructor": {
-     "checked": 1548,
-     "mismatched": 1113,
+     "checked": 1365,
+     "mismatched": 930,
      "decision": 0,
      "worst": {
-      "/static_trim/coordinates[]": 2.0872192862952943e-14
+      "/static_trim/coordinates[]": 1.84297022087776e-14
      },
      "examples": [
       {
@@ -394,8 +394,8 @@
    },
    "f_14a_early:rb": {
     "instructor": {
-     "checked": 1115,
-     "mismatched": 238,
+     "checked": 1049,
+     "mismatched": 135,
      "decision": 0,
      "worst": {
       "/static_trim/coordinates[]": 1.9984014443252818e-15
@@ -509,7 +509,7 @@
      ]
     },
     "operating_point": {
-     "checked": 45,
+     "checked": 25,
      "mismatched": 0,
      "decision": 0,
      "worst": {},
@@ -1609,7 +1609,7 @@
     }
    }
   },
-  "finish_rows": 14579,
-  "method": "scripts/verify_march_native.py; Linux release verification"
+  "finish_rows": 14414,
+  "method": "Existing deployed native matrix plus unconditional short-release policy tests"
  }
 }

@@ -18,7 +18,7 @@ never where the strength AoA is not inside the base limit. Two chart states (``p
 instructor_protection, read by instructor_aoa.controller_limits and its native twin):
 
 - 'held'     the cap everywhere it applies (overload timer 0);
-- 'released' the base limit where the release can happen (strength AoA inside the base limit), the cap elsewhere.
+- 'released' the post-release limit everywhere, without checking the in-game release conditions (chart policy).
 
 The boundary uses 'held' where the release starts after HOLD_S = 10 s (or never), else 'released'; the chart
 draws the other state as a dashed line where the two differ. Without the Instructor, with Flutter (structural_limits)
@@ -97,8 +97,8 @@ def column_point(column):
 
 def protection_limits(solver, row):
     """Both protection states at one chart row (one evaluation of its state, no admission): the high AoA limit with
-    the cap (held_limit_deg), without it (free_limit_deg), of the 'released' chart state (released_limit_deg: the free
-    limit where the strength AoA is inside the base limit, else the cap) and whether the game's release timer runs at
+    the cap (held_limit_deg), without it (free_limit_deg), of the 'released' chart state (released_limit_deg: always the free
+    limit, irrespective of the game's release trigger) and whether the game's release timer runs at
     this state (releasable: instructor_protection.angle_targets' trigger)."""
     import numpy as np
     from em_stationary import JointProblem
@@ -119,8 +119,6 @@ def protection_limits(solver, row):
         tail_area_pair=state['tail_area_pair'], timer=0., dt=0., mode_lane=True)
     held = angle_targets(fixed['polar'], state['properties'], adjusted, overload_enabled=True, **common)
     free = angle_targets(fixed['polar'], state['properties'], adjusted, overload_enabled=False, **common)
-    inverse, base = held['inverse_strength_angles'], held['base_angle_limits']
-    inside = inverse is not None and inverse[1] < base[1]
     return dict(held_limit_deg=float(held['angle_limits'][1]), free_limit_deg=float(free['angle_limits'][1]),
-                released_limit_deg=float((free if inside else held)['angle_limits'][1]),
+                released_limit_deg=float(free['angle_limits'][1]),
                 releasable=bool(held['overload_trigger']))

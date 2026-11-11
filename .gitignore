@@ -571,3 +571,6 @@
 !/references/missile-launchers.json
 !/references/missile-launcher-audit.json
 !/references/missile-profile-native-259087.json
+
+!/AGENTS.md
+!/scripts/test_short_release_policy.py
