@@ -604,8 +604,25 @@
   // The catalog arrives with the EM page's start; the list fills once it is there.
   function whenReady() { if (catalog()) populate(); else setTimeout(whenReady, 300); }
   document.addEventListener('game-versions-ready', () => { if (catalog()) populate(); });
+  document.addEventListener('tool-tab-leave', event => {
+    if (event.detail === 'engine' && catalog())
+      sidebarRows.aircraft = entries.map(({id, aircraft_id, version}) => ({id, aircraft_id, ...(version ? {version} : {})}));
+  });
   document.addEventListener('tool-tab-change', event => {
-    if (event.detail === 'engine') requestAnimationFrame(() => { if (el('engine-chart').data) Plotly.Plots.resize(el('engine-chart')); });
+    if (event.detail !== 'engine') return;
+    if (sidebarRows.aircraft && catalog()) {
+      const previous = new Map(entries.map(e => [e.id, e]));
+      entries = sidebarRows.aircraft.map(row => {
+        const old = previous.get(row.id);
+        if (old && old.version === row.version) return old;
+        return {...FRESH, ...old, ...row, version: row.version,
+          throttle: old?.throttle ?? full(row.aircraft_id, row.version),
+          c: massSettings(row.aircraft_id, old?.c, row.version)};
+      });
+      if (!entries.some(e => e.id === editing)) editing = null;
+      renderEntries(); filter(); updateForm(); render();
+    }
+    requestAnimationFrame(() => { if (el('engine-chart').data) Plotly.Plots.resize(el('engine-chart')); });
   });
   new ResizeObserver(() => { if (!root.hidden && el('engine-chart').data) Plotly.Plots.resize(el('engine-chart')); }).observe(el('engine-chart'));
   axisControls(); updateForm(); whenReady();

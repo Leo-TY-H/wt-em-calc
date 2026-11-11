@@ -95,8 +95,11 @@
     Plotly.Plots.resize(node).catch(error=>{if(node.clientWidth)showError(error.message);});
   }
   const toolTabs=[['em','em-tab','em-workspace'],['engine','engine-tab','engine-workspace'],['altitude','altitude-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
+  let currentTool='em';
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';
+    document.dispatchEvent(new CustomEvent('tool-tab-leave',{detail:currentTool}));
+    currentTool=name;
     // The EM diagram and the altitude envelope share one panel: hide the others first, then show the chosen one.
     for(const [key,tab,panel] of toolTabs) {
       if(key===name)continue;
@@ -106,12 +109,23 @@
     // The header group holding the open calculator is marked current (app.js runs its menus).
     for(const group of document.querySelectorAll('.nav-group'))group.classList.toggle('current',!!group.querySelector('[aria-current=page]'));
     if(name==='missile') {
-      if(!meta) load();
+      if(sidebarRows.missiles)restoreSidebar();else if(!meta) load();
       if(result) requestAnimationFrame(()=>{resizeVisiblePlot(el('missile-chart'));resizeDataPlots();});
     } else {pause(); if((name==='em'||name==='altitude')&&el('chart').data) requestAnimationFrame(()=>resizeVisiblePlot(el('chart')));}
     document.dispatchEvent(new CustomEvent('tool-tab-change',{detail:name}));
   }
   for(const [key,tab] of toolTabs) el(tab).addEventListener('click',()=>selectTab(key));
+  document.addEventListener('tool-tab-leave',event=>{
+    if(event.detail==='missile'&&meta)
+      sidebarRows.missiles={selected:[...selectedMissiles],meta,launchers:{...launcherAircraft}};
+  });
+  function restoreSidebar(){
+    const saved=sidebarRows.missiles;if(!saved)return;
+    meta=saved.meta;selectedMissiles=[...saved.selected];
+    for(const id of Object.keys(launcherAircraft))delete launcherAircraft[id];
+    Object.assign(launcherAircraft,saved.launchers);
+    populateMissiles();renderSelected();changed();busy(batchRunning);
+  }
   async function load() {
     if(loading) return loading;
     loading=(async()=>{try{
@@ -123,7 +137,7 @@
       }
       meta.missiles=[...unique.values()];
       meta.missiles.sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})||a.id.localeCompare(b.id));
-      populateMissiles();renderSelected();busy(false);
+      if(sidebarRows.missiles)restoreSidebar();else{populateMissiles();renderSelected();busy(false);}
     }catch(error){meta=null;busy(false);el('missile-retry').hidden=false;showError('Could not load missile configurations. Check that the simulator server is running, then retry. '+error.message);}
     finally{loading=null;}})();return loading;
   }

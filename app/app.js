@@ -1,4 +1,6 @@
 'use strict';
+// Added rows follow navigation within each calculator; plot settings stay with their view.
+const sidebarRows={aircraft:null,missiles:null};
 const chartUsable=p=>p.chart_usable??p.valid;
 const $ = id => document.getElementById(id);
 const runtimeConfig=window.EM_CONFIG||{};
@@ -1304,7 +1306,23 @@ function setTool(tool){
     syncLabels();
   }
 }
-document.addEventListener('tool-tab-change',event=>{if(event.detail==='em'||event.detail==='altitude')setTool(event.detail);});
+document.addEventListener('tool-tab-leave',event=>{
+  if(!['em','altitude'].includes(event.detail)||!state.meta)return;
+  saveCondition();sidebarRows.aircraft=state.entries.map(e=>({...e}));
+});
+document.addEventListener('tool-tab-change',event=>{
+  if(!['em','altitude'].includes(event.detail)||!state.meta)return;
+  if(sidebarRows.aircraft){
+    const previous=new Map(state.entries.map(e=>[e.id,e]));
+    state.entries=sidebarRows.aircraft.map(e=>({...e}));
+    state.conditions=Object.fromEntries(state.entries.map(e=>[e.id,
+      previous.get(e.id)?.version===e.version&&state.conditions[e.id] ? state.conditions[e.id] :
+        aircraftConditions(e.aircraft_id,state.conditions[e.id]||state.meta.defaults,e.version)]));
+    showCondition(state.entries.some(e=>e.id===state.editing)?state.editing:null);
+    renderEntries();updateDefaultContours();syncLabels();
+  }
+  setTool(event.detail);
+});
 document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click',e=>{
   if(a.getAttribute('aria-disabled')==='true'){e.preventDefault();return;}
   // A compare downloads one file per game build; this link is the first one's.

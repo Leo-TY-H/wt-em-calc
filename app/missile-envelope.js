@@ -149,7 +149,7 @@
       try {
         showError(''); el('envelope-retry').hidden = true;
         meta = await request('/api/missiles/meta');
-        populate(); updateForm();
+        if(sidebarRows.missiles)restoreSidebar();else{populate(); updateForm();}
       } catch (error) {
         meta = null; el('envelope-retry').hidden = false;
         showError('Could not load missile configurations. Check that the simulator server is running, then retry. ' + error.message);
@@ -1015,9 +1015,20 @@
   }
 
   // ---- Tab integration --------------------------------------------------------------
+  document.addEventListener('tool-tab-leave', event => {
+    if(event.detail==='envelope'&&meta)
+      sidebarRows.missiles={selected:[...selected],meta,launchers:{...launcherAircraft}};
+  });
+  function restoreSidebar(){
+    const saved=sidebarRows.missiles;if(!saved)return;
+    meta=saved.meta;selected=[...saved.selected];
+    for(const id of Object.keys(launcherAircraft))delete launcherAircraft[id];
+    Object.assign(launcherAircraft,saved.launchers);
+    populate();renderSelected();updateForm();
+  }
   document.addEventListener('tool-tab-change', event => {
     if (event.detail !== 'envelope') return;
-    if (!meta) load();
+    if(sidebarRows.missiles)restoreSidebar();else if(!meta) load();
     requestAnimationFrame(() => { if (el('envelope-chart').data) Plotly.Plots.resize(el('envelope-chart')); });
   });
   new ResizeObserver(() => { if (!root.hidden && el('envelope-chart').data) Plotly.Plots.resize(el('envelope-chart')); }).observe(el('envelope-chart'));
