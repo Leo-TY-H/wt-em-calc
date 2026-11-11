@@ -20,7 +20,7 @@ instructor_protection, read by instructor_aoa.controller_limits and its native t
 - 'held'     the cap everywhere it applies (overload timer 0);
 - 'released' the base limit where the release can happen (strength AoA inside the base limit), the cap elsewhere.
 
-The boundary uses 'held' where the release starts after HOLD_S = 10 s or more (or never), else 'released'; the chart
+The boundary uses 'held' where the release starts after HOLD_S = 10 s (or never), else 'released'; the chart
 draws the other state as a dashed line where the two differ. Without the Instructor, with Flutter (structural_limits)
 off or with limitOverload false there is no protection state.
 
@@ -35,7 +35,7 @@ RULE = os.environ.get('WT_WING_LINE', '1') != '0'
 # Leo 2026-11-10 (later the same day): the wing's breaking load stays the drawn limit in every mode, also where the
 # achievable pull is above it. WT_WING_AS_LINE=1 brings back the wing as a line with the boundary past it.
 LINE = os.environ.get('WT_WING_AS_LINE', '0') == '1'
-HOLD_S = 10.               # release start (s) from which the protected limit is the chart boundary
+HOLD_S = 10.               # latest release start (s) for the released chart boundary
 G = 9.8100004196167
 
 
@@ -66,7 +66,7 @@ def protection(fm, config):
     if not props.get('limitOverload', True):return None, None
     rate = float(props.get('overloadTimeRate', .45));start = float(list(props.get('overloadTimeRange', [.9, 1.]))[0])
     release_s = math.inf if rate <= 0. or start >= 1. else max(0., start/rate)
-    state = config.get('instructor_protection') or ('held' if release_s >= HOLD_S-1e-6 else 'released')
+    state = config.get('instructor_protection') or ('held' if release_s > HOLD_S else 'released')
     return state, release_s
 
 

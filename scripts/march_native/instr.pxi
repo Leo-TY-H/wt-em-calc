@@ -103,6 +103,7 @@ cdef struct InstrRes:
     double trim[3]
     double sticks[3]
     double low, high
+    int protection_branch  # released sides (bits 0/1); slope stencils must not cross the release jump
     double effective[2]
     bint tail_limiting      # tail_cap_limiting: the tailplane cap is the smaller term of the upper margin
     double adjusted[2]
@@ -1359,6 +1360,7 @@ cdef class Instructor:
         base_limits = [low, high]
         cos_dihedral = F(cos(M(F(self.dihedral), F(.01745329238474369))))
         q = M(M(.5, F(rho)), F(speed_squared))
+        r.protection_branch = 0
         if self.overload:
             # the reserve cap at overload timer 0 (with timer 0 and dt 0 the timer stays 0 with or without the trigger);
             # 'released': the base limit on each side where the wing-strength AoA is inside it (only there the game's
@@ -1368,8 +1370,10 @@ cdef class Instructor:
             high_inverse = inverse_cl(&p, M(F(self.strength[1]), scale), &valid)
             low_held = remap(0., self.overload_range[0], self.overload_range[1], pmax(low, M(low_inverse, self.overload_reserve)), low)
             high_held = remap(0., self.overload_range[0], self.overload_range[1], pmin(high, M(high_inverse, self.overload_reserve)), high)
-            if not (self.overload_released and low_inverse > low):low = low_held
-            if not (self.overload_released and high_inverse < high):high = high_held
+            if self.overload_released and low_inverse > low:r.protection_branch |= 1
+            else:low = low_held
+            if self.overload_released and high_inverse < high:r.protection_branch |= 2
+            else:high = high_held
         if self.limit_load_factor:
             effective_area = S(M(cos_dihedral, F(self.wing_area)), M(A(self.tail_area_pair[0], self.tail_area_pair[1]), .5))
             mass_scale = F(F(self.w_mass)/pmax(1., M(q, effective_area)))

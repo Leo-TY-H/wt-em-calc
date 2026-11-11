@@ -46,7 +46,7 @@ def decode_branch(code):
     return ('postcrit', 1. if c & 32 else -1., bool(c & 16), bool(c & 8), bool(c & 4), bool(c & 2), bool(c & 1))
 
 
-ctypedef double (*instr_event_t)(object, const Eval*, const PropSample*, int, int, int) except? -1e308
+ctypedef double (*instr_event_t)(object, const Eval*, const PropSample*, int, int, int, int*) except? -1e308
 
 
 cdef class CurveProblem(NativeCorrector):
@@ -157,7 +157,7 @@ cdef class CurveProblem(NativeCorrector):
 
     cdef int value(self, const double* q) except -2:
         """Memoized value(q); returns the memo slot, or -1 when unavailable."""
-        cdef int k, i, slot
+        cdef int k, i, slot, protection_branch = 0
         cdef bint same
         cdef Eval* e
         cdef double extra, load
@@ -216,17 +216,20 @@ cdef class CurveProblem(NativeCorrector):
         elif self.fixed == self.nx:
             extra = (hypot2(1., q[self.nx])-self.load)/10.
         elif self.fixed == -3:
-            extra = self.event_value(e, &ps if self.prop else NULL)
+            extra = self.event_value(e, &ps if self.prop else NULL, &protection_branch)
         else:
             # CurveSolver.event: production discrete energy-step reporting, ps - level
             ensure_complete(self.model, e)
             extra = e.kin.ps-self.target
         self.memo_extra[slot] = extra
         branch_code(self.model, e, &self.memo_br[slot*BMAX])
+        # The Instructor release is discontinuous even when the aerodynamic polar branch is unchanged.
+        # Include it in the event branch so a tangent uses the other side instead of differentiating the jump.
+        self.memo_br[slot*BMAX+9] = protection_branch
         self.nmemo += 1
         return slot if self.memo_ok(slot) else -1
 
-    cdef double event_value(self, Eval* e, const PropSample* ps) except? -1e308:
+    cdef double event_value(self, Eval* e, const PropSample* ps, int* protection_branch) except? -1e308:
         """Curve.events (em_stationary_boundary) residuals on the value record, same arithmetic:
         stall (v['stall_margin']-.002)/10; wing force 1.-max(maximum_wing_load_ratios)-5e-5
         (Python max keeps the first of equal values); control (non-Instructor)
@@ -251,7 +254,7 @@ cdef class CurveProblem(NativeCorrector):
             if ps == NULL or self.pm is None:return float("nan")
             return net_thrust(self.pm, &ps.frame)/self.model.weight-5e-6
         # Instructor pitch (4) and Instructor control bound (5): instructor_at on the search record
-        return self.instr_event(self.inst, e, ps, self.ev_kind, self.ev_axis, self.ev_side)
+        return self.instr_event(self.inst, e, ps, self.ev_kind, self.ev_axis, self.ev_side, protection_branch)
 
     cdef bint memo_ok(self, int slot) noexcept:
         cdef int i

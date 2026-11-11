@@ -1,5 +1,5 @@
 {
- "native_sha256": "6d7bc644b4e017c64d400aace23c527c7001674d2892d51163a420ee4589e3eb",
+ "native_sha256": "156d51206a2bab7e9d075e277de8993fb0347749175e8eccc48c443c01cc3ea0",
  "python_modules": [
   "advanced_mass",
   "aero_helpers",
@@ -101,9 +101,9 @@
   "wing_stages",
   "wing_sweep"
  ],
- "python_sha256": "2d2ea272ae81724d7e4d21247337a8a6cb026a4ee94322ed2d3ddae4c8ae4372",
+ "python_sha256": "1409cfabee7c9b5c3abc2535fa1d80b8665dc34dbbed6dd74d801e0955e60568",
  "verification": {
-  "date": "2026-11-10",
+  "date": "2026-11-11",
   "aircraft": [
    "bi:sb",
    "f_16xl:rb",
@@ -1610,6 +1610,6 @@
    }
   },
   "finish_rows": 14579,
-  "method": "scripts/verify_march_native.py; all 20 existing cases on Linux ARM"
+  "method": "scripts/verify_march_native.py; Linux release verification"
  }
 }
