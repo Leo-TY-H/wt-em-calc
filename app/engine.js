@@ -153,7 +153,9 @@
   const addEntry = (aircraft_id, from = FRESH, version = from.version) => {
     if (entries.length >= MAX) return;
     const {manual, auto, setting, pitch} = from, throttle = from.throttle ?? full(aircraft_id, version);
-    entries.push({id: `engine_${nextEntry++}`, aircraft_id, ...(version ? {version} : {}), throttle, manual, auto, setting, pitch, c: massSettings(aircraft_id, from.c && structuredClone(from.c), version)});
+    // These rows also travel to EM and altitude, whose API requires entry_ identifiers.
+    let id; do { id = `entry_engine_${nextEntry++}`; } while (entries.some(entry => entry.id === id));
+    entries.push({id, aircraft_id, ...(version ? {version} : {}), throttle, manual, auto, setting, pitch, c: massSettings(aircraft_id, from.c && structuredClone(from.c), version)});
     renderEntries(); filter(); updateForm();
   };
   el('engine-list').addEventListener('click', event => {
