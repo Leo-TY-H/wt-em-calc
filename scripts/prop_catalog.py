@@ -7,7 +7,7 @@ from fm_loader import normalize
 from fuel_loading import initial
 from mass_model import aircraft_properties,evaluate as legacy_mass
 from advanced_mass import evaluate as advanced_mass
-ROOT=Path(__file__).resolve().parents[1]
+from input_paths import ROOT
 _worker_snapshot=None
 NAMES={'yak-3':'Yak-3','bf-109f-4':'Bf 109 F-4','a2d':'A2D-1','a5m4':'A5M4','fw_200c_1':'Fw 200 C-1'}
 

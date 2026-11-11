@@ -1,0 +1,12 @@
+[Unit]
+Description=Mount immutable FM inputs before the shared calculator starts
+Before=docker.service
+RequiresMountsFor=/opt/wt-em/shared/dataset-images
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/wt-em/shared-service/scripts/publish_shared_inputs.cjs --mount-only
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -939,6 +939,7 @@ async function inspect(a,p,clicked){
 }
 async function poll(id){
   if(state.activeJob!==id)return;
+  const started=performance.now();
   try{
     const job=await api(`/api/jobs/${id}`,{},state.activeVersion);const p=job.progress||{};
     if(job.status==='complete'||job.status==='stopped'){
@@ -948,7 +949,9 @@ async function poll(id){
     }
     if(job.status==='error')throw new Error(job.error||'Calculation failed');
     if(job.status==='cancelled'){setRunning(false);state.activeJob=null;$('footer-status').textContent=state.data?.preview?'Calculation cancelled · incomplete preview retained; exports unavailable.':'Calculation cancelled. Previous results retained.';return;}
-    if(job.preview_revision&&state.previewToken!==`${id}:${job.preview_revision}`){
+    // Exporting already has its final solution. A large stale preview must not
+    // delay receiving that completed diagram.
+    if(job.status==='running'&&performance.now()-state.jobStartedAt>=2000&&job.preview_revision&&state.previewToken!==`${id}:${job.preview_revision}`){
       await loadData(id,false,true);state.previewToken=`${id}:${job.preview_revision}`;
     }
     const name=state.meta.aircraft[p.aircraft]?.name||'';
@@ -956,7 +959,7 @@ async function poll(id){
       p.phase?`${p.phase}${name?' · '+name:''}`:name?`Solving ${name} · ${fmt(p.speed_kmh,0)} km/h · ${fmt(p.load_g,2)} g`:'Queued for calculation…';
     const percent=((p.total?Math.min(99,100*p.done/p.total):0)+100*state.jobDone.length)/(state.jobDone.length+state.jobQueue.length+1);
     $('progress-fill').style.width=percent+'%';$('calculate').style.setProperty('--progress',percent+'%');$('progress-count').textContent=p.total?`${fmt(p.done,Number.isInteger(p.done)?0:1)} / ${p.total} · ${fmt(p.elapsed_s||0,0)} s`:'';
-    setTimeout(()=>poll(id),900);
+    setTimeout(()=>poll(id),Math.max(0,(job.status==='exporting'?100:400)-(performance.now()-started)));
   }catch(e){
     if(state.activeJob!==id)return;
     if(e.retryable){
@@ -985,7 +988,7 @@ async function startJob({version,config}){
   state.activeVersion=version;
   try{
     const job=await api(state.jobPath,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)},version);
-    state.activeJob=job.id;poll(job.id);
+    state.activeJob=job.id;state.jobStartedAt=performance.now();poll(job.id);
   }catch(e){setRunning(false);state.activeJob=null;error(e.message);}
 }
 // ---- Game versions (versions.js): each row's build, chosen in its edit popup ----

@@ -1,8 +1,8 @@
 'use strict';
 // Game version search (Leo, 2026-10-30): each aircraft and missile row picks its game build in its edit popup, and
-// rows on different builds compare on one chart. Every other build has its own server behind /v/<build>/ on the same
-// host; each runs the same release on that build's data, so a chart difference is a data difference. The server
-// starts on first use. Without a version list (a local copy) the calculators behave as they always did.
+// rows on different builds compare on one chart. /v/<build>/ selects immutable input data in the shared
+// calculation service; all versions use the same solver release. Without a version list (a local copy)
+// the calculators behave as they always did. The start fallback supports older service deployments.
 window.GameVersions=(()=>{
   const base=String((window.EM_CONFIG||{}).apiBase||'').replace(/\/$/,'');
   const root=path=>base?base+path:'.'+path;

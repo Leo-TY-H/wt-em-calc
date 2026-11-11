@@ -3,8 +3,9 @@ from functools import lru_cache
 from pathlib import Path
 import orjson
 
-EXCLUSIONS = Path(__file__).resolve().parents[1] / 'references/aircraft-exclusions.json'
-INPUT_BUILD = Path(__file__).resolve().parents[1] / 'references/input-build.json'
+from input_paths import REFERENCES, policy
+EXCLUSIONS = policy('aircraft-exclusions.json')
+INPUT_BUILD = REFERENCES / 'input-build.json'
 
 
 @lru_cache(maxsize=1)

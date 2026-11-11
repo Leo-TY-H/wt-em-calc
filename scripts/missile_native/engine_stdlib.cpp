@@ -92,7 +92,7 @@ void register_native_stdlib(const std::string& root){
  );V env=make_dict();for(auto key:{"WT_ENVELOPE_WORKERS","WT_MISSILE_ENGINE"}){auto value=std::getenv(key);if(value)dict_set(env,key,value);}set(e,"environ",env);put(e,"cpu_count",[](const Args&,const Kw&){return V(int(std::thread::hardware_concurrency()));});});
  register_module("sys",[](E e){set(e,"path",make_list());set(e,"modules",make_dict());});
  register_module("argparse",[](E){});
- register_module("missile_inputs",[](E e){put(e,"directory",[](const Args&,const Kw&){import_module("pathlib");auto p=std::filesystem::u8path(engine_root)/"references/missile-inputs";if(!std::filesystem::is_regular_file(p/"launch-profiles/index.json"))p=std::filesystem::u8path(engine_root)/"scripts/missile_model";else if(!std::filesystem::is_regular_file(p/"radar-launch-properties.json"))throw PyError("ValueError","Managed missile inputs are incomplete");return path_value(p);});});
+ register_module("missile_inputs",[](E e){put(e,"directory",[](const Args&,const Kw&){import_module("pathlib");const char* selected=std::getenv("WT_EM_INPUT_ROOT");auto p=std::filesystem::u8path(selected&&*selected?selected:engine_root)/"references/missile-inputs";if(!std::filesystem::is_regular_file(p/"launch-profiles/index.json"))p=std::filesystem::u8path(engine_root)/"scripts/missile_model";else if(!std::filesystem::is_regular_file(p/"radar-launch-properties.json"))throw PyError("ValueError","Managed missile inputs are incomplete");return path_value(p);});});
  set(builtins(),"__yield__",builtin("__yield__",[](const Args&a,const Kw&){if(!envelope_yield)throw PyError("RuntimeError","Envelope yield outside native search");return envelope_yield(arg(a,0));}));
 }
 }

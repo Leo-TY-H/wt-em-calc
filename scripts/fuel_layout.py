@@ -14,7 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 from component_assembly import f32, add, sub, mul
 
-TANK_PARTS = Path(__file__).resolve().parents[1] / 'references/collision-fuel-tanks.json'
+from input_paths import policy
+TANK_PARTS = policy('collision-fuel-tanks.json')
 
 
 def _value(value):

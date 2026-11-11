@@ -1,0 +1,9 @@
+[Unit]
+Description=Prepare newly built FM inputs for the shared calculator
+After=docker.service wt-em-inputs.service
+Requires=wt-em-inputs.service
+
+[Service]
+Type=oneshot
+Nice=19
+ExecStart=/usr/bin/flock -n -E 0 /opt/wt-em/shared/shared-inputs.lock /usr/bin/node /opt/wt-em/shared-service/scripts/publish_shared_inputs.cjs

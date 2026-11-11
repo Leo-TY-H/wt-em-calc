@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from aircraft_availability import excluded_vehicles
 
-ROOT = Path(__file__).resolve().parents[1]
+from input_paths import ROOT
 SOURCE = ROOT / 'references/vehicle-names/wiki.json'
 GAME_SOURCE = ROOT / 'references/vehicle-names/game.json'
 

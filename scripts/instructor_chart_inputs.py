@@ -1,5 +1,5 @@
 import json
-from em_backend import ROOT
+from input_paths import ROOT
 from tail_model import aircraft_secondary_properties
 from component_assembly import f32
 from control_mixer import curve

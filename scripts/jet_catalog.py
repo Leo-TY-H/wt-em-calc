@@ -7,7 +7,7 @@ from mass_model import tank_configuration
 from fm_loader import normalize
 from em_data import clone
 
-ROOT=Path(__file__).resolve().parents[1]
+from input_paths import ROOT
 DIRECTORY=ROOT/'references/jet-catalog/fm'
 REFERENCE=['f_16a_block_15_adf','saab_jas39c']
 NAMES={'f_16a_block_15_adf':'F-16A ADF','saab_jas39c':'JAS39C',

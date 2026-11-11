@@ -34,10 +34,10 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /srv/wt-em
 RUN useradd --create-home --uid 10001 emserver && mkdir -p /data/em /tmp/matplotlib \
     && chown -R emserver:emserver /data /tmp/matplotlib
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 nodejs \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /srv/wt-em /srv/wt-em
 USER emserver
 EXPOSE 8080
-CMD ["python", "scripts/em_server.py"]
+CMD ["node", "scripts/shared_service.cjs"]

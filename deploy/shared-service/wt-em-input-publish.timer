@@ -1,0 +1,10 @@
+[Unit]
+Description=Prepare FM versions before users select them
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+Unit=wt-em-input-publish.service
+
+[Install]
+WantedBy=timers.target

@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from component_assembly import f32, add, mul
 from aircraft_availability import excluded_vehicles
 
-ROOT = Path(__file__).resolve().parents[1]
+from input_paths import ROOT
 PROFILE = ROOT / 'references/aircraft-ammunition.json'
 WEAPONS = 'aces.vromfs.bin_u/gamedata/weapons'
 PRESETS = 'aces.vromfs.bin_u/gamedata/flightmodels/weaponpresets'

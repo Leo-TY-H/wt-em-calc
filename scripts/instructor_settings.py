@@ -7,7 +7,8 @@ from pathlib import Path
 @lru_cache(maxsize=1)
 def payload_multipliers():
     """Authored RB/SB base and assistance multipliers; no aircraft fitting."""
-    root=Path(__file__).resolve().parents[1]/'references'
+    from input_paths import REFERENCES
+    root=REFERENCES
     difficulty=json.loads((root/'body-gameparams.blkx').read_text())['difficulty_settings']['baseDifficulty']
     constants=json.loads((root/'body-gameplay.blkx').read_text())['fmConstants']
     # The supported battle difficulties share the base. Assistance is selected

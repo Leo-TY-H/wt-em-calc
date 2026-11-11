@@ -7,7 +7,7 @@ from pathlib import Path
 from component_assembly import f32, add, sub, mul
 from aircraft_availability import excluded_vehicles
 
-ROOT = Path(__file__).resolve().parents[1]
+from input_paths import ROOT
 VEHICLES = ROOT / 'references/prop-vehicles'
 DEFINITIONS = ROOT / 'references/aircraft-modifications/modifications.blkx'
 ENGINE_EFFECTS = frozenset(('afterburnerMult', 'afterburnerCompressorMult', 'addHorsePowers'))

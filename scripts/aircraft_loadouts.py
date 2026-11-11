@@ -36,7 +36,7 @@ from pathlib import Path, PurePosixPath
 from component_assembly import f32, add, mul
 from aircraft_ammunition import rows, source_name, gun_payload, attachment_frame
 
-ROOT = Path(__file__).resolve().parents[1]
+from input_paths import ROOT
 PROFILE = ROOT / 'references/aircraft-loadouts.json'
 SCHEMA = 1
 # Weapon subdirectories referenced by aircraft presets (rocketguns is the

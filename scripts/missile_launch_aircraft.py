@@ -11,7 +11,8 @@ from pathlib import Path
 from missile_inputs import directory as input_directory
 from missile_envelope import launch_angles
 
-CATALOG = Path(__file__).resolve().parents[1] / 'references/missile-launchers.json'
+from input_paths import REFERENCES
+CATALOG = REFERENCES / 'missile-launchers.json'
 
 
 @lru_cache(maxsize=1)

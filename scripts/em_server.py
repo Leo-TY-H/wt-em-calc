@@ -30,6 +30,7 @@ from urllib.request import urlopen
 
 from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute, contour_levels as validate_contour_levels
 from em_entries import ENTRY_ID
+from input_paths import REFERENCES
 from aircraft_catalog import source,asset_sources
 if current_process().name=='MainProcess':
 
@@ -322,7 +323,7 @@ BUILD_SERVER=bool(os.environ.get('WT_EM_BUILD_SERVER'))
 
 
 def start_cache_key():
-    return dict(commit=release_info().get('commit'),build=json.loads((ROOT/'references/data-version.json').read_bytes()).get('version'))
+    return dict(commit=release_info().get('commit'),build=json.loads((REFERENCES/'data-version.json').read_bytes()).get('version'))
 
 
 def save_start_cache(output):
@@ -335,7 +336,9 @@ def load_start_cache(path):
     # Written by the host for this image and mounted read-only. Anything else falls back to building the catalog.
     try:saved=pickle.loads(gzip.decompress(Path(path).read_bytes()))
     except (OSError,EOFError,ValueError,pickle.UnpicklingError):return False
-    if saved.get('key')!=start_cache_key():return False
+    expected=start_cache_key()
+    expected['commit']=os.environ.get('WT_EM_CATALOG_COMMIT',expected['commit'])
+    if saved.get('key')!=expected:return False
     from aircraft_catalog import install_worker_catalog
     import engine_performance
     install_worker_catalog(saved['catalog'])
@@ -366,8 +369,8 @@ def data_file(path,view):
 def game_data():
     # Datamine identity of the game data on disk, and the game version the compiled
     # propeller, mass and missile inputs were built from (hosted updates only).
-    data=dict(data_file(ROOT/'references/data-version.json',lambda d:{k:v for k,v in d.items() if k!='files'}) or {})
-    inputs=data_file(ROOT/'references/input-build.json',lambda d:{**{k:d.get(k) for k in ('source_version','geometry_version','channel')},
+    data=dict(data_file(REFERENCES/'data-version.json',lambda d:{k:v for k,v in d.items() if k!='files'}) or {})
+    inputs=data_file(REFERENCES/'input-build.json',lambda d:{**{k:d.get(k) for k in ('source_version','geometry_version','channel')},
         'kept':sum(len(d.get('fallbacks',{}).get(k,{})) for k in ('aircraft','missiles')),
         'unavailable':sum(len(d.get('unavailable',{}).get(k,{})) for k in ('aircraft','missiles'))})
     if inputs:data.update(inputs_source_version=inputs['source_version'],inputs_geometry_version=inputs['geometry_version'],
@@ -624,7 +627,7 @@ class Handler(BaseHTTPRequestHandler):
             if kind=='aircraft' and name in AIRCRAFT:
                 from aircraft_catalog import load
                 return self.respond(load(name))
-            source=ROOT/'references/missile-sources'/f'{name}.blkx'
+            source=REFERENCES/'missile-sources'/f'{name}.blkx'
             if kind=='missile' and name.replace('_','').replace('-','').isalnum() and source.is_file():
                 return self.respond(orjson.loads(source.read_bytes()).get('rocket',{}))
             return self.respond(dict(error='Not in this build'),404)

@@ -27,7 +27,8 @@ def display_name(key, rocket=None, *, labels=None):
 
 @lru_cache(maxsize=1)
 def synchronized_labels():
-    path = Path(__file__).resolve().parents[1] / 'references/missile-names.json'
+    from input_paths import REFERENCES
+    path = REFERENCES / 'missile-names.json'
     return json.loads(path.read_text(encoding='utf-8'))['labels'] if path.exists() else {}
 
 
