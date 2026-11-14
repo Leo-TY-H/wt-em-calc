@@ -27,10 +27,10 @@ import numpy as np
 from scipy.interpolate import Akima1DInterpolator
 
 from em_entries import COLORS, flight_mode
-from em_solver import AIRCRAFT, settings
+from em_solver import AIRCRAFT, MAX_ALTITUDE_M, settings
 from overrev import rpm_ratio
 
-ALTITUDES = (0., 18000.)    # the solver's own altitude range (em_solver.settings)
+ALTITUDES = (0., float(MAX_ALTITUDE_M))    # the solver's own altitude range (em_solver.settings)
 DEFAULT_TOP = 10000.        # the page starts at 0-10,000 m (Leo, 2026-10-30)
 # Sampling preset by SEP tolerance (m/s): spacing of the base rows and the closest rows (m), of the speeds in a row and
 # between the two states bracketing an end of a row (km/h), and how far a row's end may miss its neighbours' (km/h).
@@ -63,7 +63,7 @@ def request(values):
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in (low, high)):
         raise ValueError('Altitude range must be numbers')
     if not ALTITUDES[0] <= low < high <= ALTITUDES[1] or high-low < 100.:
-        raise ValueError('Altitude range must rise at least 100 m, within 0 to 18,000 m')
+        raise ValueError(f'Altitude range must rise at least 100 m, within 0 to {ALTITUDES[1]:,.0f} m')
     if not values.get('entries'):raise ValueError('Add at least one aircraft')
     return dict(settings(values), kind='altitude', altitude_min_m=float(low), altitude_max_m=float(high), auto_contours=choose)
 

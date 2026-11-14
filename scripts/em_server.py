@@ -28,7 +28,7 @@ from functools import lru_cache
 from urllib.parse import urlparse,parse_qs,unquote
 from urllib.request import urlopen
 
-from em_solver import ROOT, AIRCRAFT, DEFAULTS, settings, compute, contour_levels as validate_contour_levels
+from em_solver import ROOT, AIRCRAFT, DEFAULTS, MAX_ALTITUDE_M, MAX_SPEED_KMH, settings, compute, contour_levels as validate_contour_levels
 from em_entries import ENTRY_ID
 from input_paths import REFERENCES
 from aircraft_catalog import source,asset_sources
@@ -205,7 +205,7 @@ def elevator_inverted(key,entry):
 
 def solve_point(key,entry,speed_kmh,load_g):
     """Full-model state at a clicked position of a stored chart, seeded from the nearest admitted sample."""
-    for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Load',load_g,1.,64.)):
+    for label,value,low,high in (('Speed',speed_kmh,50.,MAX_SPEED_KMH),('Load',load_g,1.,64.)):
         if not math.isfinite(value) or not low<=value<=high:raise ValueError(f'{label} out of range')
     with LOCK:result=RESULTS.get(key)
     if result is None:raise FileNotFoundError('Result expired')
@@ -239,7 +239,7 @@ def public_point(value):
 
 def solve_altitude_point(key,entry,speed_kmh,altitude_m):
     """Full-model state at a clicked position of a stored altitude envelope."""
-    for label,value,low,high in (('Speed',speed_kmh,50.,3000.),('Altitude',altitude_m,0.,18000.)):
+    for label,value,low,high in (('Speed',speed_kmh,50.,MAX_SPEED_KMH),('Altitude',altitude_m,0.,MAX_ALTITUDE_M)):
         if not math.isfinite(value) or not low<=value<=high:raise ValueError(f'{label} out of range')
     with LOCK:result=RESULTS.get(key)
     if result is None:raise FileNotFoundError('Result expired')
@@ -669,7 +669,7 @@ class Handler(BaseHTTPRequestHandler):
                 if sweep not in ('altitude','speed','both'):raise ValueError('Unknown sweep')
                 level=query.get('level',['0'])[0]
                 if level not in ('0','1'):raise ValueError('level must be 0 or 1')
-                for label,value,low,high in (('Altitude',altitude,0.,18000.),('Speed',speed,5.,math.inf),('Throttle',throttle,0.,110.),('Propeller pitch',pitch,0.,100.)):
+                for label,value,low,high in (('Altitude',altitude,0.,MAX_ALTITUDE_M),('Speed',speed,5.,math.inf),('Throttle',throttle,0.,110.),('Propeller pitch',pitch,0.,100.)):
                     if value is not None and not (math.isfinite(value) and low<=value<=high):raise ValueError(f'{label} out of range')
                 from engine_performance import compute as engine_performance
                 return self.respond(engine_performance(name,altitude,speed,throttle,pitch,pitch_percent,None if sweep=='both' else sweep,level=='1'))

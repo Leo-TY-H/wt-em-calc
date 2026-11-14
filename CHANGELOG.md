@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026.11.14.1
+
+- The flight-model calculators accept altitudes up to 30,000 m (was 18,000 m) and true airspeeds up to 4,000 km/h (was 2,600 km/h). This applies to the EM chart, the altitude envelope, the engine page and clicked points. In the game's atmosphere the air thins only slowly above 18.3 km. The MiG-25PD's 1 g ceiling is about 25 km and its Mach limit is 3,240 km/h, and the F-15C, Su-27, Lightning and F-104S ceilings lie between 18.1 and 19.8 km. Default ranges are unchanged.
+- The engine page now finds level flight that begins only at high speed, as at high altitude or past VNE at a fixed speed. If none of its usual starting points converges, it tries points spread over the requested range.
+- Charts over the wider ranges put grid lines every 200 km/h and 2,000 m.
+
 ## 2026.11.11.5
 
 - All FM versions use one shared HTTP service and the same compiled solver. Version inputs and catalogs are prepared ahead of use, with a bounded pool of warm calculation workers.

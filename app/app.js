@@ -760,14 +760,16 @@ function renderChart(){
   // Tooltips carry no aircraft name (Leo, 2026-10-26); the border takes the aircraft's colour instead.
   for(const trace of traces){const owner=displayed.find(a=>a.id===trace.legendgroup);if(owner)trace.hoverlabel={...trace.hoverlabel,bordercolor:owner.color};}
   const [ymin,ymax]=chartYRange(displayed,data);
+  // Grid every 100 km/h and 1,000 m as before; the wider ranges allowed since 2026.11.14.1 (up to 4,000 km/h and 30,000 m) every 200 km/h and 2,000 m.
+  const xTick=envelopeEnd(displayed,data)-data.settings.speed_min_kmh>2700?200:100;
   const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
     annotations:[...displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),...sepLabels.annotations],
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
       name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
     margin:{l:58,r:22,t:Math.max(40,(displayed.length+keys.length)*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
-    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:100,tickfont:{size:12},constrain:'domain'},
-    yaxis:{title:{text:altitude?'Altitude (m)':'Turn rate (°/s)',standoff:8,font:{size:13}},range:[ymin,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:altitude?1000:5,tickformat:altitude?',d':undefined,tickfont:{size:12}},
+    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:xTick,tickfont:{size:12},constrain:'domain'},
+    yaxis:{title:{text:altitude?'Altitude (m)':'Turn rate (°/s)',standoff:8,font:{size:13}},range:[ymin,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:altitude?(ymax-ymin>20000?2000:1000):5,tickformat:altitude?',d':undefined,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
     uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';

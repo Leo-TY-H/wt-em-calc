@@ -20,7 +20,7 @@ from functools import lru_cache
 import numpy as np
 
 from component_assembly import f32
-from em_solver import AIRCRAFT, settings
+from em_solver import AIRCRAFT, MAX_ALTITUDE_M, settings
 from em_speed_limits import speed_limits, sweep_excluded_kmh
 
 KGF = 9.80665
@@ -286,6 +286,16 @@ def march(xs, at, starts, blank):
         start = min(range(len(xs)), key=lambda i:abs(xs[i] - s))
         if xs[start] not in rows:rows[xs[start]] = at(xs[start])
         if rows[xs[start]]['solved']:break
+    else:
+        # None of the usual starts converges, as high up, where 1 g level flight only begins above 1,000 km/h or the
+        # VNE lies below a fixed speed up to 14 km (MiG-25PD): try points spread over the requested range, halving it.
+        # When none of these converges either, the march leaves from the last usual start as before.
+        for f in (.5, .25, .75, .125, .375, .625, .875):
+            i = round(f * (len(xs) - 1))
+            if xs[i] not in rows:rows[xs[i]] = at(xs[i])
+            if rows[xs[i]]['solved']:
+                start = i
+                break
     for side in (range(start + 1, len(xs)), range(start - 1, -1, -1)):
         misses = 0
         for i in side:
@@ -559,7 +569,7 @@ def request(body, report=None):
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not low <= v <= high:
             raise ValueError(key + ' out of range')
         return v
-    altitude, speed, throttle = number('altitude_m', 0., 0., 18000.), number('speed_kmh', 300., 0., math.inf), number('throttle', 110., 0., 110.)
+    altitude, speed, throttle = number('altitude_m', 0., 0., float(MAX_ALTITUDE_M)), number('speed_kmh', 300., 0., math.inf), number('throttle', 110., 0., 110.)
     pitch = body.get('pitch', 'auto');pitch = None if pitch == 'auto' else number('pitch', None, 0., 100.)
     sweep = body.get('sweep', 'both')
     if sweep not in ('altitude', 'speed', 'sfc', 'both'):raise ValueError('Unknown sweep')
@@ -571,7 +581,7 @@ def request(body, report=None):
                 or not 0 <= r[0] < r[1] <= high):raise ValueError(key + ' must be two increasing values from 0' + (f' to {int(high)}' if high < math.inf else ''))
         return float(r[0]), float(r[1])
     # The page's true airspeed range has no cap (Leo, 2026-10-30): a sweep stays at most 800 steps and ends at the aircraft's limits.
-    altitudes, speeds = span('altitude_range', 18000.), span('speed_range', math.inf)
+    altitudes, speeds = span('altitude_range', float(MAX_ALTITUDE_M)), span('speed_range', math.inf)
     quantity = body.get('quantity')
     if quantity is not None and quantity not in CURVES and quantity != 'sfc':raise ValueError('Unknown quantity')
     mass = body.get('mass', {})

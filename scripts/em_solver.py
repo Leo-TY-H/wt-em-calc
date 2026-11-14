@@ -42,6 +42,13 @@ AIRCRAFT = LazyCatalog()
 # S8: the march chart's soft limits (solver.soft_admission): engine RPM and the forward-IAS limits
 # Leo 2026-11-10: under the same rule the wing force is no reason at all (wing_line.rule: charted as a line)
 SOFT_REASONS = frozenset(('engine RPM limit', 'IAS limit', 'flap automatic retraction', 'flap IAS limit'))
+# Highest altitude and true airspeed any calculator accepts (Leo 2026-11-14: 18,000 m and 2,600 km/h cut off aircraft at
+# high altitude). In the game atmosphere density falls only as 1/h above 18.3 km, so the MiG-25PD's 1 g ceiling is about
+# 25.2 km; the F-15C, Su-27, Lightning and F-104S top out between 18.1 and 19.8 km. Its Mach limit is 3,240 km/h TAS from
+# 18.3 km up, and with flutter off its thrust-limited level speed reaches about 3,740 km/h. The highest jet thrust table
+# row is at 29 km.
+MAX_ALTITUDE_M = 30000
+MAX_SPEED_KMH = 4000
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
                 afterburner=True, torque_gyro=False, turn_direction='left', engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
@@ -121,10 +128,10 @@ def settings(values=None):
         result['sep_contour_levels_mps']=[10.,0.,-10.,-20.,-40.]
     for name in result['aircraft']:
         if not AIRCRAFT[name]['supported']:raise ValueError(AIRCRAFT[name]['name']+': '+AIRCRAFT[name]['reason'])
-    limits={'altitude_m': (0,18000), 'fuel_percent': (1,100), 'throttle': (0,1.1),
+    limits={'altitude_m': (0,MAX_ALTITUDE_M), 'fuel_percent': (1,100), 'throttle': (0,1.1),
             'propeller_pitch_percent':(0,100),'oil_radiator_percent':(0,100),'radiator_percent':(0,100),
-            'trim_limit': (0,1), 'extra_mass_kg': (0,5000), 'speed_min_kmh': (100,2500),
-            'speed_max_kmh': (200,2600), 'max_load_g': (1.1,20), 'global_load_cap_g': (1.1,64),
+            'trim_limit': (0,1), 'extra_mass_kg': (0,5000), 'speed_min_kmh': (100,MAX_SPEED_KMH-100),
+            'speed_max_kmh': (200,MAX_SPEED_KMH), 'max_load_g': (1.1,20), 'global_load_cap_g': (1.1,64),
             'speed_samples': (7,129), 'load_samples': (5,49), 'timestep_hz': (30,120),
             'sep_tolerance_mps':(.05,5.),'surface_resolution':(201,1201),'sweep_percent':(0,100),'flaps_percent':(0,100)}
     for key,(low,high) in limits.items():

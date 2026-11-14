@@ -16,7 +16,8 @@ def require_chart_correction(config):
 def evaluate(solver, speed_kmh, load, *, attitude=None, coordinates=None, request_indices=None):
     from em_stationary import JointProblem, prepare
     from em_model_experiments import description
-    for name, value, low, high in [('Speed', speed_kmh, 100., 2600.), ('Load', load, 1., 64.)]:
+    from em_solver import MAX_SPEED_KMH
+    for name, value, low, high in [('Speed', speed_kmh, 100., float(MAX_SPEED_KMH)), ('Load', load, 1., 64.)]:
         if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not low <= value <= high:
             raise ValueError(f'{name} must be between {low:g} and {high:g}')
     if solver.config['trim_solver_mode'] != 'off':

@@ -51,8 +51,8 @@
     <label class="field">Plot<select id="engine-quantity">${Object.entries(QUANTITIES).map(([k, q]) => `<option value="${k}"${k === defaults.quantity ? ' selected' : ''}>${q.label}</option>`).join('')}</select></label>
     <div class="field" id="engine-axis-field">X axis${radios('engine-axis', AXES, defaults.axis, 'X axis')}</div>
     ${field('engine-speed', 'True airspeed', 'km/h', defaults.speed, 5, '')}
-    ${range('engine-altitude-range', 'Altitude range', 'm', 'altitude', defaults.altitudes, 18000)}
-    ${field('engine-altitude', 'Altitude', 'm', defaults.altitude, 0, 18000)}
+    ${range('engine-altitude-range', 'Altitude range', 'm', 'altitude', defaults.altitudes, 30000)}
+    ${field('engine-altitude', 'Altitude', 'm', defaults.altitude, 0, 30000)}
     ${range('engine-speed-range', 'True airspeed range', 'km/h', 'true airspeed', [0, 800], '')}
     <div class="sidebar-actions"><p id="engine-ready" class="hint" hidden></p>
       <div class="action-row"><button id="engine-run" class="primary-button" type="submit" disabled>Calculate</button><button id="engine-reset" class="secondary-button reset-button" type="button">Reset</button></div></div>
