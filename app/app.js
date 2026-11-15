@@ -103,8 +103,10 @@ const ammunitionFor=(aircraft,vehicle)=>aircraft?.ammunition?.variants?.[vehicle
 function normalizeManualControls(values,aircraft){
   const caps=aircraft.manual_controls||{};
   if(['jet','rocket'].includes(aircraft.propulsion))values.manual_engine_controls=false;
-  if(!caps.propeller_pitch)values.propeller_pitch_auto=true;
-  else if(values.manual_engine_controls&&!caps.propeller_auto)values.propeller_pitch_auto=false;
+  // Automatic pitch is on by default, as the game's auto-pitch toggle. An aircraft without automatic pitch keeps
+  // it on too, because the server runs its propellers on the lever setting anyway (em_manual_controls), so a
+  // result or a copy from that aircraft never turns automatic pitch off for another aircraft.
+  if(!caps.propeller_pitch||!caps.propeller_auto)values.propeller_pitch_auto=true;
   if(!caps.oil_radiator)values.oil_radiator_percent=0;
   if(!caps.radiator)values.radiator_percent=0;
   return values;
@@ -243,9 +245,9 @@ function syncLabels(){
   $('manual-engine-settings').hidden=!$('manual-engine-controls').checked;
   $('propeller-pitch-field').hidden=!caps.propeller_pitch;
   $('propeller-pitch-auto-field').hidden=!caps.propeller_auto;
-  if(caps.propeller_pitch&&!caps.propeller_auto&&$('manual-engine-controls').checked)$('propeller-pitch-auto').checked=false;
-  $('propeller-pitch').disabled=$('propeller-pitch-auto').checked||!caps.propeller_pitch;
-  $('propeller-pitch-label').textContent=$('propeller-pitch-auto').checked?'Automatic':$('propeller-pitch').value+'%';
+  const autoPitch=!caps.propeller_pitch||!!caps.propeller_auto&&$('propeller-pitch-auto').checked;
+  $('propeller-pitch').disabled=autoPitch;
+  $('propeller-pitch-label').textContent=autoPitch?'Automatic':$('propeller-pitch').value+'%';
   $('propeller-pitch-name').textContent=caps.pitch_kind==='RPM governor'?'Propeller RPM setting':caps.pitch_kind==='Blade angle'?'Propeller blade-angle setting':'Propeller control';
   $('propeller-pitch-help').textContent=caps.pitch_kind==='Blade angle'?'Direct blade angle: higher percentages select finer pitch and can cause over-rev.':caps.pitch_kind==='RPM governor'?'Selects a target within the aircraft’s governor RPM range. Blade pitch adjusts to hold that RPM until a pitch stop is reached.':`Control: ${caps.pitch_kind||'unavailable'}. Each propeller uses its own control type.`;
   for(const id of ['oil-radiator','radiator']){

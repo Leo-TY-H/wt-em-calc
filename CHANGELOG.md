@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026.11.15.1
+
+- With **Manual engine controls** on, every Fw 190 and Ta 152, the Bf 109 E-3 (Japan)/E-4/E-7/T-2/Z, Bf 110 C-4/C-6/F-2, Do 335 A-0/A-1/B-2, Me 210, Ju 388 J and Bv 155 B-1 offer **Automatic propeller control** again, on by default as in the game. The game allows automatic pitch on every blade-angle governor of this kind, whatever the FM's HasAutoPitchControl says; the calculator used that flag and forced a manual blade angle. Charts with manual engine controls off are unchanged.
+- Copying settings from an aircraft without automatic pitch (for example a P-51) no longer turns automatic pitch off for the other entries, on the EM and engine pages. The engine page also updates the propeller setting when an entry changes game version.
+
 ## 2026.11.14.1
 
 - The flight-model calculators accept altitudes up to 30,000 m (was 18,000 m) and true airspeeds up to 4,000 km/h (was 2,600 km/h). This applies to the EM chart, the altitude envelope, the engine page and clicked points. In the game's atmosphere the air thins only slowly above 18.3 km. The MiG-25PD's 1 g ceiling is about 25 km and its Mach limit is 3,240 km/h, and the F-15C, Su-27, Lightning and F-104S ceilings lie between 18.1 and 19.8 km. Default ranges are unchanged.

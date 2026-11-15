@@ -37,8 +37,10 @@ class PropellerEnsemble:
             optimization='Instantaneous governor and compressor regulation; steady induced flow; automatic mixture and stage selection',
             approximation='Instantaneous governor and steady wake with continuous blade polars; nominal healthy engine torque; propulsion oscillations and transient peak loads are omitted')
         if config.get('manual_engine_controls'):
+            manual_pitch=not all(self.automatic_controls['automatic'])
             self.summary.update(policy='Quasi-steady propulsion; selected manual controls and radiator drag',
-                optimization='Selected propeller command; automatic mixture and compressor; no manual search',
+                optimization=('Selected propeller command' if manual_pitch else 'Automatic propeller pitch')+
+                    '; automatic mixture and compressor; no manual search',
                 engine_health_policy='Intact engines; RPM-limit diagnostics only; thermal endurance not evaluated')
 
         if config.get('trim_solver_mode') == 'stationary':

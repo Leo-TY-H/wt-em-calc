@@ -86,6 +86,18 @@
   const checked = name => root.querySelector(`input[name=${name}]:checked`).value;
   const propeller = a => PROPS.includes(a?.propulsion);
   const pitchable = a => propeller(a) && !!a?.manual_controls?.propeller_pitch;
+  // The Automatic option keeps what the user chose; it applies where the game allows automatic pitch (on by default,
+  // as the game's auto-pitch toggle) and a lever-only aircraft runs on the setting, so copying settings from one
+  // aircraft never turns another aircraft's automatic pitch off.
+  const autoPitch = (a, manual, auto) => !pitchable(a) || !manual || !!a.manual_controls.propeller_auto && auto;
+  const pitchRequest = entry => autoPitch(aircraftOf(entry), entry.manual, entry.auto) ? 'auto' : entry.setting;
+  // As app.js normalizeManualControls: an aircraft without automatic pitch keeps Automatic on (its propellers run on
+  // the setting anyway); the request follows the entry's aircraft and build. Run after any change to either.
+  const settlePitch = entry => {
+    const a = aircraftOf(entry); if (!a) return;
+    if (!pitchable(a) || !a.manual_controls.propeller_auto) entry.auto = true;
+    entry.pitch = pitchRequest(entry);
+  };
   const aircraftOf = entry => metaOf(entry.version)?.aircraft?.[entry.aircraft_id] ?? catalog()?.[entry.aircraft_id];
   const versionSuffix = e => window.GameVersions?.enabled() && (e.version || shown?.entries.some(x => x.version)) ? ` · ${e.version || GameVersions.default}` : '';
   // One sweep per calculation (Leo, 2026-10-28: the plot is chosen in the sidebar before Calculate).
@@ -186,6 +198,7 @@
     if (!row.supported) return back('Not available in that build: ' + (row.reason || 'model integration pending'));
     entry.c = massSettings(entry.aircraft_id, entry.c, version);
     if (+entry.throttle > +full(entry.aircraft_id, version)) entry.throttle = full(entry.aircraft_id, version);
+    settlePitch(entry);
     const note = await dropMissingLoadout(row, entry.aircraft_id, entry.c, version);
     if (!current()) return undefined;
     if (editing === entry.id) showSettings();
@@ -220,15 +233,14 @@
     el('engine-manual-field').hidden = !caps.propeller_pitch;
     el('engine-manual-settings').hidden = !el('engine-manual').checked;
     el('engine-pitch-auto-field').hidden = !caps.propeller_auto;
-    if (caps.propeller_pitch && !caps.propeller_auto && el('engine-manual').checked) el('engine-pitch-auto').checked = false;
-    const auto = el('engine-pitch-auto').checked;
+    const auto = autoPitch(a, true, el('engine-pitch-auto').checked);
     el('engine-pitch').disabled = auto; el('engine-pitch-label').textContent = auto ? 'Automatic' : el('engine-pitch').value + '%';
   }
   function saveSettings() {
     syncSettings();
     const entry = entries.find(e => e.id === editing); if (!entry) return;
     Object.assign(entry, {throttle: el('engine-throttle').value, manual: el('engine-manual').checked, auto: el('engine-pitch-auto').checked, setting: el('engine-pitch').value});
-    entry.pitch = pitchable(aircraftOf(entry)) && entry.manual && !entry.auto ? entry.setting : 'auto';
+    settlePitch(entry);
     const mass = Number(el('engine-mass').value);
     Object.assign(entry.c, {fuel_percent: Number(el('engine-fuel').value), flaps_percent: Number(el('engine-flaps').value),
       extra_mass_kg: el('engine-mass').checkValidity() && Number.isFinite(mass) ? mass : entry.c.extra_mass_kg});
@@ -276,7 +288,7 @@
       entry.c = massSettings(entry.aircraft_id, same ? structuredClone(source.c) : {...source.c, loadout: '', stores_released: false, ammunition_vehicle: ''});
       entry.throttle = String(Math.min(+source.throttle, +full(entry.aircraft_id)));
       Object.assign(entry, {manual: source.manual, auto: source.auto, setting: source.setting});
-      entry.pitch = pitchable(aircraftOf(entry)) && entry.manual && !entry.auto ? entry.setting : 'auto';
+      settlePitch(entry);
     }
     el('engine-apply-status').textContent = `Applied to all ${entries.length} aircraft.`;
   });
@@ -617,9 +629,11 @@
       entries = sidebarRows.aircraft.map(row => {
         const old = previous.get(row.id);
         if (old && old.version === row.version) return old;
-        return {...FRESH, ...old, ...row, version: row.version,
+        const entry = {...FRESH, ...old, ...row, version: row.version,
           throttle: old?.throttle ?? full(row.aircraft_id, row.version),
           c: massSettings(row.aircraft_id, old?.c, row.version)};
+        settlePitch(entry);
+        return entry;
       });
       if (!entries.some(e => e.id === editing)) editing = null;
       renderEntries(); filter(); updateForm(); render();

@@ -16,14 +16,41 @@ def manual_rpm_governor(properties):
     return properties['governor'] in (1, 2)
 
 
+def auto_pitch_available(propeller):
+    """Whether the game can run this propeller automatically under manual engine controls.
+
+    This is propeller type +0x369, which the FM loaders derive from the governor type (aces.exe
+    0x143edb2a6 for PropellerType/Propeller sections, 0x143edcd34 for Engine.Propellor):
+    HasAutoPitchControl/AllowAutoProp (+0x35c) only for RPM governors 1/2, always for blade-angle
+    governors 5/8 and types above 10, never for 0, 3, 4, 6, 7, 9, 10. The per-frame control applier
+    (0x1430b20a0) runs a propeller automatically under manual engine controls when the engine's auto
+    toggle (on at spawn, 0x142fe1f84) is set and +0x369 is set; +0x35c is never read at runtime.
+    So the Fw 190 (governor 8, HasAutoPitchControl false) keeps automatic pitch, as in the game.
+    """
+    report = propeller['properties'].get('pitch_command_report')
+    if report is not None:
+        return bool(report)
+    governor = propeller['governor']
+    return bool(propeller.get('automatic')) if governor in (1, 2) else governor in (5, 8) or governor > 10
+
+
+def manual_pitch(propeller):
+    """Whether the pilot's propeller lever drives this propeller (HasManualPitchControl/IsControllable).
+
+    Governor 0 has a fixed blade angle that no lever moves, so it offers no control."""
+    return bool(propeller.get('manual')) and propeller['governor'] != 0
+
+
 def profile(fm, propulsion):
     from jet_catalog import engines
     controls = [e.get('Controls', {}) for _, e in engines(fm)
                 if e.get('Main', {}).get('Type') not in ('Jet', 'Rocket')]
-    props = [p for p in propulsion['propellers'] if p.get('manual')]
+    props = [p for p in propulsion['propellers'] if manual_pitch(p)]
     kinds = {'RPM governor' if manual_rpm_governor(p['properties']) else 'Blade angle' for p in props}
     common = bool(controls) and all(flag(c.get('hasCommonRadiator')) for c in controls)
-    return dict(propeller_pitch=bool(props), propeller_auto=bool(props) and all(p.get('automatic') for p in props),
+    # One Automatic option per aircraft, as the game's auto-pitch key toggles every selected engine;
+    # each propeller then follows it only where the game allows automatic pitch (propeller_commands).
+    return dict(propeller_pitch=bool(props), propeller_auto=any(auto_pitch_available(p) for p in props),
                 pitch_kind=' / '.join(sorted(kinds)),
                 radiator=any(flag(c.get('hasRadiatorControl')) for c in controls),
                 oil_radiator=any(flag(c.get('hasOilRadiatorControl')) and
@@ -41,10 +68,18 @@ def radiator_positions(config, capability):
 
 
 def propeller_commands(properties, config):
-    manual = config.get('manual_engine_controls', False) and not config.get('propeller_pitch_auto', True)
+    """Per-propeller controls as the game's applier (0x1430b20a0) sets them each frame.
+
+    Without manual engine controls every propeller is automatic. With them, a propeller is automatic
+    when the Automatic option (the game's per-engine auto toggle, on by default) is on and the game
+    allows automatic pitch for it; otherwise the lever command drives it. Propellers without a lever
+    stay automatic."""
+    mec = config.get('manual_engine_controls', False)
+    toggle = config.get('propeller_pitch_auto', True)
     command = int(math.floor(config.get('propeller_pitch_percent', 50.) * 255. / 100. + .5))
-    return dict(commands=[command if manual and p['manual'] else 255 for p in properties['propellers']],
-                automatic=[not (manual and p['manual']) for p in properties['propellers']])
+    automatic = [not (mec and manual_pitch(p) and not (toggle and auto_pitch_available(p)))
+                 for p in properties['propellers']]
+    return dict(commands=[255 if auto else command for auto in automatic], automatic=automatic)
 
 
 def rpm_boundary(engine, minimum, maximum, cancelled=None):
