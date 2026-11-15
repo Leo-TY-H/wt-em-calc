@@ -48,9 +48,20 @@ def catalog():
     from vehicle_names import apply_names
     apply_names(result)
     from flap_model import profile as flap_profile
+    from rocket_boosters import capability as booster_capability
+    from aircraft_loadouts import vehicle_profile
+
+    def booster_profile(name):
+        try:return vehicle_profile(name)
+        except (OSError, ValueError, KeyError):return None
     for name, row in result.items():
         path = prop_catalog.fm_source(row['fm_id']) if 'fm_id' in row else jet_catalog.source(name)
-        row['flaps'] = flap_profile(orjson.loads(path.read_bytes()))
+        fm = orjson.loads(path.read_bytes())
+        row['flaps'] = flap_profile(fm)
+        # 'Booster on' availability (rocket_boosters.capability); absent for aircraft without rocket boosters.
+        boosters = booster_capability(fm, booster_profile(name))
+        if boosters:
+            row['boosters'] = boosters
     # An item the last build couldn't update keeps its previous game data, and says so.
     build = input_build()
     kept, unavailable = build.get('fallbacks', {}).get('aircraft', {}), build.get('unavailable', {}).get('aircraft', {})

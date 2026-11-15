@@ -104,11 +104,14 @@ def assets(name):
     return apply_propulsion(name,propulsion['properties']),mass
 
 
-def mass_state(name,fuel_percent,extra_mass=0.,payloads=(),*,payload_scale=.2,external_tanks=()):
+def mass_state(name,fuel_percent,extra_mass=0.,payloads=(),*,payload_scale=.2,external_tanks=(),booster_percent=100.):
     fm=load(name);_,asset=assets(name);p=aircraft_properties(fm,payload_scale=payload_scale)
     if any(not 0<=i<len(asset['tanks']) or not asset['tanks'][i]['external'] for i in external_tanks):
         raise ValueError('Drop tank does not match an external fuel tank of '+name)
     fill=initial(asset['tanks'],asset['fuel_systems'],fuel_percent/100.,external=tuple(external_tanks))
+    if booster_percent!=100.:
+        from rocket_boosters import scale_tank_propellant
+        fill=scale_tank_propellant(fm,asset['tanks'],fill,booster_percent)
     payloads=[*payloads, *([dict(mass=extra_mass,position=fm['Mass']['CenterOfGravity'])] if extra_mass else [])]
     nitro=f32(fm['Mass'].get('MaxNitro',0.))
     kw=dict(payloads=payloads,fuel_by_tank=fill['fuel_by_tank'],nitro=nitro)

@@ -66,7 +66,9 @@ ROOTS = ('polar_f32', 'wing_model', 'wing_stages', 'tail_model', 'component_stag
          # S5: the march, curve, limit, recovery and propulsion modules the native engine transliterates
          'em_march', 'em_march_curves', 'em_pitch_limit', 'em_prop_branch_recovery', 'prop_governor_evaluator',
          'em_load_limits', 'em_aircraft_region', 'em_speed_limits', 'em_sampling', 'prop_steady', 'piston_general',
-         'piston_compressor', 'turbine_general', 'rocket_general', 'jet_model', 'jet_nozzle')
+         'piston_compressor', 'turbine_general', 'rocket_general', 'jet_model', 'jet_nozzle',
+         # Lit rocket boosters in the propeller seed (prop2.pxi calls rocket_boosters.seed_state)
+         'rocket_boosters')
 _STATE = dict(module=None, status=None, events=None)
 
 

@@ -27,16 +27,23 @@ def engine_data(solver):
         from jet_catalog import engines
         from jet_model import prepare
         from jet_nozzle import prepare as nozzle
-        data=[]
-        for _,e in engines(solver.fm):
-            if e.get('Booster',False):continue
+        data=[];lit=lit_boosters(solver)
+        for key,e in engines(solver.fm):
+            booster=e.get('Booster',False)
+            if booster and int(key[6:]) not in lit:continue
             main=e['Main'];kind=main['Type']
             if kind not in ('Jet','Rocket'):continue
-            data.append(dict(kind=kind,main=main,boost=e.get('Afterburner',{}),
+            data.append(dict(kind=kind,main=main,boost=e.get('Afterburner',{}),booster=booster,
                 jet=prepare(main) if kind=='Jet' else None,
                 nozzles=[nozzle(e[k]) for k in sorted(e) if re.fullmatch(r'Nozzle\d+',k)]))
     solver._region_engine_data=data
     return data
+
+
+def lit_boosters(solver):
+    """FM indices of the rocket boosters the 'Booster on' setting lights (fitted and holding propellant)."""
+    boosters=solver.mass.get('boosters') or {}
+    return set(boosters.get('ready',())) if solver.config.get('boosters') else set()
 
 
 def direct_thrust(solver,speed,density):
@@ -65,7 +72,7 @@ def direct_thrust(solver,speed,density):
             thrust=max(t for t,_,_,_ in values)*max(0.,multiplier)
             if ab:thrust*=max(1.,max(b for _,b,_,_ in values))
         else:
-            throttle=min(throttle,main.get('MaxThrMult',1.1))
+            throttle=1.1 if engine.get('booster') else min(throttle,main.get('MaxThrMult',1.1))
             fraction=min(1.,throttle/(1.1 if main['ThrottleBoost']>1. else 1.))
             rpm=main['RPMMin']+(main['RPMMax']-main['RPMMin'])*fraction
             thrust=main['Thrust']*rpm/main['RPMMax'] if throttle>0. else 0.
@@ -92,8 +99,11 @@ def propulsion_estimate(solver, speed, density):
     nitro=solver.mass['nitro_mass']
     state=initial_state(properties,(speed,0.,0.),solver.config['altitude_m'],nitro=nitro,**controls)
     power=direct=0.
-    for engine,seed in zip(properties['engines'],state['engines']):
-        if engine['family']==3:continue  # Optional boosters are disabled in trim.
+    lit=lit_boosters(solver)
+    for index,(engine,seed) in enumerate(zip(properties['engines'],state['engines'])):
+        if engine['family']==3:  # Rocket boosters: off unless the 'Booster on' setting lights them (full thrust).
+            if index in lit:direct+=engine['maximum_direct_thrust']
+            continue
         target=target_omega(engine['properties'],seed,nitro)
         outputs=[]
         for fraction in (.8,1.,1.1):

@@ -443,7 +443,7 @@ def check_custom(editor, tiers):
     return masses
 
 
-def resolve(name, vehicle, loadout, released=False, ammunition=True):
+def resolve(name, vehicle, loadout, released=False, ammunition=True, burnt_out=False):
     """Ordered payload items of a loadout, or None for the clean default."""
     loadout = normalize(loadout)
     if loadout == '':
@@ -470,12 +470,82 @@ def resolve(name, vehicle, loadout, released=False, ammunition=True):
             order += next(o for o in by_tier[int(tier)]['options'] if o['id'] == preset)['items']
         label = 'custom'
     items = [value['items'][i] for i in order]
-    return dict(state(items, released=released, ammunition=ammunition), label=label)
+    return dict(state(items, released=released, ammunition=ammunition, burnt_out=burnt_out), label=label)
 
 
-def state(items, released=False, ammunition=True):
-    """Payload records, float32 drag area (game summation order) and present drop tanks."""
-    payloads, tanks, area = [], [], 0.
+@lru_cache(maxsize=1)
+def _weapon_files():
+    """Weapon files of the input build by lower-case name (the game matches names case-insensitively)."""
+    base, index = ROOT / 'references/weapon-sources', {}
+    for folder in WEAPON_DIRS:
+        if (base / folder).is_dir():
+            for path in sorted((base / folder).glob('*.blkx')):
+                index.setdefault(path.stem.lower(), path)
+    return index
+
+
+@lru_cache(maxsize=512)
+def _weapon_document(weapon):
+    path = _weapon_files().get(weapon.lower())
+    return None if path is None else json.loads(path.read_bytes())
+
+
+def booster_store(item, propellant_tanks=()):
+    """A store that belongs to a rocket booster: a booster module (boosterGun), one that switches on an engine,
+    or one that fills a booster-only fuel system (the Mirage SEPR propellant tanks; rocket_boosters.propellant_tanks).
+    The weapon files' tags.booster is not used: the Mirage drop tanks carry it too."""
+    if item['k'] != 's' or item.get('c') != 'payload':
+        return False
+    document = _weapon_document(item['w']) or {}
+    links = module_links(item['w']) or {}
+    return bool(item.get('booster') or document.get('boosterGun') or links.get('engine')
+                or set(links.get('fueltank', ())) & set(propellant_tanks))
+
+
+@lru_cache(maxsize=512)
+def module_links(weapon):
+    """Flight-model items a module store switches on, {'fueltank': (...), 'engine': (...)}, or None
+    without its weapon file. The fmModule parser (0x141413100) reads every itemType%d/itemIndex%d pair;
+    the module handler (0x141414ee0) marks each fuel tank present (0x141415049) and attaches each
+    External engine (eng+0x12, 0x1414151d1). JATO/RATO pods name their engine and its propellant tank;
+    the Mirage SEPR store names two tanks."""
+    document = _weapon_document(weapon)
+    if document is None:
+        return None
+    payload = next(iter(rows(document.get('payload'))), {})
+    links = {}
+    for key in sorted(payload):
+        if key.lower().startswith('itemtype') and key[8:].isdecimal() and isinstance(payload[key], str):
+            index = payload.get('itemIndex' + key[8:], payload.get('itemindex' + key[8:]))
+            if isinstance(index, int) and not isinstance(index, bool) and index >= 0:
+                links.setdefault(payload[key].lower(), []).append(index)
+    return {kind: tuple(indices) for kind, indices in links.items()}
+
+
+def default_boosters(name, vehicle='', released=False, burnt_out=False):
+    """Rocket-booster modules the aircraft always carries (common weapons, e.g. Kitsuka, A-4, Ar 234 JATO):
+    part of the clean default as in the game, where every preset keeps them. None when there are none."""
+    try:
+        value = vehicle_profile(name, vehicle)
+    except (OSError, ValueError, KeyError):
+        return None
+    if not value.get('supported'):
+        return None
+    items = [value['items'][i] for i in value['common'] if value['items'][i]['k'] == 's' and value['items'][i].get('booster')]
+    return dict(state(items, released=released, burnt_out=burnt_out), label='default rocket boosters') if items else None
+
+
+def auto_dropped(item):
+    """A booster module the game releases once it burns out (payload autoDrop; store update 0x141414c70)."""
+    document = _weapon_document(item['w']) or {}
+    payload = next(iter(rows(document.get('payload'))), {})
+    return bool(payload.get('autoDrop')) and booster_store(item)
+
+
+def state(items, released=False, ammunition=True, burnt_out=False):
+    """Payload records, float32 drag area (game summation order), present drop/propellant tanks and
+    the booster engines attached modules switch on."""
+    payloads, tanks, engines, area = [], [], [], 0.
     store_mass = gun_mass = 0.
     for item in items:
         if item['k'] == 'g':
@@ -483,15 +553,20 @@ def state(items, released=False, ammunition=True):
             drag = item['d']
             gun_mass += mass
         else:
-            rounds = 0 if released else item['n']
+            rounds = 0 if released or (burnt_out and auto_dropped(item)) else item['n']
             mass = add(mul(rounds, item['m']), item['M'])
             drag = add(mul(rounds, item['d']), item['D']) if item['x'] else 0.
             store_mass += mass
-            if item['t'] is not None and rounds > 0:
+            links = module_links(item['w']) if item['c'] == 'payload' and rounds > 0 else None
+            if links is not None:
+                tanks.extend(links.get('fueltank', ()))
+                engines.extend(links.get('engine', ()))
+            elif item['t'] is not None and rounds > 0:
                 tanks.append(item['t'])
         payloads.append(dict(mass=mass, position=list(item['p'])))
         area = add(drag, area)
     return dict(payloads=payloads, drag_area=area, external_tanks=sorted(set(tanks)),
+                booster_engines=sorted(set(engines)),
                 store_mass_kg=store_mass, gun_mass_kg=gun_mass, items=items, released=released)
 
 
@@ -546,12 +621,18 @@ def summary(name, vehicle=''):
         return dict(supported=False, reason=value['reason'])
 
     common = set(value['common'])
+    try:
+        from aircraft_catalog import load
+        from rocket_boosters import propellant_tanks
+        tanks = propellant_tanks(load(name))
+    except (OSError, ValueError, KeyError):
+        tanks = set()
 
     def describe(item_ids):
         """Label, mass and drag of the weapons a preset or pylon adds (common guns excluded)."""
         own = [i for i in item_ids if i not in common]
         if not own:
-            return dict(label='Empty', mass_kg=0., drag_area_m2=0.)
+            return dict(label='Empty', mass_kg=0., drag_area_m2=0., boosters=False)
         stores, guns = {}, {}
         for i in own:
             item = value['items'][i]
@@ -560,7 +641,8 @@ def summary(name, vehicle=''):
         parts = stores or guns
         s = state([value['items'][i] for i in own])
         label = ', '.join(f'{n}× {k}' if n > 1 else k for k, n in parts.items())
-        return dict(label=label, mass_kg=round(s['store_mass_kg'] + s['gun_mass_kg'], 1), drag_area_m2=round(s['drag_area'], 5))
+        return dict(label=label, mass_kg=round(s['store_mass_kg'] + s['gun_mass_kg'], 1), drag_area_m2=round(s['drag_area'], 5),
+                    boosters=any(booster_store(value['items'][i], tanks) for i in own))
 
     presets = [dict(id=p['id'], req=p.get('req'), tiers=p['tiers'], error=p.get('error'), **describe(p['items']))
                for p in value['presets'] if not p.get('hidden')]

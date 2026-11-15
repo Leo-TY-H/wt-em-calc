@@ -36,17 +36,21 @@ def engines(fm):
         instance=fm[key];base=fm.get('EngineType'+str(instance.get('Type',0)),{})
         resolved=merge(base,instance)
         if resolved.get('Main',{}).get('Type') in ('Jet','Rocket') and not any(re.fullmatch(r'Nozzle\d+',k) for k in resolved):
-
-
-            x,y,z=map(f32,resolved.get('Vector',[1.,0.,0.]))
-            degrees=f32(57.2957763671875)
-            direction=[mul(f32(math.atan2(-z,x)),degrees),
-                       mul(f32(math.atan2(y,f32(math.sqrt(add(mul(z,z),mul(x,x)))))),degrees)]
-            resolved['Nozzle0']=dict(Position=resolved.get('Position',[0.,0.,0.]),
-                Direction=resolved.get('Direction',direction),ThrustRatio=1.,ThrustMax=2147440000.,
-                FlapsToThrust=resolved.get('FlapsToThrust',[0.,1.,1.,1.]))
+            resolved['Nozzle0']=engine_mount(resolved)
         found.append((key,resolved))
     return found
+
+
+def engine_mount(resolved,flaps=True):
+    """The engine block's own Position and Vector/Direction as one nozzle: old-format engines, and every rocket,
+    whose step (aces.exe 0x142fa3b83) applies thrust there and never reads Nozzle sections."""
+    x,y,z=map(f32,resolved.get('Vector',[1.,0.,0.]))
+    degrees=f32(57.2957763671875)
+    direction=[mul(f32(math.atan2(-z,x)),degrees),
+               mul(f32(math.atan2(y,f32(math.sqrt(add(mul(z,z),mul(x,x)))))),degrees)]
+    return dict(Position=resolved.get('Position',[0.,0.,0.]),
+        Direction=resolved.get('Direction',direction),ThrustRatio=1.,ThrustMax=2147440000.,
+        FlapsToThrust=resolved.get('FlapsToThrust',[0.,1.,1.,1.]) if flaps else [0.,1.,1.,1.])
 
 
 def fuel_capacities(fm):

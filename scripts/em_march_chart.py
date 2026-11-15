@@ -563,7 +563,9 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
     from instructor_envelope import profile
     columns = sorted(envelope['columns'], key=lambda c: c['speed_kmh'])
     points = [p for c in columns for p in c['points']]
-    mach = aircraft_catalog(load(name), cfg)
+    from bomb_plane import flight
+    fname, fcfg = flight(name, cfg)  # a carrier joined to its bomb plane flies the bomb plane's FM
+    mach = aircraft_catalog(load(fname), fcfg)
     gaps = unresolved_intervals(envelope, columns)
     components = [compact_component(c) for c in (curves or {}).get('components', [])]
     levels = coverage(cfg)['checked_sep_levels_mps']
@@ -571,7 +573,7 @@ def aircraft_row(name, index, cfg, solver, envelope, curves, tracer):
     return dict(AIRCRAFT[name], id=name, color=COLORS[index % 2], settings=cfg, aircraft_model=description(cfg),
                 chart_solver='march', points=points, columns=columns,
                 boundary_columns=[outline_column(c) for c in columns],
-                instructor_approximation=profile(load(name), cfg) if cfg['instructor'] else None,
+                instructor_approximation=profile(load(fname), fcfg) if cfg['instructor'] else None,
                 instructor_unresolved_speeds_kmh=[], sweep_excluded_speeds_kmh=[],
                 low_speed_edge=low_speed_edge(cfg, envelope, columns, tracer),
                 speed_limit=speed_limits(solver.fm, cfg), sustained=[],

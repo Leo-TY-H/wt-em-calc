@@ -302,8 +302,9 @@ cdef class PropModel:
             for i, l in enumerate(t['propellers']):
                 T.props[i].index = l['index'];T.props[i].ratio = l['ratio'];T.props[i].inverse_ratio = l['inverse_ratio']
         # Seed (prop_equilibrium.solve: native_controls engine_control_mode='automatic'), velocity independent
-        native_controls = dict(controls, engine_control_mode='automatic')
-        seed = initial_state(p, (100., 0., 0.), self.altitude, nitro=self.nitro, **native_controls)
+        # Lit rocket boosters (controls['boosters']) run from the seed on (rocket_boosters.seed_state)
+        from rocket_boosters import seed_state as booster_seed_state
+        seed = booster_seed_state(p, (100., 0., 0.), self.altitude, self.nitro, controls)
         for k, es in enumerate(seed['engines']):
             S_ = &self.seed_engines[k]
             S_.throttle = es['throttle'];S_.effective_throttle = es['effective_throttle'];S_.omega = es['omega']

@@ -52,7 +52,7 @@ MAX_SPEED_KMH = 4000
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
                 afterburner=True, torque_gyro=False, turn_direction='left', engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
-                extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', loadout='', stores_released=False, speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
+                extra_mass_kg=0., default_ammunition=True, ammunition_vehicle='', loadout='', stores_released=False, boosters=False, booster_fuel_percent=100., speed_min_kmh=100., speed_max_kmh=1300., max_load_g=None,
                 speed_samples=9, load_samples=9, structural_limits=True, timestep_hz=48.,low_speed_load_cap=False,global_load_cap_g=64.,reference_load_cap=False,aircraft_search_region=True,
                 sampling='adaptive',sep_tolerance_mps=.5,surface_resolution=601,sep_contour_levels_mps=[100.,0.,-100.,-200.,-400.],sweep_percent=0.,flaps_percent=0.,instructor=True,autotrim=None,
                 aircraft_settings={},compare_instructor=False,entries=None,instructor_model='steady',instructor_authority_mode='direct',trim_solver_mode='stationary',roll_leveling=False,turn_response_mode='settled',mach_curve_mode='stable',
@@ -86,7 +86,7 @@ DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.
 
 AIRCRAFT_SETTINGS = frozenset(('altitude_m','fuel_percent','throttle','afterburner',
     'manual_engine_controls','propeller_pitch_auto','propeller_pitch_percent','oil_radiator_percent','radiator_percent',
-    'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','structural_limits','turn_response_mode',
+    'trim_mode','trim_limit','fixed_trim','extra_mass_kg','default_ammunition','ammunition_vehicle','loadout','stores_released','boosters','booster_fuel_percent','structural_limits','turn_response_mode',
     'timestep_hz','sweep_percent','flaps_percent','instructor','autotrim','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','trim_solver_mode','torque_gyro','roll_leveling','mach_curve_mode',
     'experimental_instantaneous_aero','experimental_lateral_trim','stationary_governor_mode','turn_direction'))
 
@@ -128,7 +128,7 @@ def settings(values=None):
         result['sep_contour_levels_mps']=[10.,0.,-10.,-20.,-40.]
     for name in result['aircraft']:
         if not AIRCRAFT[name]['supported']:raise ValueError(AIRCRAFT[name]['name']+': '+AIRCRAFT[name]['reason'])
-    limits={'altitude_m': (0,MAX_ALTITUDE_M), 'fuel_percent': (1,100), 'throttle': (0,1.1),
+    limits={'altitude_m': (0,MAX_ALTITUDE_M), 'fuel_percent': (1,100), 'booster_fuel_percent': (0,100), 'throttle': (0,1.1),
             'propeller_pitch_percent':(0,100),'oil_radiator_percent':(0,100),'radiator_percent':(0,100),
             'trim_limit': (0,1), 'extra_mass_kg': (0,5000), 'speed_min_kmh': (100,MAX_SPEED_KMH-100),
             'speed_max_kmh': (200,MAX_SPEED_KMH), 'max_load_g': (1.1,20), 'global_load_cap_g': (1.1,64),
@@ -146,7 +146,7 @@ def settings(values=None):
         result[key]=int(result[key])
     result['sep_contour_levels_mps']=contour_levels(result['sep_contour_levels_mps'])
     if result['speed_min_kmh']>=result['speed_max_kmh']: raise ValueError('Maximum speed must exceed minimum speed')
-    for key in ['manual_engine_controls','propeller_pitch_auto','default_ammunition','stores_released','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region','enable_exports']:
+    for key in ['manual_engine_controls','propeller_pitch_auto','default_ammunition','stores_released','boosters','afterburner','structural_limits','instructor','compare_instructor','torque_gyro','roll_leveling','low_speed_load_cap','reference_load_cap','aircraft_search_region','enable_exports']:
         if not isinstance(result[key],bool): raise ValueError(key+' must be true or false')
     if result['autotrim'] is None:result['autotrim']=result['instructor']
     if not isinstance(result['autotrim'],bool):raise ValueError('autotrim must be true or false')
@@ -228,7 +228,8 @@ def settings(values=None):
         if condition['loadout']:
             from aircraft_loadouts import resolve as resolve_loadout
             resolve_loadout(name,condition['ammunition_vehicle'],condition['loadout'],
-                            released=condition['stores_released'],ammunition=condition['default_ammunition'])
+                            released=condition['stores_released'],ammunition=condition['default_ammunition'],
+                            burnt_out=condition['booster_fuel_percent']==0)
     return result
 
 
@@ -307,6 +308,11 @@ class EngineUnit:
         return result['force'],result['moment']
 
 
+def enumerate_engines(installed):
+    """(FM engine index, instance) pairs of jet_catalog.engines."""
+    return [(int(key[6:]),e) for key,e in installed]
+
+
 class EngineEnsemble:
     def __init__(self,model,mass,config):
         installed=installed_engines(model['fm'])
@@ -316,10 +322,19 @@ class EngineEnsemble:
             self.units=[RocketUnit(model,mass,config,e) for _,e in installed]
         else:self.units=[EngineUnit(model,mass,config,e) for _,e in installed if e['Main']['Type']=='Jet']
         if not self.units:raise ValueError('No installed supported direct-thrust engines')
-        self.summary=dict(self.units[0].summary)
-        self.summary.update(engine_count=len(self.units),engines=[u.summary for u in self.units],
+        self.summary=dict(self.units[0].summary);main=len(self.units)
+        self.summary.update(engine_count=main,engines=[u.summary for u in self.units],
                             nozzle_policy='Normal forward flight; VTOL, reverse and thrust-vectoring commands zero')
-        if len(self.units)>1:self.summary['policy']=str(len(self.units))+' engines · '+', '.join(dict.fromkeys(u.summary['policy'] for u in self.units))
+        if main>1:self.summary['policy']=str(main)+' engines · '+', '.join(dict.fromkeys(u.summary['policy'] for u in self.units))
+        # Rocket boosters are off unless the 'Booster on' setting lights every fitted booster that holds propellant.
+        boosters=mass.get('boosters')
+        if boosters:
+            if config.get('boosters') and boosters['ready']:
+                from rocket_em import booster_units
+                ready=set(boosters['ready'])
+                self.units+=booster_units(model,mass,config,[(i,e) for i,e in enumerate_engines(installed) if i in ready])
+                self.summary['booster_units']=[u.summary for u in self.units[main:]]
+            self.summary['rocket_boosters']=boosters['policy']
 
     def __getattr__(self,name):
         units=self.__dict__.get('units')
@@ -366,6 +381,14 @@ class TrimSolver:
 
     def __init__(self, name, config):
         self.name=name; self.config=aircraft_settings(settings(config),name)
+        # A carrier joined to its bomb plane (Mistel 2) flies on the bomb plane's FM alone (bomb_plane.py); the chart
+        # keeps the carrier's settings for display.
+        from bomb_plane import carried, flight_settings
+        self.settings_echo=self.config;self.carrier=None
+        plane=carried(name,self.config)
+        if plane is not None:
+            self.carrier=dict(aircraft=name,bomb_plane=plane)
+            name=self.name=plane;self.config=flight_settings(self.config,plane)
 
 
         self.fm=dict(load_aircraft(name),RollLeveling=self.config['roll_leveling'])
@@ -380,9 +403,17 @@ class TrimSolver:
         self.model=at_sweep(prepare(self.fm),self.config['sweep_percent']/100.); self.controls=control_properties(self.fm)
         # Selected weapon loadout: store payloads, drag area (FM+0x8448) and drop tanks.
         from aircraft_loadouts import resolve as resolve_loadout
+        # Booster propellant 0%: burnt out, and booster pods that auto-drop have left (aces.exe 0x141414c70).
+        burnt_out=self.config['booster_fuel_percent']==0
         self.loadout=resolve_loadout(name,self.config['ammunition_vehicle'],self.config['loadout'],
-                                     released=self.config['stores_released'],ammunition=self.config['default_ammunition'])
+                                     released=self.config['stores_released'],ammunition=self.config['default_ammunition'],
+                                     burnt_out=burnt_out)
+        # Always-fitted rocket-booster modules (common weapons) belong to the clean default, as in the game.
+        from aircraft_loadouts import default_boosters
+        self.booster_modules=(default_boosters(name,self.config['ammunition_vehicle'],released=self.config['stores_released'],burnt_out=burnt_out)
+                              if self.loadout is None else None)
         if self.loadout is not None:self.model['attachment_drag_area']=self.loadout['drag_area']
+        elif self.booster_modules is not None:self.model['attachment_drag_area']=self.booster_modules['drag_area']
         from em_mach_events import configure_model
         configure_model(self.model,self.config['mach_curve_mode'])
         self.model['aircraft_trim_mode']=self.config['aircraft_trim_mode']
@@ -396,18 +427,24 @@ class TrimSolver:
         ammunition_mass=selected_mass(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else 0.
         added_mass=self.config['extra_mass_kg']
         weapon_payloads=selected_payloads(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else []
-        external_tanks=()
+        external_tanks=();self.booster_attached=()
         if self.loadout is not None:
             # A loadout lists every weapon of the aircraft (guns included) in the game's order.
             weapon_payloads=self.loadout['payloads'];ammunition_mass=self.loadout['gun_mass_kg']
-            external_tanks=tuple(self.loadout['external_tanks'])
+            external_tanks=tuple(self.loadout['external_tanks']);self.booster_attached=tuple(self.loadout['booster_engines'])
+        elif self.booster_modules is not None:
+            weapon_payloads=[*weapon_payloads,*self.booster_modules['payloads']]
+            external_tanks=tuple(self.booster_modules['external_tanks']);self.booster_attached=tuple(self.booster_modules['booster_engines'])
         # The autotrim switch is snapshot bit 0 (aces.exe 0x14307cd3b keys the
         # payload CG multiplier on it, not on the Instructor).
         assistance_flags=int(self.config['autotrim'])
         payload_scale=payload_scales(assistance_flags,*payload_multipliers())[0]
-        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads,payload_scale=payload_scale,external_tanks=external_tanks)
+        if self.is_prop:self.mass=prop_mass_state(name,self.config['fuel_percent'],added_mass,payloads=weapon_payloads,payload_scale=payload_scale,
+                                                  external_tanks=external_tanks,booster_percent=self.config['booster_fuel_percent'])
         else:
-            fuel=[f32(capacity*self.config['fuel_percent']/100.) for capacity in fuel_capacities(self.fm)]
+            # Booster-only systems (Me 262 C rocket propellant) are full at spawn; the others hold the fuel setting.
+            from rocket_boosters import system_fill
+            fuel=system_fill(self.fm,fuel_capacities(self.fm),self.config['fuel_percent'])
             if external_tanks:
                 # Drop tanks are full at spawn (0x1411204d0): add each present external tank.
                 tanks={t['index']:t for t in tank_configuration(self.fm)}
@@ -417,6 +454,9 @@ class TrimSolver:
                     system=int(tank['system'])
                     fuel+= [0.]*(system+1-len(fuel))
                     fuel[system]=add(fuel[system],tank['capacity'])
+            # The booster propellant setting (100% = the full load the game spawns with) scales booster-only systems.
+            from rocket_boosters import scale_propellant
+            fuel=scale_propellant(self.fm,fuel,self.config['booster_fuel_percent'])
             payloads=[*weapon_payloads,*([dict(mass=added_mass,position=self.fm['Mass']['CenterOfGravity'])] if added_mass else [])]
             self.mass=mass_evaluate(aircraft_properties(self.fm,payload_scale=payload_scale),fuel,payloads=payloads)
             self.mass['fuel_by_system']=fuel
@@ -430,6 +470,17 @@ class TrimSolver:
                 store_mass_kg=self.loadout['store_mass_kg'],gun_mass_kg=self.loadout['gun_mass_kg'],
                 drag_area_m2=self.loadout['drag_area'],external_tanks=self.loadout['external_tanks'])
             self.mass['mass_policy']='Selected weapon loadout at its attachments (native store mass/drag rules), full drop tanks; manual additional mass at configured CG'
+        elif self.booster_modules is not None:
+            self.mass['loadout']=dict(label=self.booster_modules['label'],released=self.booster_modules['released'],
+                store_mass_kg=self.booster_modules['store_mass_kg'],gun_mass_kg=0.,
+                drag_area_m2=self.booster_modules['drag_area'],external_tanks=self.booster_modules['external_tanks'])
+        from rocket_boosters import summary as booster_summary
+        boosters=booster_summary(self.fm,self.mass['fuel_by_system'],self.booster_attached,on=self.config['boosters'])
+        if boosters is not None:self.mass['boosters']=boosters
+        if self.carrier is not None:
+            self.mass['bomb_plane']=dict(self.carrier,policy='Joined: the bomb plane\'s own flight model, mass, fuel and engines '
+                'at the pilot\'s throttle; the carrier adds no mass, drag or thrust (game rule while fmConstants/useAllPayloads '
+                'is false). Release the stores for the carrier alone.')
         self.weight=self.mass['mass']*float(G); self.dt=f32(1/self.config['timestep_hz'])
         self.engine=PropellerEnsemble(name,self.model,self.mass,self.config) if self.is_prop else EngineEnsemble(self.model,self.mass,self.config)
         self.instructor_boundaries={}
@@ -1605,7 +1656,7 @@ def compute_regular(config=None, progress=None, cancelled=None):
         valid=[p for p in points if p['valid']]
         metadata=dict(AIRCRAFT[name],color=['#38c9d7','#ffa66b'][index])
         from aircraft_description import description
-        output['aircraft'].append(dict(id=name,**metadata,settings=solver.config,aircraft_model=description(solver.config),mass=solver.mass,engine=solver.engine.summary,points=points,
+        output['aircraft'].append(dict(id=name,**metadata,settings=solver.settings_echo,aircraft_model=description(solver.config),mass=solver.mass,engine=solver.engine.summary,points=points,
                                        speed_limit=speed_limits(solver.fm,solver.config),
                                        instructor_approximation=instructor_profile(solver.fm,solver.config) if solver.config['instructor'] else None,
                                        sustained=sustained,valid_points=len(valid),converged_points=sum(p['converged'] for p in points)))

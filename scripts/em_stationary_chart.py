@@ -105,7 +105,7 @@ def main():
     name = config['aircraft'][0]
     solver = TrimSolver(name, config)
     started = time.monotonic()
-    record = dict(model_revision=REVISION, settings=solver.config, aircraft_name=AIRCRAFT[name]['name'],
+    record = dict(model_revision=REVISION, settings=getattr(solver, 'settings_echo', solver.config), aircraft_name=AIRCRAFT[name]['name'],
         backend=BACKEND, python=sys.version, executable=sys.executable,
         data_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         verified_data_files=len(manifest['data_files']),

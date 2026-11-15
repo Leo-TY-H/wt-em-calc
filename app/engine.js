@@ -66,7 +66,9 @@
   </main>
   <dialog id="engine-dialog" class="entry-dialog" aria-labelledby="engine-dialog-title"><header class="entry-dialog-header"><div><span class="eyebrow">AIRCRAFT SETTINGS</span><h2 id="engine-dialog-title"></h2></div><button type="button" id="engine-dialog-close" class="text-button" aria-label="Close settings">✕</button></header>
     <div class="entry-dialog-body"><div id="engine-version" class="version-picker" hidden></div><label class="field">Fuel load <output id="engine-fuel-label">30%</output><input id="engine-fuel" type="range" min="1" max="100" step="1" value="30"></label>
+      <label id="engine-booster-fuel-field" class="field" hidden>Booster propellant <output id="engine-booster-fuel-label">100%</output><input id="engine-booster-fuel" type="range" min="0" max="100" step="1" value="100"></label>
       <label class="field">Throttle <output id="engine-throttle-label">110%</output><input id="engine-throttle" type="range" min="0" max="110" step="1" value="110"></label>
+      <label id="engine-boosters-field" class="check-row" hidden><input id="engine-boosters" type="checkbox"> Booster on</label>
       <div id="engine-manual-field"><label class="check-row"><input id="engine-manual" type="checkbox"> Manual engine controls</label>
       <div id="engine-manual-settings"><label id="engine-pitch-auto-field" class="check-row"><input id="engine-pitch-auto" type="checkbox" checked> Automatic propeller control</label>
       <label class="field"><span id="engine-pitch-name">Propeller control</span> <output id="engine-pitch-label">Automatic</output><input id="engine-pitch" type="range" min="0" max="100" step="1" value="50"></label></div></div>
@@ -160,6 +162,11 @@
     if (!ammunitionFor(a, c.ammunition_vehicle)?.supported) c.default_ammunition = false;
     c.flaps_percent = a.has_flaps ? Math.max(0, Math.min(100, Math.round(c.flaps_percent || 0))) : 0;
     if (!a.loadouts?.supported || !c.loadout) { c.loadout = ''; c.stores_released = false; }
+    // 'Booster on' only where a booster is fitted and holds propellant (app.js boostersFitted); sent with the mass
+    // settings, as is the booster propellant (100% = the game's spawn load) where the server knows it.
+    if ('booster_fuel_percent' in d) c.booster_fuel_percent = Math.max(0, Math.min(100, Math.round(c.booster_fuel_percent ?? 100)));
+    else delete c.booster_fuel_percent;
+    c.boosters = !!c.boosters && boostersFitted(aircraft_id, a, c, version) && c.booster_fuel_percent !== 0;
     return c;
   }
   const addEntry = (aircraft_id, from = FRESH, version = from.version) => {
@@ -217,6 +224,7 @@
     el('engine-apply-all').disabled = entries.length < 2; el('engine-apply-status').textContent = '';
     showLoadoutSummary(entry);
     el('engine-throttle').max = full(entry.aircraft_id); el('engine-throttle').value = entry.throttle; el('engine-manual').checked = entry.manual;
+    el('engine-boosters').checked = !!entry.c.boosters;el('engine-booster-fuel').value = entry.c.booster_fuel_percent ?? 100;
     el('engine-pitch-auto').checked = entry.auto; el('engine-pitch').value = entry.setting;
     el('engine-pitch-name').textContent = kind === 'RPM governor' ? 'Propeller RPM setting' : kind === 'Blade angle' ? 'Propeller blade-angle setting' : 'Propeller control';
     syncSettings();
@@ -231,6 +239,11 @@
       button.disabled = percent == null; button.setAttribute('aria-pressed', String(!button.disabled && +el('engine-flaps').value === Math.round(percent)));
     }
     el('engine-manual-field').hidden = !caps.propeller_pitch;
+    const entry = entries.find(e => e.id === editing);
+    const fitted = !!entry && boostersFitted(entry.aircraft_id, a, entry.c, entry.version);
+    el('engine-booster-fuel-field').hidden = !fitted || !('booster_fuel_percent' in state.meta.defaults);
+    el('engine-booster-fuel-label').textContent = el('engine-booster-fuel').value + '%';
+    el('engine-boosters-field').hidden = !fitted || +el('engine-booster-fuel').value === 0;
     el('engine-manual-settings').hidden = !el('engine-manual').checked;
     el('engine-pitch-auto-field').hidden = !caps.propeller_auto;
     const auto = autoPitch(a, true, el('engine-pitch-auto').checked);
@@ -243,10 +256,12 @@
     settlePitch(entry);
     const mass = Number(el('engine-mass').value);
     Object.assign(entry.c, {fuel_percent: Number(el('engine-fuel').value), flaps_percent: Number(el('engine-flaps').value),
+      boosters: el('engine-boosters').checked && !el('engine-boosters-field').hidden,
+      ...(entry.c.booster_fuel_percent !== undefined && {booster_fuel_percent: Number(el('engine-booster-fuel').value)}),
       extra_mass_kg: el('engine-mass').checkValidity() && Number.isFinite(mass) ? mass : entry.c.extra_mass_kg});
     el('engine-apply-status').textContent = '';
   }
-  for (const id of ['engine-fuel', 'engine-throttle', 'engine-manual', 'engine-pitch-auto', 'engine-pitch', 'engine-flaps', 'engine-mass']) el(id).addEventListener('input', saveSettings);
+  for (const id of ['engine-fuel', 'engine-booster-fuel', 'engine-throttle', 'engine-boosters', 'engine-manual', 'engine-pitch-auto', 'engine-pitch', 'engine-flaps', 'engine-mass']) el(id).addEventListener('input', saveSettings);
   el('engine-flap-modes').addEventListener('click', event => {
     const button = event.target.closest('[data-flap-mode]'), entry = entries.find(e => e.id === editing);
     if (!button || button.disabled || !entry) return;
@@ -276,7 +291,7 @@
   }
   el('engine-loadout-edit').addEventListener('click', () => {
     const entry = entries.find(e => e.id === editing); if (!entry) return;
-    openLoadoutEditor({id: entry.id, aircraft_id: entry.aircraft_id, version: entry.version, c: entry.c, applied() { if (editing === entry.id) showLoadoutSummary(entry); }});
+    openLoadoutEditor({id: entry.id, aircraft_id: entry.aircraft_id, version: entry.version, c: entry.c, applied() { if (editing === entry.id) { showLoadoutSummary(entry); saveSettings(); } }});
   });
   el('engine-apply-all').addEventListener('click', () => {
     // As the EM page: every setting to every entry; a loadout and armament variant only to the same aircraft.
@@ -385,7 +400,7 @@
   const available = (q, list) => list.some(d => (!QUANTITIES[q].props || propeller(aircraftOf(d.entry))) &&
     d.result.modes.some(m => m[shown.axis].some(r => Number.isFinite(QUANTITIES[q].y(r, d.result)))));
   // Legend: aircraft · number, then the settings that differ from the defaults (full throttle, automatic pitch).
-  const entryName = (d, swept) => `${cleanName(d.result.name)} · ${d.index + 1}${versionSuffix(d.entry)}${!swept && d.entry.throttle !== full(d.entry.aircraft_id, d.entry.version) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}`;
+  const entryName = (d, swept) => `${cleanName(d.result.name)} · ${d.index + 1}${versionSuffix(d.entry)}${!swept && d.entry.throttle !== full(d.entry.aircraft_id, d.entry.version) ? ` · ${d.entry.throttle}%` : ''}${d.entry.pitch !== 'auto' ? ` · ${d.entry.pitch}% pitch` : ''}${d.entry.c?.boosters ? ' · boosters on' : ''}`;
   function render() {
     const list = displayed(), chart = el('engine-chart');
     if (!list.length) {

@@ -72,8 +72,10 @@ def without_wep():
     return sorted(out)
 
 
-# The EM page's mass settings the popup carries (Leo, 2026-10-28), as JSON text so results can be cached.
-MASS = ('fuel_percent', 'extra_mass_kg', 'flaps_percent', 'loadout', 'stores_released', 'default_ammunition', 'ammunition_vehicle')
+# The EM page's mass settings the popup carries (Leo, 2026-10-28), as JSON text so results can be cached; with them the
+# 'Booster on' setting (rocket boosters lit, Leo 2026-11-15), which goes with the loadout that fits the boosters.
+MASS = ('fuel_percent', 'extra_mass_kg', 'flaps_percent', 'loadout', 'stores_released', 'default_ammunition', 'ammunition_vehicle', 'boosters',
+        'booster_fuel_percent')
 
 
 def solver(name, altitude, throttle, pitch, mass='{}'):
@@ -158,6 +160,9 @@ def propeller_row(chart, speed_kmh, report):
     if report is not None:report(point, chart)
     thrust = float(prop['force'][0])
     fuel = [3600. * e['consumption'] for e in state['engines']]   # kg/h; mixed aircraft include their jets
+    # Lit rocket boosters (family 3): in the total thrust, not in the propeller efficiency or the engines' fuel.
+    rockets = [i for i, e in enumerate(p['engines']) if e['family'] == 3]
+    booster = sum(float(state['engines'][i].get('force', (0., 0., 0.))[0]) for i in rockets)
     # SFC (Leo, 2026-10-29), in the game's units: pistons' fuel per their shaft power (the torque x omega the fuel law
     # takes; kg per GAME_HP hour), turbines' fuel per the turbine scalar thrust it multiplies (kg per GAME_KGF hour),
     # from turbine_scalar, kept only where that re-run reproduces the solver's own fuel to the bit.
@@ -172,12 +177,13 @@ def propeller_row(chart, speed_kmh, report):
                 for i in pistons]
     return dict(thrust_kgf=thrust / KGF, power_hp=power / GAME_HP if power > 0. or pistons else None,
                 engine_power_hp=[e.get('torque', 0.) * e['omega'] / GAME_HP for e in state['engines']],
-                fuel_kgh=sum(fuel), engine_fuel_kgh=fuel,
+                fuel_kgh=sum(f for i, f in enumerate(fuel) if i not in rockets), engine_fuel_kgh=fuel,
+                **(dict(booster_thrust_kgf=booster / KGF, booster_fuel_kgh=sum(fuel[i] for i in rockets)) if booster else {}),
                 piston_power_hp=piston_w / GAME_HP if pistons else None,
                 bsfc=sum(fuel[i] for i in pistons) / (piston_w / GAME_HP) if pistons and piston_w > 0. else None,
                 turbine_thrust_kgf=turbine_n / KGF if turbines and exact else None,
                 tsfc=sum(fuel[i] for i in turbines) / (turbine_n / GAME_KGF) if turbines and exact and turbine_n > 0. else None,
-                efficiency=thrust * v / power * 100. if power > 1. and not any(e['family'] == 2 for e in p['engines']) else None,
+                efficiency=(thrust - booster) * v / power * 100. if power > 1. and not any(e['family'] == 2 for e in p['engines']) else None,
                 rpm=point['propulsion']['engine_rpm'], pitch_deg=point['propulsion']['propeller_pitch_deg'],
                 pitch_percent=point['propulsion'].get('propeller_pitch_percent'),
                 manifold_ata=[float(state['engines'][i].get('manifold', math.nan)) for i in pistons],
@@ -211,16 +217,33 @@ def turbine_scalar(engine, s, velocity, height, nitro):
                          shaft_fraction=mul(omega, p['inverse_omega']), running=2)
 
 
+def main_units(chart):
+    """The aircraft's own direct-thrust engines, without lit rocket boosters (rocket_em.booster_units)."""
+    return [u for u in chart.engine.units if not getattr(u, 'booster', False)]
+
+
+def booster_fields(chart, v):
+    """Lit rocket boosters' share of a row: their thrust (in the row's total) and propellant flow (not in fuel_kgh)."""
+    lit = [u for u in getattr(chart.engine, 'units', ()) if getattr(u, 'booster', False)]
+    if not lit:return {}
+    force = [0.] * 3
+    for u in lit:
+        f, _ = u.vectors(v)
+        force = [a + b for a, b in zip(force, f)]
+    return dict(booster_thrust_kgf=float(force[0]) / KGF, booster_fuel_kgh=sum(3600. * u.consumption for u in lit))
+
+
 def jet_row(chart, speed_kmh):
     from air_state import cache
     v = speed_kmh / 3.6
     air = cache([f32(v), 0., 0.], chart.config['altitude_m'])
     # The chart's nominal engine state (jet_nominal.evaluate): RPM, the scalar thrust and the fuel demand it sets, kg/s.
-    nominal = [u.nominal(v) for u in chart.engine.units];fuel = [3600. * n['scalar']['consumption'] for n in nominal]
+    nominal = [u.nominal(v) for u in main_units(chart)];fuel = [3600. * n['scalar']['consumption'] for n in nominal]
     engine = sum(n['scalar']['thrust'] for n in nominal)
     return dict(thrust_kgf=float(chart.engine.vectors(v)[0][0]) / KGF, rpm=[n['omega'] * 30 / math.pi for n in nominal],
                 fuel_kgh=sum(fuel), engine_fuel_kgh=fuel, turbine_thrust_kgf=engine / KGF,
-                tsfc=sum(fuel) / (engine / GAME_KGF) if engine > 0. else None, mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6)
+                tsfc=sum(fuel) / (engine / GAME_KGF) if engine > 0. else None, mach=float(air['mach']), ias_kmh=float(air['ias_u']) * 3.6,
+                **booster_fields(chart, v))
 
 
 def rocket_row(chart, speed_kmh):
@@ -384,7 +407,7 @@ def sfc_curves(name, chart, propulsion):
             add('rocket', i, [dict(throttle_percent=x, fuel_kgs=step(u.properties, dict(throttle=min(f32(x / 100.), cap), running=7 if x > 0. else 0))['consumption'])
                               for x in throttles(u.properties['properties']['throttle_boost'])])
     elif propulsion == 'jet':
-        for i, u in enumerate(chart.engine.units):
+        for i, u in enumerate(main_units(chart)):
             limit = u.ep['omega_limit']
             add('tsfc', i, [dict(throttle_percent=x, tsfc=turbine_tsfc(u.jet, u.ep['throttle_boost'], limit, x)) for x in throttles(u.ep['throttle_boost'])])
     else:
@@ -549,16 +572,16 @@ def compute(name, altitude_m, speed_kmh, throttle=110., pitch=None, report=None,
     engines = chart.engine.properties['engines'] if prop else []
     return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude_m,
                 speed_kmh=speed_kmh, throttle_percent=throttle, pitch_percent=pitch, modes=modes,
-                engine_count=len(engines) if prop else len(chart.engine.units), mass_kg=float(chart.mass['mass']),
+                engine_count=len(engines) if prop else len(main_units(chart)), mass_kg=float(chart.mass['mass']),
                 stages=[len(e['properties']['stages']) for e in engines if e['family'] in (0, 1)],
                 rpm_limit=([e['properties']['omega_limit'] * 30 / math.pi for e in engines] if prop else
-                           [u.ep['omega_limit'] * 30 / math.pi for u in chart.engine.units] if entry['propulsion'] == 'jet' else []),
+                           [u.ep['omega_limit'] * 30 / math.pi for u in main_units(chart)] if entry['propulsion'] == 'jet' else []),
                 elapsed_s=time.perf_counter() - started)
 
 
 def request(body, report=None):
     """POST /api/engine: {aircraft, sweep: altitude|speed|sfc, level, altitude_m, speed_kmh, throttle, pitch: 'auto'|%,
-    mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle},
+    mass: {fuel_percent, extra_mass_kg, flaps_percent, loadout, stores_released, default_ammunition, ammunition_vehicle, boosters, booster_fuel_percent},
     point: true for the one point of the sweep at altitude_m and speed_kmh ({row})}."""
     known = {'aircraft', 'sweep', 'level', 'altitude_m', 'speed_kmh', 'throttle', 'pitch', 'mass', 'altitude_range', 'speed_range', 'quantity', 'point'}
     if set(body) - known:raise ValueError('Unknown field: ' + ', '.join(sorted(set(body) - known)))

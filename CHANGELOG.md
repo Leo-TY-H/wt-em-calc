@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.11.15.2
+
+- **Rocket boosters.** Booster weight follows the game: JATO/RATO pods bring their full propellant (Kitsuka 700 kg, Me 264 900, Tu-14T 760, B-66B 408, Il-28 380, Ar 234 250, Pucara 120, A-4 81), the Mirage SEPR store both of its tanks (1,080 kg), and the Me 262 C-1a/C-2b their full 1,700 kg of rocket propellant whatever the fuel load. Boosters the aircraft always carries (Kitsuka, A-4, Ar 234, B-66B, Il-28, Me 264, Tu-14T) are part of the default.
+- **Booster on** (next to the throttle, EM and engine pages, shown only when a booster is fitted) lights the boosters as the game's ignite key does: full rated thrust at any speed and altitude, independent of the throttle, until the propellant runs out. The point details give the thrust, propellant and burn time.
+- **Booster propellant** (next to the fuel load): 100% is the full load the game spawns with; less scales the booster propellant and its burn time; 0% is burnt out, when auto-dropping booster pods have left with their weight and drag.
+- **Mistel 2.** With the Mistel loadout the chart flies the Ju 88 G-1 Mistel's own flight model, mass, fuel, engines and Instructor, as the game does while the two are joined; the Fw 190 adds no weight, drag or thrust there. With the stores released (or no loadout) it is the clean Fw 190 A-8. It was a Fw 190 with a 3,500 kg zero-drag bomb before.
+
 ## 2026.11.15.1
 
 - With **Manual engine controls** on, every Fw 190 and Ta 152, the Bf 109 E-3 (Japan)/E-4/E-7/T-2/Z, Bf 110 C-4/C-6/F-2, Do 335 A-0/A-1/B-2, Me 210, Ju 388 J and Bv 155 B-1 offer **Automatic propeller control** again, on by default as in the game. The game allows automatic pitch on every blade-angle governor of this kind, whatever the FM's HasAutoPitchControl says; the calculator used that flag and forced a manual blade angle. Charts with manual engine controls off are unchanged.

@@ -9,6 +9,7 @@ from propulsion_general import target_omega, delivered_boost
 from prop_quasisteady import frame as step, REVISION
 from propeller_general import local_flow
 from prop_steady import initial_state
+from rocket_boosters import seed_state as booster_seed_state
 from em_cancellation import check as check_cancel
 from jet_model import scalar_update
 from control_mixer import density_at_height
@@ -97,8 +98,8 @@ def _regime_fit(evaluate, x, paths, bounds, blocks, targets, modes, full_jacobia
 def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=True, state=None, *, _prepare_only=False, _retain_linearization=False, _stationary=False, _governor_saturation=False):
     if _stationary and not _prepare_only:
         raise ValueError('Stationary equations require the stationary solver, not the legacy search')
-    native_controls = dict(controls, engine_control_mode='automatic')
-    seed = initial_state(p, velocity, height, nitro=nitro, **native_controls)
+    # Lit rocket boosters (controls['boosters']) run from the seed on, as the game starts them at ignition.
+    seed = booster_seed_state(p, velocity, height, nitro, controls)
     if state is not None:
         for group in ('engines', 'propellers', 'transmissions'):
             for s, old in zip(seed[group], state[group]):

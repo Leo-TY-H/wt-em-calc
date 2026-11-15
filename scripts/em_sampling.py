@@ -153,6 +153,8 @@ def sweep_speed_intervals(name,config):
     boundary (em_speed_limits), and nothing above the enforced limit is flown, so neither is listed."""
     from aircraft_catalog import load
     from em_speed_limits import sweep_excluded_kmh, speed_limits
+    from bomb_plane import flight
+    name,config=flight(name,config)  # a carrier joined to its bomb plane flies the bomb plane's FM
     fm=load(name)
     excluded=sweep_excluded_kmh(fm,config)
     if not excluded:return []
@@ -1858,9 +1860,11 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
     from em_speed_limits import speed_limits
     start=time.monotonic();cfg_json=json.dumps(config,sort_keys=True)
     conditions={name:aircraft_settings(config,name) for name in config['aircraft']}
-    redlines={name:speed_limits(load(name),cfg) for name,cfg in conditions.items()}
+    from bomb_plane import flight
+    flights={name:flight(name,cfg) for name,cfg in conditions.items()}  # joined carriers fly their bomb plane's FM
+    redlines={name:speed_limits(load(flights[name][0]),flights[name][1]) for name in conditions}
     from em_mach_events import aircraft_catalog as mach_catalog,speed_knots,crossings,transition_width,discontinuity_regions,overlaps
-    mach_info={name:mach_catalog(load(name),cfg) for name,cfg in conditions.items()}
+    mach_info={name:mach_catalog(load(flights[name][0]),flights[name][1]) for name in conditions}
     discontinuities={name:discontinuity_regions(mach_info[name],cfg) for name,cfg in conditions.items()}
     mach_intervals={name:[] for name in conditions}
     workers=WORKERS;results={name:{} for name in config['aircraft']}
@@ -1930,7 +1934,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             snapshot['aircraft'].append(dict(AIRCRAFT[name],id=name,color=['#38c9d7','#ffa66b'][index],
                 settings=conditions[name],columns=ordered,points=points,
                 interpolation=dict(coverage(config),native_discontinuities=discontinuities[name],mach_approximations=mach_info[name].get('approximations',[])),
-                instructor_approximation=profile(load(name),conditions[name]) if conditions[name]['instructor'] else None,
+                instructor_approximation=profile(load(flights[name][0]),flights[name][1]) if conditions[name]['instructor'] else None,
                 boundary_columns=[outline_column(c) for c in sorted(
                     {**boundary_probes[name],**{c['speed_kmh']:c for c in ordered}}.values(),key=lambda c:c['speed_kmh'])],
                 sustained=[p for c in ordered for p in c['sustained']],
@@ -2620,7 +2624,7 @@ def compute_adaptive(config,progress=None,cancelled=None,preview=None):
             output['aircraft'].append(dict(id=name,**metadata,settings=conditions[name],aircraft_model=description(conditions[name]),points=points,columns=ordered,
                 boundary_columns=[outline_column(c) for c in sorted(
                     {**boundary_probes[name],**columns}.values(),key=lambda c:c['speed_kmh'])],
-                instructor_approximation=profile(load(name),conditions[name]) if conditions[name]['instructor'] else None,
+                instructor_approximation=profile(load(flights[name][0]),flights[name][1]) if conditions[name]['instructor'] else None,
                 instructor_unresolved_speeds_kmh=[c['speed_kmh'] for c in ordered if c['boundary_status']=='Instructor boundary unresolved'],
                 sweep_excluded_speeds_kmh=exclusions[name],
                 low_speed_edge=low_speed_edges.get(name),

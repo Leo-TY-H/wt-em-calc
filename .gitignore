@@ -75,6 +75,7 @@
 !/scripts/aircraft_loadouts.py
 !/scripts/aircraft_model.py
 !/scripts/aircraft_upgrades.py
+!/scripts/bomb_plane.py
 !/scripts/altitude_chart.py
 !/scripts/body_dynamics.py
 !/scripts/bootstrap_runtime.py
@@ -554,6 +555,7 @@
 !/scripts/propeller_general.py
 !/scripts/propulsion_general.py
 !/scripts/release_info.py
+!/scripts/rocket_boosters.py
 !/scripts/rocket_em.py
 !/scripts/rocket_general.py
 !/scripts/structural_limits.py

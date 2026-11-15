@@ -64,13 +64,13 @@ async function api(path, options={}, version) {
   throw new Error('Calculator updates took too long to load. Please refresh the page.');
 }
 function error(message) {$('error').textContent=message;$('error').hidden=!message;}
-const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','extra-mass':'extra_mass_kg',
+const conditionFields={altitude:'altitude_m',fuel:'fuel_percent','booster-fuel':'booster_fuel_percent','extra-mass':'extra_mass_kg',
   sweep:'sweep_percent',flaps:'flaps_percent',
   'propeller-pitch':'propeller_pitch_percent','oil-radiator':'oil_radiator_percent',radiator:'radiator_percent'};
 // Fixed browser model; diagnostic API settings remain independently available.
 const fixedSolverConditions={trim_solver_mode:'stationary',mach_curve_mode:'auto',experimental_instantaneous_aero:false,experimental_lateral_trim:'full',timestep_hz:48};
 const conditionKeys=[...Object.values(conditionFields),...Object.keys(fixedSolverConditions),'throttle','afterburner','trim_mode','trim_limit',
-  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','autotrim','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto'];
+  'fixed_trim','default_ammunition','ammunition_vehicle','loadout','stores_released','instructor','autotrim','instructor_model','instructor_authority_mode','engine_control_mode','aircraft_trim_mode','torque_gyro','turn_direction','roll_leveling','structural_limits','turn_response_mode','manual_engine_controls','propeller_pitch_auto','boosters'];
 const entryColors=['#38c9d7','#ffa66b','#b79aff','#91d477','#ee8eb6','#f0d367','#e0b0ff','#cfb296'];
 const metaOf=version=>window.GameVersions?.meta(version)||state.meta;
 const rowOf=e=>metaOf(e.version).aircraft[e.aircraft_id]??state.meta.aircraft[e.aircraft_id];
@@ -91,6 +91,11 @@ const requestConditions=c=>{const values={...c,...fixedSolverConditions};delete 
 // Autotrim defaults to the Instructor setting (settings saved before the switch); torque/gyro follows
 // autotrim as in the game, where both are set by the control mode (on exactly in full real).
 const modeConditions=c=>{const values=conditionsFrom(c);const autotrim=values.instructor||(values.autotrim??values.instructor);return {...values,...fixedSolverConditions,instructor_model:'steady',engine_control_mode:'quasi_steady',aircraft_trim_mode:'discrete',instructor_authority_mode:'direct',turn_response_mode:'settled',...('autotrim' in state.meta.defaults?{autotrim}:{}),torque_gyro:!autotrim};};
+// Rocket boosters of a chart (mass.boosters): fitted, lit or off, thrust, propellant and burn time at the game's flow.
+const boosterRows=b=>b?[['Rocket boosters',b.on?`On · ${fmt(b.thrust_n/KGF,0)} kgf · ${fmt(b.propellant_kg,0)} kg propellant · burns ${fmt(b.burn_time_s,0)} s`:
+  `Off · ${fmt(b.propellant_kg,0)} kg propellant aboard`]]:[];
+// A carrier joined to its bomb plane (Mistel 2): the chart is the bomb plane's flight model (mass.bomb_plane).
+const bombPlaneRows=b=>b?[['Composite',`Joined to ${escapeText(state.meta.aircraft[b.bomb_plane]?.name||b.bomb_plane)}: its flight model, mass and engines fly; release the stores for the carrier alone`]]:[];
 const engineModelLabel=c=>c.engine_control_mode==='quasi_steady'?(c.controls?.automatic?.some(auto=>!auto)||c.manual_engine_controls&&!c.propeller_pitch_auto?'Quasi-steady · manual pitch':'Quasi-steady · ideal governor'):'Dynamic propulsion';
 const aircraftModelLabel=c=>c.aircraft_trim_mode==='quasi_steady'?'Quasi-steady aircraft trim':'Discrete aircraft trim';
 const experimentLabel=p=>{const e=p.model_experiments;return e?`${e.instantaneous_aerodynamics?'Instantaneous aerodynamics':'Retained aerodynamic history'} · ${{full:'Full trim',zero_sideslip:'Zero sideslip, full roll/yaw balance',symmetric:'Ideal symmetric, pitch trim only'}[e.lateral_trim]}`:'Retained model';};
@@ -100,6 +105,19 @@ const instructorAuthorityLabel=c=>c.instructor_authority_mode==='direct'?'Direct
 const tailCapRows=i=>i?.tail_cap_limiting&&Number.isFinite(i.tail_cap_margin_deg)?[['Tail-plane cap',i.tail_cap_margin_deg>=0?fmt(i.tail_cap_margin_deg,3)+'° of tail angle left':'exceeded by '+fmt(-i.tail_cap_margin_deg,3)+'° of tail angle']]:[];
 const instructorLimitingLabel=i=>i.limiting==='Instructor effective AoA'&&i.tail_cap_limiting&&Number.isFinite(i.tail_cap_margin_deg)&&i.tail_cap_margin_deg/10<=i.angle_margin+1e-12?'Instructor tail-plane cap':i.limiting;
 const ammunitionFor=(aircraft,vehicle)=>aircraft?.ammunition?.variants?.[vehicle]||aircraft?.ammunition;
+// Rocket boosters (Leo, 2026-11-15): 'Booster on' is offered when a booster is fitted: built in (Me 262 C), always
+// carried (common JATO modules) or in the selected loadout (catalog row boosters, loadout summary boosters flags).
+// An unknown loadout counts as fitted; the server lights only boosters that are fitted and hold propellant.
+function boostersFitted(name,aircraft,c,version){
+  const caps=aircraft?.boosters;if(!caps)return false;
+  if(caps.builtin)return true;
+  if(c.stores_released)return false;  // released stores take their booster modules with them
+  if(caps.default)return true;
+  if(!caps.loadout||!c.loadout)return false;
+  const info=cachedLoadouts(name,c.ammunition_vehicle,version);if(!info)return true;
+  if(typeof c.loadout==='string')return !!info.presets?.find(p=>p.id===c.loadout)?.boosters;
+  return Object.entries(c.loadout.tiers||{}).some(([tier,id])=>optionOf(info.editor,tier,id)?.boosters);
+}
 function normalizeManualControls(values,aircraft){
   const caps=aircraft.manual_controls||{};
   if(['jet','rocket'].includes(aircraft.propulsion))values.manual_engine_controls=false;
@@ -113,7 +131,9 @@ function normalizeManualControls(values,aircraft){
 }
 // Aircraft without WEP (server's no_wep list): the game's throttle stops at 100% (Leo, 2026-10-28).
 const noWep=(name,version)=>!!name&&!!metaOf(version)?.no_wep?.includes(name);
-const aircraftConditions=(name,c,version)=>{const values=modeConditions(c);if(noWep(name,version)){values.throttle=Math.min(values.throttle,1);values.afterburner=false;}const aircraft=metaOf(version).aircraft[name]??state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}return normalizeManualControls(values,aircraft);};
+const aircraftConditions=(name,c,version)=>{const values=modeConditions(c);if(noWep(name,version)){values.throttle=Math.min(values.throttle,1);values.afterburner=false;}const aircraft=metaOf(version).aircraft[name]??state.meta.aircraft[name];const ammo=aircraft.ammunition;if(!ammo?.variants?.[values.ammunition_vehicle])values.ammunition_vehicle=ammo?.vehicle_id||'';if(!ammunitionFor(aircraft,values.ammunition_vehicle)?.supported)values.default_ammunition=false;values.flaps_percent=Math.max(0,Math.min(100,Math.round(values.flaps_percent||0)));if(!aircraft.has_flaps)values.flaps_percent=0;if(['jet','rocket'].includes(aircraft.propulsion))values.engine_control_mode='automatic';if(!aircraft.loadouts?.supported||!values.loadout){values.loadout='';values.stores_released=false;}values.booster_fuel_percent=Math.max(0,Math.min(100,Math.round(values.booster_fuel_percent??100)));
+  if(!('booster_fuel_percent' in state.meta.defaults))delete values.booster_fuel_percent;
+  if(!boostersFitted(name,aircraft,values,version)||values.booster_fuel_percent===0)values.boosters=false;return normalizeManualControls(values,aircraft);};
 // One control mode switch (Leo, 2026-10-28), set as in the game (aces.exe 0x141b81440): the Instructor in Mouse aim and
 // Simplified (one option: both use the same steady Instructor here), autotrim in every mode but Full real, torque/gyro
 // only in Full real. The entry keeps its mode (control_mode, page only) for its name.
@@ -133,7 +153,7 @@ function saveCondition(){
   state.conditions[state.editing]={...state.conditions[state.editing],
     ...Object.fromEntries(Object.entries(conditionFields).map(([id,k])=>[k,+$(id).value])),
     default_ammunition:$('default-ammunition').checked,ammunition_vehicle:$('ammunition-vehicle').value,
-    manual_engine_controls:$('manual-engine-controls').checked,propeller_pitch_auto:$('propeller-pitch-auto').checked,
+    manual_engine_controls:$('manual-engine-controls').checked,propeller_pitch_auto:$('propeller-pitch-auto').checked,boosters:$('boosters').checked,
     ...fixedSolverConditions,structural_limits:$('flutter-on').checked,
     throttle:+$('throttle').value/100,afterburner:+$('throttle').value>100,
     ...(mode=>({control_mode:mode,instructor:CONTROL_MODES[mode].instructor,torque_gyro:!CONTROL_MODES[mode].autotrim,
@@ -150,6 +170,7 @@ function showCondition(id){
   $('default-ammunition').checked=!!c.default_ammunition;
   $('manual-engine-controls').checked=!!c.manual_engine_controls;
   $('propeller-pitch-auto').checked=c.propeller_pitch_auto!==false;
+  $('boosters').checked=!!c.boosters;
   const aircraft=id?rowOf(state.entries.find(e=>e.id===id)):null;
   const variants=aircraft?.ammunition?.variants;
   $('ammunition-vehicle-field').hidden=!variants||Object.keys(variants).length<2;
@@ -242,6 +263,14 @@ function syncLabels(){
   const editingEntry=state.entries.find(e=>e.id===state.editing),aircraft=editingEntry&&rowOf(editingEntry);
   const caps=aircraft?.manual_controls||{};
   $('manual-engine-field').hidden=!aircraft||['jet','rocket'].includes(aircraft.propulsion);
+  const boosterCaps=aircraft?.boosters,fitted=!!editingEntry&&boostersFitted(editingEntry.aircraft_id,aircraft,state.conditions[editingEntry.id]||{},editingEntry.version);
+  // Booster propellant (Leo, 2026-11-15): 100% is the full load the game spawns with; 0% is burnt out, when
+  // auto-dropping booster pods have left. 'Booster on' needs propellant.
+  $('booster-fuel-field').hidden=!fitted||!('booster_fuel_percent' in state.meta.defaults);
+  $('booster-fuel-label').textContent=$('booster-fuel').value+'%';
+  const lightable=fitted&&+$('booster-fuel').value>0;
+  $('boosters-field').hidden=!lightable;$('boosters-help').hidden=!lightable||!$('boosters').checked;
+  $('boosters-help').textContent=boosterCaps?'Rocket boosters lit: full rated thrust, independent of the throttle, until the propellant runs out (burn time in the point details). In the game they are off until ignited.':'';
   $('manual-engine-settings').hidden=!$('manual-engine-controls').checked;
   $('propeller-pitch-field').hidden=!caps.propeller_pitch;
   $('propeller-pitch-auto-field').hidden=!caps.propeller_auto;
@@ -939,7 +968,7 @@ async function inspect(a,p,clicked){
         ['Governor',p.propulsion.stationarity.governor_status.join(' / ')],
         ['Model assumption','Steady propulsion; fluctuations and transient peak loads omitted']]:[])]:[]),
     ['Solved sideslip',fmt(p.sideslip_deg??0,4)+'°'],
-    ['Wing load / breaking load',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',entryModeLabel(a)],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)]])}</div><div hidden><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
+    ['Wing load / breaking load',p.wing_load_ratios.map(x=>fmt(x*100,1)).join(' / ')+'%'],['Flight mode',entryModeLabel(a)],['Propeller torque & gyro',resultConditions(a).torque_gyro?'On':'Off'],['Engine state',escapeText(a.engine.policy)],...boosterRows(a.mass?.boosters),...bombPlaneRows(a.mass?.bomb_plane)])}</div><div hidden><h3>COMPONENT FORCES · kgf</h3><table><thead><tr><th>Component</th><th>Forward</th><th>Up</th><th>Right</th></tr></thead><tbody>${forces.map(([k,v])=>`<tr><td>${names[k]||escapeText(k)}</td>${bodyRight(v).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr>`).join('')}<tr><td>Total, incl. engine</td>${bodyRight(p.force_n).map(x=>`<td>${fmt(x/KGF,0)}</td>`).join('')}</tr></tbody></table></div></div>${p.reasons.length?`<div class="point-note">Excluded: ${escapeText(p.reasons.join('; '))}.</div>`:''}${note}`;
 }
 async function poll(id){
   if(state.activeJob!==id)return;

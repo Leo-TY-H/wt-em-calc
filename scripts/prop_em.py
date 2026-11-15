@@ -20,6 +20,10 @@ class PropellerEnsemble:
         self.automatic_controls=dict(propeller_commands(self.properties,config),
             gears=[0]*len(self.properties['engines']),
             throttle=config['throttle'],afterburner=config['afterburner'],engine_control_mode=config['engine_control_mode'])
+        # 'Booster on': the fitted rocket boosters holding propellant run (rocket_boosters.seed_state).
+        boosters=mass.get('boosters') or {}
+        lit=tuple(boosters.get('ready',())) if config.get('boosters') else ()
+        if lit:self.automatic_controls['boosters']=lit
         from prop_quasisteady import REVISION
         from prop_governor_branch import REVISION as branch_revision
 
@@ -28,7 +32,7 @@ class PropellerEnsemble:
             for e in self.properties['engines']])
         self.summary=dict(engine_count=sum(e['family']!=3 for e in self.properties['engines']),
             policy='Quasi-steady propulsion; ideal RPM governor with blade-pitch stops; radiators closed',
-            nozzle_policy='Neutral nozzle controls; optional rocket boosters off',
+            nozzle_policy='Neutral nozzle controls; rocket boosters '+('lit' if lit else 'off'),
             fuel_policy='Initial internal fuel and boost consumables frozen',
             model_revision=REVISION,
             governor_branch_revision=branch_revision,
