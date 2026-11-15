@@ -17,7 +17,8 @@ version=em.game_data()['version']
 assert all(part.isdecimal() for part in version.split('.')) and len(version.split('.'))==4
 raw=io.BytesIO();em.save_start_cache(raw);snapshot=raw.getvalue()
 from engine_performance import without_wep
-meta=dict(aircraft=dict(em.AIRCRAFT),defaults=em.DEFAULTS,latest=None,
+from bomb_plane import mark_bomb_planes
+meta=dict(aircraft=mark_bomb_planes(dict(em.AIRCRAFT)),defaults=em.DEFAULTS,latest=None,
           no_wep=list(without_wep()),game_data=em.game_data())
 encoded=gzip.compress(orjson.dumps(meta,option=orjson.OPT_SERIALIZE_NUMPY),compresslevel=1)
 assert len(snapshot)+len(encoded)<5000000,'Catalog exceeds the finite 5 MB publication limit'

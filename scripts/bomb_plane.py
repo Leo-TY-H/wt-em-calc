@@ -58,6 +58,20 @@ def carried(name, config):
     return plane
 
 
+@lru_cache(maxsize=None)
+def is_bomb_plane(vehicle):
+    """A vehicle the game spawns only as another aircraft's bomb plane (vehicle blk bombPlane, e.g. ju_88g_1_mistel):
+    not selectable on its own, so the aircraft pickers leave it out; carriers still fly its FM."""
+    path = REFERENCES / 'prop-vehicles' / (vehicle + '.blkx')
+    return path.is_file() and orjson.loads(path.read_bytes()).get('bombPlane') is True
+
+
+def mark_bomb_planes(aircraft):
+    """Catalog rows for the page: bomb planes carry bomb_plane=True (copies; the solver catalog is untouched)."""
+    return {name: dict(row, bomb_plane=True) if is_bomb_plane(row.get('vehicle_id') or name) else row
+            for name, row in aircraft.items()}
+
+
 def flight(name, config):
     """(aircraft, settings) whose flight model flies a chart of `name` with `config`: the bomb plane while joined."""
     plane = carried(name, config)

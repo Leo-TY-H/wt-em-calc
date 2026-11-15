@@ -352,11 +352,12 @@ function syncAircraftMenu(){
 function populateAircraft(){
   // By name, the leading nation symbol ignored, so an aircraft's variants sit together (the one without a symbol first).
   const symbol=a=>Number(cleanName(a.name)!==sortName(a.name));
-  const entries=Object.entries({...state.extraAircraft,...state.meta.aircraft}).sort(([,a],[,b])=>Number(b.supported)-Number(a.supported)||
+  // A bomb plane (Mistel 2's Ju 88) is flown through its carrier, not selected on its own.
+  const entries=Object.entries({...state.extraAircraft,...state.meta.aircraft}).filter(([,a])=>!a.bomb_plane).sort(([,a],[,b])=>Number(b.supported)-Number(a.supported)||
     sortName(a.name).localeCompare(sortName(b.name),undefined,{numeric:true})||symbol(a)-symbol(b)||a.name.localeCompare(b.name));
   // The type stays searchable but is not shown (Leo, 2026-10-23).
   const family=a=>({piston:'Piston propeller',turboprop:'Turboprop',mixed:'Propeller + jet',rocket:'Rocket'})[a.propulsion]||(a.has_sweep?'Variable sweep':'Jet');
-  $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?(a.experimental&&a.propulsion!=='piston'?' · Experimental':''):' · '+(a.reason||'Model integration pending'))}${a.only_in?escapeText(' · Only in '+a.only_in):''}</small></span><button type="button" data-add="${escapeText(id)}"${a.only_in?` data-version="${escapeText(a.only_in)}"`:''} aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
+  $('aircraft-list').innerHTML=entries.map(([id,a])=>`<div class="aircraft-option" data-search="${escapeText(id+' '+a.name+' '+family(a))}" data-supported="${!!a.supported}" title="${escapeText(a.supported?'':a.reason||'')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name)||id)}</code>${escapeText(a.supported?'':' · '+(a.reason||'Model integration pending'))}${a.only_in?escapeText(' · Only in '+a.only_in):''}</small></span><button type="button" data-add="${escapeText(id)}"${a.only_in?` data-version="${escapeText(a.only_in)}"`:''} aria-label="Add ${escapeText(a.name)}" ${a.supported?'':'disabled'}>Add</button></div>`).join('');
 }
 $('aircraft-search').addEventListener('input',syncAircraftMenu);
 $('aircraft-search').addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault();});

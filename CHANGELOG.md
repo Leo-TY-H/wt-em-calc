@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026.11.15.3
+
+- The aircraft lists no longer tag the turboprops (A2D-1, IA.58A Pucara, Qing-6, Tu-95M, Wyvern S.4) and the FR-1 Fireball as Experimental, nor show the experimental note on hover for supported aircraft.
+- The aircraft lists show the Mistel 2 once. The Ju 88 half (ju_88g_1_mistel) is a bomb plane the game only spawns under the Fw 190, so it is no longer offered on its own; the Mistel 2 with its Mistel loadout still flies on its flight model.
+
 ## 2026.11.15.2
 
 - **Rocket boosters.** Booster weight follows the game: JATO/RATO pods bring their full propellant (Kitsuka 700 kg, Me 264 900, Tu-14T 760, B-66B 408, Il-28 380, Ar 234 250, Pucara 120, A-4 81), the Mirage SEPR store both of its tanks (1,080 kg), and the Me 262 C-1a/C-2b their full 1,700 kg of rocket propellant whatever the fuel load. Boosters the aircraft always carries (Kitsuka, A-4, Ar 234, B-66B, Il-28, Me 264, Tu-14T) are part of the default.

@@ -643,7 +643,8 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=self.server.shutdown,daemon=True).start()
                     return
             from engine_performance import without_wep
-            return self.respond(dict(aircraft=dict(AIRCRAFT),defaults=DEFAULTS,latest=None,no_wep=without_wep(),
+            from bomb_plane import mark_bomb_planes
+            return self.respond(dict(aircraft=mark_bomb_planes(dict(AIRCRAFT)),defaults=DEFAULTS,latest=None,no_wep=without_wep(),
                 result_policy=dict(storage='memory',fresh_calculations=True,automatic_saving=False),release=release_info(),
                 game_data=game_data()))
         if path.startswith('/api/loadouts/'):

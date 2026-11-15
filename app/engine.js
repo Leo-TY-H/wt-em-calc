@@ -120,9 +120,9 @@
   function populate() {
     const aircraft = catalog();
     const symbol = a => Number(cleanName(a.name) !== sortName(a.name));
-    const rows = Object.entries({...state.extraAircraft, ...aircraft}).sort(([, a], [, b]) => Number(b.supported) - Number(a.supported) ||
+    const rows = Object.entries({...state.extraAircraft, ...aircraft}).filter(([, a]) => !a.bomb_plane).sort(([, a], [, b]) => Number(b.supported) - Number(a.supported) ||
       sortName(a.name).localeCompare(sortName(b.name), undefined, {numeric: true}) || symbol(a) - symbol(b) || a.name.localeCompare(b.name));
-    el('engine-list').innerHTML = rows.map(([id, a]) => `<div class="aircraft-option" data-search="${escapeText(id + ' ' + a.name)}" data-supported="${!!a.supported}" title="${escapeText(a.reason || '')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name) || id)}</code>${a.only_in ? escapeText(' · Only in ' + a.only_in) : ''}</small></span><button type="button" data-add="${escapeText(id)}"${a.only_in ? ` data-version="${escapeText(a.only_in)}"` : ''} aria-label="Add ${escapeText(a.name)}"${a.supported ? '' : ' disabled'}>Add</button></div>`).join('');
+    el('engine-list').innerHTML = rows.map(([id, a]) => `<div class="aircraft-option" data-search="${escapeText(id + ' ' + a.name)}" data-supported="${!!a.supported}" title="${escapeText(a.supported ? '' : a.reason || '')}"><span><strong>${escapeText(cleanName(a.name))}</strong><small><code>${escapeText(nameCode(a.name) || id)}</code>${a.only_in ? escapeText(' · Only in ' + a.only_in) : ''}</small></span><button type="button" data-add="${escapeText(id)}"${a.only_in ? ` data-version="${escapeText(a.only_in)}"` : ''} aria-label="Add ${escapeText(a.name)}"${a.supported ? '' : ' disabled'}>Add</button></div>`).join('');
     filter(); renderEntries(); updateForm();
   }
   function filter() {
