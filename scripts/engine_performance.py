@@ -3,7 +3,8 @@
 The EM plotter's own logic throughout (Leo, 2026-10-28): each point is calculated by a solver built from the same
 settings as an EM chart at that altitude (the EM page's throttle slider: setting / 100, boost requested above 100%;
 its manual propeller control; every other setting at the EM defaults, fully upgraded as the catalog applies every
-modification). Propeller aircraft: the EM plotter's axial-flow propulsion state (em_stationary_baseline.AxialReference:
+modification), except that level-flight SEP runs with the Instructor off, so it ends at the real stall (Leo,
+2026-11-15). Propeller aircraft: the EM plotter's axial-flow propulsion state (em_stationary_baseline.AxialReference:
 BaselineSolver.operating_point at 1 g, angle of attack, bank and controls 0), kept when converged and admitted by the
 chart's propeller admission. Jets: the chart's engine force (EngineEnsemble.vectors). Fuel flow (Leo, 2026-10-29) is
 the game's consumption of each engine in that same state (FUEL-CONSUMPTION-MODEL.md: the piston power-ratio law, the
@@ -78,12 +79,14 @@ MASS = ('fuel_percent', 'extra_mass_kg', 'flaps_percent', 'loadout', 'stores_rel
         'booster_fuel_percent')
 
 
-def solver(name, altitude, throttle, pitch, mass='{}'):
+def solver(name, altitude, throttle, pitch, mass='{}', instructor=True):
     """The EM chart's solver for these settings (built per altitude: the catalog caches the aircraft, so this is cheap),
-    with the compiled evaluator (em_march_native: the same values; the axial points take a third less time)."""
+    with the compiled evaluator (em_march_native: the same values; the axial points take a third less time).
+    instructor False: the EM page's Realistic control mode (autotrim, no Instructor AoA cap)."""
     import em_march_native
     from em_stationary_baseline import BaselineSolver
     extra = dict(json.loads(mass), altitude_m=float(altitude), throttle=throttle / 100., afterburner=throttle > 100.)
+    if not instructor:extra.update(instructor=False, autotrim=True)
     if pitch is not None:extra.update(manual_engine_controls=True, propeller_pitch_auto=False, propeller_pitch_percent=pitch)
     chart = BaselineSolver(name, settings(dict(aircraft=[name], sideslip_recovery=False, **extra)))
     em_march_native.attach(chart)
@@ -258,8 +261,11 @@ def rocket_row(chart, speed_kmh):
 
 
 def level_solver(name, altitude, throttle, pitch, mass='{}'):
-    """The EM plotter's point solver (em_server.point_solver for a march chart): soft admission, compiled loop."""
-    chart = solver(name, altitude, throttle, pitch, mass)
+    """The EM plotter's point solver (em_server.point_solver for a march chart): soft admission, compiled loop. The
+    Instructor is off (Leo, 2026-11-15: "for the engine performance always use real stall"): level flight ends at the
+    wing's stall (or another hard limit), not at the Instructor's AoA cap. Autotrim stays on (the EM page's Realistic
+    control mode)."""
+    chart = solver(name, altitude, throttle, pitch, mass, instructor=False)
     chart.soft_admission = True
     return chart
 

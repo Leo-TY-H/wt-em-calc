@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026.11.16.1
+
+- **Engine performance, SEP in level flight** now ends at the real stall: level flight is solved with the Instructor off (autotrim on, as the EM page's Realistic mode), so the curve no longer stops early at the Instructor's AoA cap. Example: P-51H at 200 km/h TAS went from 3,238 m to 4,502 m, where the wing stalls at 152 km/h IAS. Points shown before keep the same SEP; the engine plots are unchanged.
+
 ## 2026.11.15.3
 
 - The aircraft lists no longer tag the turboprops (A2D-1, IA.58A Pucara, Qing-6, Tu-95M, Wyvern S.4) and the FR-1 Fireball as Experimental, nor show the experimental note on hover for supported aircraft.
