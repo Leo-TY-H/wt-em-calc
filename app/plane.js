@@ -314,7 +314,9 @@
   // Flap speeds: extension against indicated airspeed, only the limits that apply (Leo, 2026-11-19). Holding an
   // extension: the critical speed solid, the automatic retraction dashed, each where it is the lower one; extending:
   // the speed where the flaps stop travelling out, dotted.
-  const LIMITS = {critical: ['Critical speed', 'solid', 1], retraction: ['Auto retraction', 'dash', 0], extension: ['Extension limit', 'dot', 1]};
+  // The IAS limits are the game's forward IAS; a Mach limit is placed at its level-flight IAS at the page's altitude.
+  const LIMITS = {critical: ['Critical speed', 'solid', 1], retraction: ['Auto retraction', 'dash', 0], retraction_mach: ['Auto retraction by Mach', 'dashdot', 0],
+    extension: ['Extension limit', 'dot', 1]};
   function renderFlaps(list) {
     const traces = [];
     for (const d of list) {
@@ -323,11 +325,12 @@
         const [label, dash, along] = LIMITS[segment.kind], points = dense(segment.points, along), group = `${d.entry.id}-${segment.kind}`;
         traces.push({type: 'scatter', mode: 'lines', x: points.map(p => p[0]), y: points.map(p => p[1]), name: `${name} · ${label.toLowerCase()}`,
           legendgroup: group, showlegend: !traces.some(t => t.legendgroup === group), line: {color: d.color, width: 2.4, dash}, hoverlabel: {bordercolor: d.color},
-          hovertemplate: `%{y:.0f}% · %{x:,.0f} km/h IAS<extra>${escapeText(name)} · ${label.toLowerCase()}</extra>`});
+          ...(segment.kind === 'retraction_mach' && {customdata: points.map(p => p[0] / d.result.flaps.ias_per_mach)}),
+          hovertemplate: `%{y:.0f}% · ${segment.kind === 'retraction_mach' ? 'Mach %{customdata:.2f} · ' : ''}%{x:,.0f} km/h IAS<extra>${escapeText(name)} · ${label.toLowerCase()}</extra>`});
       }
     }
     const layout = layoutBase(traces, 'flaps');
-    layout.xaxis = {...axisStyle, title: {text: `Indicated airspeed (km/h) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, rangemode: 'tozero'};
+    layout.xaxis = {...axisStyle, title: {text: `Forward IAS (km/h) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, rangemode: 'tozero'};
     layout.yaxis = {...axisStyle, title: {text: 'Flap extension (%)', standoff: 8, font: {size: 13}}, range: [0, 104]};
     draw('plane-flaps-chart', list, traces, layout, 'flap-speeds');
   }

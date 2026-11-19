@@ -18,7 +18,11 @@ schedule are not necessarily the same"):
 
 Flap efficiency (Leo: "percent gain in lift divided by percent gain in drag at the instructor aoa"; 2026-11-19 later:
 a Mach slider, the curve over every extension, the aircraft's own flap settings labelled). For each Mach of a grid and
-each extension that can be held there (the EM chart's own speed limit with those flaps, em_speed_limits.speed_limits):
+each extension that can be held in that state. The game judges the IAS limits (automatic retraction by IAS, the lock
+IAS, the critical speed, the wing's VNE) on the forward IAS, body-forward airspeed x sqrt(density ratio), and the Mach
+limits (retraction by Mach, the lock Mach, MNE) on the Mach of the total airspeed, so a state at high AoA is inside an
+IAS limit at a higher Mach than level flight is; each solved state is tested on its own forward IAS and Mach
+(flap_model.violations and the wing's limits), as the EM chart's leaning IAS edge does:
 - state: the EM chart's steady level turn at that speed at the Instructor's full pull (Mouse aim): where the march's
   'Instructor pitch' margin or its control authority margin with autotrim reaches zero, whichever comes first, found
   by the chart's own prescribed-alpha correction, once with the flaps and once with flaps up at the same speed. The
@@ -77,21 +81,26 @@ def ias_factor(altitude):
 
 
 def holding_limit(profile, percent, altitude):
-    """(IAS km/h, kind) of the lowest limit on holding an extension at this altitude: kind 'retraction' (automatic) or
-    'critical' (the flaps break); (None, None) where neither applies."""
+    """(IAS km/h, kind) of the lowest limit on holding an extension at this altitude: kind 'retraction' (automatic, by
+    forward IAS: flapsLimByIas or mechLockIas), 'retraction_mach' (automatic, by the Mach of the total airspeed:
+    flapsLimByMach or mechLockMachNumber, placed at the IAS of that Mach in level flow at this altitude) or 'critical'
+    (the flaps break, by forward IAS); (None, None) where none applies. The game's own quantities (flap_model,
+    em_speed_limits: aces.exe traced 2026-10-19)."""
     from air_state import speed_of_sound
     from flap_model import limits
     row = limits(profile, percent)
     if row is None:return None, None
     mach_to_ias = float(speed_of_sound(altitude)) * 3.6 * ias_factor(altitude)
-    automatic = [v for v in (row['automatic_ias_kmh'], row['automatic_mach'] and row['automatic_mach'] * mach_to_ias) if v is not None]
-    candidates = ([(min(automatic), 'retraction')] if automatic else []) + ([(float(row['destruction_ias_kmh']), 'critical')] if row['damage'] else [])
+    candidates = (([(float(row['automatic_ias_kmh']), 'retraction')] if row['automatic_ias_kmh'] is not None else [])
+                  + ([(float(row['automatic_mach']) * mach_to_ias, 'retraction_mach')] if row['automatic_mach'] is not None else [])
+                  + ([(float(row['destruction_ias_kmh']), 'critical')] if row['damage'] else []))
     return min(candidates) if candidates else (None, None)
 
 
 def flap_limits(profile, altitude):
     """(segments, detents) for the flap speeds chart: segments [{kind, points: [[ias_kmh, percent], ...]}] of the limits
-    that apply (kind 'retraction' | 'critical' | 'extension'); detents {combat|takeoff|landing: percent}."""
+    that apply (kind 'retraction' | 'retraction_mach' | 'critical' | 'extension'); detents {combat|takeoff|landing:
+    percent}."""
     from flap_model import deployment_speed_limit
     if not profile['available']:return [], {}
     segments = []
@@ -249,9 +258,25 @@ def efficiency(name, altitude, throttle, mass, detents):
     percents = [x for x in percents if x > 0.]
     sound = float(speed_of_sound(altitude)) * 3.6
     charts = {x: solver(name, altitude, throttle, mass, x, structural=False) for x in percents}
-    limit = {x: speed_limits(charts[x].fm, dict(charts[x].config, structural_limits=True))['speed_kmh'] for x in percents}
-    # The grid runs down from the fastest speed any extension above the damage threshold can be held at.
-    top = max(limit[x] for x in percents if x > 5. or len(percents) == 1)
+    from em_speed_limits import IAS_DOMAIN_ALPHA_DEG
+    from flap_model import violations
+    profile, strength = clean.flap_profile, clean.model['geometry']['strength']
+    lean = math.cos(math.radians(IAS_DOMAIN_ALPHA_DEG))
+    limit, reach = {}, {}
+    for x in percents:
+        row = speed_limits(charts[x].fm, dict(charts[x].config, structural_limits=True))
+        # limit: the lowest limit in level flow (zero AoA); reach: the fastest speed worth trying, the Mach limits as
+        # they are and the forward-IAS limits up to their level speed / cos(30 deg) (em_speed_limits.march_domain).
+        limit[x] = row['speed_kmh']
+        vertical, forward = row.get('vertical_limit'), row.get('forward_ias_limits') or []
+        reach[x] = min([vertical['speed_kmh']] if vertical else []) if not forward else min(
+            ([vertical['speed_kmh']] if vertical else []) + [min(c['speed_kmh'] for c in forward) / lean])
+    def held(x, point):
+        """Whether this state keeps the extension: its own forward IAS and total Mach against every flap and wing limit."""
+        ias, mach = point['ias_kmh'] / 3.6, point['mach']
+        return not violations(profile, x, ias, mach, True, None) and ias <= strength['ias'] and mach <= strength['mach']
+    # The grid runs down from the fastest speed any extension above the damage threshold can be tried at.
+    top = max(reach[x] for x in percents if x > 5. or len(percents) == 1)
     steps = int(math.floor(top / sound / MACH_STEP + 1e-9))
     full = min(int(math.floor(limit[percents[-1]] / sound / MACH_STEP + 1e-9)), steps)
     limiting = lambda p: 'aoa' if p['instructor']['limiting'] == 'Instructor effective AoA' else 'control'
@@ -268,7 +293,7 @@ def efficiency(name, altitude, throttle, mass, detents):
             lift0, drag0 = aerodynamic(reference)
             neighbour, failed = reference, 0
             for i, x in enumerate(percents):
-                if speed > limit[x] - .0036 or lift0 <= 0. or drag0 <= 0.:continue
+                if speed > reach[x] - .0036 or lift0 <= 0. or drag0 <= 0.:continue
                 # Unsolved extensions come in runs (the Instructor's trim solve fails there) and each costs far more
                 # than a solved one: after GIVE_UP in a row the rest of this Mach row is left out.
                 if failed >= GIVE_UP:break
@@ -277,6 +302,7 @@ def efficiency(name, altitude, throttle, mass, detents):
                     failed += 1
                     continue
                 neighbour, failed = flapped, 0
+                if not held(x, flapped):continue
                 lift, drag = aerodynamic(flapped)
                 lift_gain, drag_gain = (lift / lift0 - 1.) * 100., (drag / drag0 - 1.) * 100.
                 # Rounded for the page (the surface is a few thousand records).
@@ -288,7 +314,10 @@ def efficiency(name, altitude, throttle, mass, detents):
     # Slow rows without any result are dropped.
     while rows and not any(rows[-1]):grid.pop();rows.pop()
     grid.reverse();rows.reverse()
-    return dict(mach=[round(m, 4) for m in grid], percents=percents, sound_kmh=sound, limit_mach=[limit[x] / sound for x in percents],
+    # The page reads between rows: an extension held at one row and not at the next ends halfway (its exact end depends
+    # on the state's AoA there).
+    last = [max((m for m, row in zip(grid, rows) if row[i]), default=0.) + .5 * MACH_STEP for i in range(len(percents))]
+    return dict(mach=[round(m, 4) for m in grid], percents=percents, sound_kmh=sound, limit_mach=last,
                 default_mach=round(MACH_STEP * full, 4), rows=rows)
 
 
@@ -433,11 +462,13 @@ def compute(name, altitude, throttle, mass='{}'):
         chart = solver(name, altitude, throttle, mass)
         profile = entry['flaps']
         limits, detents = flap_limits(profile, altitude)
+        from air_state import speed_of_sound
         return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude, throttle_percent=throttle,
                     mass_kg=float(chart.mass['mass']),
                     sections=[mass_figures(chart, entry), aerodynamic_figures(chart, entry), limit_figures(chart, entry, profile),
                               propulsion_figures(chart, entry, name, mass)],
                     flaps=dict(available=bool(profile['available']), limits=limits, detents=detents,
+                               ias_per_mach=float(speed_of_sound(altitude)) * 3.6 * ias_factor(altitude),
                                efficiency=efficiency(name, altitude, throttle, mass, detents) if profile['available'] else None),
                     elapsed_s=time.perf_counter() - started)
 
