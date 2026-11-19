@@ -26,8 +26,8 @@
     <div id="plane-empty" class="plane-empty">${EMPTY}</div>
     <div id="plane-charts" class="plane-charts" hidden>
       <section class="chart-card"><h3>FLAP SPEEDS</h3><div id="plane-flaps-chart" class="plane-chart" aria-label="Flap schedule and critical speed"></div></section>
-      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><div class="mode-switch plane-setting" id="plane-setting" role="radiogroup" aria-label="Flap setting">${['Combat', 'Takeoff', 'Landing'].map(m =>
-        `<label><input type="radio" name="plane-setting" value="${m.toLowerCase()}"><span>${m}</span></label>`).join('')}</div><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
+      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><div class="mode-switch plane-setting" id="plane-setting" role="group" aria-label="Flap settings shown">${['Combat', 'Takeoff', 'Landing'].map(m =>
+        `<label><input type="checkbox" name="plane-setting" value="${m.toLowerCase()}" checked><span>${m}</span></label>`).join('')}</div><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
     </div>
     <div id="plane-tables" class="plane-tables" hidden></div>
     <section id="plane-version-changes" class="version-changes" hidden></section>
@@ -343,19 +343,19 @@
     const has = mode => list.some(d => d.result.flaps.efficiency?.modes[mode]?.rows.some(r => Number.isFinite(r?.score)));
     const inputs = [...root.querySelectorAll('input[name=plane-setting]')];
     for (const input of inputs) input.disabled = !has(input.value);
-    // The setting stays as chosen while any aircraft has it; else the first one available.
-    if (!inputs.some(i => i.checked && !i.disabled)) { const first = inputs.find(i => !i.disabled); if (first) first.checked = true; }
-    const mode = inputs.find(i => i.checked && !i.disabled)?.value, traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%';
-    for (const d of list) {
-      const curve = d.result.flaps.efficiency?.modes[mode], name = entryName(d); if (!curve) continue;
+    // Every setting ticked is drawn (Leo, 2026-11-19): combat solid, takeoff dashed, landing dotted, in the aircraft's colour.
+    const DASH = {combat: 'solid', takeoff: 'dash', landing: 'dot'}, LABEL = {combat: 'combat', takeoff: 'takeoff', landing: 'landing'};
+    const traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%';
+    for (const d of list) for (const mode of inputs.filter(i => i.checked && !i.disabled).map(i => i.value)) {
+      const curve = d.result.flaps.efficiency?.modes[mode], name = `${entryName(d)} · ${LABEL[mode]} ${fmt(curve?.percent, 0)}%`; if (!curve) continue;
       const rows = curve.rows, solved = r => Number.isFinite(r?.score);
       if (!rows.some(solved)) continue;
-      traces.push({type: 'scatter', mode: 'lines', x: d.result.flaps.efficiency.speeds, y: rows.map(r => solved(r) ? r.score : null), name: `${name} · ${fmt(curve.percent, 0)}%`,
-        connectgaps: false, line: {color: d.color, width: 2.4}, hoverlabel: {bordercolor: d.color},
+      traces.push({type: 'scatter', mode: 'lines', x: d.result.flaps.efficiency.speeds, y: rows.map(r => solved(r) ? r.score : null), name,
+        connectgaps: false, line: {color: d.color, width: 2.4, dash: DASH[mode]}, hoverlabel: {bordercolor: d.color},
         customdata: rows.map(r => solved(r) ? [signed(r.lift_gain_percent), signed(r.drag_gain_percent), fmt(r.load_g, 2), fmt(r.clean_load_g, 2), PULL[r.limiting] || ''] : []),
         hovertemplate: `%{y:.3f} · %{x:,.0f} km/h<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>%{customdata[2]} g · flaps up %{customdata[3]} g<br>%{customdata[4]}<extra>${escapeText(name)}</extra>`});
     }
-    const layout = layoutBase(traces, 'score-' + mode);
+    const layout = layoutBase(traces, 'score');
     layout.xaxis = {...axisStyle, title: {text: `True airspeed (km/h) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}};
     // The first view covers the middle 96% of the scores and zero: where the drag gain passes through zero the ratio
     // runs off without bound (zoom out for all of it).
