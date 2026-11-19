@@ -427,6 +427,9 @@ class TrimSolver:
         ammunition_mass=selected_mass(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else 0.
         added_mass=self.config['extra_mass_kg']
         weapon_payloads=selected_payloads(name,self.config['ammunition_vehicle']) if self.config['default_ammunition'] else []
+        # Default ammunition the build could not place (aircraft_ammunition.counted: the H.P.12) goes in at the centre of gravity.
+        if self.config['default_ammunition'] and self.loadout is None and ammunition_profile(name,self.config['ammunition_vehicle']).get('unplaced'):
+            added_mass=added_mass+ammunition_mass
         external_tanks=();self.booster_attached=()
         if self.loadout is not None:
             # A loadout lists every weapon of the aircraft (guns included) in the game's order.

@@ -198,17 +198,29 @@ def profiles():
     return data['aircraft']
 
 
+UNPLACED = 'Weapon attachment inputs have not been compiled'
+
+
+def counted(value):
+    """A default-ammunition profile the build could not place (the aircraft's model geometry is in no game resource
+    channel: the H.P.12) still counts. Its rounds and masses are exact; only where the weapons sit is unknown. It is
+    supported, with unplaced True: em_solver adds its mass at the aircraft's centre of gravity, as it does extra mass."""
+    if value.get('supported') or value.get('reason') != UNPLACED or not value.get('weapons') or 'mass_kg' not in value:return value
+    return dict({k:v for k, v in value.items() if k != 'reason'}, supported=True, unplaced=True,
+                note='Counted at the centre of gravity: the weapon positions of this aircraft are not available')
+
+
 def profile(name, vehicle=None):
     try:
         available = profiles()
         if name in available and name not in excluded_vehicles():
             if vehicle and vehicle != name:
                 raise ValueError('Ammunition vehicle does not match the selected aircraft')
-            return available[name]
+            return counted(available[name])
         # Some catalog entries intentionally combine vehicles sharing one FM.
         # Expose those layouts to the interface so its selected variant is visible.
         from aircraft_upgrades import profile as upgrades
-        candidates = {n: available[n] for n in upgrades(name)['vehicle_sources']}
+        candidates = {n: counted(available[n]) for n in upgrades(name)['vehicle_sources']}
         selected = vehicle or next(iter(candidates))
         if selected not in candidates:
             raise ValueError('Ammunition vehicle does not share the selected flight model')
@@ -228,4 +240,5 @@ def selected_payloads(name, vehicle=None):
     value = profile(name, vehicle)
     if not value['supported']:
         raise ValueError('Default ammunition is unavailable for ' + name + ': ' + value['reason'])
+    if value.get('unplaced'):return []   # its mass goes in at the centre of gravity (em_solver)
     return [dict(mass=w['mass_kg'], position=list(w['position'])) for w in value['weapons']]

@@ -180,6 +180,7 @@
 !/scripts/em_uncorrected.py
 !/scripts/em_workers.py
 !/scripts/engine_performance.py
+!/scripts/engine_surface.py
 !/scripts/engine_commands.py
 !/scripts/engine_supply.py
 !/scripts/flap_model.py

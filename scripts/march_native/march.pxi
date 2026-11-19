@@ -1987,6 +1987,46 @@ cdef class MarchEngine:
     def get_point_solver(self):
         return self.points_()
 
+    @cython.boundscheck(True)
+    @cython.wraparound(True)
+    def move(self, solver):
+        """This engine at another altitude of the same aircraft and settings (Leo, 2026-11-19: one engine serves every
+        altitude; building one took 3 ms, more than the level-flight solve it was built for). `solver` is a copy of
+        the engine's solver whose config holds the altitude, with its own engine object (for jets and rockets built at
+        that altitude) and its own Python-side caches, and which shares this engine's native loop.
+
+        What the compiled objects keep from the altitude, all of it set here: the model's altitude (air is read from
+        it at every evaluation) and its thrust vectors by speed, each jet's air density and IAS factor, the propeller
+        model's altitude (PropModel.set_altitude), the Instructor's height and the governed requests kept by velocity.
+        Everything else they keep is the aircraft's and the settings', or is keyed by what it depends on (the Mach
+        conditions, the Instructor's trims by their whole input). The trial states already made stay where they are.
+        The forward-IAS limit is an indicated speed: the same at every altitude."""
+        cdef int k
+        cdef double h = solver.config['altitude_m']
+        cdef Model m = self.model
+        cdef Instructor inst
+        import math
+        from component_assembly import f32
+        if bool(solver.is_prop) != self.is_prop:raise ValueError('another aircraft')
+        if not m.prop:
+            units = solver.engine.units
+            if len(units) != m.nunits:raise ValueError('another engine set')
+            for k in range(m.nunits):
+                m.units[k].ias_factor = f32(math.sqrt(f32(units[k].rho/f32(1.225))))
+                if m.units[k].rocket:m.units[k].thrust = float(units[k].thrust)
+                else:m.units[k].jet.rho = units[k].rho
+        self.solver = solver;m.solver = solver;m.altitude = h
+        m.nvec = 0;m.vec_next = 0
+        self.fin.solver = solver;self.fin.request_cache.clear()
+        if self.fin.pm is not None:self.fin.pm.set_altitude(h)
+        if self.fin.instructor is not None:
+            inst = <Instructor>self.fin.instructor
+            inst.solver = solver;inst.w_height = h
+        if self.point_solver is not None:
+            (<PointSolver>self.point_solver).solver = solver
+            # BaselineSolver.core() creates the shared seed and predictor caches (as PointSolver.__init__)
+            solver.core()
+
     def python_counts(self):
         """Where this engine left native code: Python call-outs by kind (zero everywhere is fully native)."""
         out = dict(production_columns=self.stats.get('python_calls', 0), python_events=self.stats.get('python_events', 0),

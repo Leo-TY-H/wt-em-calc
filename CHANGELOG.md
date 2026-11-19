@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.11.19.1
+
+- **Engine performance is much faster.** A propeller aircraft's curve over speed is solved at every whole km/h and its curve over altitude at every whole metre, inside the compiled solver. Examples: Bf 109 G-2 over speed 2.9 s to about 0.1 s, B-17G 8 to 11 s to 0.2 s; over altitude Bf 109 G-2 about 3 s to 0.4 s, Tu-95M 37 s to under 3 s. SEP in level flight takes 0.2 to 0.7 s (was 1.3 to 4.4 s and more). Jet curves are several times faster too.
+- **Where a propeller has two possible states at the same speed and altitude, the curve shows the one with more thrust**, as the EM chart does. Before, it showed whichever the sweep reached first: the B-17G at 2,471 m was 22% low between 157 and 178 km/h, the Tu-95M 12% low below about 70 km/h. A clicked point reports the same state as the curve.
+- **Low throttle.** Below about 20% throttle the engine curves had gaps of 120 to 200 km/h, and SEP in level flight began far above the stall (Bf 109 G-2 at 20%: 371 km/h instead of 209). Both are complete now.
+- **Ba.65 (K.14) L** has an EM chart, engine curves and SEP. Its propeller's two pitch stops are equal, so it is solved as the fixed-pitch propeller it is; before, the chart was empty.
+- **H.P.12**: its default ammunition (24.9 kg) is counted in the weight.
+- Other aircraft's EM charts and engine curves are unchanged.
+
 ## 2026.11.16.1
 
 - **Engine performance, SEP in level flight** now ends at the real stall: level flight is solved with the Instructor off (autotrim on, as the EM page's Realistic mode), so the curve no longer stops early at the Instructor's AoA cap. Example: P-51H at 200 km/h TAS went from 3,238 m to 4,502 m, where the wing stalls at 152 km/h IAS. Points shown before keep the same SEP; the engine plots are unchanged.

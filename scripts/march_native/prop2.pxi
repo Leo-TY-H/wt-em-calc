@@ -2,8 +2,11 @@
 # propeller aircraft (prepare / enumerate_speeds / sample / propulsion_at).
 
 from libc.stdlib cimport calloc, free as pfree
+from cpython.bytes cimport PyBytes_FromStringAndSize
 
 DEF MAXPATH = 40
+DEF AX_RESCUE = 2000   # most points a path starts from rest after its states were continued (axial_path's last pass)
+DEF AXC = 8        # most request combinations (one request per shaft each) a row point keeps states of
 DEF MAXCAND = 8
 
 cdef struct PropPrep:
@@ -106,6 +109,30 @@ class PropUnsupported(ValueError):
 DEF S16_ENGINE_SLIDE = .15   # S16: relative shaft-speed reach of the supercharger-edge search (locate)
 
 
+class AxMore(Exception):
+    """A path point has more request combinations than the path's arrays hold."""
+
+
+cdef class AxStore:
+    """The states of a solved path (PropModel.axial_path with full False): `entry(i)` gives point i as the path's
+    full result would (`ax_entry`, without the states of other request combinations), by evaluating the model once
+    more at the point's solved coordinates."""
+    cdef object model
+    cdef int count, n
+    cdef double G, dt
+    cdef char* kind
+    cdef double* Q
+    cdef long long* B
+    cdef double* ALT
+    cdef double* SPD
+
+    def __dealloc__(self):
+        pfree(self.kind);pfree(self.Q);pfree(self.B);pfree(self.ALT);pfree(self.SPD)
+
+    def entry(self, int i):
+        return self.model.path_entry(self, i)
+
+
 cdef class PropModel:
     cdef int ne, nprops, nt
     cdef EngineT engines[NP]
@@ -138,6 +165,23 @@ cdef class PropModel:
     cdef bint linked[NP]
     cdef public long samples
     cdef double dt_aircraft
+    # Engine performance page (`axial`): the Newton settings of the propulsion coordinates (set_axial)
+    cdef int ax_n, ax_nblocks, ax_colors
+    cdef double ax_lo[MAXPATH]
+    cdef double ax_hi[MAXPATH]
+    cdef double ax_step[MAXPATH]
+    cdef double ax_limit[MAXPATH]
+    cdef double ax_scale[MAXPATH]
+    cdef int ax_size[MAXPATH]
+    cdef int ax_block[MAXPATH][MAXPATH]
+    # `axial_row`: over-rev limits, each propeller's own-axis share of the flight speed, the starts
+    cdef double ax_wlimit[NP]
+    cdef double ax_inv0[NP]
+    cdef double ax_initial[MAXPATH]
+    cdef double ax_alt[4][MAXPATH]
+    cdef double ax_fine[MAXPATH]
+    cdef int ax_nalt
+    cdef bint ax_has_fine, ax_row_ready
     # S8: the sliding (Filippov) state of a shaft on a jump of its propeller's blade polar (Leo, 2026-10-19): where the
     # shaft torque jumps through zero as the shaft speed crosses a blade-polar discontinuity (a section Mach on a
     # degenerate Mach row, the degenerate lift-line switch), the shaft sits on the jump and the two one-sided propeller
@@ -178,7 +222,7 @@ cdef class PropModel:
         cdef EngState* S_
         cdef TransT* T
         from prop_steady import initial_state
-        from em_manual_controls import manual_rpm_governor
+        from em_manual_controls import governs, manual_rpm_governor
         from prop_quasisteady import prepare_blades
         from polar_model import mach_curve
         from component_assembly import f32
@@ -314,6 +358,7 @@ cdef class PropModel:
             S_.gear = es['gear'];S_.friction = 0.;S_.torque = 0.;S_.extra_amplitude = 0.;S_.seed = 12345
             S_.turbo_command = es.get('turbo_command', 1.)
             S_.throttle_ratio = 0.;S_.potential_manifold = 0.;S_.manifold = 0.;S_.consumption = 0.
+            S_.regime = 0;S_.fuel_regime = 0
             for j in range(3):
                 S_.force[j] = 0.;S_.moment[j] = 0.
             S_.running = es.get('running', 7)
@@ -334,7 +379,7 @@ cdef class PropModel:
         def variable(path, value, scale, lo, hi):
             paths.append(path);scales.append(scale);lower.append(lo/scale);upper.append(hi/scale);initial.append(value/scale)
         for i, t in enumerate(p['transmissions']):
-            links = [l for l in t['propellers'] if p['propellers'][l['index']]['properties']['governor']
+            links = [l for l in t['propellers'] if governs(p['propellers'][l['index']]['properties'])
                      and (seed['propellers'][l['index']]['auto'] or manual_rpm_governor(p['propellers'][l['index']]['properties']))]
             self.ngoverned[i] = len(links)
             for j, l in enumerate(links):
@@ -1280,6 +1325,8 @@ cdef class PropModel:
         for s in range(self.nt):
             if not self.ngoverned[s]:
                 status.append('manual blade pitch' if any(self.props[self.trans[s].props[k].index].governor
+                                                          and self.props[self.trans[s].props[k].index].pitch_max
+                                                          > self.props[self.trans[s].props[k].index].pitch_min
                                                           for k in range(self.trans[s].np)) else 'fixed pitch')
             else:
                 status.append('minimum pitch' if ps.fractions[s] <= 2e-5 else
@@ -1359,6 +1406,22 @@ cdef class PropModel:
         return (self.record(&out, q), self.request_records(&prep), tuple(prep.velocity[i] for i in range(3)),
                 tuple(prep.rates[i] for i in range(3)))
 
+    def test_regime(self, double speed, double load, double alpha, double bank, double G, double dt, coords, request_indices):
+        """([(the branches of its law, of its fuel law) per engine], [its blade sections' polar branches per
+        propeller]) at a JointProblem state (EngState.regime, PropState.branches), or None."""
+        cdef PropPrep prep
+        cdef PropSample out
+        cdef double c[MAXPATH]
+        cdef int r[NP]
+        cdef double inner[MAXPATH]
+        self.dt_aircraft = dt
+        self.prepare(speed, load, alpha, bank, G, &prep)
+        for i in range(len(coords)):c[i] = float(coords[i])
+        for i in range(len(request_indices)):r[i] = int(request_indices[i])
+        if self.propulsion_at(&prep, c, r, len(request_indices), inner, &out):return None
+        return ([(out.frame.engines[k].regime, out.frame.engines[k].fuel_regime) for k in range(self.ne)],
+                [out.frame.props[k].branches for k in range(self.nprops)])
+
     def set_joint_layout(self, active, rows):
         self.nactive = len(active);self.nrows = len(rows)
         for i, a in enumerate(active):self.active[i] = a
@@ -1402,6 +1465,824 @@ cdef class PropModel:
         if code:return None
         return ([inner[i] for i in range(self.nrows)], [out.row[i] for i in range(11)], bool(out.converged),
                 [[prep.cand[s][k] for k in range(prep.ncand[s])] for s in range(self.nt)])
+
+    # ------------------------------------------------------------------ Engine performance page: propeller points at alpha 0
+    def set_altitude(self, double altitude):
+        """Another altitude for the same aircraft and settings. Nothing else this model keeps depends on it: the engines'
+        start states are the automatic-control ones (prop_steady.initial_state with mixture 1), the same at every
+        altitude; air, inlet pressure and the turbines' tables are read at self.altitude in every sample."""
+        self.altitude = altitude
+
+    def set_axial(self, lower, upper, steps, limits, scales, blocks):
+        """The settings of `axial` (engine_performance._prop_fast_setup): bounds, difference steps, step limits and
+        residual scales of the propulsion coordinates (JointProblem's, from prop_start on), and the coordinates of
+        each shaft (blocks; one block: every coordinate is differenced on its own)."""
+        cdef int i, b, c
+        self.ax_n = len(lower)
+        for i in range(self.ax_n):
+            self.ax_lo[i] = lower[i];self.ax_hi[i] = upper[i];self.ax_step[i] = steps[i]
+            self.ax_limit[i] = limits[i];self.ax_scale[i] = scales[i]
+        self.ax_nblocks = len(blocks);self.ax_colors = 0
+        for b in range(self.ax_nblocks):
+            self.ax_size[b] = len(blocks[b])
+            if self.ax_size[b] > self.ax_colors:self.ax_colors = self.ax_size[b]
+            for c in range(self.ax_size[b]):self.ax_block[b][c] = blocks[b][c]
+
+    def candidates(self, double speed, double G, double dt):
+        """The governed request candidates of each shaft at alpha 0 and 1 g (test_sample's last item, without a sample)."""
+        cdef PropPrep prep
+        self.dt_aircraft = dt
+        self.prepare(speed, 1., 0., 0., G, &prep)
+        return [[prep.cand[s][k] for k in range(prep.ncand[s])] for s in range(self.nt)]
+
+    cdef object axial_result(self, const double* q, const double* r, const double* J, bint have_jac, const PropSample* ps):
+        """(coordinates, residual, Jacobian or None, summary of the solved state): the summary holds what `record`
+        gives the engine page: (converged as record decides it, force, governor status, per engine (omega, torque,
+        consumption, gear, regulator, potential manifold, direct force x, manifold, the branches of its law, of its fuel
+        law), per propeller (pitch, flow 0, 1, 2, equilibrium flow 0, its blade sections' polar branches, its fastest
+        section's Mach number), shaft speeds, each shaft's propeller thrust, each shaft's target speed)."""
+        cdef double thrust
+        cdef int idx
+        cdef const PFrame* fr = &ps.frame
+        cdef int n = self.ax_n, i, j, k, s
+        cdef double error = 0.
+        cdef bint converged = True, manual
+        for k in range(self.npaths):
+            if not isfinite(ps.residual[k]):converged = False
+            elif fabs(ps.residual[k]) > error:error = fabs(ps.residual[k])
+        if error > 1e-5:converged = False
+        status = []
+        for s in range(self.nt):
+            if not self.ngoverned[s]:
+                manual = False
+                for k in range(self.trans[s].np):
+                    if (self.props[self.trans[s].props[k].index].governor
+                            and self.props[self.trans[s].props[k].index].pitch_max > self.props[self.trans[s].props[k].index].pitch_min):manual = True
+                status.append('manual blade pitch' if manual else 'fixed pitch')
+            else:
+                if not (ps.fractions[s] <= 2e-5 or ps.fractions[s] >= 1.-2e-5
+                        or fabs(fr.trans_omega[s]-ps.targets[s]) <= 1e-10*pmax(1., fabs(ps.targets[s]))):converged = False
+                status.append('minimum pitch' if ps.fractions[s] <= 2e-5 else
+                              'maximum pitch' if ps.fractions[s] >= 1-2e-5 else 'target RPM')
+        for i in range(3):
+            if not (isfinite(fr.force[i]) and isfinite(fr.moment[i]) and isfinite(fr.momentum[i])):converged = False
+        if not (isfinite(fr.wash[0]) and isfinite(fr.wash[1])):converged = False
+        shafts = []
+        for s in range(self.nt):
+            thrust = 0.
+            for k in range(self.trans[s].np):
+                idx = self.trans[s].props[k].index
+                for i in range(3):thrust += fr.props[idx].outputs[i]*self.props[idx].basis[i]
+            shafts.append(thrust)
+        summary = (bool(converged), (fr.force[0], fr.force[1], fr.force[2]), status,
+                   [(fr.engines[k].omega, fr.engines[k].torque, fr.engines[k].consumption, fr.engines[k].gear,
+                     fr.engines[k].regulator, fr.engines[k].potential_manifold, fr.engines[k].force[0], fr.engines[k].manifold,
+                     fr.engines[k].regime, fr.engines[k].fuel_regime)
+                    for k in range(self.ne)],
+                   [(fr.props[k].pitch, fr.props[k].flow[0], fr.props[k].flow[1], fr.props[k].flow[2],
+                     fr.props[k].equilibrium_flow[0], fr.props[k].branches, fr.props[k].tip_mach) for k in range(self.nprops)],
+                   [fr.trans_omega[s] for s in range(self.nt)], shafts, [ps.targets[s] for s in range(self.nt)])
+        return ([q[i] for i in range(n)], [r[i] for i in range(n)],
+                [[J[i*n+j] for j in range(n)] for i in range(n)] if have_jac else None, summary)
+
+    cdef int axial_core(self, const PropPrep* prep, const int* req, int nreq, double* q, double* J, bint* have_jac_io,
+                        double* r, PropSample* out) except -1:
+        """The Newton loop of `axial` on a prepared flight condition. q: the start, then the solved coordinates; J and
+        have_jac_io: a Jacobian to start with (or none), then the one to go on with; r, out: the solved residual and
+        sample. Returns 0 with a closed state, 1 without one."""
+        cdef double qp[MAXPATH]
+        cdef double qn[MAXPATH]
+        cdef double rv[MAXPATH]
+        cdef double dq[MAXPATH]
+        cdef double step[MAXPATH]
+        cdef double delta[MAXPATH]
+        cdef double M[MAXPATH*(MAXPATH+1)]
+        cdef int n = self.ax_n, w = self.ax_n+1, i, j, k, b, c, color, it, ls, pivot, row
+        cdef bint have_jac = have_jac_io[0], fresh = False, accepted, ok, closed, singular
+        cdef double norm0, norm1, alpha, ratio, v, denom, e, d, f, h, total
+        for i in range(n):q[i] = pmin(pmax(q[i], self.ax_lo[i]), self.ax_hi[i])
+        if self.propulsion_at(prep, q, req, nreq, r, out):return 1
+        closed = out.converged
+        norm0 = 0.
+        for i in range(n):
+            if fabs(r[i]) > .1*self.ax_scale[i]:closed = False
+            norm0 += (r[i]/self.ax_scale[i])*(r[i]/self.ax_scale[i])
+        norm0 = sqrt(norm0)
+        if closed:
+            have_jac_io[0] = have_jac
+            return 0
+        for it in range(8):
+            if not have_jac:
+                for i in range(n*n):J[i] = 0.
+                ok = True
+                if self.ax_nblocks > 1:
+                    for color in range(self.ax_colors):
+                        for i in range(n):qp[i] = q[i]
+                        for b in range(self.ax_nblocks):
+                            if color < self.ax_size[b]:
+                                c = self.ax_block[b][color]
+                                h = self.ax_step[c] if q[c]+self.ax_step[c] <= self.ax_hi[c] else -self.ax_step[c]
+                                qp[c] += h;delta[c] = h
+                        if self.propulsion_at(prep, qp, req, nreq, rv, out):
+                            ok = False
+                            break
+                        for b in range(self.ax_nblocks):
+                            if color < self.ax_size[b]:
+                                c = self.ax_block[b][color]
+                                for k in range(self.ax_size[b]):
+                                    row = self.ax_block[b][k]
+                                    J[row*n+c] = (rv[row]-r[row])/delta[c]
+                else:
+                    for j in range(n):
+                        h = self.ax_step[j] if q[j]+self.ax_step[j] <= self.ax_hi[j] else -self.ax_step[j]
+                        for i in range(n):qp[i] = q[i]
+                        qp[j] += h
+                        if self.propulsion_at(prep, qp, req, nreq, rv, out):
+                            ok = False
+                            break
+                        for row in range(n):J[row*n+j] = (rv[row]-r[row])/h
+                if not ok:break
+                have_jac = True;fresh = True
+            # J dq = -r: elimination with row pivoting
+            for i in range(n):
+                for j in range(n):M[i*w+j] = J[i*n+j]
+                M[i*w+n] = -r[i]
+            singular = False
+            for c in range(n):
+                pivot = c
+                for row in range(c+1, n):
+                    if fabs(M[row*w+c]) > fabs(M[pivot*w+c]):pivot = row
+                if M[pivot*w+c] == 0.:
+                    singular = True
+                    break
+                if pivot != c:
+                    for k in range(w):
+                        e = M[c*w+k];M[c*w+k] = M[pivot*w+k];M[pivot*w+k] = e
+                d = M[c*w+c]
+                for row in range(c+1, n):
+                    f = M[row*w+c]/d
+                    if f != 0.:
+                        for k in range(c, w):M[row*w+k] -= f*M[c*w+k]
+            if singular:
+                if not fresh:
+                    have_jac = False
+                    continue
+                break
+            for c in range(n-1, -1, -1):
+                total = M[c*w+n]
+                for k in range(c+1, n):total -= M[c*w+k]*dq[k]
+                dq[c] = total/M[c*w+c]
+            ratio = 0.
+            for i in range(n):
+                if fabs(dq[i])/self.ax_limit[i] > ratio:ratio = fabs(dq[i])/self.ax_limit[i]
+            if ratio > 1.:
+                for i in range(n):dq[i] = dq[i]/ratio
+            accepted = False;alpha = 1.
+            for ls in range(3):
+                for i in range(n):qn[i] = pmin(pmax(q[i]+alpha*dq[i], self.ax_lo[i]), self.ax_hi[i])
+                if not self.propulsion_at(prep, qn, req, nreq, rv, out):
+                    closed = out.converged
+                    norm1 = 0.;denom = 0.
+                    for i in range(n):
+                        if fabs(rv[i]) > .1*self.ax_scale[i]:closed = False
+                        norm1 += (rv[i]/self.ax_scale[i])*(rv[i]/self.ax_scale[i])
+                        step[i] = qn[i]-q[i];denom += step[i]*step[i]
+                    norm1 = sqrt(norm1)
+                    if closed or norm1 < (.98 if fresh else .75)*norm0:
+                        if denom > 1e-24 and (closed or (alpha == 1. and norm1 < .65*norm0)):
+                            for i in range(n):
+                                e = rv[i]-r[i]
+                                for j in range(n):e -= J[i*n+j]*step[j]
+                                e = e/denom
+                                for j in range(n):J[i*n+j] += e*step[j]
+                        elif not closed:have_jac = False
+                        if closed:
+                            for i in range(n):
+                                q[i] = qn[i];r[i] = rv[i]
+                            have_jac_io[0] = have_jac
+                            return 0
+                        for i in range(n):
+                            q[i] = qn[i];r[i] = rv[i]
+                        norm0 = norm1;fresh = False;accepted = True
+                        break
+                alpha *= .5
+            if not accepted:
+                if not fresh:
+                    have_jac = False
+                    continue
+                break
+        if self.propulsion_at(prep, q, req, nreq, r, out):return 1
+        if not out.converged:return 1
+        for i in range(n):
+            if fabs(r[i]) > self.ax_scale[i]:return 1
+        have_jac_io[0] = have_jac
+        return 0
+
+
+
+    def axial(self, double speed, double G, double dt, coords, request_indices, jacobian):
+        """engine_performance._newton_prop on native samples: Newton on the propulsion equations at alpha 0 and 1 g
+        from `coords`, the Jacobian by differences (one sample per coordinate of a shaft, the shafts together) and kept
+        between steps and points by Broyden's update (jacobian: the one to start with, or None). Returns None (no
+        state on this request branch, or no convergence), False (another number of equations than coordinates: the
+        Python loop solves those), or `axial_result`."""
+        cdef PropPrep prep
+        cdef PropSample out
+        cdef double q[MAXPATH]
+        cdef double r[MAXPATH]
+        cdef double J[MAXPATH*MAXPATH]
+        cdef int req[NP]
+        cdef int n = self.ax_n, nreq, i, j
+        cdef bint have_jac = False
+        if self.nrows != self.nactive or n != self.nactive or n <= 0:return False
+        self.dt_aircraft = dt
+        self.prepare(speed, 1., 0., 0., G, &prep)
+        nreq = len(request_indices)
+        for i in range(nreq):req[i] = int(request_indices[i])
+        for i in range(n):q[i] = float(coords[i])
+        if jacobian is not None and len(jacobian) == n and len(jacobian[0]) == n:
+            for i in range(n):
+                for j in range(n):J[i*n+j] = float(jacobian[i][j])
+            have_jac = True
+        if self.axial_core(&prep, req, nreq, q, J, &have_jac, r, &out):return None
+        return self.axial_result(q, r, J, have_jac, &out)
+
+    # ------------------------------------------------------------------ a whole row of propeller points (one altitude)
+    def set_axial_row(self, omega_limits, inv0, initial, alternates, fine_seed):
+        """The settings of `axial_row` beside `set_axial`'s: each engine's over-rev limit (rad/s), each propeller's
+        share of the flight speed along its own axis, the coordinates a solve starts from at rest, the alternate
+        starts (up to 4) and the fine-pitch start (or None)."""
+        cdef int i, a
+        for i in range(self.ne):self.ax_wlimit[i] = omega_limits[i]
+        for i in range(self.nprops):self.ax_inv0[i] = inv0[i]
+        for i in range(self.ax_n):self.ax_initial[i] = initial[i]
+        self.ax_nalt = min(len(alternates), 4)
+        for a in range(self.ax_nalt):
+            for i in range(self.ax_n):self.ax_alt[a][i] = alternates[a][i]
+        self.ax_has_fine = fine_seed is not None
+        if self.ax_has_fine:
+            for i in range(self.ax_n):self.ax_fine[i] = fine_seed[i]
+        self.ax_row_ready = True
+
+    cdef bint ax_converged(self, const PropSample* ps) noexcept:
+        """`axial_result`'s 'converged' (the record's)."""
+        cdef const PFrame* fr = &ps.frame
+        cdef double error = 0.
+        cdef int k, s, i
+        for k in range(self.npaths):
+            if not isfinite(ps.residual[k]):return False
+            elif fabs(ps.residual[k]) > error:error = fabs(ps.residual[k])
+        if error > 1e-5:return False
+        for s in range(self.nt):
+            if self.ngoverned[s]:
+                if not (ps.fractions[s] <= 2e-5 or ps.fractions[s] >= 1.-2e-5
+                        or fabs(fr.trans_omega[s]-ps.targets[s]) <= 1e-10*pmax(1., fabs(ps.targets[s]))):return False
+        for i in range(3):
+            if not (isfinite(fr.force[i]) and isfinite(fr.moment[i]) and isfinite(fr.momentum[i])):return False
+        if not (isfinite(fr.wash[0]) and isfinite(fr.wash[1])):return False
+        return True
+
+    cdef bint ax_overspeed(self, const PropSample* ps) noexcept:
+        cdef int k
+        for k in range(self.ne):
+            if ps.frame.engines[k].omega > self.ax_wlimit[k]*(1+1e-6):return True
+        return False
+
+    cdef bint ax_flows(self, double v, const PropSample* ps) noexcept:
+        """engine_performance._summary_fields' tests of each propeller's flow (prop_admission's margins)."""
+        cdef const PFrame* fr = &ps.frame
+        cdef const PropT* p
+        cdef double vf = F(v), local0, upstream, axial, omega_p, t, air
+        cdef int s, k, idx, i, cell
+        cdef bint has_width
+        for s in range(self.nt):
+            for k in range(self.trans[s].np):
+                idx = self.trans[s].props[k].index
+                p = &self.props[idx]
+                local0 = F(vf*self.ax_inv0[idx])
+                if local0 <= p.airflow_x[0]:air = p.airflow_v[0][0]
+                else:
+                    cell = -1
+                    for i in range(p.nairflow-1):
+                        if local0 <= p.airflow_x[i+1]:
+                            cell = i
+                            break
+                    if cell < 0:air = p.airflow_v[p.nairflow-1][0]
+                    else:
+                        t = (local0-p.airflow_x[cell])/(p.airflow_x[cell+1]-p.airflow_x[cell])
+                        air = p.airflow_v[cell][0]+(p.airflow_v[cell+1][0]-p.airflow_v[cell][0])*t
+                upstream = local0+air
+                axial = local0+.5*(fr.props[idx].flow[0]+fr.props[idx].flow[1])
+                if not (isfinite(upstream) and isfinite(axial) and upstream > 0. and axial > 0.):return False
+                if p.coaxial and not (upstream+.5*fr.props[idx].equilibrium_flow[0] > 0.):return False
+                omega_p = fr.trans_omega[s]*self.trans[s].props[k].ratio
+                has_width = False
+                for i in range(4):
+                    if p.width[i] > 0. and p.station_radius[i] > 0.:has_width = True
+                if has_width:
+                    if omega_p-.25*fr.props[idx].flow[2] <= 0.:return False
+                    if p.coaxial and omega_p+.25*fr.props[idx].flow[2] <= 0.:return False
+        return True
+
+    cdef bint ax_status_any(self, const PropSample* ps, int what) noexcept:
+        """Whether a governed shaft is on its minimum pitch stop (what 1) or holds its target RPM (what 3)."""
+        cdef int s
+        for s in range(self.nt):
+            if not self.ngoverned[s]:continue
+            if ps.fractions[s] <= 2e-5:
+                if what == 1:return True
+            elif ps.fractions[s] >= 1-2e-5:pass
+            elif what == 3:return True
+        return False
+
+    cdef int ax_solve(self, const PropPrep* prep, double v, const double* wQ, const double* wJ, const char* wH,
+                      const long long* wB, int wn, bint cold, const double* seed, double* oQ, double* oJ, char* oH,
+                      long long* oB, int* on, int* chosen, double* r, PropSample* ps, int cap=AXC) except -1:
+        """engine_performance._solve_prop_fast. A shaft may have several governor requests; every combination of one
+        request per shaft (at most AXC) is solved, from the neighbour's state of the same combination (wQ, wJ, wH, wB:
+        wn states, each with its combination packed in wB) or, where it has none or `cold`, from rest (`seed`, default
+        the layout's). The state of the smallest residual is the point's; then the tests of the Python function.
+        Returns 0 with a result later points can start from (oQ, oJ, oH, oB: `on` states, `chosen` the point's; r,
+        ps: its residual and sample), 3 with a fine-stop result (r, ps and state 0 of oQ; not started from), 1
+        without a result, 9 with more than AXC combinations (the caller's Python loop solves those rows), 8 with
+        more than `cap` (what the caller's arrays hold) but no more than AXC."""
+        cdef int req[NP]
+        cdef int digits[NP]
+        cdef int n = self.ax_n, nreq = self.nt, i, s, c, total = 1, k, w, best = -1
+        cdef bint got, used_warm = False, conv, over, valid, needs_fine, hj
+        cdef double q[MAXPATH]
+        cdef double rr[MAXPATH]
+        cdef double J[MAXPATH*MAXPATH]
+        cdef PropSample ps2
+        cdef double force, norm, best_norm = 0.
+        cdef long long code
+        for s in range(self.nt):
+            digits[s] = prep.ncand[s] if prep.ncand[s] > 1 else 1
+            if digits[s] > 8:return 9
+            total *= digits[s]
+            if total > AXC:return 9
+        if total > cap:return 8
+        on[0] = 0
+        for c in range(total):
+            # combination c: the last shaft's request changes fastest (itertools.product)
+            k = c;code = 0
+            for s in range(self.nt-1, -1, -1):
+                req[s] = k % digits[s];k //= digits[s]
+            for s in range(self.nt):code = code*8+req[s]
+            w = -1
+            for i in range(wn):
+                if wB[i] == code:
+                    w = i
+                    break
+            got = False
+            if w >= 0:
+                for i in range(n):q[i] = wQ[w*n+i]
+                hj = wH[w]
+                if hj:
+                    for i in range(n*n):J[i] = wJ[w*n*n+i]
+                if not self.axial_core(prep, req, nreq, q, J, &hj, rr, &ps2):
+                    got = True;used_warm = True
+            if not got and (cold or w < 0):
+                for i in range(n):q[i] = seed[i] if seed != NULL else self.ax_initial[i]
+                hj = False
+                if not self.axial_core(prep, req, nreq, q, J, &hj, rr, &ps2):got = True
+            if not got:continue
+            k = on[0];on[0] = k+1
+            for i in range(n):oQ[k*n+i] = q[i]
+            oH[k] = hj;oB[k] = code
+            if hj:
+                for i in range(n*n):oJ[k*n*n+i] = J[i]
+            norm = 0.
+            for i in range(n):norm += rr[i]*rr[i]
+            norm = sqrt(norm)
+            if best < 0 or norm < best_norm:
+                best = k;best_norm = norm
+                for i in range(n):r[i] = rr[i]
+                ps[0] = ps2
+        if best < 0:
+            on[0] = 0
+            return 3 if not self.ax_fine_state(prep, v, oQ, r, ps) else 1
+        chosen[0] = best
+        conv = self.ax_converged(ps);force = ps.frame.force[0]
+        if conv and force >= 0.:
+            if self.ax_overspeed(ps) or not self.ax_flows(v, ps):return 1
+            return 0
+        k = oB[best]
+        for s in range(self.nt-1, -1, -1):
+            req[s] = k % 8;k //= 8
+        if used_warm and force < 0.:
+            # a state of negative thrust reached from a neighbour: the one from rest where it has more thrust
+            for i in range(n):q[i] = self.ax_initial[i]
+            hj = False
+            if not self.axial_core(prep, req, nreq, q, J, &hj, rr, &ps2):
+                if self.ax_converged(&ps2) and ps2.frame.force[0] > force:
+                    for i in range(n):
+                        oQ[best*n+i] = q[i];r[i] = rr[i]
+                    oH[best] = hj
+                    if hj:
+                        for i in range(n*n):oJ[best*n*n+i] = J[i]
+                    ps[0] = ps2
+                    conv = True;force = ps.frame.force[0]
+        over = self.ax_overspeed(ps)
+        valid = conv and not over and self.ax_flows(v, ps)
+        needs_fine = (not over) and ((not conv) or (force < 0. and self.ax_status_any(ps, 3)))
+        if self.ax_has_fine and needs_fine:
+            if not self.ax_fine_state(prep, v, q, rr, &ps2):
+                for i in range(n):
+                    oQ[i] = q[i];r[i] = rr[i]
+                ps[0] = ps2;on[0] = 0
+                return 3
+        return 0 if valid else 1
+
+    cdef int ax_fine_state(self, const PropPrep* prep, double v, double* q_out, double* r_out, PropSample* ps_out) except -1:
+        """engine_performance._fine_pitch_record and its acceptance: over every request combination, the closed
+        fine-stop state of negative thrust with the smallest residual, where it is a result (0: q_out, r_out, ps_out);
+        1 without one."""
+        cdef int req[NP]
+        cdef int digits[NP]
+        cdef int n = self.ax_n, i, s, c, k, total = 1
+        cdef double q[MAXPATH]
+        cdef double rr[MAXPATH]
+        cdef double J[MAXPATH*MAXPATH]
+        cdef PropSample ps
+        cdef bint hj, found = False
+        cdef double norm, best = 0.
+        if not self.ax_has_fine:return 1
+        for s in range(self.nt):
+            digits[s] = prep.ncand[s] if prep.ncand[s] > 1 else 1
+            total *= digits[s]
+        for c in range(total):
+            k = c
+            for s in range(self.nt-1, -1, -1):
+                req[s] = k % digits[s];k //= digits[s]
+            for i in range(n):q[i] = self.ax_fine[i]
+            hj = False
+            if self.axial_core(prep, req, self.nt, q, J, &hj, rr, &ps):continue
+            if not self.ax_converged(&ps) or self.ax_overspeed(&ps) or not (ps.frame.force[0] < 0.) or not self.ax_status_any(&ps, 1):continue
+            norm = 0.
+            for i in range(n):norm += rr[i]*rr[i]
+            norm = sqrt(norm)
+            if not found or norm < best:
+                found = True;best = norm
+                for i in range(n):
+                    q_out[i] = q[i];r_out[i] = rr[i]
+                ps_out[0] = ps
+        if not found or not self.ax_flows(v, ps_out):return 1
+        return 0
+
+    cdef object ax_entry(self, int kind, const double* oQ, const double* oJ, const char* oH, const long long* oB, int on,
+                         int chosen, const double* r, const PropSample* ps):
+        """A row point for the caller: (2 or 3, `axial_result` of its state, that state's request of each shaft, every
+        kept state as (requests, coordinates, Jacobian or None))."""
+        cdef int n = self.ax_n, k, i, j
+        if kind == 3:return (3, self.axial_result(oQ, r, oJ, False, ps), None, [])
+        states = []
+        for k in range(on):
+            states.append((self.ax_requests(oB[k]), [oQ[k*n+i] for i in range(n)],
+                           [[oJ[k*n*n+i*n+j] for j in range(n)] for i in range(n)] if oH[k] else None))
+        return (2, self.axial_result(&oQ[chosen*n], r, &oJ[chosen*n*n], oH[chosen], ps), self.ax_requests(oB[chosen]), states)
+
+    def path_entry(self, AxStore store, int i):
+        """Point i of a solved path (AxStore.entry)."""
+        if not (0 <= i < store.count) or store.kind[i] < 2:return None
+        return self.ax_again(store.G, store.dt, store.ALT[i], store.SPD[i], store.kind[i], &store.Q[i*store.n], store.B[i])
+
+    cdef object ax_again(self, double G, double dt, double altitude, double speed, int kind, const double* q, long long packed):
+        """A solved path point once more from its coordinates: its `ax_entry` (AxStore.entry)."""
+        cdef PropPrep prep
+        cdef PropSample ps
+        cdef int req[NP]
+        cdef double r[MAXPATH]
+        cdef double home = self.altitude
+        cdef long long k = packed
+        cdef int s
+        for s in range(self.nt-1, -1, -1):
+            req[s] = <int>(k % 8);k //= 8
+        self.dt_aircraft = dt;self.altitude = altitude
+        try:
+            self.prepare(speed/3.6, 1., 0., 0., G, &prep)
+            if self.propulsion_at(&prep, q, req, self.nt, r, &ps):return None
+            return (kind, self.axial_result(q, r, q, False, &ps), self.ax_requests(packed) if kind == 2 else None, [])
+        finally:self.altitude = home
+
+    cdef tuple ax_requests(self, long long packed):
+        """A packed request combination as each shaft's request index."""
+        cdef int s
+        out = [0]*self.nt
+        for s in range(self.nt-1, -1, -1):
+            out[s] = int(packed % 8);packed //= 8
+        return tuple(out)
+
+    cdef void ax_keep(self, int i, int code, int cap, const double* tQ, const double* tJ, const char* tH, const long long* tB,
+                      int on, int sel, const PropSample* ps, double* Q, double* JJ, char* H, long long* B, int* NS,
+                      double* QC, long long* BC, double* L) noexcept:
+        """A path point's new result into the path's arrays: its states for its neighbours to start from (code 0),
+        its own state's coordinates and requests, and its six numbers for the caller."""
+        cdef int n = self.ax_n, d, k
+        cdef const PFrame* fr = &ps.frame
+        cdef double power = 0., fuel = 0., rocket = 0., gears = 0., base = 1.
+        if code == 0:
+            for d in range(on*n):Q[i*cap*n+d] = tQ[d]
+            for d in range(on*n*n):JJ[i*cap*n*n+d] = tJ[d]
+            for d in range(on):
+                H[i*cap+d] = tH[d];B[i*cap+d] = tB[d]
+            NS[i] = on
+            for d in range(n):QC[i*n+d] = tQ[sel*n+d]
+            BC[i] = tB[sel]
+        else:
+            NS[i] = 0
+            for d in range(n):QC[i*n+d] = tQ[d]
+            BC[i] = 0
+        for k in range(self.ne):
+            power += fr.engines[k].torque*fr.engines[k].omega
+            if self.engines[k].family == 3:rocket += fr.engines[k].force[0]
+            else:fuel += fr.engines[k].consumption
+            gears += base*fr.engines[k].gear;base *= 8.
+        L[i*6] = 2. if code == 0 else 3.;L[i*6+1] = fr.force[0];L[i*6+2] = power;L[i*6+3] = fuel;L[i*6+4] = rocket;L[i*6+5] = gears
+
+    def axial_row(self, double G, double dt, int lo, int hi, allowed):
+        """A whole row at this model's altitude: every whole km/h lo..hi (`axial_path` along speed)."""
+        return self.axial_path(G, dt, [self.altitude]*(hi-lo+1), [float(x) for x in range(lo, hi+1)], allowed, ())
+
+    def axial_path(self, double G, double dt, altitudes, speeds, allowed, anchors, bint full=True, int cap=1, int retry=1):
+        """Every point of a path solved (alpha 0, 1 g) and settled: point i at altitudes[i] (m) and speeds[i] (km/h),
+        neighbours in the path one step apart (a row: one altitude, every whole km/h; an altitude curve: one speed,
+        every whole metre). Each point is solved from the nearest solved one within 32 steps, else from rest and the
+        alternate starts; then the states in `anchors` ((index, [(requests, coordinates, Jacobian or None), ...]) are
+        continued at their points; then, until nothing changes, every state is continued to the next point down and
+        up, where it replaces a state of less thrust (or none). allowed[i]: whether point i is within the aircraft's
+        limits. Returns None where the layout is not this loop's or a point has more than AXC request combinations,
+        else for each point None or `ax_entry`. The model's altitude is as before afterwards.
+
+        full False (a long path, of which the caller needs few points in full): returns instead (the bytes of six
+        doubles a point: 0 no state / 2 / 3, thrust N, shaft power W, fuel kg/s without rockets, rocket thrust N, the
+        engines' gears packed in base 8; an AxStore giving `ax_entry` of any point on request).
+        cap: how many request combinations a point's arrays hold (1 to start with; the path is solved again with AXC
+        where a point has more).
+        retry: after a point with no solved point near found no state from rest either, the points within this many
+        steps after it are not started from rest again (1: every point is; along altitude the next metre is the same
+        flight condition to a part in ten thousand, and what failed there fails here)."""
+        cdef int n = self.ax_n, count = len(speeds), i, x, u, d, step, a, code, rounds, pick, tried_n, c2, on, sel, on2, sel2, m, sj
+        cdef double* QC
+        cdef long long* BC
+        cdef double* L
+        cdef AxStore store
+        cdef bint again = False
+        cdef int last_cold = -1000000, outer
+        cdef bint found_more
+        cdef PropPrep prep
+        cdef PropSample ps
+        cdef PropSample ps2
+        cdef double r[MAXPATH]
+        cdef double rb[MAXPATH]
+        cdef bint changed
+        cdef double v, kgf, old
+        cdef char* kind
+        cdef char* none_tried
+        cdef char* H
+        cdef char* tH
+        cdef char* tH2
+        cdef double* Q
+        cdef double* JJ
+        cdef double* T
+        cdef double* tQ
+        cdef double* tJ
+        cdef double* tQ2
+        cdef double* tJ2
+        cdef long long* B
+        cdef long long tB[AXC]
+        cdef long long tB2[AXC]
+        cdef int* NS
+        cdef unsigned long long* lower_tried
+        cdef unsigned long long* upper_tried
+        # A state continued from a neighbour gives the same again while that neighbour's state is the same: ver counts
+        # a speed's changes, from_lower / from_upper hold the neighbour's count when its state was last continued here.
+        cdef int* ver
+        cdef int* from_lower
+        cdef int* from_upper
+        cdef double* ALT
+        cdef double* SPD
+        cdef double home = self.altitude
+        if not self.ax_row_ready or self.nrows != self.nactive or n != self.nactive or n <= 0 or count <= 0:return None
+        if len(altitudes) != count or len(allowed) != count:raise ValueError('axial_path: one altitude and one flag for each speed')
+        self.dt_aircraft = dt
+        if cap < 1 or cap > AXC:cap = AXC
+        m = cap*n;sj = cap*n*n
+        kind = <char*>calloc(count, 1);none_tried = <char*>calloc(count, 1)
+        H = <char*>calloc(count*cap, 1);tH = <char*>calloc(AXC, 1);tH2 = <char*>calloc(AXC, 1)
+        Q = <double*>calloc(count*m, sizeof(double));JJ = <double*>calloc(count*sj, sizeof(double))
+        tQ = <double*>calloc(AXC*n, sizeof(double));tJ = <double*>calloc(AXC*n*n, sizeof(double))
+        tQ2 = <double*>calloc(AXC*n, sizeof(double));tJ2 = <double*>calloc(AXC*n*n, sizeof(double))
+        T = <double*>calloc(count, sizeof(double))
+        B = <long long*>calloc(count*cap, sizeof(long long));NS = <int*>calloc(count, sizeof(int))
+        QC = <double*>calloc(count*n, sizeof(double));BC = <long long*>calloc(count, sizeof(long long))
+        L = <double*>calloc(count*6, sizeof(double))
+        lower_tried = <unsigned long long*>calloc(count, sizeof(unsigned long long))
+        upper_tried = <unsigned long long*>calloc(count, sizeof(unsigned long long))
+        ver = <int*>calloc(count, sizeof(int));from_lower = <int*>calloc(count, sizeof(int));from_upper = <int*>calloc(count, sizeof(int))
+        for i in range(count):
+            from_lower[i] = -1;from_upper[i] = -1
+        ALT = <double*>calloc(count, sizeof(double));SPD = <double*>calloc(count, sizeof(double))
+        for i in range(count):
+            ALT[i] = altitudes[i];SPD[i] = speeds[i]
+        res = [None]*count
+        try:
+            # ---- every speed once, in increasing order
+            for i in range(count):
+                if not allowed[i]:
+                    kind[i] = 1
+                    continue
+                v = SPD[i]/3.6;self.altitude = ALT[i]
+                self.prepare(v, 1., 0., 0., G, &prep)
+                u = -1
+                for d in range(1, 33):
+                    if i-d >= 0 and kind[i-d] == 2:
+                        u = i-d
+                        break
+                    if i+d < count and kind[i+d] == 2:
+                        u = i+d
+                        break
+                if u >= 0:
+                    if u < i:lower_tried[i] |= (<unsigned long long>1) << (i-u)
+                    else:upper_tried[i] |= (<unsigned long long>1) << (u-i)
+                    if u == i-1:from_lower[i] = ver[u]
+                    elif u == i+1:from_upper[i] = ver[u]
+                    code = self.ax_solve(&prep, v, &Q[u*m], &JJ[u*sj], &H[u*cap], &B[u*cap], NS[u], True, NULL, tQ, tJ, tH, tB, &on, &sel, r, &ps, cap)
+                else:
+                    if i-last_cold < retry:
+                        kind[i] = 1;none_tried[i] = 1
+                        continue
+                    none_tried[i] = 2
+                    code = self.ax_solve(&prep, v, NULL, NULL, NULL, NULL, 0, True, NULL, tQ, tJ, tH, tB, &on, &sel, r, &ps, cap)
+                if code == 9:return None
+                if code == 8:
+                    again = True
+                    raise AxMore()
+                if u < 0:
+                    # no solved speed near: the alternate starts too; of the states found, the one with more thrust
+                    for a in range(self.ax_nalt):
+                        c2 = self.ax_solve(&prep, v, NULL, NULL, NULL, NULL, 0, True, self.ax_alt[a], tQ2, tJ2, tH2, tB2, &on2, &sel2, rb, &ps2, cap)
+                        if c2 == 9:return None
+                        if c2 == 8:
+                            again = True
+                            raise AxMore()
+                        if c2 != 0:continue
+                        kgf = ps2.frame.force[0]/9.80665
+                        old = ps.frame.force[0]/9.80665 if code != 1 else 0.
+                        if code == 1 or kgf > old+1e-4*pmax(fabs(old), 1.):
+                            for d in range(AXC*n):tQ[d] = tQ2[d]
+                            for d in range(AXC*n*n):tJ[d] = tJ2[d]
+                            for d in range(AXC):
+                                tH[d] = tH2[d];tB[d] = tB2[d]
+                            for d in range(n):r[d] = rb[d]
+                            on = on2;sel = sel2;ps = ps2;code = 0
+                if code == 1:
+                    kind[i] = 1
+                    if u < 0:last_cold = i
+                    continue
+                kind[i] = 2 if code == 0 else 3
+                T[i] = ps.frame.force[0]/9.80665;ver[i] += 1
+                self.ax_keep(i, code, cap, tQ, tJ, tH, tB, on, sel, &ps, Q, JJ, H, B, NS, QC, BC, L)
+                if full:res[i] = self.ax_entry(kind[i], tQ, tJ, tH, tB, on, sel, r, &ps)
+            # ---- states given from outside (another path's states at some of these points), continued here as a
+            # neighbour's are: kept where the point has no state or one of less thrust
+            for anchor in anchors:
+                i = anchor[0]
+                if not (0 <= i < count) or not allowed[i]:continue
+                on2 = 0
+                for requests, coords, jac in anchor[1]:
+                    if len(coords) != n:continue
+                    if on2 >= cap:raise AxMore()
+                    tB2[on2] = 0
+                    for d in range(self.nt):tB2[on2] = tB2[on2]*8+int(requests[d])
+                    for d in range(n):tQ2[on2*n+d] = coords[d]
+                    tH2[on2] = jac is not None
+                    if jac is not None:
+                        for d in range(n):
+                            for c2 in range(n):tJ2[on2*n*n+d*n+c2] = jac[d][c2]
+                    on2 += 1
+                if not on2:continue
+                v = SPD[i]/3.6;self.altitude = ALT[i]
+                self.prepare(v, 1., 0., 0., G, &prep)
+                code = self.ax_solve(&prep, v, tQ2, tJ2, tH2, tB2, on2, False, NULL, tQ, tJ, tH, tB, &on, &sel, r, &ps, cap)
+                if code == 9:return None
+                if code == 8:
+                    again = True
+                    raise AxMore()
+                if code != 0:continue
+                kgf = ps.frame.force[0]/9.80665
+                if kind[i] < 2 or kgf > T[i]+1e-4*pmax(fabs(T[i]), 1.):
+                    kind[i] = 2;T[i] = kgf;ver[i] += 1
+                    self.ax_keep(i, 0, cap, tQ, tJ, tH, tB, on, sel, &ps, Q, JJ, H, B, NS, QC, BC, L)
+                    if full:res[i] = self.ax_entry(2, tQ, tJ, tH, tB, on, sel, r, &ps)
+            # ---- states continued down and up until nothing changes
+            for outer in range(2):
+                for rounds in range(8):
+                    changed = False
+                    for step in (1, -1):
+                        i = count-2 if step == 1 else 1
+                        while 0 <= i < count:
+                            u = i+step
+                            if kind[u] >= 2 and allowed[i]:
+                                v = SPD[i]/3.6;self.altitude = ALT[i]
+                                if kind[i] == 1:
+                                    # no state here yet: once more from the solved speeds near it that have not started it
+                                    self.prepare(v, 1., 0., 0., G, &prep)
+                                    tried_n = 0
+                                    for d in range(1, 33):
+                                        for pick in (i-d, i+d):
+                                            if tried_n >= 2 or pick < 0 or pick >= count or kind[pick] != 2:continue
+                                            if pick < i:
+                                                if lower_tried[i] & ((<unsigned long long>1) << d):continue
+                                                lower_tried[i] |= (<unsigned long long>1) << d
+                                            else:
+                                                if upper_tried[i] & ((<unsigned long long>1) << d):continue
+                                                upper_tried[i] |= (<unsigned long long>1) << d
+                                            tried_n += 1
+                                            if kind[i] != 1:continue
+                                            if pick == i-1:from_lower[i] = ver[pick]
+                                            elif pick == i+1:from_upper[i] = ver[pick]
+                                            code = self.ax_solve(&prep, v, &Q[pick*m], &JJ[pick*sj], &H[pick*cap], &B[pick*cap], NS[pick], True, NULL,
+                                                                 tQ, tJ, tH, tB, &on, &sel, r, &ps, cap)
+                                            if code == 9:return None
+                                            if code == 8:
+                                                again = True
+                                                raise AxMore()
+                                            if code == 1:continue
+                                            kind[i] = 2 if code == 0 else 3
+                                            T[i] = ps.frame.force[0]/9.80665;ver[i] += 1
+                                            self.ax_keep(i, code, cap, tQ, tJ, tH, tB, on, sel, &ps, Q, JJ, H, B, NS, QC, BC, L)
+                                            if full:res[i] = self.ax_entry(kind[i], tQ, tJ, tH, tB, on, sel, r, &ps)
+                                            changed = True
+                                if kind[u] == 2 and (from_upper[i] if step == 1 else from_lower[i]) != ver[u]:
+                                    # the neighbour's state continued here: kept where it has more thrust than what is here
+                                    if step == 1:from_upper[i] = ver[u]
+                                    else:from_lower[i] = ver[u]
+                                    self.prepare(v, 1., 0., 0., G, &prep)
+                                    code = self.ax_solve(&prep, v, &Q[u*m], &JJ[u*sj], &H[u*cap], &B[u*cap], NS[u], False, NULL,
+                                                         tQ, tJ, tH, tB, &on, &sel, r, &ps, cap)
+                                    if code == 9:return None
+                                    if code == 8:
+                                        again = True
+                                        raise AxMore()
+                                    if code == 0:
+                                        kgf = ps.frame.force[0]/9.80665
+                                        if kind[i] < 2 or kgf > T[i]+1e-4*pmax(fabs(T[i]), 1.):
+                                            kind[i] = 2;T[i] = kgf;ver[i] += 1
+                                            self.ax_keep(i, 0, cap, tQ, tJ, tH, tB, on, sel, &ps, Q, JJ, H, B, NS, QC, BC, L)
+                                            if full:res[i] = self.ax_entry(2, tQ, tJ, tH, tB, on, sel, r, &ps)
+                                            changed = True
+                            i -= step
+                    if not changed:break
+                if outer or retry <= 1:break
+                # the points left without a state that the first pass did not start from rest (retry): from rest and
+                # the alternate starts now; where one finds a state, the states are continued once more
+                found_more = False;tried_n = 0
+                for i in range(count):
+                    if kind[i] != 1 or not allowed[i] or none_tried[i] != 1:continue
+                    if tried_n >= AX_RESCUE:break
+                    tried_n += 1
+                    v = SPD[i]/3.6;self.altitude = ALT[i]
+                    self.prepare(v, 1., 0., 0., G, &prep)
+                    code = self.ax_solve(&prep, v, NULL, NULL, NULL, NULL, 0, True, NULL, tQ, tJ, tH, tB, &on, &sel, r, &ps, cap)
+                    if code == 9:return None
+                    if code == 8:raise AxMore()
+                    for a in range(self.ax_nalt):
+                        c2 = self.ax_solve(&prep, v, NULL, NULL, NULL, NULL, 0, True, self.ax_alt[a], tQ2, tJ2, tH2, tB2, &on2, &sel2, rb, &ps2, cap)
+                        if c2 == 9:return None
+                        if c2 == 8:raise AxMore()
+                        if c2 != 0:continue
+                        kgf = ps2.frame.force[0]/9.80665
+                        old = ps.frame.force[0]/9.80665 if code != 1 else 0.
+                        if code == 1 or kgf > old+1e-4*pmax(fabs(old), 1.):
+                            for d in range(AXC*n):tQ[d] = tQ2[d]
+                            for d in range(AXC*n*n):tJ[d] = tJ2[d]
+                            for d in range(AXC):
+                                tH[d] = tH2[d];tB[d] = tB2[d]
+                            for d in range(n):r[d] = rb[d]
+                            on = on2;sel = sel2;ps = ps2;code = 0
+                    none_tried[i] = 2
+                    if code == 1:continue
+                    kind[i] = 2 if code == 0 else 3
+                    T[i] = ps.frame.force[0]/9.80665;ver[i] += 1
+                    self.ax_keep(i, code, cap, tQ, tJ, tH, tB, on, sel, &ps, Q, JJ, H, B, NS, QC, BC, L)
+                    if full:res[i] = self.ax_entry(kind[i], tQ, tJ, tH, tB, on, sel, r, &ps)
+                    found_more = True
+                if not found_more:break
+            if full:return res
+            store = AxStore.__new__(AxStore)
+            store.model = self;store.count = count;store.n = n;store.G = G;store.dt = dt
+            store.kind = kind;store.Q = QC;store.B = BC;store.ALT = ALT;store.SPD = SPD
+            kind = NULL;QC = NULL;BC = NULL;ALT = NULL;SPD = NULL
+            return (PyBytes_FromStringAndSize(<char*>L, count*6*sizeof(double)), store)
+        except AxMore:
+            again = True
+        finally:
+            pfree(kind);pfree(none_tried);pfree(H);pfree(tH);pfree(tH2);pfree(Q);pfree(JJ);pfree(tQ);pfree(tJ);pfree(tQ2);pfree(tJ2)
+            pfree(T);pfree(B);pfree(NS);pfree(lower_tried);pfree(upper_tried);pfree(ver);pfree(from_lower);pfree(from_upper)
+            pfree(ALT);pfree(SPD);pfree(QC);pfree(BC);pfree(L)
+            self.altitude = home
+        if again:return None if cap >= AXC else self.axial_path(G, dt, altitudes, speeds, allowed, anchors, full, AXC, retry)
 
 
 cdef double net_thrust(PropModel pm, const PFrame* fr) noexcept:

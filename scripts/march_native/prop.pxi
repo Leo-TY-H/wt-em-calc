@@ -99,6 +99,9 @@ cdef struct EngState:
     double force[3]
     double moment[3]
     int running
+    # Engine performance page: the branches of the engine's law this state is on (piston_output), for the slice
+    # surface's regimes: where one changes, a curve over speed or altitude has a corner or a step. Not read by the model.
+    int regime, fuel_regime
 
 
 cdef struct PropState:
@@ -107,6 +110,12 @@ cdef struct PropState:
     bint auto
     double equilibrium_flow[3]
     double outputs[40]
+    # Engine performance page: the polar branch of each blade section in this state (`polar_branch64`, 5 bits a
+    # section, the second rotor of a coaxial propeller from bit 20): where one changes, thrust and torque have a
+    # corner. Not read by the model.
+    long long branches
+    # the fastest blade section's Mach number (prop_admission's 'mach' of the sections, for the page's Tip Mach)
+    double tip_mach
 
 
 cdef struct PFrame:
@@ -216,6 +225,35 @@ cdef double calc_cd64(const BPolar* p, double a) noexcept nogil:
     return pmin(cd, 0.15+p.cyCritH*fabs(sin(a*DEG_TO_RAD)))
 
 
+cdef int polar_branch64(const BPolar* p, double a) noexcept nogil:
+    """Which pieces of calc_cl64 and calc_cd64 an angle of attack is on (engine_performance.polar_branch): 0 on the
+    line and the parabola up to a critical angle (they join smoothly), 1 to 6 for the pieces past the upper critical
+    angle, 7 to 12 past the lower one; plus 16 where the drag is on its cap."""
+    cdef double s, crit, top, linear
+    cdef int branch = 0
+    if not (p.aoaLineL <= a and a <= p.aoaLineH):
+        s = 1 if a-p.aoaLineH+0.01 >= 0 else -1
+        crit = p.aoaCritH if s > 0 else p.aoaCritL
+        if s*(a-crit) > 0:
+            top = pmax(40, p.maxDistAng)
+            if s*a > 140:
+                branch = 6
+            elif s*a > top:
+                branch = 5 if s*a > 90 else 4
+            elif s*a > p.maxDistAng:
+                branch = 3
+            else:
+                branch = 1 if s*(a-crit) < p.parabAngle else 2
+            if s < 0:
+                branch += 6
+    s = 1 if a >= 0 else -1
+    crit = p.aoaCritH if s > 0 else p.aoaCritL
+    linear = p.cl0+p.clLineCoeff*a
+    if p.cd0+linear*linear*p.indCoeff+p.cdAfterCoeff*pmax(s*(a-crit), 0) > 0.15+p.cyCritH*fabs(sin(a*DEG_TO_RAD)):
+        branch += 16
+    return branch
+
+
 # ---------------------------------------------------------------- propeller
 cdef inline double sign64(double x) noexcept nogil:
     return 1. if x > 0. else (-1. if x < 0. else 0.)
@@ -267,10 +305,12 @@ cdef void inverse_basis(const double* b, double* out) noexcept nogil:
 
 
 cdef void blade_forces(const PropT* p, double omega, double pitch, double axial, double transverse, double density,
-                       double sound, double angular_flow, double* thrust_out, double* torque_out) noexcept nogil:
+                       double sound, double angular_flow, double* thrust_out, double* torque_out,
+                       long long* branches_out=NULL, double* mach_out=NULL) noexcept nogil:
     cdef double thrust = 0., torque = 0., radius, twist, width, tangential, phi, alpha, speed, force_unit, lift, drag
     cdef BPolar polar
     cdef int k
+    cdef long long branches = 0
     for k in range(4):
         radius = p.station_radius[k]; twist = p.twist[k]; width = p.width[k]
         tangential = radius*(omega-angular_flow)
@@ -285,7 +325,13 @@ cdef void blade_forces(const PropT* p, double omega, double pitch, double axial,
         drag = calc_cd64(&polar, alpha)*force_unit*polar.kq
         thrust += (lift*tangential-drag*axial)/speed
         torque += (lift*axial+drag*tangential)/speed*radius
+        if branches_out != NULL and width != 0.:
+            branches |= (<long long>polar_branch64(&polar, alpha)) << (5*k)
+        if mach_out != NULL and width != 0. and speed/sound > mach_out[0]:
+            mach_out[0] = speed/sound
     thrust_out[0] = thrust*p.blades; torque_out[0] = torque*p.blades
+    if branches_out != NULL:
+        branches_out[0] = branches
 
 
 cdef inline double induced_flow(double thrust, double upstream, double density, double disc, double gain) noexcept nogil:
@@ -306,6 +352,8 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
     cdef double tr[3]
     cdef double deflection, axial_force, direction, reaction, normalized, damp, momentum, a, b, c, d, t
     cdef double first, thrust2, torque2
+    cdef long long branches = 0, branches2 = 0
+    cdef double tip = 0.
     # Match Python float ** in the wake flux. A volatile exponent prevents
     # GCC from replacing libm pow with multiplication (one-ulp ARM drift).
     cdef volatile double flux_exponent = 2.
@@ -328,15 +376,16 @@ cdef void propeller(const PropT* p, PropState* st, const double* velocity, const
     ambient = local[0]+airflow[0]
     # propeller_load
     axial = local[0]+.5*(st.flow[0]+st.flow[1])
-    blade_forces(p, omega, st.pitch, axial, transverse, density, sound, .25*st.flow[2], &thrust, &torque)
+    blade_forces(p, omega, st.pitch, axial, transverse, density, sound, .25*st.flow[2], &thrust, &torque, &branches, &tip)
     first = thrust
     if p.coaxial:
         # the second rotor: identical blade inputs at zero swirl and a finite nonzero shaft speed
         if st.flow[2] == 0. and omega != 0. and isfinite(omega):
             thrust2 = thrust;torque2 = torque
         else:
-            blade_forces(p, omega, st.pitch, axial, transverse, density, sound, -.25*st.flow[2], &thrust2, &torque2)
+            blade_forces(p, omega, st.pitch, axial, transverse, density, sound, -.25*st.flow[2], &thrust2, &torque2, &branches2, &tip)
         thrust = thrust+thrust2;torque = torque+torque2
+    st.branches = branches | (branches2 << 20);st.tip_mach = tip
     x = induced_flow(first, ambient, density, disc, airflow[2])
     if p.coaxial:
         st.equilibrium_flow[0] = x;st.equilibrium_flow[1] = induced_flow(thrust, ambient+.5*x, density, disc, airflow[2])
@@ -505,8 +554,9 @@ cdef double reservoir_torque(const EngineT* p, double omega, double throttle, do
 
 
 cdef int mixture(const EngineT* p, double inlet, double command, double rich, bint automatic, double* factor_out,
-                 double* rich_out) noexcept nogil:
-    """Returns 1 when the running branch requires a stop."""
+                 double* rich_out, int* regime_out=NULL) noexcept nogil:
+    """Returns 1 when the running branch requires a stop. regime_out: 0 factor 1, 1 lean (2 with the automatic cap),
+    3 rich."""
     cdef double pressure = F(inlet), accum = F(rich), supplied, limit, factor, inv
     cdef bint stop
     cdef int kind = p.mixer_type
@@ -520,6 +570,13 @@ cdef int mixture(const EngineT* p, double inlet, double command, double rich, bi
             factor_out[0] = 1.; rich_out[0] = accum
             return 0
     supplied = M(command, p.mixer_scale)
+    if regime_out != NULL:
+        regime_out[0] = 0
+        if automatic and supplied > A(pressure, F(-.01)):
+            if not (A(pressure, F(-.01)) > M(pressure, .25)):regime_out[0] = 2
+        elif supplied < pressure:
+            if not (supplied > M(pressure, .25)):regime_out[0] = 1
+        elif supplied > pressure:regime_out[0] = 3
     if automatic:
         supplied = pmin(supplied, A(pressure, F(-.01)))
     stop = supplied < pressure and supplied < F(.03)
@@ -539,14 +596,15 @@ cdef int mixture(const EngineT* p, double inlet, double command, double rich, bi
 cdef int compressor_step(const EngineT* p, double omega, double throttle, double inlet, double dt, int gear_in,
                          int old_gear, double regulator, bint afterburner, double nitro, double height,
                          double* multiplier, int* gear_out, double* regulator_out, double* ratio_out,
-                         double* potential_out, double* manifold_out, int* selected_out=NULL) noexcept nogil:
+                         double* potential_out, double* manifold_out, int* selected_out=NULL,
+                         int* regime_out=NULL) noexcept nogil:
     """piston_compressor.step for discrete stages (types 1/2); gear_in < 0 selects automatically. S16: ``selected_out``
     (where given) is the stage the scores selected, -1 where none scored above the starting -1 (the fallback factor -1
     that aces.exe 0x142fa2180 returns too)."""
     cdef double requested, x, speed, best, potential, target, gain, ratio, manifold, factor
     cdef double pb, flow, critical, flat, ceiling, line, baseline, shape, score, offset, xx, scale
     cdef bint boost, flat_present, ceiling_present, exact
-    cdef int i, lo_i, hi_i, sel = -1, k
+    cdef int i, lo_i, hi_i, sel = -1, k, code, sel_code = 6
     cdef double sel_shape = -1., sel_flow = 0., sel_line = 1., sel_offset = 0., sel_pb = 1.
     cdef const StageT* s
     omega = F(omega); throttle = F(throttle); inlet = F(inlet); dt = F(dt); regulator = F(regulator)
@@ -579,21 +637,22 @@ cdef int compressor_step(const EngineT* p, double omega, double throttle, double
             baseline = M(M(baseline, pmax(s.power, 1.)), F(.8))
         if flow <= critical:
             if exact:
-                shape = s.power
+                shape = s.power;code = 0
             elif flow <= ceiling:
-                shape = s.ceiling_factor if ceiling_present else s.power
+                shape = s.ceiling_factor if ceiling_present else s.power;code = 1
             else:
                 shape = A(pdiv(M(S(s.ceiling_factor, s.power), S(critical, flow)), pmax(S(critical, ceiling), F(.0001))), s.power)
+                code = 2
         elif not flat_present:
-            shape = A(pdiv(M(S(s.power, baseline), S(1., flow)), pmax(S(1., critical), F(.0001))), baseline)
+            shape = A(pdiv(M(S(s.power, baseline), S(1., flow)), pmax(S(1., critical), F(.0001))), baseline);code = 3
         elif flow <= flat:
             if exact:
                 xx = pmin(1., pmax(0., A(1., pdiv(M(S(flow, critical), -1.), S(flat, critical)))))
             else:
                 xx = interval32(flow, critical, 1., flat, 0.)
-            shape = A(M(F(pow(xx, s.curvature)), S(s.power, s.flat_power)), s.flat_power)
+            shape = A(M(F(pow(xx, s.curvature)), S(s.power, s.flat_power)), s.flat_power);code = 4
         else:
-            shape = A(pdiv(M(S(s.flat_power, baseline), S(1., flow)), pmax(S(1., flat), F(.0001))), baseline)
+            shape = A(pdiv(M(S(s.flat_power, baseline), S(1., flow)), pmax(S(1., flat), F(.0001))), baseline);code = 5
         potential = M(M(flow, speed), pdiv(p.max_ata, M(p.compressor_reference, s.critical)))
         score = pmin(potential, M(p.max_ata, pb)); offset = S(1., line)
         if exact:
@@ -602,7 +661,7 @@ cdef int compressor_step(const EngineT* p, double omega, double throttle, double
         if boost:
             score = M(score, M(s.boost, p.afterburner_boost))
         if score > best:
-            sel = i; best = score
+            sel = i; best = score;sel_code = code
             sel_shape = shape; sel_flow = flow; sel_line = line; sel_offset = offset; sel_pb = pb
     if selected_out != NULL:selected_out[0] = sel
     if sel < 0:
@@ -615,6 +674,9 @@ cdef int compressor_step(const EngineT* p, double omega, double throttle, double
         gain = F(.1) if p.compressor_type == 2 else M(dt, 3.)
         target = A(M(S(target, regulator), gain), regulator)
     regulator = pmin(1., pmax(0., target)); ratio = pmin(pdiv(requested, p.max_ata), 1.)
+    if regime_out != NULL:
+        # the stage's power shape, the regulator (open, holding the pressure back, shut), the low-RPM manifold laws
+        regime_out[0] = sel_code+(0 if target >= 1. else 8 if target > 0. else 16)+(32 if omega < 150. else 0)
     manifold = M(M(potential, ratio), regulator)
     factor = M(A(pdiv(M(manifold, sel_line), M(requested, sel_pb)), sel_offset), sel_shape)
     # low_rpm(manifold, omega, flow)
@@ -629,7 +691,7 @@ cdef int compressor_step(const EngineT* p, double omega, double throttle, double
 cdef void turbo_compressor(const EngineT* p, double omega, double throttle, double inlet, double dt, bint afterburner,
                            double nitro, double height, double turbo, double turbo_command, bint automatic, bint assisted,
                            double* multiplier, double* ratio_out, double* potential_out, double* manifold_out,
-                           double* turbo_out, double* command_out) noexcept nogil:
+                           double* turbo_out, double* command_out, int* regime_out=NULL) noexcept nogil:
     """piston_compressor.step for the turbo-supercharger (compressor_type 3, exact altitudes)."""
     cdef double requested, x, speed, shape, base, upper, allowed, target, fraction, potential, top, ratio, manifold, line, factor
     cdef const StageT* s = &p.stages[0]
@@ -666,6 +728,12 @@ cdef void turbo_compressor(const EngineT* p, double omega, double throttle, doub
     else:
         potential = M(pdiv(turbo, allowed), base)
     ratio = pmin(pdiv(requested, potential), 1.);manifold = M(ratio, potential)
+    if regime_out != NULL:
+        # the power shape, the turbine at its allowed speed (the pressure no longer held), below its least speed, the
+        # requested pressure below the potential one there (at or above the least speed the potential pressure is the
+        # requested one or the turbine's most, to rounding), the low-RPM manifold laws
+        regime_out[0] = ((1 if inlet > s.critical else 0)+(2 if turbo >= allowed else 0)+(4 if turbo < p.turbo_min else 0)
+                         +(8 if turbo < p.turbo_min and pdiv(requested, potential) < 1. else 0)+(32 if omega < 150. else 0))
     line = s.ceiling_factor if A(s.ceiling, F(.0001)) < s.critical else 1.
     factor = M(A(pdiv(M(line, manifold), requested), S(1., line)), shape)
     # low_rpm(manifold, omega, inlet)
@@ -816,6 +884,7 @@ cdef int rocket_output(const EngineT* p, EngState* s, const double* cg) noexcept
 cdef int engine_output(const EngineT* p, EngState* s, double body_u, double height, double nitro, const Unit* u,
                        const double* cg) noexcept nogil:
     """prop_quasisteady.engine_output: pistons, turbines (family 2/5) and rockets (family 3); nonzero: unavailable."""
+    s.regime = 0;s.fuel_regime = 0
     if p.family == 2 or p.family == 5:
         s.regulator = -1.; s.extra_amplitude = 0.
         return turbine_output(p, s, u, body_u, height, nitro, cg)
@@ -831,7 +900,7 @@ cdef int piston_output(const EngineT* p, EngState* s, double body_u, double heig
     cdef double dt = F(0.), omega, throttle, inlet, mult, regulator, ratio, potential, manifold, tq, mixf, rich, modulation
     cdef double mechanical, power, x, rate, mixf2, rich2
     cdef double* y
-    cdef int gear, code
+    cdef int gear, code, creg = 0, mreg = 0, treg = 0
     cdef long seed_out
     cdef double turbo, command
     if p.family != 0 and p.family != 1:
@@ -844,14 +913,15 @@ cdef int piston_output(const EngineT* p, EngState* s, double body_u, double heig
         turbo_compressor(p, s.omega, s.throttle, inlet, 0., s.afterburner, nitro, height, 0., 1., True, True,
                          &mult, &ratio, &potential, &manifold, &turbo, &command)
         turbo_compressor(p, omega, throttle, inlet, dt, s.afterburner, nitro, height, turbo, s.turbo_command, True, False,
-                         &mult, &ratio, &potential, &manifold, &turbo, &command)
+                         &mult, &ratio, &potential, &manifold, &turbo, &command, &creg)
+        creg += 64
         s.turbo = turbo;s.turbo_command = command
         gear = 0;regulator = 1.
     else:
         code = compressor_step(p, omega, throttle, inlet, dt,
                                s.gear if (p.manual_compressor and not s.automatic_compressor) else -1, s.gear,
                                s.regulator, s.afterburner, nitro, height,
-                               &mult, &gear, &regulator, &ratio, &potential, &manifold)
+                               &mult, &gear, &regulator, &ratio, &potential, &manifold, NULL, &creg)
         if code:
             return 4
     if p.carburetor == 3:
@@ -860,8 +930,10 @@ cdef int piston_output(const EngineT* p, EngState* s, double body_u, double heig
         tq = rpm_torque(p, omega, throttle, 1., s.afterburner, gear, nitro)
     else:
         return 5
+    # negative torque and its floor
+    if tq < 0.:treg = 2 if tq == M(M(M(M(1., F(-.8)), omega), p.inverse_omega), p.torque_base) else 1
     tq = M(tq, mult)
-    if mixture(p, inlet, s.mixture, s.extra_amplitude, s.automatic_mixture, &mixf, &rich):
+    if mixture(p, inlet, s.mixture, s.extra_amplitude, s.automatic_mixture, &mixf, &rich, &mreg):
         return 6
     tq = M(mixf, tq)
     if mechanical_multiplier(p, omega, s.mechanical, rich, tq, s.friction, dt, 12345, &modulation, &mechanical, &seed_out):
@@ -870,6 +942,9 @@ cdef int piston_output(const EngineT* p, EngState* s, double body_u, double heig
     power = pmax(M(p.base_hp, F(.05)), M(M(tq, F(.00134048261602968)), omega))
     x = pmax(0., pdiv(power, p.base_hp))
     y = p.consumption
+    s.regime = creg+256*mreg+1024*treg
+    s.fuel_regime = (0 if M(M(tq, F(.00134048261602968)), omega) <= M(p.base_hp, F(.05)) else 1 if x <= .5 else 2 if x <= 1.
+                     else 3 if x < F(1.1) else 4)
     if x <= .5:
         rate = y[0] if x <= 0 else (y[1] if x >= .5 else A(y[0], M(x, A(S(y[1], y[0]), S(y[1], y[0])))))
     elif x <= 1.:

@@ -16,6 +16,16 @@ def manual_rpm_governor(properties):
     return properties['governor'] in (1, 2)
 
 
+def governs(properties):
+    """Whether the propeller's governor has a blade to move: it has one and its two pitch stops differ.
+
+    With equal stops (Ba.65 K.14 L: 24 degrees both) the blade never moves, so the propeller is a fixed-pitch one and
+    its shaft speed is free. Solved as a governed one it has no state the solver can reach: nothing changes over the
+    governor's own range, and its states lie on both sides of it.
+    """
+    return bool(properties['governor']) and properties['pitch_max'] > properties['pitch_min']
+
+
 def auto_pitch_available(propeller):
     """Whether the game can run this propeller automatically under manual engine controls.
 
