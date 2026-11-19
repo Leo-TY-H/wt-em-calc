@@ -26,7 +26,8 @@
     <div id="plane-empty" class="plane-empty">${EMPTY}</div>
     <div id="plane-charts" class="plane-charts" hidden>
       <section class="chart-card"><h3>FLAP SPEEDS</h3><div id="plane-flaps-chart" class="plane-chart" aria-label="Flap schedule and critical speed"></div></section>
-      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><label class="field plane-mach" id="plane-mach-field">Mach <output id="plane-mach-label"></output><input id="plane-mach" type="range" min="0" max="1" step="0.01" value="0" aria-label="Mach"></label><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
+      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><div class="mode-switch plane-setting" id="plane-setting" role="radiogroup" aria-label="Flap setting">${['Combat', 'Takeoff', 'Landing'].map(m =>
+        `<label><input type="radio" name="plane-setting" value="${m.toLowerCase()}"><span>${m}</span></label>`).join('')}</div><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
     </div>
     <div id="plane-tables" class="plane-tables" hidden></div>
     <section id="plane-version-changes" class="version-changes" hidden></section>
@@ -238,7 +239,7 @@
         el('plane-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
       shown = {...run, entries: wanted.map(e => structuredClone(e))};
-      machTouched = false; render();
+      render();
       window.GameVersions?.changes(el('plane-version-changes'), wanted.map(e => ({id: e.aircraft_id, kind: 'fm', version: e.version, name: cleanName(aircraftOf(e)?.name || e.aircraft_id)})));
     } catch (error) { showError(error.message); }
     finally { busy(false); }
@@ -334,79 +335,38 @@
     layout.yaxis = {...axisStyle, title: {text: 'Flap extension (%)', standoff: 8, font: {size: 13}}, range: [0, 104]};
     draw('plane-flaps-chart', list, traces, layout, 'flap-speeds');
   }
-  // Flap efficiency (Leo, 2026-11-19): lift gain over drag gain against extension at the slider's Mach, every extension
-  // that can be held there, with the aircraft's own flap settings labelled. The server sends the whole surface (a row
-  // per 0.02 Mach); the slider reads between its rows, so sliding asks for nothing.
-  const MODES = {combat: 'Combat', takeoff: 'Takeoff', landing: 'Landing'}, NUMBERS = ['score', 'lift_gain_percent', 'drag_gain_percent', 'alpha_deg', 'clean_alpha_deg', 'load_g', 'clean_load_g'];
-  let machTouched = false;
-  // One aircraft's records at a Mach: per extension, between the two grid rows around it; an extension that can still
-  // be held but has no row above keeps the row below.
-  function scoreRow(surface, mach) {
-    const grid = surface.mach, last = grid.length - 1;
-    if (!grid.length || mach < grid[0] - 1e-9) return null;
-    let k = grid.findIndex(m => m > mach + 1e-9) - 1; if (k < 0) k = last;
-    const t = k < last ? Math.max(0, (mach - grid[k]) / (grid[k + 1] - grid[k])) : 0;
-    return surface.percents.map((_, i) => {
-      if (mach > surface.limit_mach[i] + 1e-9) return null;
-      const a = surface.rows[k][i], b = k < last ? surface.rows[k + 1][i] : null;
-      if (!a || !Number.isFinite(a.score)) return null;
-      if (t < 1e-9 || !b || !Number.isFinite(b.score)) return mach - grid[k] < .0201 ? a : null;
-      return {...a, ...Object.fromEntries(NUMBERS.map(key => [key, a[key] + (b[key] - a[key]) * t]))};
-    });
-  }
-  function machRange(list) {
-    const surfaces = list.map(d => d.result.flaps.efficiency).filter(e => e?.mach.length);
-    if (!surfaces.length) return null;
-    const tops = surfaces.map(e => Math.max(...e.limit_mach.map((m, i) => e.rows.some(row => row[i]) ? Math.min(m, e.mach[e.mach.length - 1] + .02) : 0)));
-    return {min: Math.min(...surfaces.map(e => e.mach[0])), max: Math.floor(Math.max(...tops) * 100 + 1e-6) / 100,
-      start: Math.min(...surfaces.map(e => e.default_mach))};
-  }
+  // Flap efficiency (Leo, 2026-11-19): lift gain over drag gain against true airspeed for the chosen flap setting, at
+  // the EM diagram's full Mouse-aim pull, over the speeds where the setting can be held. Every setting is calculated,
+  // so choosing another one only redraws.
+  const PULL = {aoa: 'Instructor AoA', control: 'full stick', wing: 'wing limit', stall: 'stall'};
   function renderScore(list) {
-    const range = machRange(list), slider = el('plane-mach');
-    el('plane-mach-field').hidden = !range;
-    if (!range) { if (el('plane-score-chart').classList.contains('js-plotly-plot')) Plotly.purge(el('plane-score-chart')); return; }
-    slider.min = range.min.toFixed(2); slider.max = range.max.toFixed(2);
-    if (!machTouched || +slider.value < range.min || +slider.value > range.max) slider.value = Math.max(range.min, Math.min(range.max, range.start)).toFixed(2);
-    const mach = +slider.value, sound = list.find(d => d.result.flaps.efficiency)?.result.flaps.efficiency.sound_kmh;
-    el('plane-mach-label').textContent = `${mach.toFixed(2)} · ${fmt(mach * sound, 0)} km/h TAS`;
-    const traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%', PULL = {aoa: 'Instructor AoA', control: 'full stick'};
-    const scores = [], labels = [];
+    const has = mode => list.some(d => d.result.flaps.efficiency?.modes[mode]?.rows.some(r => Number.isFinite(r?.score)));
+    const inputs = [...root.querySelectorAll('input[name=plane-setting]')];
+    for (const input of inputs) input.disabled = !has(input.value);
+    // The setting stays as chosen while any aircraft has it; else the first one available.
+    if (!inputs.some(i => i.checked && !i.disabled)) { const first = inputs.find(i => !i.disabled); if (first) first.checked = true; }
+    const mode = inputs.find(i => i.checked && !i.disabled)?.value, traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%';
     for (const d of list) {
-      const surface = d.result.flaps.efficiency; if (!surface?.mach.length) continue;
-      for (const row of surface.rows) for (const r of row) if (Number.isFinite(r?.score)) scores.push(r.score);
-      const rows = scoreRow(surface, mach), name = entryName(d);
-      // An aircraft with nothing at this Mach keeps its legend row.
-      const at = i => rows?.[i], x = surface.percents, y = x.map((_, i) => at(i)?.score ?? null);
-      traces.push({type: 'scatter', mode: 'lines', x, y, name, connectgaps: false, line: {color: d.color, width: 2.4}, hoverlabel: {bordercolor: d.color},
-        customdata: x.map((_, i) => at(i) ? [signed(at(i).lift_gain_percent), signed(at(i).drag_gain_percent), fmt(at(i).alpha_deg, 1), fmt(at(i).clean_alpha_deg, 1),
-          fmt(at(i).load_g, 2), fmt(at(i).clean_load_g, 2), PULL[at(i).limiting] || ''] : []),
-        hovertemplate: `%{y:.3f} · flaps %{x:.0f}%<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>` +
-          `AoA %{customdata[2]}° · flaps up %{customdata[3]}°<extra>${escapeText(name)}</extra>`});
-      // The aircraft's own flap settings on its curve.
-      const marks = Object.keys(MODES).map(mode => [mode, x.findIndex(p => Math.abs(p - d.result.flaps.detents[mode]) < 1e-6)]).filter(([, i]) => i >= 0 && Number.isFinite(y[i]));
-      if (marks.length) traces.push({type: 'scatter', mode: 'markers', x: marks.map(([, i]) => x[i]), y: marks.map(([, i]) => y[i]),
-        marker: {color: d.color, size: 9, symbol: 'diamond-open', line: {width: 2}}, showlegend: false, hoverinfo: 'skip', cliponaxis: false});
-      for (const [mode, i] of marks) labels.push({x: x[i], y: y[i], text: MODES[mode], color: d.color});
+      const curve = d.result.flaps.efficiency?.modes[mode], name = entryName(d); if (!curve) continue;
+      const rows = curve.rows, solved = r => Number.isFinite(r?.score);
+      if (!rows.some(solved)) continue;
+      traces.push({type: 'scatter', mode: 'lines', x: d.result.flaps.efficiency.speeds, y: rows.map(r => solved(r) ? r.score : null), name: `${name} · ${fmt(curve.percent, 0)}%`,
+        connectgaps: false, line: {color: d.color, width: 2.4}, hoverlabel: {bordercolor: d.color},
+        customdata: rows.map(r => solved(r) ? [signed(r.lift_gain_percent), signed(r.drag_gain_percent), fmt(r.load_g, 2), fmt(r.clean_load_g, 2), PULL[r.limiting] || ''] : []),
+        hovertemplate: `%{y:.3f} · %{x:,.0f} km/h<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>%{customdata[2]} g · flaps up %{customdata[3]} g<br>%{customdata[4]}<extra>${escapeText(name)}</extra>`});
     }
-    const layout = layoutBase(traces, 'score');
-    layout.xaxis = {...axisStyle, title: {text: `Flap extension (%) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, range: [0, 104]};
-    // One scale for every Mach, so the curves move and the axis does not: the middle 96% of all scores, and zero.
-    scores.sort((a, b) => a - b);
+    const layout = layoutBase(traces, 'score-' + mode);
+    layout.xaxis = {...axisStyle, title: {text: `True airspeed (km/h) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}};
+    // The first view covers the middle 96% of the scores and zero: where the drag gain passes through zero the ratio
+    // runs off without bound (zoom out for all of it).
+    const scores = traces.flatMap(t => t.y.filter(Number.isFinite)).sort((p, q) => p - q);
     const low = Math.min(0, scores[Math.floor(.02 * (scores.length - 1))] ?? 0), high = Math.max(0, scores[Math.ceil(.98 * (scores.length - 1))] ?? 1), pad = .08 * (high - low || 1);
     layout.yaxis = {...axisStyle, title: {text: 'Lift gain / drag gain', standoff: 8, font: {size: 13}}, range: [low - (low < 0 ? pad : 0), high + pad], zeroline: true, zerolinecolor: 'rgba(240,240,250,.35)'};
-    // Setting names beside their marks, moved up or down so that none covers another (sizes from the first view's axes).
-    const chart = el('plane-score-chart'), width = Math.max(200, chart.clientWidth - layout.margin.l - layout.margin.r), height = Math.max(120, chart.clientHeight - layout.margin.t - layout.margin.b);
-    const [y0, y1] = layout.yaxis.range, placed = [];
-    layout.annotations = labels.sort((a, b) => a.x - b.x || b.y - a.y).map(label => {
-      const right = label.x > 88, w = 6.4 * label.text.length + 4, px = label.x / 104 * width, py = (y1 - label.y) / (y1 - y0) * height;
-      const left = right ? px - w : px - w / 2, clear = shift => !placed.some(b => left < b.left + b.w && b.left < left + w && Math.abs(py - shift - b.y) < 13);
-      const shift = [14, -14, 27, -27, 40, -40, 53, -53].find(clear) ?? 14;
-      placed.push({left, w, y: py - shift});
-      return {x: label.x, y: label.y, text: label.text, showarrow: false, yshift: shift, xanchor: right ? 'right' : 'center', font: {color: label.color, size: 11}};
-    });
     draw('plane-score-chart', list, traces, layout, 'flap-efficiency');
   }
-  el('plane-mach').addEventListener('input', () => { machTouched = true; const list = displayed().filter(d => d.result.flaps.available); if (list.length) renderScore(list); });
+  root.querySelectorAll('input[name=plane-setting]').forEach(input => input.addEventListener('change', () => {
+    const list = displayed().filter(d => d.result.flaps.available); if (list.length) renderScore(list);
+  }));
   function download() {
     const list = displayed(); if (!list.length) return;
     const link = document.createElement('a');

@@ -16,18 +16,16 @@ schedule are not necessarily the same"):
 - extending: the speed where the flaps' outward travel stops (dvFlapsOut reaching zero, flap_model.deployment_speed_limit;
   flaps already out stay out), drawn below the holding limit.
 
-Flap efficiency (Leo: "percent gain in lift divided by percent gain in drag at the instructor aoa"; 2026-11-19 later:
-a Mach slider, the curve over every extension, the aircraft's own flap settings labelled). For each Mach of a grid and
-each extension that can be held in that state. The game judges the IAS limits (automatic retraction by IAS, the lock
-IAS, the critical speed, the wing's VNE) on the forward IAS, body-forward airspeed x sqrt(density ratio), and the Mach
-limits (retraction by Mach, the lock Mach, MNE) on the Mach of the total airspeed, so a state at high AoA is inside an
-IAS limit at a higher Mach than level flight is; each solved state is tested on its own forward IAS and Mach
-(flap_model.violations and the wing's limits), as the EM chart's leaning IAS edge does:
-- state: the EM chart's steady level turn at that speed at the Instructor's full pull (Mouse aim): where the march's
-  'Instructor pitch' margin or its control authority margin with autotrim reaches zero, whichever comes first, found
-  by the chart's own prescribed-alpha correction, once with the flaps and once with flaps up at the same speed. The
-  wing's breaking load does not end the pull and the Instructor's wing protection is left out (the solver's Flutter
-  off), so the comparison is at the Instructor's AoA limit itself also where the wing would break first (B-17G);
+Flap efficiency (Leo, 2026-11-19, final form: "we allow users to select a flap setting, then we plot efficiency vs
+speed in the applicable speed range for instructor full pull aoa consistent with the em diagram"). For each flap setting
+the aircraft has (combat, takeoff, landing) and each true airspeed of a grid:
+- state: the EM diagram's own boundary state at that speed in Mouse aim, a steady level turn pulled until the first of
+  its limits: the Instructor's pitch limit (with its wing protection as the chart applies it), the end of its control
+  authority with autotrim, the wing's breaking load, the stall (pull_margins; the chart's defaults, Flutter on), found
+  by the chart's own prescribed-alpha correction; once with the flaps and once with flaps up at the same speed;
+- applicable speeds: where both states exist and the flapped one keeps its extension, tested on its own forward IAS
+  (automatic retraction by IAS, lock IAS, critical speed, the wing's VNE) and total Mach (retraction by Mach, lock
+  Mach, MNE), as the game does and the EM chart's leaning IAS edge shows;
 - lift and drag: the aircraft's aerodynamic force (every component, no engine force) across and along the airflow;
 - score = (lift / lift flaps up - 1) / (drag / drag flaps up - 1).
 """
@@ -46,9 +44,9 @@ MARGIN = 1e-5        # Instructor margin (tenths of a degree, or stick travel) t
 END_MARGIN = .01     # the last balanced state counts as the limit when its margin is below this,
 END_AHEAD = .05      # or when its margin's slope puts the limit within this many degrees of AoA
 BRACKET = .05        # widest AoA bracket (deg) of the limit that still gives a state
-MACH_STEP = .02      # Mach grid of the efficiency surface (the page reads between its rows)
-EXTENSION_STEP = 1.  # extension grid of the efficiency curves, percent (plus the flap settings and the polar rows)
-GIVE_UP = 3          # consecutive Mach rows without a flaps-up state that end the grid at its slow end
+SPEED_STEP = 2.      # true airspeed grid of the efficiency curves, km/h
+GIVE_UP = 5          # consecutive speeds without a flaps-up state that end the grid at its slow end
+MODES = ('combat', 'takeoff', 'landing')
 PROPS = ('piston', 'turboprop', 'mixed')
 
 
@@ -146,8 +144,8 @@ def instructor_state(chart, speed_kmh, seed=None, why=None, near=None):
     import em_sampling
     from em_stationary_boundary import Curve
     def margin(p):
-        ctl = p.get('instructor') if p else None
-        return ctl['margin'] if ctl and ctl.get('converged') and math.isfinite(ctl['margin']) else None
+        m = pull_margins(p) if p else None
+        return min(m.values()) if m else None
     def fail(reason):
         if why is not None:why.append(reason)
         return None
@@ -192,6 +190,21 @@ def instructor_state(chart, speed_kmh, seed=None, why=None, near=None):
     low, width = bracketed(at, low, m_low, high, m_high, margin)
     if width > BRACKET and margin(low) > END_MARGIN:return fail('limit bracketed only to %.2f deg' % width), start
     return low, start
+
+
+def pull_margins(p):
+    """The margins that end a full Mouse-aim pull on the EM diagram, positive inside (em_march.margins' quantities):
+    'aoa' the Instructor's pitch limit, 'control' its control authority with autotrim, 'wing' the wing's breaking load
+    (where the solver's structural limits are on), 'stall'. None where the Instructor's record is missing although no
+    other limit is passed (its trim solve did not close): the state cannot be placed."""
+    out = {}
+    if p.get('stall_margin_deg') is not None:out['stall'] = p['stall_margin_deg'] / 10.
+    if p.get('wing_load_ratios'):out['wing'] = 1. - max(p['wing_load_ratios'])
+    ctl = p.get('instructor')
+    if ctl and ctl.get('converged') and math.isfinite(ctl['margin']):
+        out['aoa'] = ctl['envelope_margin'];out['control'] = ctl['margins']['control authority with auto trim']
+    elif not any(v < 0. for v in out.values()):return None
+    return out
 
 
 def bracketed(at, low, m_low, high, m_high, margin):
@@ -246,79 +259,65 @@ def aerodynamic(point):
 
 
 def efficiency(name, altitude, throttle, mass, detents):
-    """The flap efficiency surface: dict(mach: ascending grid, percents: extensions, sound_kmh, limit_mach: the highest
-    Mach each extension can be held at, default_mach: the highest grid Mach where every extension can be held, rows:
-    per Mach a list with one record per extension, None where it cannot be held or no state was found)."""
-    from air_state import speed_of_sound
-    from em_speed_limits import speed_limits
-    clean = solver(name, altitude, throttle, mass, 0., structural=False)
-    rows_of_polar = [100. * float(r[0]) for r in (clean.model.get('flaps') or [])]
-    percents = sorted({5.} | {EXTENSION_STEP * i for i in range(1, int(100. / EXTENSION_STEP) + 1)} | {round(float(v), 3) for v in detents.values()}
-                      | {round(v, 3) for v in rows_of_polar if 0. < v < 100.})
-    percents = [x for x in percents if x > 0.]
-    sound = float(speed_of_sound(altitude)) * 3.6
-    charts = {x: solver(name, altitude, throttle, mass, x, structural=False) for x in percents}
-    from em_speed_limits import IAS_DOMAIN_ALPHA_DEG
+    """The flap efficiency curves: dict(speeds: ascending true airspeeds in km/h, modes: {combat|takeoff|landing:
+    dict(percent, rows: one record per speed, None where the setting cannot be held or a state is missing)})."""
+    from em_speed_limits import IAS_DOMAIN_ALPHA_DEG, speed_limits
     from flap_model import violations
+    modes = [m for m in MODES if detents.get(m)]
+    if not modes:return dict(speeds=[], modes={})
+    clean = solver(name, altitude, throttle, mass, 0.)
     profile, strength = clean.flap_profile, clean.model['geometry']['strength']
     lean = math.cos(math.radians(IAS_DOMAIN_ALPHA_DEG))
-    limit, reach = {}, {}
-    for x in percents:
-        row = speed_limits(charts[x].fm, dict(charts[x].config, structural_limits=True))
-        # limit: the lowest limit in level flow (zero AoA); reach: the fastest speed worth trying, the Mach limits as
-        # they are and the forward-IAS limits up to their level speed / cos(30 deg) (em_speed_limits.march_domain).
-        limit[x] = row['speed_kmh']
+    charts, reach = {}, {}
+    for m in modes:
+        charts[m] = solver(name, altitude, throttle, mass, float(detents[m]))
+        row = speed_limits(charts[m].fm, charts[m].config)
+        # The fastest speed worth trying: the Mach limits as they are, the forward-IAS limits up to their level speed /
+        # cos(30 deg) (em_speed_limits.march_domain); each state is then tested on its own forward IAS and Mach.
         vertical, forward = row.get('vertical_limit'), row.get('forward_ias_limits') or []
-        reach[x] = min([vertical['speed_kmh']] if vertical else []) if not forward else min(
-            ([vertical['speed_kmh']] if vertical else []) + [min(c['speed_kmh'] for c in forward) / lean])
-    def held(x, point):
-        """Whether this state keeps the extension: its own forward IAS and total Mach against every flap and wing limit."""
+        reach[m] = min(([vertical['speed_kmh']] if vertical else []) + ([min(c['speed_kmh'] for c in forward) / lean] if forward else []))
+    def held(m, point):
         ias, mach = point['ias_kmh'] / 3.6, point['mach']
-        return not violations(profile, x, ias, mach, True, None) and ias <= strength['ias'] and mach <= strength['mach']
-    # The grid runs down from the fastest speed any extension above the damage threshold can be tried at.
-    top = max(reach[x] for x in percents if x > 5. or len(percents) == 1)
-    steps = int(math.floor(top / sound / MACH_STEP + 1e-9))
-    full = min(int(math.floor(limit[percents[-1]] / sound / MACH_STEP + 1e-9)), steps)
-    limiting = lambda p: 'aoa' if p['instructor']['limiting'] == 'Instructor effective AoA' else 'control'
-    grid, rows, misses, previous = [], [], 0, None
-    for k in range(steps, 1, -1):
-        mach = MACH_STEP * k;speed = mach * sound
+        return not violations(profile, float(detents[m]), ias, mach, True, None) and ias <= strength['ias'] and mach <= strength['mach']
+    def limiting(p):
+        margins = pull_margins(p)
+        return min(margins, key=margins.get)
+    steps = int(math.floor(max(reach.values()) / SPEED_STEP + 1e-9))
+    slowest = min(reach.values())
+    speeds, rows, misses, previous, near = [], {m: [] for m in modes}, 0, None, {m: None for m in modes}
+    for k in range(steps, 0, -1):
+        speed = SPEED_STEP * k
         reference, level = instructor_state(clean, speed, near=previous)
-        row = [None] * len(percents)
+        speeds.append(speed)
+        for m in modes:rows[m].append(None)
         if reference is None:
             misses += 1
-            if misses >= GIVE_UP and k < full:break
-        else:
-            misses, previous = 0, reference
-            lift0, drag0 = aerodynamic(reference)
-            neighbour, failed = reference, 0
-            for i, x in enumerate(percents):
-                if speed > reach[x] - .0036 or lift0 <= 0. or drag0 <= 0.:continue
-                # Unsolved extensions come in runs (the Instructor's trim solve fails there) and each costs far more
-                # than a solved one: after GIVE_UP in a row the rest of this Mach row is left out.
-                if failed >= GIVE_UP:break
-                flapped, _ = instructor_state(charts[x], speed, seed=level or reference, near=neighbour)
-                if flapped is None:
-                    failed += 1
-                    continue
-                neighbour, failed = flapped, 0
-                if not held(x, flapped):continue
-                lift, drag = aerodynamic(flapped)
-                lift_gain, drag_gain = (lift / lift0 - 1.) * 100., (drag / drag0 - 1.) * 100.
-                # Rounded for the page (the surface is a few thousand records).
-                row[i] = dict(score=round(lift_gain / drag_gain, 5) if abs(drag_gain) > 1e-9 else None, lift_gain_percent=round(lift_gain, 3),
-                              drag_gain_percent=round(drag_gain, 3), alpha_deg=round(flapped['alpha_deg'], 3),
-                              clean_alpha_deg=round(reference['alpha_deg'], 3), load_g=round(flapped['load_g'], 3),
-                              clean_load_g=round(reference['load_g'], 3), limiting=limiting(flapped))
-        grid.append(mach);rows.append(row)
-    # Slow rows without any result are dropped.
-    while rows and not any(rows[-1]):grid.pop();rows.pop()
-    grid.reverse();rows.reverse()
-    # The page reads between rows: an extension held at one row and not at the next ends halfway (its exact end depends
-    # on the state's AoA there).
-    last = [max((m for m, row in zip(grid, rows) if row[i]), default=0.) + .5 * MACH_STEP for i in range(len(percents))]
-    return dict(mach=[round(m, 4) for m in grid], percents=percents, sound_kmh=sound, limit_mach=last,
-                default_mach=round(MACH_STEP * full, 4), rows=rows)
+            if misses >= GIVE_UP and speed < slowest:break
+            continue
+        misses, previous = 0, reference
+        lift0, drag0 = aerodynamic(reference)
+        if lift0 <= 0. or drag0 <= 0.:continue
+        for m in modes:
+            if speed > reach[m] - .0036:continue
+            flapped, _ = instructor_state(charts[m], speed, seed=level or reference, near=near[m] or reference)
+            if flapped is None:continue
+            near[m] = flapped
+            if not held(m, flapped):continue
+            lift, drag = aerodynamic(flapped)
+            lift_gain, drag_gain = (lift / lift0 - 1.) * 100., (drag / drag0 - 1.) * 100.
+            rows[m][-1] = dict(score=round(lift_gain / drag_gain, 5) if abs(drag_gain) > 1e-9 else None, lift_gain_percent=round(lift_gain, 3),
+                               drag_gain_percent=round(drag_gain, 3), alpha_deg=round(flapped['alpha_deg'], 3),
+                               clean_alpha_deg=round(reference['alpha_deg'], 3), load_g=round(flapped['load_g'], 3),
+                               clean_load_g=round(reference['load_g'], 3), limiting=limiting(flapped), clean_limiting=limiting(reference))
+    # Ends without any result are dropped.
+    while speeds and not any(rows[m][-1] for m in modes):
+        speeds.pop()
+        for m in modes:rows[m].pop()
+    while speeds and not any(rows[m][0] for m in modes):
+        speeds.pop(0)
+        for m in modes:rows[m].pop(0)
+    speeds.reverse()
+    return dict(speeds=speeds, modes={m: dict(percent=float(detents[m]), rows=rows[m][::-1]) for m in modes})
 
 
 # ---- Figures --------------------------------------------------------------------------------
