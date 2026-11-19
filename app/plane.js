@@ -323,7 +323,7 @@
         const [label, dash, along] = LIMITS[segment.kind], points = dense(segment.points, along), group = `${d.entry.id}-${segment.kind}`;
         traces.push({type: 'scatter', mode: 'lines', x: points.map(p => p[0]), y: points.map(p => p[1]), name: `${name} · ${label.toLowerCase()}`,
           legendgroup: group, showlegend: !traces.some(t => t.legendgroup === group), line: {color: d.color, width: 2.4, dash}, hoverlabel: {bordercolor: d.color},
-          hovertemplate: `${label}<br>%{y:.0f}%<br>%{x:,.0f} km/h IAS<extra>${escapeText(name)}</extra>`});
+          hovertemplate: `%{y:.0f}% · %{x:,.0f} km/h IAS<extra>${escapeText(name)} · ${label.toLowerCase()}</extra>`});
       }
     }
     const layout = layoutBase(traces, 'flaps');
@@ -377,8 +377,8 @@
       traces.push({type: 'scatter', mode: 'lines', x, y, name, connectgaps: false, line: {color: d.color, width: 2.4}, hoverlabel: {bordercolor: d.color},
         customdata: x.map((_, i) => at(i) ? [signed(at(i).lift_gain_percent), signed(at(i).drag_gain_percent), fmt(at(i).alpha_deg, 1), fmt(at(i).clean_alpha_deg, 1),
           fmt(at(i).load_g, 2), fmt(at(i).clean_load_g, 2), PULL[at(i).limiting] || ''] : []),
-        hovertemplate: `%{y:.3f}<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>Flaps %{x:.0f}% · Mach ${mach.toFixed(2)}<br>` +
-          `AoA %{customdata[2]}° · flaps up %{customdata[3]}°<br>%{customdata[4]} g · flaps up %{customdata[5]} g<br>%{customdata[6]}<extra>${escapeText(name)}</extra>`});
+        hovertemplate: `%{y:.3f} · flaps %{x:.0f}%<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>` +
+          `AoA %{customdata[2]}° · flaps up %{customdata[3]}°<extra>${escapeText(name)}</extra>`});
       // The aircraft's own flap settings on its curve.
       const marks = Object.keys(MODES).map(mode => [mode, x.findIndex(p => Math.abs(p - d.result.flaps.detents[mode]) < 1e-6)]).filter(([, i]) => i >= 0 && Number.isFinite(y[i]));
       if (marks.length) traces.push({type: 'scatter', mode: 'markers', x: marks.map(([, i]) => x[i]), y: marks.map(([, i]) => y[i]),
