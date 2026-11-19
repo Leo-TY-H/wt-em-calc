@@ -130,18 +130,14 @@ def mass_figures(chart, entry):
     m, fm_mass, area = chart.mass, chart.fm['Mass'], float(chart.model['geometry']['area'])
     total, fuel, payload, extra = (float(m[k]) for k in ('mass', 'fuel_mass', 'payload_mass', 'additional_mass_kg'))
     empty = float(scalar(fm_mass.get('EmptyMass'), 0.))
-    rest = total - empty - fuel - payload - extra
     return section('MASS', [
         figure('Empty', empty, 'kg'),
-        figure('Crew and oil', rest if rest > .5 else None, 'kg'),
         figure('Fuel', fuel, 'kg', note=f"{chart.config['fuel_percent']:g}%"),
         figure('Fuel capacity', entry.get('fuel_capacity'), 'kg'),
         figure('Weapons and ammunition', payload if payload > 0. else None, 'kg'),
         figure('Additional', extra if extra > 0. else None, 'kg'),
         figure('Total', total, 'kg'),
-        figure('Maximum takeoff', scalar(fm_mass.get('Takeoff')), 'kg'),
-        figure('Wing loading', total / area if area > 0. else None, 'kg/m²', 1),
-        figure('Inertia · roll / yaw / pitch', [float(v) for v in m['inertia']], 'kg·m²')])
+        figure('Wing loading', total / area if area > 0. else None, 'kg/m²', 1)])
 
 
 def polar_at(chart, flaps):
@@ -158,28 +154,18 @@ def instructor_multiplier(chart):
 
 
 def aerodynamic_figures(chart, entry):
-    g, ad = chart.model['geometry'], chart.fm['Aerodynamics']
+    g = chart.model['geometry']
     span, area = float(g['span']), float(g['area'])
     clean, full = polar_at(chart, 0.), polar_at(chart, 1.) if entry.get('has_flaps') else None
     pair = lambda f: [f(clean)] + ([f(full)] if full is not None else [])
     suffix = ' · clean / full flaps'
     share = instructor_multiplier(chart)
-    wing = ad.get('WingPlane') or ad.get('WingPlaneSweep0') or {}
-    oswald = scalar((wing.get('FlapsPolar0') or {}).get('OswaldsEfficiencyNumber'), scalar(ad.get('OswaldsEfficiencyNumber')))
-    drag = lambda key: (lambda v: v if v and v > 0. else None)(scalar(ad.get(key)))
     return section('AERODYNAMICS', [
         figure('Wing area', area, 'm²', 2),
         figure('Wingspan', span, 'm', 2),
-        figure('Aspect ratio', span * span / area if area > 0. else None, '', 2),
-        figure('Sweep', float(g['sweep']) if g.get('sweep') else None, '°', 1),
-        figure('Lift slope', float(clean['clLineCoeff']) * float(clean['cyMult']), '/°', 4),
-        figure('Oswald efficiency', oswald, '', 2),
         figure('CL max' + suffix, pair(lambda p: float(p['cyCritH']) * float(p['clKq'])), '', 2),
         figure('Critical AoA' + suffix, pair(lambda p: float(p['aoaCritH'])), '°', 1),
-        figure('Instructor AoA' + suffix, pair(lambda p: share * float(p['aoaCritH'])), '°', 1),
-        figure('CD min' + suffix, pair(lambda p: float(p['cd0'])), '', 4),
-        figure('Gear CD', drag('GearCd'), '', 4),
-        figure('Airbrake CD', drag('AirbrakeCd'), '', 4)])
+        figure('Instructor AoA' + suffix, pair(lambda p: share * float(p['aoaCritH'])), '°', 1)])
 
 
 def limit_figures(chart, entry, profile):
@@ -189,7 +175,6 @@ def limit_figures(chart, entry, profile):
     gear = scalar(fm_mass.get('GearDestructionIndSpeed'))
     rows = [figure('VNE', float(strength['ias']) * 3.6, 'km/h IAS'),
             figure('Mach limit', float(strength['mach']), '', 2),
-            figure('Wing strength · + / −', [float(strength['force'][1]) / 1000., -float(strength['force'][0]) / 1000.], 'kN per wing', 1),
             figure('Instructor load limit · + / −', [float(props['loadFactorLimit'][1]), -float(props['loadFactorLimit'][0])]
                    if props.get('limitLoadfactor') and props.get('loadFactorLimit') else None, 'g', 1),
             figure('Gear limit', gear if gear and gear > 0. else None, 'km/h IAS')]
@@ -216,7 +201,7 @@ def propulsion_figures(chart, entry, name, mass):
     if entry['propulsion'] in PROPS:
         mains = [e for e in installed if e.get('Main', {}).get('Type') in ('Inline', 'Radial', 'TurboProp')]
         e = mains[0] if mains else {}
-        main, prop, compressor = e.get('Main', {}), e.get('Propellor', {}), e.get('Compressor', {})
+        main, compressor = e.get('Main', {}), e.get('Compressor', {})
         power = scalar(main.get('Power'))
         rows += [figure('Power per engine · 100% at 0 m', power, 'hp'),
                  figure('Power / weight', power * len(mains) / total if power else None, 'hp/kg', 3)]
@@ -225,20 +210,13 @@ def propulsion_figures(chart, entry, name, mass):
                 stage, height = scalar(compressor.get(f'Power{i}')), scalar(compressor.get(f'Altitude{i}'))
                 if stage and height is not None:
                     rows.append(figure(f'Supercharger gear {i + 1}', f'{stage:,.0f} hp at {height:,.0f} m'))
-        rows += [figure('RPM · 100% / WEP / limit', [scalar(main.get('RPMMax')), scalar(main.get('RPMAfterburner')), scalar(main.get('RPMMaxAllowed'))], 'rpm'),
-                 figure('Propeller', f"{scalar(prop.get('Diameter'), 0.):g} m · {int(scalar(prop.get('NumBlades'), 0))} blades" if prop.get('Diameter') else None),
-                 figure('Blade angle', [scalar(prop.get('PhiMin')), scalar(prop.get('PhiMax'))] if prop.get('PhiMax') is not None else None, '°', 1),
-                 figure('Reduction', scalar(prop.get('Reductor')), '', 3)]
     else:
         # Static thrust at sea level from the chart's own engine force, at 100% and (where the throttle goes there) 110%.
         from engine_performance import without_wep
         tops = [100.] if name in without_wep() else [100., 110.]
         thrust = [float(solver(name, 0., t, mass).engine.vectors(0.)[0][0]) / KGF for t in tops]
-        main = installed[0].get('Main', {}) if installed else {}
         rows += [figure('Static thrust at 0 m · 100% / 110%', thrust, 'kgf'),
                  figure('Thrust / weight · 100% / 110%', [t / total for t in thrust], '', 2)]
-        if main.get('Type') == 'Jet':
-            rows.append(figure('RPM · 100% / WEP / limit', [scalar(main.get('RPMMax')), scalar(main.get('RPMAfterburner')), scalar(main.get('RPMMaxAllowed'))], 'rpm'))
     return section('PROPULSION', rows)
 
 
