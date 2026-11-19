@@ -43,7 +43,7 @@ END_MARGIN = .01     # the last balanced state counts as the limit when its marg
 END_AHEAD = .05      # or when its margin's slope puts the limit within this many degrees of AoA
 BRACKET = .05        # widest AoA bracket (deg) of the limit that still gives a state
 MACH_STEP = .02      # Mach grid of the efficiency surface (the page reads between its rows)
-EXTENSION_STEP = 10. # extension grid of the efficiency curves, percent (plus 5%, the flap settings and the polar rows)
+EXTENSION_STEP = 1.  # extension grid of the efficiency curves, percent (plus the flap settings and the polar rows)
 GIVE_UP = 3          # consecutive Mach rows without a flaps-up state that end the grid at its slow end
 PROPS = ('piston', 'turboprop', 'mixed')
 
@@ -266,17 +266,24 @@ def efficiency(name, altitude, throttle, mass, detents):
         else:
             misses, previous = 0, reference
             lift0, drag0 = aerodynamic(reference)
-            neighbour = reference
+            neighbour, failed = reference, 0
             for i, x in enumerate(percents):
                 if speed > limit[x] - .0036 or lift0 <= 0. or drag0 <= 0.:continue
+                # Unsolved extensions come in runs (the Instructor's trim solve fails there) and each costs far more
+                # than a solved one: after GIVE_UP in a row the rest of this Mach row is left out.
+                if failed >= GIVE_UP:break
                 flapped, _ = instructor_state(charts[x], speed, seed=level or reference, near=neighbour)
-                if flapped is None:continue
-                neighbour = flapped
+                if flapped is None:
+                    failed += 1
+                    continue
+                neighbour, failed = flapped, 0
                 lift, drag = aerodynamic(flapped)
                 lift_gain, drag_gain = (lift / lift0 - 1.) * 100., (drag / drag0 - 1.) * 100.
-                row[i] = dict(score=lift_gain / drag_gain if abs(drag_gain) > 1e-9 else None, lift_gain_percent=lift_gain, drag_gain_percent=drag_gain,
-                              alpha_deg=flapped['alpha_deg'], clean_alpha_deg=reference['alpha_deg'], load_g=flapped['load_g'],
-                              clean_load_g=reference['load_g'], limiting=limiting(flapped))
+                # Rounded for the page (the surface is a few thousand records).
+                row[i] = dict(score=round(lift_gain / drag_gain, 5) if abs(drag_gain) > 1e-9 else None, lift_gain_percent=round(lift_gain, 3),
+                              drag_gain_percent=round(drag_gain, 3), alpha_deg=round(flapped['alpha_deg'], 3),
+                              clean_alpha_deg=round(reference['alpha_deg'], 3), load_g=round(flapped['load_g'], 3),
+                              clean_load_g=round(reference['load_g'], 3), limiting=limiting(flapped))
         grid.append(mach);rows.append(row)
     # Slow rows without any result are dropped.
     while rows and not any(rows[-1]):grid.pop();rows.pop()
