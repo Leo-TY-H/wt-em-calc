@@ -7,18 +7,18 @@ solver evaluates at Mach 0 (flaps up and fully down); a jet's static thrust is t
 a propeller engine's power is the FM's Main.Power (the solver's shaft power at 100% throttle at sea level, checked on
 the Bf 109 F-4, P-51D-5, Fw 190 A-5, La-7 and A2D).
 
-Flap curves, in indicated airspeed at the page's altitude:
-- schedule: the largest extension the game's flap actuator holds (flap_model: flapsLimByIas, flapsLimByMach and the
-  mechanism lock); only aircraft with such a schedule have one;
-- critical: the speed where flaps at each extension break (Mass.FlapsDestructionIndSpeedP*), checked by the game above
-  5% extension.
+Flap speeds, in indicated airspeed at the page's altitude; only the limits that apply are drawn (Leo, 2026-11-19: "use
+whatever limits that apply. for example on adf only the auto flap schedule apply"; "extension schedule and retraction
+schedule are not necessarily the same"):
+- holding an extension: the lower of the automatic retraction (flap_model: the actuator target capped by flapsLimByIas,
+  flapsLimByMach and the mechanism lock) and the critical speed where the flaps break (Mass.FlapsDestructionIndSpeedP*,
+  checked by the game above 5% extension); each drawn only where it is the lower one;
+- extending: the speed where the flaps' outward travel stops (dvFlapsOut reaching zero, flap_model.deployment_speed_limit;
+  flaps already out stay out), drawn below the holding limit.
 
-Flap efficiency (Leo: "percent gain in lift divided by percent gain in drag at the instructor aoa and the
-corresponding speed at each deployment percentage"; later the same day: only the flap settings the aircraft has,
-combat, takeoff and landing, one value each). For each setting:
-- speed: the EM chart's own speed limit with those flaps at the altitude (em_speed_limits.speed_limits: the lowest of
-  the schedule, the lock and the critical speed, or the aircraft's own limit where no flap limit lies below it), a
-  hair inside it;
+Flap efficiency (Leo: "percent gain in lift divided by percent gain in drag at the instructor aoa"; 2026-11-19 later:
+a Mach slider, the curve over every extension, the aircraft's own flap settings labelled). For each Mach of a grid and
+each extension that can be held there (the EM chart's own speed limit with those flaps, em_speed_limits.speed_limits):
 - state: the EM chart's steady level turn at that speed at the Instructor's full pull (Mouse aim): where the march's
   'Instructor pitch' margin or its control authority margin with autotrim reaches zero, whichever comes first, found
   by the chart's own prescribed-alpha correction, once with the flaps and once with flaps up at the same speed. The
@@ -42,6 +42,9 @@ MARGIN = 1e-5        # Instructor margin (tenths of a degree, or stick travel) t
 END_MARGIN = .01     # the last balanced state counts as the limit when its margin is below this,
 END_AHEAD = .05      # or when its margin's slope puts the limit within this many degrees of AoA
 BRACKET = .05        # widest AoA bracket (deg) of the limit that still gives a state
+MACH_STEP = .02      # Mach grid of the efficiency surface (the page reads between its rows)
+EXTENSION_STEP = 10. # extension grid of the efficiency curves, percent (plus 5%, the flap settings and the polar rows)
+GIVE_UP = 3          # consecutive Mach rows without a flaps-up state that end the grid at its slow end
 PROPS = ('piston', 'turboprop', 'mixed')
 
 
@@ -73,40 +76,64 @@ def ias_factor(altitude):
     return float(cache([1., 0., 0.], altitude)['ias_u'])
 
 
-def flap_curves(profile, altitude):
-    """(schedule, critical, detents) for the charts: schedule [[ias_kmh, percent], ...] or None without one; critical
-    [[ias_kmh, percent], ...] from 5% extension up; detents {combat|takeoff|landing: percent}."""
+def holding_limit(profile, percent, altitude):
+    """(IAS km/h, kind) of the lowest limit on holding an extension at this altitude: kind 'retraction' (automatic) or
+    'critical' (the flaps break); (None, None) where neither applies."""
     from air_state import speed_of_sound
-    from flap_model import DAMAGE_FRACTION, automatic_extension, curve_speed_limit, destruction_speed
-    if not profile['available']:return None, None, {}
-    critical = [(float(destruction_speed(profile, x)) * 3.6, x * 100.) for x in
-                sorted({float(DAMAGE_FRACTION), 1.} | {float(x) for x, _ in profile['destruction_mps'] if DAMAGE_FRACTION < x < 1.})]
+    from flap_model import limits
+    row = limits(profile, percent)
+    if row is None:return None, None
     mach_to_ias = float(speed_of_sound(altitude)) * 3.6 * ias_factor(altitude)
-    lock = min((v for v in (profile['lock_ias_kmh'], profile['lock_mach'] and profile['lock_mach'] * mach_to_ias) if v), default=None)
-    scheduled = (curve_speed_limit(profile['ias_curve'], 1.) is not None or curve_speed_limit(profile['mach_curve'], 1.) is not None
-                 or lock is not None)
-    schedule = None
-    if scheduled:
-        top = 1.1 * max([v for v, _ in critical] + [lock or 0.] + [x for x in profile['ias_curve'][:2] if x < 2900.])
-        knots = {0., top} | {float(x) for x in profile['ias_curve'][:2]} | {float(x) * mach_to_ias for x in profile['mach_curve'][:2]}
-        schedule = []
-        for v in sorted(k for k in knots if 0. <= k <= top):
-            if lock is not None and v > lock:
-                if not schedule or schedule[-1][0] < lock:
-                    schedule += [(lock, float(automatic_extension(profile, lock, lock / mach_to_ias)) * 100.), (lock, 0.)]
-                schedule.append((v, 0.))
-            else:schedule.append((v, float(automatic_extension(profile, v, v / mach_to_ias)) * 100.))
-    return schedule, critical, {k: v for k, v in profile['modes'].items() if v is not None}
+    automatic = [v for v in (row['automatic_ias_kmh'], row['automatic_mach'] and row['automatic_mach'] * mach_to_ias) if v is not None]
+    candidates = ([(min(automatic), 'retraction')] if automatic else []) + ([(float(row['destruction_ias_kmh']), 'critical')] if row['damage'] else [])
+    return min(candidates) if candidates else (None, None)
+
+
+def flap_limits(profile, altitude):
+    """(segments, detents) for the flap speeds chart: segments [{kind, points: [[ias_kmh, percent], ...]}] of the limits
+    that apply (kind 'retraction' | 'critical' | 'extension'); detents {combat|takeoff|landing: percent}."""
+    from flap_model import deployment_speed_limit
+    if not profile['available']:return [], {}
+    segments = []
+    # Every half percent from fully out down to (nearly) in; a change of the lower limit starts a new segment at the
+    # same point so the lines meet.
+    for i in range(200, -1, -1):
+        percent = max(.5 * i, 1e-3)
+        speed, kind = holding_limit(profile, percent, altitude)
+        if kind is None:continue
+        point = [float(speed), .5 * i]
+        if segments and segments[-1]['kind'] != kind and abs(segments[-1]['points'][-1][1] - point[1]) <= .5:
+            segments[-1]['points'].append(point)
+        if not segments or segments[-1]['kind'] != kind:segments.append(dict(kind=kind, points=[]))
+        segments[-1]['points'].append(point)
+    for segment in segments:
+        # Straight runs keep only their ends.
+        pts, kept = segment['points'], []
+        for j, q in enumerate(pts):
+            if 0 < j < len(pts) - 1:
+                (x0, y0), (x1, y1) = kept[-1], pts[j + 1]
+                # within 0.02 km/h or percent of the straight line between its neighbours (the speeds are binary32)
+                if abs((q[0] - x0) * (y1 - y0) - (q[1] - y0) * (x1 - x0)) <= .02 * math.hypot(x1 - x0, y1 - y0):continue
+            kept.append(q)
+        segment['points'] = kept
+    stop = deployment_speed_limit(profile.get('deployment_rate_curve'))
+    if stop is not None:
+        # Extensions that can be held at the speed where outward travel stops: the line runs up to the highest.
+        held = [.5 * i for i in range(1, 201) if (lambda v: v is None or v > stop)(holding_limit(profile, .5 * i, altitude)[0])]
+        if held:segments.append(dict(kind='extension', points=[[float(stop), 0.], [float(stop), max(held)]]))
+    return segments, {k: v for k, v in profile['modes'].items() if v is not None}
 
 
 # ---- Flap efficiency ------------------------------------------------------------------------
 
-def instructor_state(chart, speed_kmh, seed=None, why=None):
+def instructor_state(chart, speed_kmh, seed=None, why=None, near=None):
     """The steady level turn at this speed at the Instructor's full pull: its AoA limit or the end of its control
     authority with autotrim (em_march.margins: 'Instructor pitch', 'control'), with the balanced state the search
     started from; (None, start) where there is none (no balanced flight inside the limit there, or the turn stops
     balancing short of it; why: a list that gets the reason). seed: a balanced state of the same aircraft in another
-    configuration at this speed, tried as the start where the unseeded level-flight solve does not close."""
+    configuration at this speed, tried as the start where the unseeded level-flight solve does not close. near: a
+    neighbouring full-pull state (another extension or speed): the search starts at its AoA when that balances here,
+    which takes a few corrections instead of the march up from level flight; the result is the same limit."""
     import em_sampling
     from em_stationary_boundary import Curve
     def margin(p):
@@ -116,6 +143,9 @@ def instructor_state(chart, speed_kmh, seed=None, why=None):
         if why is not None:why.append(reason)
         return None
     curve = Curve(chart, speed_kmh)
+    if near is not None:
+        found = near_limit(curve, near, margin)
+        if found is not None:return found, None
     low = None
     try:
         low = em_sampling.solve_level(chart, speed_kmh, None)
@@ -150,7 +180,14 @@ def instructor_state(chart, speed_kmh, seed=None, why=None):
             high, m_high = p, m
             break
     if high is None:return fail('limit not reached'), start
-    # Safeguarded secant (Illinois): an end kept twice in a row counts half.
+    low, width = bracketed(at, low, m_low, high, m_high, margin)
+    if width > BRACKET and margin(low) > END_MARGIN:return fail('limit bracketed only to %.2f deg' % width), start
+    return low, start
+
+
+def bracketed(at, low, m_low, high, m_high, margin):
+    """The admitted side of the limit between two states (margins m_low > 0 >= m_high), and the AoA bracket left.
+    Safeguarded secant (Illinois): an end kept twice in a row counts half."""
     w_low = w_high = 1.
     for _ in range(60):
         if m_low <= MARGIN or high['alpha_deg'] - low['alpha_deg'] < 1e-5:break
@@ -163,9 +200,32 @@ def instructor_state(chart, speed_kmh, seed=None, why=None):
             if m is None:break   # the admitted side found so far is within the bracket of the limit
         if m > 0.:low, m_low, w_low, w_high = p, m, 1., .5 * w_high
         else:high, m_high, w_high, w_low = p, m, 1., .5 * w_low
-    if high['alpha_deg'] - low['alpha_deg'] > BRACKET and m_low > END_MARGIN:
-        return fail('limit bracketed only to %.2f deg' % (high['alpha_deg'] - low['alpha_deg'])), start
-    return low, start
+    return low, (0. if m_low <= MARGIN else high['alpha_deg'] - low['alpha_deg'])
+
+
+def near_limit(curve, near, margin):
+    """The full-pull state found from a neighbouring one: a state on each side of the limit within a few degrees of the
+    neighbour's AoA, then the same bracket search. None where that does not work out (the caller starts from level)."""
+    at = lambda seed, alpha: curve.correct(seed, alpha=float(alpha), max_nfev=40, max_evaluations=400)
+    p = at(near, near['alpha_deg'])
+    m = margin(p) if p is not None else None
+    if m is None:return None
+    low = high = None
+    if m > 0.:low, m_low = p, m
+    else:high, m_high = p, m
+    step = .5
+    for _ in range(5):
+        base = low if high is None else high
+        q = at(base, base['alpha_deg'] + (step if high is None else -step))
+        mq = margin(q) if q is not None else None
+        if mq is None:return None
+        if mq > 0.:low, m_low = q, mq
+        else:high, m_high = q, mq
+        if low is not None and high is not None:break
+        step *= 2.
+    if low is None or high is None:return None
+    state, width = bracketed(lambda alpha: at(low, alpha), low, m_low, high, m_high, margin)
+    return state if width <= BRACKET else None
 
 
 def aerodynamic(point):
@@ -176,43 +236,53 @@ def aerodynamic(point):
     return fx * math.sin(a) + fy * math.cos(a), -(fx * math.cos(a) - fy * math.sin(a))
 
 
-FLAP_LIMITS = {'Flap IAS limit': 'critical', 'Flap automatic IAS limit': 'schedule', 'Flap automatic Mach limit': 'schedule',
-               'VNE': 'VNE', 'Mach limit': 'Mach limit', 'Wing sweep limit': 'wing sweep'}
-MODES = ('combat', 'takeoff', 'landing')
-
-
 def efficiency(name, altitude, throttle, mass, detents):
+    """The flap efficiency surface: dict(mach: ascending grid, percents: extensions, sound_kmh, limit_mach: the highest
+    Mach each extension can be held at, default_mach: the highest grid Mach where every extension can be held, rows:
+    per Mach a list with one record per extension, None where it cannot be held or no state was found)."""
+    from air_state import speed_of_sound
     from em_speed_limits import speed_limits
-    """One row per flap setting the aircraft has (flap_model.profile modes), in the game's order."""
     clean = solver(name, altitude, throttle, mass, 0., structural=False)
-    factor = ias_factor(altitude)
-    rows = []
-    for mode in MODES:
-        percent = detents.get(mode)
-        if percent is None or percent <= 0.:continue
-        percent = float(percent)
-        chart = solver(name, altitude, throttle, mass, percent, structural=False)
-        limit = speed_limits(chart.fm, dict(chart.config, structural_limits=True))
-        row = dict(mode=mode, percent=percent, limit=FLAP_LIMITS.get(limit['kind'], limit['kind']))
-        speed = limit['sample_speed_kmh']
-        row.update(speed_kmh=speed, ias_kmh=speed * factor)
-        why = []
-        reference, level = instructor_state(clean, speed, why=why)
-        flapped, _ = instructor_state(chart, speed, seed=level, why=why)
-        if why:row['unsolved'] = '; '.join(why)
-        if flapped is not None and reference is not None:
-            (lift, drag), (lift0, drag0) = aerodynamic(flapped), aerodynamic(reference)
-            if lift0 > 0. and drag0 > 0.:
+    rows_of_polar = [100. * float(r[0]) for r in (clean.model.get('flaps') or [])]
+    percents = sorted({5.} | {EXTENSION_STEP * i for i in range(1, int(100. / EXTENSION_STEP) + 1)} | {round(float(v), 3) for v in detents.values()}
+                      | {round(v, 3) for v in rows_of_polar if 0. < v < 100.})
+    percents = [x for x in percents if x > 0.]
+    sound = float(speed_of_sound(altitude)) * 3.6
+    charts = {x: solver(name, altitude, throttle, mass, x, structural=False) for x in percents}
+    limit = {x: speed_limits(charts[x].fm, dict(charts[x].config, structural_limits=True))['speed_kmh'] for x in percents}
+    # The grid runs down from the fastest speed any extension above the damage threshold can be held at.
+    top = max(limit[x] for x in percents if x > 5. or len(percents) == 1)
+    steps = int(math.floor(top / sound / MACH_STEP + 1e-9))
+    full = min(int(math.floor(limit[percents[-1]] / sound / MACH_STEP + 1e-9)), steps)
+    limiting = lambda p: 'aoa' if p['instructor']['limiting'] == 'Instructor effective AoA' else 'control'
+    grid, rows, misses, previous = [], [], 0, None
+    for k in range(steps, 1, -1):
+        mach = MACH_STEP * k;speed = mach * sound
+        reference, level = instructor_state(clean, speed, near=previous)
+        row = [None] * len(percents)
+        if reference is None:
+            misses += 1
+            if misses >= GIVE_UP and k < full:break
+        else:
+            misses, previous = 0, reference
+            lift0, drag0 = aerodynamic(reference)
+            neighbour = reference
+            for i, x in enumerate(percents):
+                if speed > limit[x] - .0036 or lift0 <= 0. or drag0 <= 0.:continue
+                flapped, _ = instructor_state(charts[x], speed, seed=level or reference, near=neighbour)
+                if flapped is None:continue
+                neighbour = flapped
+                lift, drag = aerodynamic(flapped)
                 lift_gain, drag_gain = (lift / lift0 - 1.) * 100., (drag / drag0 - 1.) * 100.
-                limiting = lambda p: 'aoa' if p['instructor']['limiting'] == 'Instructor effective AoA' else 'control'
-                row.update(mach=float(flapped['mach']), lift_gain_percent=lift_gain, drag_gain_percent=drag_gain,
-                           limiting=limiting(flapped), clean_limiting=limiting(reference),
-                           score=lift_gain / drag_gain if abs(drag_gain) > 1e-9 else None,
-                           alpha_deg=flapped['alpha_deg'], clean_alpha_deg=reference['alpha_deg'],
-                           load_g=flapped['load_g'], clean_load_g=reference['load_g'],
-                           lift_n=lift, drag_n=drag, clean_lift_n=lift0, clean_drag_n=drag0)
-        rows.append(row)
-    return rows
+                row[i] = dict(score=lift_gain / drag_gain if abs(drag_gain) > 1e-9 else None, lift_gain_percent=lift_gain, drag_gain_percent=drag_gain,
+                              alpha_deg=flapped['alpha_deg'], clean_alpha_deg=reference['alpha_deg'], load_g=flapped['load_g'],
+                              clean_load_g=reference['load_g'], limiting=limiting(flapped))
+        grid.append(mach);rows.append(row)
+    # Slow rows without any result are dropped.
+    while rows and not any(rows[-1]):grid.pop();rows.pop()
+    grid.reverse();rows.reverse()
+    return dict(mach=[round(m, 4) for m in grid], percents=percents, sound_kmh=sound, limit_mach=[limit[x] / sound for x in percents],
+                default_mach=round(MACH_STEP * full, 4), rows=rows)
 
 
 # ---- Figures --------------------------------------------------------------------------------
@@ -355,13 +425,13 @@ def compute(name, altitude, throttle, mass='{}'):
     with LOCK:
         chart = solver(name, altitude, throttle, mass)
         profile = entry['flaps']
-        schedule, critical, detents = flap_curves(profile, altitude)
+        limits, detents = flap_limits(profile, altitude)
         return dict(aircraft_id=name, name=entry['name'], propulsion=entry['propulsion'], altitude_m=altitude, throttle_percent=throttle,
                     mass_kg=float(chart.mass['mass']),
                     sections=[mass_figures(chart, entry), aerodynamic_figures(chart, entry), limit_figures(chart, entry, profile),
                               propulsion_figures(chart, entry, name, mass)],
-                    flaps=dict(available=bool(profile['available']), schedule=schedule, critical=critical, detents=detents,
-                               efficiency=efficiency(name, altitude, throttle, mass, detents) if profile['available'] else []),
+                    flaps=dict(available=bool(profile['available']), limits=limits, detents=detents,
+                               efficiency=efficiency(name, altitude, throttle, mass, detents) if profile['available'] else None),
                     elapsed_s=time.perf_counter() - started)
 
 

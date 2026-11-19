@@ -9,6 +9,11 @@
 /* Two charts side by side, the figures below them. */
 .plane-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:26px}
 .plane-chart{height:440px;width:100%}
+/* The Mach slider sits in the efficiency card's heading row. */
+.plane-charts .chart-card{position:relative}
+.plane-mach{position:absolute;top:-4px;right:0;display:flex;align-items:center;gap:10px;margin:0;font-size:12px;white-space:nowrap;z-index:2}
+.plane-mach output{float:none;min-width:150px;font-variant-numeric:tabular-nums;color:var(--text)}
+.plane-mach input[type=range]{width:min(220px,26vw);margin:0}
 #plane-workspace h3{margin:0 0 6px;font-size:10px;font-weight:600;letter-spacing:.15em;color:var(--muted)}
 .plane-tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 36px}
 .plane-tables.wide{grid-template-columns:minmax(0,1fr)}

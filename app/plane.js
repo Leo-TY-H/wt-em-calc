@@ -26,7 +26,7 @@
     <div id="plane-empty" class="plane-empty">${EMPTY}</div>
     <div id="plane-charts" class="plane-charts" hidden>
       <section class="chart-card"><h3>FLAP SPEEDS</h3><div id="plane-flaps-chart" class="plane-chart" aria-label="Flap schedule and critical speed"></div></section>
-      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
+      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><label class="field plane-mach" id="plane-mach-field">Mach <output id="plane-mach-label"></output><input id="plane-mach" type="range" min="0" max="1" step="0.01" value="0" aria-label="Mach"></label><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
     </div>
     <div id="plane-tables" class="plane-tables" hidden></div>
     <section id="plane-version-changes" class="version-changes" hidden></section>
@@ -238,7 +238,7 @@
         el('plane-run').style.setProperty('--progress', `${(i + 1) / wanted.length * 100}%`);
       }
       shown = {...run, entries: wanted.map(e => structuredClone(e))};
-      render();
+      machTouched = false; render();
       window.GameVersions?.changes(el('plane-version-changes'), wanted.map(e => ({id: e.aircraft_id, kind: 'fm', version: e.version, name: cleanName(aircraftOf(e)?.name || e.aircraft_id)})));
     } catch (error) { showError(error.message); }
     finally { busy(false); }
@@ -311,47 +311,99 @@
     });
     return out;
   }
-  // Flap speeds: extension against indicated airspeed. Critical speed solid, the automatic schedule dashed.
+  // Flap speeds: extension against indicated airspeed, only the limits that apply (Leo, 2026-11-19). Holding an
+  // extension: the critical speed solid, the automatic retraction dashed, each where it is the lower one; extending:
+  // the speed where the flaps stop travelling out, dotted.
+  const LIMITS = {critical: ['Critical speed', 'solid', 1], retraction: ['Auto retraction', 'dash', 0], extension: ['Extension limit', 'dot', 1]};
   function renderFlaps(list) {
     const traces = [];
     for (const d of list) {
-      const flaps = d.result.flaps, name = entryName(d);
-      const line = (points, label, dash) => traces.push({type: 'scatter', mode: 'lines', x: points.map(p => p[0]), y: points.map(p => p[1]), name: `${name} · ${label.toLowerCase()}`,
-        line: {color: d.color, width: 2.4, dash}, hoverlabel: {bordercolor: d.color},
-        hovertemplate: `${label}<br>%{y:.0f}%<br>%{x:,.0f} km/h IAS<extra>${escapeText(name)}</extra>`});
-      line(dense(flaps.critical, 1), 'Critical speed', 'solid');
-      if (flaps.schedule) line(dense(flaps.schedule, 0), 'Schedule', 'dash');
+      const name = entryName(d);
+      for (const segment of d.result.flaps.limits) {
+        const [label, dash, along] = LIMITS[segment.kind], points = dense(segment.points, along), group = `${d.entry.id}-${segment.kind}`;
+        traces.push({type: 'scatter', mode: 'lines', x: points.map(p => p[0]), y: points.map(p => p[1]), name: `${name} · ${label.toLowerCase()}`,
+          legendgroup: group, showlegend: !traces.some(t => t.legendgroup === group), line: {color: d.color, width: 2.4, dash}, hoverlabel: {bordercolor: d.color},
+          hovertemplate: `${label}<br>%{y:.0f}%<br>%{x:,.0f} km/h IAS<extra>${escapeText(name)}</extra>`});
+      }
     }
     const layout = layoutBase(traces, 'flaps');
     layout.xaxis = {...axisStyle, title: {text: `Indicated airspeed (km/h) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, rangemode: 'tozero'};
     layout.yaxis = {...axisStyle, title: {text: 'Flap extension (%)', standoff: 8, font: {size: 13}}, range: [0, 104]};
     draw('plane-flaps-chart', list, traces, layout, 'flap-speeds');
   }
-  // Flap efficiency (Leo, 2026-11-19: only the settings an aircraft has): lift gain over drag gain of the combat,
-  // takeoff and landing flaps, each at its own speed limit and Instructor AoA; a bar per aircraft and setting.
-  const MODES = {combat: 'Combat', takeoff: 'Takeoff', landing: 'Landing'};
+  // Flap efficiency (Leo, 2026-11-19): lift gain over drag gain against extension at the slider's Mach, every extension
+  // that can be held there, with the aircraft's own flap settings labelled. The server sends the whole surface (a row
+  // per 0.02 Mach); the slider reads between its rows, so sliding asks for nothing.
+  const MODES = {combat: 'Combat', takeoff: 'Takeoff', landing: 'Landing'}, NUMBERS = ['score', 'lift_gain_percent', 'drag_gain_percent', 'alpha_deg', 'clean_alpha_deg', 'load_g', 'clean_load_g'];
+  let machTouched = false;
+  // One aircraft's records at a Mach: per extension, between the two grid rows around it; an extension that can still
+  // be held but has no row above keeps the row below.
+  function scoreRow(surface, mach) {
+    const grid = surface.mach, last = grid.length - 1;
+    if (!grid.length || mach < grid[0] - 1e-9) return null;
+    let k = grid.findIndex(m => m > mach + 1e-9) - 1; if (k < 0) k = last;
+    const t = k < last ? Math.max(0, (mach - grid[k]) / (grid[k + 1] - grid[k])) : 0;
+    return surface.percents.map((_, i) => {
+      if (mach > surface.limit_mach[i] + 1e-9) return null;
+      const a = surface.rows[k][i], b = k < last ? surface.rows[k + 1][i] : null;
+      if (!a || !Number.isFinite(a.score)) return null;
+      if (t < 1e-9 || !b || !Number.isFinite(b.score)) return mach - grid[k] < .0201 ? a : null;
+      return {...a, ...Object.fromEntries(NUMBERS.map(key => [key, a[key] + (b[key] - a[key]) * t]))};
+    });
+  }
+  function machRange(list) {
+    const surfaces = list.map(d => d.result.flaps.efficiency).filter(e => e?.mach.length);
+    if (!surfaces.length) return null;
+    const tops = surfaces.map(e => Math.max(...e.limit_mach.map((m, i) => e.rows.some(row => row[i]) ? Math.min(m, e.mach[e.mach.length - 1] + .02) : 0)));
+    return {min: Math.min(...surfaces.map(e => e.mach[0])), max: Math.floor(Math.max(...tops) * 100 + 1e-6) / 100,
+      start: Math.min(...surfaces.map(e => e.default_mach))};
+  }
   function renderScore(list) {
-    const traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%';
-    const LIMIT = {critical: 'critical speed', schedule: 'schedule'}, PULL = {aoa: 'Instructor AoA', control: 'full stick'};
-    const modes = Object.keys(MODES).filter(m => list.some(d => d.result.flaps.efficiency.some(r => r.mode === m)));
+    const range = machRange(list), slider = el('plane-mach');
+    el('plane-mach-field').hidden = !range;
+    if (!range) { if (el('plane-score-chart').classList.contains('js-plotly-plot')) Plotly.purge(el('plane-score-chart')); return; }
+    slider.min = range.min.toFixed(2); slider.max = range.max.toFixed(2);
+    if (!machTouched || +slider.value < range.min || +slider.value > range.max) slider.value = Math.max(range.min, Math.min(range.max, range.start)).toFixed(2);
+    const mach = +slider.value, sound = list.find(d => d.result.flaps.efficiency)?.result.flaps.efficiency.sound_kmh;
+    el('plane-mach-label').textContent = `${mach.toFixed(2)} · ${fmt(mach * sound, 0)} km/h TAS`;
+    const traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%', PULL = {aoa: 'Instructor AoA', control: 'full stick'};
+    const scores = [], labels = [];
     for (const d of list) {
-      const all = d.result.flaps.efficiency, name = entryName(d), solved = r => Number.isFinite(r?.score);
-      if (!all.some(solved)) continue;
-      const rows = modes.map(m => all.find(r => r.mode === m));
-      traces.push({type: 'bar', x: modes.map(m => MODES[m]), y: rows.map(r => solved(r) ? r.score : null), name,
-        marker: {color: rgba(d.color, .22), line: {color: d.color, width: 2}}, hoverlabel: {bordercolor: d.color},
-        customdata: rows.map(r => solved(r) ? [signed(r.lift_gain_percent), signed(r.drag_gain_percent), fmt(r.ias_kmh, 0), LIMIT[r.limit] || r.limit || '', fmt(r.alpha_deg, 1), fmt(r.clean_alpha_deg, 1),
-          fmt(r.load_g, 2), fmt(r.clean_load_g, 2), PULL[r.limiting] || '', fmt(r.percent, 0)] : []),
-        hovertemplate: `%{y:.3f}<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>%{x} %{customdata[9]}% · %{customdata[2]} km/h IAS (%{customdata[3]})<br>` +
-          `AoA %{customdata[4]}° · flaps up %{customdata[5]}°<br>%{customdata[6]} g · flaps up %{customdata[7]} g<br>%{customdata[8]}<extra>${escapeText(name)}</extra>`});
+      const surface = d.result.flaps.efficiency; if (!surface?.mach.length) continue;
+      for (const row of surface.rows) for (const r of row) if (Number.isFinite(r?.score)) scores.push(r.score);
+      const rows = scoreRow(surface, mach), name = entryName(d);
+      // An aircraft with nothing at this Mach keeps its legend row.
+      const at = i => rows?.[i], x = surface.percents, y = x.map((_, i) => at(i)?.score ?? null);
+      traces.push({type: 'scatter', mode: 'lines', x, y, name, connectgaps: false, line: {color: d.color, width: 2.4}, hoverlabel: {bordercolor: d.color},
+        customdata: x.map((_, i) => at(i) ? [signed(at(i).lift_gain_percent), signed(at(i).drag_gain_percent), fmt(at(i).alpha_deg, 1), fmt(at(i).clean_alpha_deg, 1),
+          fmt(at(i).load_g, 2), fmt(at(i).clean_load_g, 2), PULL[at(i).limiting] || ''] : []),
+        hovertemplate: `%{y:.3f}<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>Flaps %{x:.0f}% · Mach ${mach.toFixed(2)}<br>` +
+          `AoA %{customdata[2]}° · flaps up %{customdata[3]}°<br>%{customdata[4]} g · flaps up %{customdata[5]} g<br>%{customdata[6]}<extra>${escapeText(name)}</extra>`});
+      // The aircraft's own flap settings on its curve.
+      const marks = Object.keys(MODES).map(mode => [mode, x.findIndex(p => Math.abs(p - d.result.flaps.detents[mode]) < 1e-6)]).filter(([, i]) => i >= 0 && Number.isFinite(y[i]));
+      if (marks.length) traces.push({type: 'scatter', mode: 'markers', x: marks.map(([, i]) => x[i]), y: marks.map(([, i]) => y[i]),
+        marker: {color: d.color, size: 9, symbol: 'diamond-open', line: {width: 2}}, showlegend: false, hoverinfo: 'skip', cliponaxis: false});
+      for (const [mode, i] of marks) labels.push({x: x[i], y: y[i], text: MODES[mode], color: d.color});
     }
     const layout = layoutBase(traces, 'score');
-    Object.assign(layout, {barmode: 'group', bargap: .3, bargroupgap: .12});
-    layout.xaxis = {...axisStyle, showgrid: false, type: 'category', categoryorder: 'array', categoryarray: modes.map(m => MODES[m]),
-      title: {text: `Flap setting · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, fixedrange: true};
-    layout.yaxis = {...axisStyle, title: {text: 'Lift gain / drag gain', standoff: 8, font: {size: 13}}, zeroline: true, zerolinecolor: 'rgba(240,240,250,.35)'};
+    layout.xaxis = {...axisStyle, title: {text: `Flap extension (%) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, range: [0, 104]};
+    // One scale for every Mach, so the curves move and the axis does not: the middle 96% of all scores, and zero.
+    scores.sort((a, b) => a - b);
+    const low = Math.min(0, scores[Math.floor(.02 * (scores.length - 1))] ?? 0), high = Math.max(0, scores[Math.ceil(.98 * (scores.length - 1))] ?? 1), pad = .08 * (high - low || 1);
+    layout.yaxis = {...axisStyle, title: {text: 'Lift gain / drag gain', standoff: 8, font: {size: 13}}, range: [low - (low < 0 ? pad : 0), high + pad], zeroline: true, zerolinecolor: 'rgba(240,240,250,.35)'};
+    // Setting names beside their marks, moved up or down so that none covers another (sizes from the first view's axes).
+    const chart = el('plane-score-chart'), width = Math.max(200, chart.clientWidth - layout.margin.l - layout.margin.r), height = Math.max(120, chart.clientHeight - layout.margin.t - layout.margin.b);
+    const [y0, y1] = layout.yaxis.range, placed = [];
+    layout.annotations = labels.sort((a, b) => a.x - b.x || b.y - a.y).map(label => {
+      const right = label.x > 88, w = 6.4 * label.text.length + 4, px = label.x / 104 * width, py = (y1 - label.y) / (y1 - y0) * height;
+      const left = right ? px - w : px - w / 2, clear = shift => !placed.some(b => left < b.left + b.w && b.left < left + w && Math.abs(py - shift - b.y) < 13);
+      const shift = [14, -14, 27, -27, 40, -40, 53, -53].find(clear) ?? 14;
+      placed.push({left, w, y: py - shift});
+      return {x: label.x, y: label.y, text: label.text, showarrow: false, yshift: shift, xanchor: right ? 'right' : 'center', font: {color: label.color, size: 11}};
+    });
     draw('plane-score-chart', list, traces, layout, 'flap-efficiency');
   }
+  el('plane-mach').addEventListener('input', () => { machTouched = true; const list = displayed().filter(d => d.result.flaps.available); if (list.length) renderScore(list); });
   function download() {
     const list = displayed(); if (!list.length) return;
     const link = document.createElement('a');
