@@ -222,7 +222,7 @@ cdef class PropModel:
         cdef EngState* S_
         cdef TransT* T
         from prop_steady import initial_state
-        from em_manual_controls import manual_rpm_governor
+        from em_manual_controls import governs, manual_rpm_governor
         from prop_quasisteady import prepare_blades
         from polar_model import mach_curve
         from component_assembly import f32
@@ -379,7 +379,7 @@ cdef class PropModel:
         def variable(path, value, scale, lo, hi):
             paths.append(path);scales.append(scale);lower.append(lo/scale);upper.append(hi/scale);initial.append(value/scale)
         for i, t in enumerate(p['transmissions']):
-            links = [l for l in t['propellers'] if p['propellers'][l['index']]['properties']['governor']
+            links = [l for l in t['propellers'] if governs(p['propellers'][l['index']]['properties'])
                      and (seed['propellers'][l['index']]['auto'] or manual_rpm_governor(p['propellers'][l['index']]['properties']))]
             self.ngoverned[i] = len(links)
             for j, l in enumerate(links):
@@ -1325,6 +1325,8 @@ cdef class PropModel:
         for s in range(self.nt):
             if not self.ngoverned[s]:
                 status.append('manual blade pitch' if any(self.props[self.trans[s].props[k].index].governor
+                                                          and self.props[self.trans[s].props[k].index].pitch_max
+                                                          > self.props[self.trans[s].props[k].index].pitch_min
                                                           for k in range(self.trans[s].np)) else 'fixed pitch')
             else:
                 status.append('minimum pitch' if ps.fractions[s] <= 2e-5 else
@@ -1514,7 +1516,8 @@ cdef class PropModel:
             if not self.ngoverned[s]:
                 manual = False
                 for k in range(self.trans[s].np):
-                    if self.props[self.trans[s].props[k].index].governor:manual = True
+                    if (self.props[self.trans[s].props[k].index].governor
+                            and self.props[self.trans[s].props[k].index].pitch_max > self.props[self.trans[s].props[k].index].pitch_min):manual = True
                 status.append('manual blade pitch' if manual else 'fixed pitch')
             else:
                 if not (ps.fractions[s] <= 2e-5 or ps.fractions[s] >= 1.-2e-5

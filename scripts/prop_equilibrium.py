@@ -16,7 +16,7 @@ from control_mixer import density_at_height
 from piston_model import div
 from prop_equilibrium_blocks import variable_blocks, grouped_jacobian
 from em_trim_work import charge
-from em_manual_controls import manual_rpm_governor
+from em_manual_controls import governs, manual_rpm_governor
 from prop_governor_branch import select as select_governor_branch
 from prop_governor_evaluator import prepare as prepare_governor_evaluators
 
@@ -114,7 +114,7 @@ def solve(p, velocity, height, body_omega, cg, dt, nitro, controls, torque_gyro=
         paths.append(path); scales.append(scale)
         lower.append(lo / scale); upper.append(hi / scale); initial.append(value / scale)
     for i, t in enumerate(p['transmissions']):
-        links = [link for link in t['propellers'] if p['propellers'][link['index']]['properties']['governor']
+        links = [link for link in t['propellers'] if governs(p['propellers'][link['index']]['properties'])
                  and (seed['propellers'][link['index']]['auto'] or
                       manual_rpm_governor(p['propellers'][link['index']]['properties']))]
         governed.append(links)
@@ -451,7 +451,7 @@ def _result(p, state, controls, governed, last, residual, calls, early_stops):
         shaft_target_rpm=[v * 60 / (2 * math.pi) for v in targets],
         shaft_rpm_error=[v * 60 / (2 * math.pi) for v in rpm_errors],
         induced_flow_residual_mps=[[a-b for a,b in zip(q['equilibrium_flow'],q['flow'])] for q in r['propellers']],
-        governor_status=[(('manual blade pitch' if any(p['propellers'][l['index']]['properties']['governor']
+        governor_status=[(('manual blade pitch' if any(governs(p['propellers'][l['index']]['properties'])
                           for l in p['transmissions'][i]['propellers']) else 'fixed pitch') if not governed[i] else 'minimum pitch' if fractions[i] <= 2e-5 else
                           'maximum pitch' if fractions[i] >= 1 - 2e-5 else 'target RPM') for i in range(len(governed))])
     return dict(state=r, force=row[:3], moment=row[3:6], angular_momentum=row[6:9], wash=row[9:],

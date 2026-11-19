@@ -8,14 +8,14 @@ therefore covers requests, not torque/wake equilibria or aircraft trims.
 import itertools
 import math
 
-from em_manual_controls import manual_rpm_governor
+from em_manual_controls import governs, manual_rpm_governor
 from prop_quasisteady import engine_output
 from propulsion_general import delivered_boost, target_omega
 
 
 def governed_links(properties, seed, shaft):
     return [link for link in shaft['propellers']
-            if properties['propellers'][link['index']]['properties']['governor']
+            if governs(properties['propellers'][link['index']]['properties'])
             and (seed['propellers'][link['index']]['auto']
                  or manual_rpm_governor(properties['propellers'][link['index']]['properties']))]
 

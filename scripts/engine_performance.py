@@ -862,17 +862,6 @@ def _prop_fast_setup(base_chart):
             if path[0] == 'pitch':other[j] = fraction
             elif path[0] == 'flow' and path[2] < 2:other[j] = axial
         alternates.append(np.clip(other, layout.lower[ps:], layout.upper[ps:]))
-    # A governed propeller whose two pitch stops coincide (Ba.65 K.14 L: 24 degrees both) has no state on the governor's
-    # own range: the coordinate changes nothing between 0 and 1, so a solve started there never leaves it. Its states
-    # are on the stops, with the RPM free (below 0: under the governor's RPM, above 1: over it): two starts there.
-    if any(link['index'] is not None and p['propellers'][link['index']]['properties'].get('governor')
-           and p['propellers'][link['index']]['properties']['pitch_max'] <= p['propellers'][link['index']]['properties']['pitch_min']
-           for shaft in p['transmissions'] for link in shaft['propellers']):
-        for stop in (-.05, 1.05):
-            other = initial.copy()
-            for j, path in enumerate(layout.paths):
-                if path[0] == 'pitch':other[j] = stop
-            alternates.append(np.clip(other, layout.lower[ps:], layout.upper[ps:]))
     return dict(s2=s2, active=layout.active, rows=layout.rows, nt=len(p['transmissions']), engines=p['engines'], alternates=alternates,
                 flows={}, table_speeds=[e['turbine']['speed'] for e in p['engines'] if e.get('turbine') and e['turbine'].get('speed')],
                 blocks=blocks, max_color=max(map(len, blocks), default=0),
@@ -1502,14 +1491,70 @@ def _axial_slice(name, entry, prop, throttle, pitch, mass, heights, speeds):
     return dict(rows=rows, mixer=mixer), base_chart
 
 
+def _limits_by_altitude(base):
+    """check_at(h) -> `speed_limit_check` of the base chart's aircraft and settings at altitude h, or None where only
+    the full calculation will do. `speed_limits` works everything out again at each altitude (0.4 ms: the aircraft's
+    strength, its flap limits); only the two conversions to true airspeed depend on the altitude. This keeps the
+    altitude-independent parts and repeats `em_speed_limits.speed_limits`' own conversions; at two altitudes it is
+    compared with that function, and used only if both agree exactly. Not for an aircraft with a wing sweep schedule
+    (the speeds where the selected sweep is unavailable) or with an RPM cutoff among the limits."""
+    from wing_sweep import prepare, select
+    from flap_model import profile as flap_profile, limits as flap_limits
+    from air_state import cache as air, speed_of_sound
+    fm, config = base.fm, base.config
+    if len(prepare(fm)) >= 2 or config.get('_over_rev_limits'):return None
+    strength = select(prepare(fm), config['sweep_percent'] / 100.)['geometry']['strength']
+    structural = bool(config['structural_limits'])
+    flaps = flap_limits(flap_profile(fm), config.get('flaps_percent', 0.),
+                        config.get('sweep_percent', 0.) / 100. if config.get('sweep_percent') is not None else None)
+    def maximum(h):
+        factor, sound, speeds = air([1., 0., 0.], h)['ias_u'], speed_of_sound(h), []
+        if structural:speeds += [strength['ias'] / factor * 3.6, strength['mach'] * sound * 3.6]
+        if flaps:
+            if structural and flaps.get('damage', True):speeds.append(flaps['destruction_ias_kmh'] / factor)
+            if flaps.get('sweep_locked'):speeds.append(0.)
+            elif flaps['automatic_ias_kmh'] is not None:speeds.append(flaps['automatic_ias_kmh'] / factor)
+            if flaps['automatic_mach'] is not None:speeds.append(flaps['automatic_mach'] * sound * 3.6)
+        return min(speeds) if speeds else math.inf
+    for h in (config['altitude_m'], config['altitude_m'] + 1777.):
+        there = dict(config, altitude_m=h)
+        limit = speed_limits(fm, there)
+        if maximum(h) != (limit['speed_kmh'] if limit['enforced'] else math.inf) or sweep_excluded_kmh(fm, there):return None
+    def check_at(h):
+        top = maximum(h)
+        return lambda speed: speed > top
+    return check_at
+
+
+def _engine_at(base, config):
+    """A jet or rocket chart's engine for another altitude of the same settings: the base chart's units with the air
+    density of that altitude, which is all an engine unit takes from it (its `summary`, a reference RPM that no
+    level-flight row reads, stays the base altitude's). Building the units again took 1.2 ms an altitude."""
+    import copy
+    from control_mixer import density_at_height
+    engine = copy.copy(base.engine)
+    engine.units = [copy.copy(unit) for unit in base.engine.units]
+    for unit in engine.units:
+        unit.config = config
+        unit.rho = density_at_height(f32(config['altitude_m']))
+    return engine
+
+
+# Whether the level charts of one aircraft and setting share one compiled engine, moved to each altitude
+# (MarchEngine.move), instead of building one per altitude (3 ms each: three quarters of an SEP curve over altitude).
+SHARED_LEVEL_ENGINE = True
+
+
 def _level_charts(name, throttle, pitch, mass, height, lean=False):
     """(base chart, chart_at(height) -> (chart, solve)): the level-flight point solver of one aircraft and setting at
-    any altitude. The charts share the aircraft data; each altitude has its own atmosphere, engine, compiled objects
-    and solver caches. lean: the point's row is left as the solver made it (the surface reads four of its fields;
-    normalizing every field for export took most of a point's time)."""
+    any altitude. The charts share the aircraft data; each altitude has its own atmosphere, engine object and solver
+    caches, and they share one compiled engine, which `solve` moves to its chart's altitude first. lean: the point's
+    row is left as the solver made it (the surface reads four of its fields; normalizing every field for export took
+    most of a point's time)."""
     import copy
     import em_march_native
     base = level_solver(name, height, throttle, pitch, mass)
+    shared, limits = [], []   # the base chart's compiled engine (or None), its point solve, the chart it is at; `_limits_by_altitude`
     def chart_at(h):
         if float(h) == base.config['altitude_m']:chart = base
         else:
@@ -1519,13 +1564,22 @@ def _level_charts(name, throttle, pitch, mass, height, lean=False):
             chart.instructor_boundaries = {}
             chart.instructor_trim_entries = {}
             chart._sideslip_solvers = {}
+            # Its own kept seeds and predictors. A copy made after the base chart's first solve shared the base's: they
+            # are kept by the engine object's id, and once an altitude's chart was dropped a later one's engine could
+            # get the same id and start from a state of the other altitude (results within the solver's tolerance of
+            # each other, but depending on what memory happened to be reused).
+            chart._stationary_seeds, chart._stationary_predictors = OrderedDict(), OrderedDict()
             if chart.is_prop:
                 chart.engine = base.engine.with_controls(None)
                 chart.engine.config = chart.config
+            elif SHARED_LEVEL_ENGINE:chart.engine = _engine_at(base, chart.config)
+            else:chart.engine = type(base.engine)(chart.model, chart.mass, chart.config)
+            if not SHARED_LEVEL_ENGINE:
+                em_march_native.detach(chart)
+                em_march_native.attach(chart)
             else:
-                chart.engine = type(base.engine)(chart.model, chart.mass, chart.config)
-            em_march_native.detach(chart)
-            em_march_native.attach(chart)
+                if not limits:limits.append(_limits_by_altitude(base))
+                if limits[0] is not None:chart._speed_limit_check = (chart.config['altitude_m'], limits[0](chart.config['altitude_m']))
         if lean:
             from em_stationary_surface import chart_point
             def sample(result, tolerance=chart.config['sep_tolerance_mps']):
@@ -1533,8 +1587,24 @@ def _level_charts(name, throttle, pitch, mass, height, lean=False):
                 row['valid'] = row['chart_usable']
                 return row
             chart.sample = sample
-        native = em_march_native.engine(chart)
-        return chart, native.get_point_solver().solve_row if native is not None else chart.solve
+        if not SHARED_LEVEL_ENGINE:
+            native = em_march_native.engine(chart)
+            return chart, native.get_point_solver().solve_row if native is not None else chart.solve
+        if not shared:
+            native = em_march_native.engine(base)
+            shared.extend((native, native.get_point_solver().solve_row if native is not None else None, base))
+        native, solve_row = shared[:2]
+        if native is None:
+            if chart is not base:   # no compiled engine: the chart's own solve, with its own native loop
+                em_march_native.detach(chart)
+                em_march_native.attach(chart)
+            return chart, chart.solve
+        def solve(speed_kmh, load, initial=None):
+            if shared[2] is not chart:
+                native.move(chart)
+                shared[2] = chart
+            return solve_row(speed_kmh, load, initial)
+        return chart, solve
     return base, chart_at
 
 
