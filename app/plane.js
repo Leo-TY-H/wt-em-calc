@@ -327,22 +327,28 @@
     layout.yaxis = {...axisStyle, title: {text: 'Flap extension (%)', standoff: 8, font: {size: 13}}, range: [0, 104]};
     draw('plane-flaps-chart', list, traces, layout, 'flap-speeds');
   }
-  // Flap efficiency: lift gain over drag gain against extension, each at its own speed limit.
+  // Flap efficiency (Leo, 2026-11-19: only the settings an aircraft has): lift gain over drag gain of the combat,
+  // takeoff and landing flaps, each at its own speed limit and Instructor AoA; a bar per aircraft and setting.
+  const MODES = {combat: 'Combat', takeoff: 'Takeoff', landing: 'Landing'};
   function renderScore(list) {
     const traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%';
     const LIMIT = {critical: 'critical speed', schedule: 'schedule'}, PULL = {aoa: 'Instructor AoA', control: 'full stick'};
+    const modes = Object.keys(MODES).filter(m => list.some(d => d.result.flaps.efficiency.some(r => r.mode === m)));
     for (const d of list) {
-      const rows = d.result.flaps.efficiency, name = entryName(d), solved = r => Number.isFinite(r.score);
-      if (!rows.some(solved)) continue;
-      traces.push({type: 'scatter', mode: 'lines', x: rows.map(r => r.percent), y: rows.map(r => solved(r) ? r.score : null), name, connectgaps: false,
-        line: {color: d.color, width: 2.4}, hoverlabel: {bordercolor: d.color},
-        customdata: rows.map(r => solved(r) ? [signed(r.lift_gain_percent), signed(r.drag_gain_percent), fmt(r.ias_kmh, 0), LIMIT[r.limit] || '', fmt(r.alpha_deg, 1), fmt(r.clean_alpha_deg, 1),
-          fmt(r.load_g, 2), fmt(r.clean_load_g, 2), PULL[r.limiting] || ''] : []),
-        hovertemplate: `%{y:.3f}<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>Flaps %{x:.0f}% · %{customdata[2]} km/h IAS (%{customdata[3]})<br>` +
+      const all = d.result.flaps.efficiency, name = entryName(d), solved = r => Number.isFinite(r?.score);
+      if (!all.some(solved)) continue;
+      const rows = modes.map(m => all.find(r => r.mode === m));
+      traces.push({type: 'bar', x: modes.map(m => MODES[m]), y: rows.map(r => solved(r) ? r.score : null), name,
+        marker: {color: rgba(d.color, .22), line: {color: d.color, width: 2}}, hoverlabel: {bordercolor: d.color},
+        customdata: rows.map(r => solved(r) ? [signed(r.lift_gain_percent), signed(r.drag_gain_percent), fmt(r.ias_kmh, 0), LIMIT[r.limit] || r.limit || '', fmt(r.alpha_deg, 1), fmt(r.clean_alpha_deg, 1),
+          fmt(r.load_g, 2), fmt(r.clean_load_g, 2), PULL[r.limiting] || '', fmt(r.percent, 0)] : []),
+        hovertemplate: `%{y:.3f}<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>%{x} %{customdata[9]}% · %{customdata[2]} km/h IAS (%{customdata[3]})<br>` +
           `AoA %{customdata[4]}° · flaps up %{customdata[5]}°<br>%{customdata[6]} g · flaps up %{customdata[7]} g<br>%{customdata[8]}<extra>${escapeText(name)}</extra>`});
     }
     const layout = layoutBase(traces, 'score');
-    layout.xaxis = {...axisStyle, title: {text: `Flap extension (%) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, range: [0, 102]};
+    Object.assign(layout, {barmode: 'group', bargap: .3, bargroupgap: .12});
+    layout.xaxis = {...axisStyle, showgrid: false, type: 'category', categoryorder: 'array', categoryarray: modes.map(m => MODES[m]),
+      title: {text: `Flap setting · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}, fixedrange: true};
     layout.yaxis = {...axisStyle, title: {text: 'Lift gain / drag gain', standoff: 8, font: {size: 13}}, zeroline: true, zerolinecolor: 'rgba(240,240,250,.35)'};
     draw('plane-score-chart', list, traces, layout, 'flap-efficiency');
   }

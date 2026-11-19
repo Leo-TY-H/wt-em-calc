@@ -14,9 +14,11 @@ Flap curves, in indicated airspeed at the page's altitude:
   5% extension.
 
 Flap efficiency (Leo: "percent gain in lift divided by percent gain in drag at the instructor aoa and the
-corresponding speed at each deployment percentage"). For each extension:
+corresponding speed at each deployment percentage"; later the same day: only the flap settings the aircraft has,
+combat, takeoff and landing, one value each). For each setting:
 - speed: the EM chart's own speed limit with those flaps at the altitude (em_speed_limits.speed_limits: the lowest of
-  the schedule, the lock and the critical speed), a hair inside it; extensions without a flap speed limit have no row;
+  the schedule, the lock and the critical speed, or the aircraft's own limit where no flap limit lies below it), a
+  hair inside it;
 - state: the EM chart's steady level turn at that speed at the Instructor's full pull (Mouse aim): where the march's
   'Instructor pitch' margin or its control authority margin with autotrim reaches zero, whichever comes first, found
   by the chart's own prescribed-alpha correction, once with the flaps and once with flaps up at the same speed. The
@@ -36,7 +38,6 @@ from em_solver import AIRCRAFT, MAX_ALTITUDE_M, settings
 KGF = 9.80665
 MASS = ('fuel_percent', 'extra_mass_kg', 'loadout', 'stores_released', 'default_ammunition', 'ammunition_vehicle', 'boosters',
         'booster_fuel_percent')
-STEP = 5.            # flap extension step of the efficiency rows, percent
 MARGIN = 1e-5        # Instructor margin (tenths of a degree, or stick travel) that counts as the limit
 END_MARGIN = .01     # the last balanced state counts as the limit when its margin is below this,
 END_AHEAD = .05      # or when its margin's slope puts the limit within this many degrees of AoA
@@ -175,22 +176,24 @@ def aerodynamic(point):
     return fx * math.sin(a) + fy * math.cos(a), -(fx * math.cos(a) - fy * math.sin(a))
 
 
-FLAP_LIMITS = {'Flap IAS limit': 'critical', 'Flap automatic IAS limit': 'schedule', 'Flap automatic Mach limit': 'schedule'}
+FLAP_LIMITS = {'Flap IAS limit': 'critical', 'Flap automatic IAS limit': 'schedule', 'Flap automatic Mach limit': 'schedule',
+               'VNE': 'VNE', 'Mach limit': 'Mach limit', 'Wing sweep limit': 'wing sweep'}
+MODES = ('combat', 'takeoff', 'landing')
 
 
 def efficiency(name, altitude, throttle, mass, detents):
     from em_speed_limits import speed_limits
-    percents = sorted({STEP * i for i in range(1, int(100. / STEP) + 1)} | {round(float(v), 3) for v in detents.values()})
+    """One row per flap setting the aircraft has (flap_model.profile modes), in the game's order."""
     clean = solver(name, altitude, throttle, mass, 0., structural=False)
     factor = ias_factor(altitude)
     rows = []
-    for percent in percents:
-        if percent <= 0.:continue
+    for mode in MODES:
+        percent = detents.get(mode)
+        if percent is None or percent <= 0.:continue
+        percent = float(percent)
         chart = solver(name, altitude, throttle, mass, percent, structural=False)
         limit = speed_limits(chart.fm, dict(chart.config, structural_limits=True))
-        kind = FLAP_LIMITS.get(limit['kind'])
-        row = dict(percent=percent, limit=kind)
-        if kind is None:continue   # no flap speed limit at this extension (the game checks damage above 5%)
+        row = dict(mode=mode, percent=percent, limit=FLAP_LIMITS.get(limit['kind'], limit['kind']))
         speed = limit['sample_speed_kmh']
         row.update(speed_kmh=speed, ias_kmh=speed * factor)
         why = []
