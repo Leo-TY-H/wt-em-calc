@@ -1,5 +1,5 @@
 // Plane info (Leo, 2026-11-19): key mass, aerodynamic, limit and propulsion figures of up to eight aircraft at their
-// settings, their flap speed curves (automatic schedule, critical speed) and a flap efficiency score (POST /api/plane,
+// settings, and their flap speed limits (automatic retraction, critical speed, extension limit; POST /api/plane,
 // scripts/plane_info.py). Laid out like the engine page; uses app.js's catalog (state.meta), api(), name helpers and
 // loadout editor.
 (() => {
@@ -26,8 +26,6 @@
     <div id="plane-empty" class="plane-empty">${EMPTY}</div>
     <div id="plane-charts" class="plane-charts" hidden>
       <section class="chart-card"><h3>FLAP SPEEDS</h3><div id="plane-flaps-chart" class="plane-chart" aria-label="Flap schedule and critical speed"></div></section>
-      <section class="chart-card"><h3>FLAP EFFICIENCY</h3><div class="mode-switch plane-setting" id="plane-setting" role="group" aria-label="Flap settings shown">${['Combat', 'Takeoff', 'Landing'].map(m =>
-        `<label><input type="checkbox" name="plane-setting" value="${m.toLowerCase()}" checked><span>${m}</span></label>`).join('')}</div><div id="plane-score-chart" class="plane-chart" aria-label="Flap efficiency"></div></section>
     </div>
     <div id="plane-tables" class="plane-tables" hidden></div>
     <section id="plane-version-changes" class="version-changes" hidden></section>
@@ -258,10 +256,10 @@
   function render() {
     const list = displayed(), flapped = list.filter(d => d.result.flaps.available);
     el('plane-empty').hidden = !!list.length; el('plane-tables').hidden = !list.length; el('plane-charts').hidden = !flapped.length;
-    for (const id of ['plane-flaps-chart', 'plane-score-chart']) if (!flapped.length && el(id).classList.contains('js-plotly-plot')) Plotly.purge(el(id));
+    if (!flapped.length && el('plane-flaps-chart').classList.contains('js-plotly-plot')) Plotly.purge(el('plane-flaps-chart'));
     if (!list.length) return;
     renderTables(list);
-    if (flapped.length) { renderFlaps(flapped); renderScore(flapped); }
+    if (flapped.length) renderFlaps(flapped);
   }
 
   // One table per section, a column per aircraft. Rows keep each aircraft's own order: a row only some aircraft have
@@ -335,38 +333,6 @@
     layout.yaxis = {...axisStyle, title: {text: 'Flap extension (%)', standoff: 8, font: {size: 13}}, range: [0, 104]};
     draw('plane-flaps-chart', list, traces, layout, 'flap-speeds');
   }
-  // Flap efficiency (Leo, 2026-11-19): lift gain over drag gain against true airspeed for the chosen flap setting, at
-  // the EM diagram's full Mouse-aim pull, over the speeds where the setting can be held. Every setting is calculated,
-  // so choosing another one only redraws.
-  const PULL = {aoa: 'Instructor AoA', control: 'full stick', wing: 'wing limit', stall: 'stall'};
-  function renderScore(list) {
-    const has = mode => list.some(d => d.result.flaps.efficiency?.modes[mode]?.rows.some(r => Number.isFinite(r?.score)));
-    const inputs = [...root.querySelectorAll('input[name=plane-setting]')];
-    for (const input of inputs) input.disabled = !has(input.value);
-    // Every setting ticked is drawn (Leo, 2026-11-19): combat solid, takeoff dashed, landing dotted, in the aircraft's colour.
-    const DASH = {combat: 'solid', takeoff: 'dash', landing: 'dot'}, LABEL = {combat: 'combat', takeoff: 'takeoff', landing: 'landing'};
-    const traces = [], signed = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v), 1) + '%';
-    for (const d of list) for (const mode of inputs.filter(i => i.checked && !i.disabled).map(i => i.value)) {
-      const curve = d.result.flaps.efficiency?.modes[mode], name = `${entryName(d)} · ${LABEL[mode]} ${fmt(curve?.percent, 0)}%`; if (!curve) continue;
-      const rows = curve.rows, solved = r => Number.isFinite(r?.score);
-      if (!rows.some(solved)) continue;
-      traces.push({type: 'scatter', mode: 'lines', x: d.result.flaps.efficiency.speeds, y: rows.map(r => solved(r) ? r.score : null), name,
-        connectgaps: false, line: {color: d.color, width: 2.4, dash: DASH[mode]}, hoverlabel: {bordercolor: d.color},
-        customdata: rows.map(r => solved(r) ? [signed(r.lift_gain_percent), signed(r.drag_gain_percent), fmt(r.load_g, 2), fmt(r.clean_load_g, 2), PULL[r.limiting] || ''] : []),
-        hovertemplate: `%{y:.3f} · %{x:,.0f} km/h<br>Lift %{customdata[0]} · drag %{customdata[1]}<br>%{customdata[2]} g · flaps up %{customdata[3]} g<br>%{customdata[4]}<extra>${escapeText(name)}</extra>`});
-    }
-    const layout = layoutBase(traces, 'score');
-    layout.xaxis = {...axisStyle, title: {text: `True airspeed (km/h) · ${fmt(shown.altitude, 0)} m`, standoff: 8, font: {size: 13}}};
-    // The first view covers the middle 96% of the scores and zero: where the drag gain passes through zero the ratio
-    // runs off without bound (zoom out for all of it).
-    const scores = traces.flatMap(t => t.y.filter(Number.isFinite)).sort((p, q) => p - q);
-    const low = Math.min(0, scores[Math.floor(.02 * (scores.length - 1))] ?? 0), high = Math.max(0, scores[Math.ceil(.98 * (scores.length - 1))] ?? 1), pad = .08 * (high - low || 1);
-    layout.yaxis = {...axisStyle, title: {text: 'Lift gain / drag gain', standoff: 8, font: {size: 13}}, range: [low - (low < 0 ? pad : 0), high + pad], zeroline: true, zerolinecolor: 'rgba(240,240,250,.35)'};
-    draw('plane-score-chart', list, traces, layout, 'flap-efficiency');
-  }
-  root.querySelectorAll('input[name=plane-setting]').forEach(input => input.addEventListener('change', () => {
-    const list = displayed().filter(d => d.result.flaps.available); if (list.length) renderScore(list);
-  }));
   function download() {
     const list = displayed(); if (!list.length) return;
     const link = document.createElement('a');
@@ -382,7 +348,7 @@
     if (event.detail === 'plane' && catalog())
       sidebarRows.aircraft = entries.map(({id, aircraft_id, version}) => ({id, aircraft_id, ...(version ? {version} : {})}));
   });
-  const resize = () => { for (const id of ['plane-flaps-chart', 'plane-score-chart']) if (el(id).data && el(id).clientWidth) Plotly.Plots.resize(el(id)); };
+  const resize = () => { const chart = el('plane-flaps-chart'); if (chart.data && chart.clientWidth) Plotly.Plots.resize(chart); };
   document.addEventListener('tool-tab-change', event => {
     if (event.detail !== 'plane') return;
     if (sidebarRows.aircraft && catalog()) {
