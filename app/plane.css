@@ -1,0 +1,23 @@
+/* Plane info page: the engine page's sidebar and popup; styles.css shares its sidebar, list and unboxed chart rules. */
+#plane-picker{min-width:0;margin:0 0 6px}
+#plane-selected{width:100%;margin:10px 0 4px}
+#plane-workspace .sidebar-actions .hint{margin:0 0 8px;color:#f08070}
+#plane-dialog{overflow-x:hidden}
+#plane-dialog input:disabled{opacity:.45}
+#plane-loadout-detail{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.5}
+.plane-empty{height:max(520px,calc(100vh - var(--header) - 36px))}
+/* Two charts side by side, the figures below them. */
+.plane-charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:26px}
+.plane-chart{height:440px;width:100%}
+#plane-workspace h3{margin:0 0 6px;font-size:10px;font-weight:600;letter-spacing:.15em;color:var(--muted)}
+.plane-tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px 36px}
+.plane-tables.wide{grid-template-columns:minmax(0,1fr)}
+.plane-table{overflow-x:auto}
+.plane-tables table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.plane-tables th{padding:0 0 6px 14px;border-bottom:2px solid var(--entry-color,var(--line));color:var(--text);font-weight:500;text-align:right;white-space:nowrap}
+.plane-tables th:first-child{border-bottom-color:var(--line)}
+.plane-tables td{padding:5px 0 5px 14px;border-bottom:1px solid var(--line);color:var(--text);text-align:right;white-space:nowrap}
+.plane-tables th:first-child,.plane-tables td:first-child{padding-left:0;color:#acacb4;text-align:left}
+.plane-tables td small{color:var(--muted);font-size:11px}
+@media(max-width:1150px){.plane-charts,.plane-tables{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:760px){.plane-chart{height:360px}.plane-empty{height:440px}}

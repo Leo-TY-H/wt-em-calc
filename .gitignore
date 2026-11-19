@@ -36,6 +36,8 @@
 !/app/config.js
 !/app/engine.css
 !/app/engine.js
+!/app/plane.css
+!/app/plane.js
 !/app/versions.js
 !/app/versions.css
 !/app/engagement-research.css
@@ -180,6 +182,7 @@
 !/scripts/em_uncorrected.py
 !/scripts/em_workers.py
 !/scripts/engine_performance.py
+!/scripts/plane_info.py
 !/scripts/engine_commands.py
 !/scripts/engine_supply.py
 !/scripts/flap_model.py

@@ -95,7 +95,7 @@
     if(!node?.data||!node.clientWidth)return;
     Plotly.Plots.resize(node).catch(error=>{if(node.clientWidth)showError(error.message);});
   }
-  const toolTabs=[['em','em-tab','em-workspace'],['engine','engine-tab','engine-workspace'],['altitude','altitude-tab','em-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
+  const toolTabs=[['em','em-tab','em-workspace'],['engine','engine-tab','engine-workspace'],['altitude','altitude-tab','em-workspace'],['plane','plane-tab','plane-workspace'],['missile','missile-tab','missile-workspace'],['envelope','envelope-tab','envelope-workspace']].filter(([,tab,panel])=>el(tab)&&el(panel));
   let currentTool='em';
   function selectTab(name) {
     if(name===true||name===false)name=name?'missile':'em';

@@ -747,6 +747,7 @@ class Handler(BaseHTTPRequestHandler):
         names.update({f'/{name}':name for name in ('missile-launchers.js','missile-models.js','missile-plot.js','missile-models.json','target-model.json','missile-setup3d.js','vendor/three.module.min.js')})
         names.update({'/missile-envelope.js':'missile-envelope.js','/missile-envelope.css':'missile-envelope.css'})
         names.update({'/engine.js':'engine.js','/engine.css':'engine.css','/versions.js':'versions.js','/versions.css':'versions.css'})
+        names.update({'/plane.js':'plane.js','/plane.css':'plane.css'})
         names.update({f'/engagement-research.{extension}':f'engagement-research.{extension}' for extension in ('html','css','js')})
         names['/fonts/wt-symbols.ttf']='fonts/wt-symbols.ttf'
         names.update({f'/icons/neothunderism-{size}.png':f'icons/neothunderism-{size}.png' for size in (16,32,180,192,512)})
@@ -795,6 +796,10 @@ class Handler(BaseHTTPRequestHandler):
                 # Engine performance page with the popup's mass settings (engine_performance.request).
                 from engine_performance import request as engine_request
                 return self.respond(engine_request(body,pitch_percent))
+            if path=='/api/plane':
+                # Plane info page: figures, flap speed curves and flap efficiency (plane_info.request).
+                from plane_info import request as plane_request
+                return self.respond(plane_request(body))
             if path=='/api/trial':
                 from em_uncorrected import request
                 return self.respond(request(body))
