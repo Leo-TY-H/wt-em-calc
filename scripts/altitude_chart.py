@@ -112,6 +112,9 @@ END_REACH = 3.
 # the rows between two others look wrong, and so asked for more rows). On the fast side the first probe is the
 # aircraft's speed limit itself (em_speed_limits), for the same reason.
 END_EXACT = .25
+# A speed limit (VNE, Mach) rejects a state at once: that end is closed in on to this part of the bracket, so it too moves
+# smoothly from row to row.
+HARD_FINE = 1./32.
 # The check of a row against the two beside it counts a SEP difference by how far it would move a contour: where SEP
 # changes fast along the row (towards the stall, and towards the speed limit, where it falls by hundreds of m/s), a
 # difference smaller than SEP's change over the end tolerance (2 km/h at Smooth) is within what the ends themselves are
@@ -480,8 +483,11 @@ class Envelope:
             if way > 0 and top_speed is not None and good < top_speed < rejected[0]:expected = top_speed
             probes = [expected] if expected is not None and min(good, rejected[0]) < expected < max(good, rejected[0]) else []
             first, trusted = bool(probes), True
+
+            def width():
+                return self.bracket*(HARD_FINE if HARD_LIMITS & set(seen[rejected[0]]['reasons']) else 1.)
             while True:
-                while abs(rejected[0]-good) > self.bracket:
+                while abs(rejected[0]-good) > width():
                     limit, gap = reach(good, way) if trusted else None, abs(rejected[0]-good)
                     if limit is not None and limit[0] <= END_EXACT*self.bracket:
                         # The limit should be right here: a state just past it must not exist. If one does, the margin
