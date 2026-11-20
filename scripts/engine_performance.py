@@ -1551,9 +1551,14 @@ def _level_charts(name, throttle, pitch, mass, height, lean=False):
     caches, and they share one compiled engine, which `solve` moves to its chart's altitude first. lean: the point's
     row is left as the solver made it (the surface reads four of its fields; normalizing every field for export took
     most of a point's time)."""
+    return level_charts_of(level_solver(name, height, throttle, pitch, mass), lean)
+
+
+def level_charts_of(base, lean=False):
+    """`_level_charts` for a level-flight chart already built (soft admission set): the altitude envelope builds its
+    own from an EM entry's settings."""
     import copy
     import em_march_native
-    base = level_solver(name, height, throttle, pitch, mass)
     shared, limits = [], []   # the base chart's compiled engine (or None), its point solve, the chart it is at; `_limits_by_altitude`
     def chart_at(h):
         if float(h) == base.config['altitude_m']:chart = base
@@ -1599,11 +1604,14 @@ def _level_charts(name, throttle, pitch, mass, height, lean=False):
                 em_march_native.detach(chart)
                 em_march_native.attach(chart)
             return chart, chart.solve
-        def solve(speed_kmh, load, initial=None):
+        def here():
             if shared[2] is not chart:
                 native.move(chart)
                 shared[2] = chart
+        def solve(speed_kmh, load, initial=None):
+            here()
             return solve_row(speed_kmh, load, initial)
+        solve.native, solve.here = native, here   # the shared engine, and the call that moves it to this chart's altitude
         return chart, solve
     return base, chart_at
 
