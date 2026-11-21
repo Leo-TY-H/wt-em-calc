@@ -120,6 +120,19 @@ HARD_FINE = 1./32.
 # difference smaller than SEP's change over the end tolerance (2 km/h at Smooth) is within what the ends themselves are
 # held to. Without it those stretches asked for rows down to the closest spacing all the way up (a jet: 110-165 rows).
 STEEP_KIND = True
+# Between rows (Blend): a jump within JUMP_REACH speed steps of one in the row beside is the same jump line; within a
+# jump lines the rows are cut at the same Mach numbers, MACH_STEP apart.
+JUMP_REACH = 2.5
+JUMP_END = 2.
+# The row check (Envelope.mismatch): a miss counts as 1/ROW_SMOOTH of itself where SEP bends smoothly with altitude,
+# which it does where the curve through the next rows out as well comes within SMOOTH of the straight line's miss.
+ROW_SMOOTH, SMOOTH = 1., .25     # 1: off. At 3 it saved 6 of 99 rows on the F-4E and left the F-15A 1.4 tolerances off
+MISMATCH_LOG = None     # a list here collects every row check (diagnostics): height, row gap, SEP term, where, end and jump terms
+MACH_LINES = False      # tried 2026-11-21: bands that open at an end as a Mach line enters the span asked for more rows, not fewer
+MACH_STEP = .05
+# A wider speed grid for wide envelopes (the preset's step times a whole number, for about GRID_STATES steps a row) was
+# tried 2026-11-21 at 25: a quarter fewer states for jets, but up to 1.4 tolerances off against the reference rows.
+GRID_STATES = 0
 SEED_EVERY = 3                      # of a row's states, how many are kept as starts for clicked points (`Envelope.seeds`)
 SPEED_END, ALTITUDE_END = 'End of the speed range', 'End of the altitude range'
 
@@ -235,38 +248,185 @@ def makima_at(xs, ys, v):
 
 
 class Row:
-    """One altitude's solved speeds, its ends, and SEP along it."""
+    """One altitude's solved speeds, its ends, and SEP along it: one curve for each piece between two jumps."""
     def __init__(self, height, samples, left, right, labels, gaps, spacing, jumps):
-        self.height, self.left, self.right, self.labels, self.gaps, self.jumps = height, left, right, labels, gaps, jumps
+        self.height, self.left, self.right, self.labels, self.gaps = height, left, right, labels, gaps
         self.samples = samples      # by speed, the rejected ones too
         # The curve runs through the ends and the states well inside them: the bisection's close states add only rounding.
         knots = [v for v, s in sorted(samples.items()) if s['valid'] and (v in (left, right) or s.get('knot') or left+spacing < v < right-spacing)]
-        values = [samples[v]['ps_mps'] for v in knots]
-        # Not a shape-preserving curve: those flatten the top of SEP to the best state solved, and the ceiling sits there.
-        if len(knots) > 2:
-            self.sep = Akima1DInterpolator(knots, values, method='makima');self.slope = self.sep.derivative()
-        else:
-            self.sep = lambda v, x=knots, y=values:np.interp(v, x, y)
-            self.slope = lambda v, k=(values[-1]-values[0])/max(knots[-1]-knots[0], 1e-9) if len(knots) > 1 else 0.:np.full(np.shape(v), k)
+        self.jumps = sorted(j for j in jumps if knots and knots[0] < j < knots[-1])
+        self.pieces = []            # (first knot, last knot, curve, slope)
+        for k in range(len(self.jumps)+1):
+            low = self.jumps[k-1] if k else -math.inf;high = self.jumps[k] if k < len(self.jumps) else math.inf
+            xs = [v for v in knots if low < v < high];ys = [samples[v]['ps_mps'] for v in xs]
+            # Not a shape-preserving curve: those flatten the top of SEP to the best state solved, and the ceiling sits there.
+            if len(xs) > 2:
+                curve = Akima1DInterpolator(xs, ys, method='makima');slope = curve.derivative()
+            elif xs:
+                curve = lambda v, x=xs, y=ys:np.interp(v, x, y)
+                slope = lambda v, k=(ys[-1]-ys[0])/max(xs[-1]-xs[0], 1e-9):np.full(np.shape(v), k)
+            else:continue
+            self.pieces.append((xs[0], xs[-1], curve, slope))
+        self.jumps = [.5*(a[1]+b[0]) for a, b in zip(self.pieces, self.pieces[1:])]
+        self.steps = [abs(float(b[2](b[0]))-float(a[2](a[1]))) for a, b in zip(self.pieces, self.pieces[1:])]     # SEP across each jump
         fine = np.linspace(left, right, max(2, int((right-left)/2.)+1))
-        values = self.sep(fine);i = int(np.argmax(values))
+        values = self.sep(fine);i = int(np.nanargmax(values))
         self.best_speed, self.best_sep = float(fine[i]), float(values[i])
-        if 0 < i < len(fine)-1:
+        if 0 < i < len(fine)-1 and not any(fine[i-1] < j < fine[i+1] for j in self.jumps):
             # The top of the parabola through the three best, so the line does not step with the grid above.
             a, b, c = values[i-1:i+2];curve = a-2.*b+c
             if curve < 0.:
                 self.best_speed += .5*(a-c)/curve*(fine[1]-fine[0]);self.best_sep = float(self.sep(self.best_speed))
 
-    def at_fractions(self, fractions):
-        speeds = np.clip(self.left+fractions*(self.right-self.left), self.left, self.right);values = np.array(self.sep(speeds), dtype=float)
-        for low, high in self.gaps:values[(speeds > low) & (speeds < high)] = math.nan
+    def piece_of(self, speed):
+        return sum(j < speed for j in self.jumps)
+
+    def in_piece(self, k, speeds, slope=False):
+        """SEP (or its slope along speed) of piece k at these speeds, each taken no further than the piece's own states."""
+        low, high, curve, steep = self.pieces[min(k, len(self.pieces)-1)]
+        speeds = np.asarray(speeds, dtype=float);values = np.array((steep if slope else curve)(np.clip(speeds, low, high)), dtype=float)
+        for a, b in self.gaps:values[(speeds > a) & (speeds < b)] = math.nan
         return values
+
+    def sep(self, speeds, slope=False):
+        speeds = np.asarray(speeds, dtype=float);out = np.empty(speeds.shape)
+        pieces = np.searchsorted(self.jumps, speeds) if self.jumps else np.zeros(speeds.shape, dtype=int)
+        flat, index = out.reshape(-1), pieces.reshape(-1);given = speeds.reshape(-1)
+        for k in set(index.tolist()):flat[index == k] = self.in_piece(k, given[index == k], slope)
+        return out if out.shape else float(out)
+
+    def slope(self, speeds):
+        return self.sep(speeds, slope=True)
+
+    def at_fractions(self, fractions):
+        return self.sep(np.clip(self.left+fractions*(self.right-self.left), self.left, self.right))
 
     def by_a_jump(self, fractions, width):
         """Which of these fractions of the span lie within this width (km/h) of a jump in SEP."""
         speeds = self.left+fractions*(self.right-self.left);near = np.zeros(speeds.shape, dtype=bool)
         for jump in self.jumps:near |= np.abs(speeds-jump) < width
         return near
+
+
+class Blend:
+    """SEP between solved rows (Leo, 2026-11-21: jump lines traced across rows, fewer rows for jets).
+
+    Jump lines: a jump found in neighbouring rows within `reach` km/h is one line (a track). Every row is cut at every
+    track (a row a track does not reach is cut where the track ends, which changes nothing there), and rows are only
+    ever blended part with part: no value is taken across a jump, and contours run up to it from both sides, as on
+    the EM chart.
+
+    Mach lines (MACH_LINES): between two jump lines every row is cut again at the same Mach numbers, MACH_STEP apart.
+    What bends SEP along speed (the drag rise, the thrust tables) sits at a Mach number, while a row's ends move with
+    indicated speed: lines of the same fraction of the whole span cut across those bends, and every one of them then
+    looked like a kink between two rows. Within a band between two Mach lines the same fraction is the same Mach
+    number; the bands next to an end or a jump line run to it, so the surface still meets them exactly.
+
+    A segment is one such band of one part; it has the same index in every row, and zero width where its Mach lines lie
+    outside the part."""
+    def __init__(self, rows, reach):
+        from air_state import speed_of_sound
+        self.rows = rows = sorted(rows, key=lambda r:r.height)
+        self.heights = np.array([r.height for r in rows])
+        self.sound = np.array([float(speed_of_sound(r.height)) for r in rows])*3.6      # km/h
+        tracks, open_ = [], []      # {row index: speed}
+        for i, row in enumerate(rows):
+            free, now = list(row.jumps), []
+            for d, t, j in sorted((abs(t[i-1]-j), k, j) for k, t in enumerate(open_) for j in row.jumps):
+                if d > reach or j not in free or i in open_[t]:continue
+                open_[t][i] = j;free.remove(j);now.append(open_[t])
+            for j in free:
+                track = {i:j};tracks.append(track);now.append(track)
+            open_ = now
+        tracks.sort(key=lambda t:sorted(t.values())[len(t)//2])
+        self.tracks = tracks
+        machs = []
+        if MACH_LINES:
+            low = min(r.left/a for r, a in zip(rows, self.sound));high = max(r.right/a for r, a in zip(rows, self.sound))
+            machs = [k*MACH_STEP for k in range(int(math.floor(low/MACH_STEP))+1, int(math.ceil(high/MACH_STEP)))]
+        self.bands = len(machs)+1
+        self.parts = len(tracks)+1
+        bounds = np.empty((len(rows), self.parts*self.bands+1))
+        for i, row in enumerate(rows):
+            cuts = []
+            for t in tracks:
+                at = t[i] if i in t else t[min(t, key=lambda k:abs(k-i))]
+                cuts.append(min(max(at, row.left, cuts[-1] if cuts else row.left), row.right))
+            # a row's own jumps stay where they are: a line continued from another row never passes one
+            for k, t in enumerate(tracks):
+                if i in t:
+                    cuts[k] = t[i]
+                    for m in range(k):cuts[m] = min(cuts[m], t[i])
+                    for m in range(k+1, len(cuts)):cuts[m] = max(cuts[m], t[i])
+            cuts = [row.left]+cuts+[row.right]
+            for part in range(self.parts):
+                lo, hi = cuts[part], cuts[part+1]
+                bounds[i, part*self.bands:(part+1)*self.bands] = [lo]+[min(max(m*self.sound[i], lo), hi) for m in machs]
+            bounds[i, -1] = row.right
+        self.bounds = bounds
+        self.segments = self.parts*self.bands
+        self.breaks = [part*self.bands for part in range(1, self.parts)]       # the bounds that are jump lines
+
+    def reading(self, i, segments, fractions):
+        """Row i's SEP at these fractions of these segments."""
+        row = self.rows[i];lo, hi = self.bounds[i, segments], self.bounds[i, segments+1]
+        speeds = lo+fractions*(hi-lo);out = np.empty(speeds.shape);parts = segments//self.bands
+        for part in set(parts.tolist()):
+            piece = row.piece_of(.5*(self.bounds[i, part*self.bands]+self.bounds[i, (part+1)*self.bands]))
+            out[parts == part] = row.in_piece(piece, speeds[parts == part])
+        return out
+
+    def place(self, i, speeds):
+        """(segments, fractions) of these speeds in row i."""
+        cuts = self.bounds[i]
+        segments = np.clip(np.searchsorted(cuts, speeds, side='right')-1, 0, self.segments-1)
+        # a speed on a jump line belongs to the side its states are on; one on any other line to either
+        width = cuts[segments+1]-cuts[segments]
+        return segments, np.where(width > 1e-9, (speeds-cuts[segments])/np.where(width > 1e-9, width, 1.), 0.)
+
+    def columns(self):
+        """The surface's columns, one list for each stretch between jump lines: (segments, fractions)."""
+        groups, group = [], None
+        for k in range(self.segments):
+            if k in self.breaks or group is None:
+                group = [[], []];groups.append(group)
+            width = float((self.bounds[:, k+1]-self.bounds[:, k]).max())
+            if width <= 1e-9:continue
+            fractions = np.linspace(0., 1., min(801, max(2, int(width/2.5)+1)))
+            if group[0]:fractions = fractions[1:]       # the line it shares with the segment before
+            group[0] += [k]*len(fractions);group[1] += fractions.tolist()
+        return [(np.array(g[0]), np.array(g[1])) for g in groups if len(g[0]) > 1]
+
+    def surface(self, spacing):
+        """For each stretch between jump lines, speed and SEP on a grid of columns by altitude: the solved rows and
+        rows blended between them every `spacing` m."""
+        places = []     # (lower row, upper row, share of the upper)
+        for i in range(len(self.rows)-1):
+            n = max(1, int(math.ceil((self.heights[i+1]-self.heights[i])/spacing-1e-9)))
+            places += [(i, i+1, k/n) for k in range(n)]
+        places.append((len(self.rows)-1, len(self.rows)-1, 0.))
+        heights = np.array([(1.-t)*self.heights[a]+t*self.heights[b] for a, b, t in places])
+        groups = []
+        for segments, fractions in self.columns():
+            speed = np.array([self.bounds[i, segments]+fractions*(self.bounds[i, segments+1]-self.bounds[i, segments]) for i in range(len(self.rows))])
+            sep = np.array([self.reading(i, segments, fractions) for i in range(len(self.rows))])
+            groups.append(dict(altitude_m=heights, speed_kmh=np.array([(1.-t)*speed[a]+t*speed[b] for a, b, t in places]),
+                               sep_mps=np.array([sep[a] if t == 0. else (1.-t)*sep[a]+t*sep[b] for a, b, t in places])))
+        return dict(groups=groups)
+
+    def at(self, speed, height):
+        """SEP at one place, as the surface holds it (None outside the rows)."""
+        if not self.heights[0] <= height <= self.heights[-1]:return None
+        b = int(min(max(np.searchsorted(self.heights, height), 1), len(self.rows)-1)) if len(self.rows) > 1 else 0
+        a = max(b-1, 0);t = 0. if a == b else (height-self.heights[a])/(self.heights[b]-self.heights[a])
+        cuts = (1.-t)*self.bounds[a]+t*self.bounds[b]
+        if not cuts[0] <= speed <= cuts[-1]:return None
+        k = int(min(max(np.searchsorted(cuts, speed, side='right')-1, 0), self.segments-1))
+        while k < self.segments-1 and cuts[k+1]-cuts[k] <= 1e-9:k += 1
+        segments, fractions = np.array([k]), np.array([(speed-cuts[k])/max(cuts[k+1]-cuts[k], 1e-9)])
+        value = (1.-t)*self.reading(a, segments, fractions)
+        if t:value = value+t*self.reading(b, segments, fractions)
+        return float(value[0])
 
 
 class Envelope:
@@ -482,7 +642,7 @@ class Envelope:
             good, tries = grid[i], 3
             if way > 0 and top_speed is not None and good < top_speed < rejected[0]:expected = top_speed
             probes = [expected] if expected is not None and min(good, rejected[0]) < expected < max(good, rejected[0]) else []
-            first, trusted = bool(probes), True
+            first, trusted, bridges = bool(probes), True, 2
 
             def width():
                 return self.bracket*(HARD_FINE if HARD_LIMITS & set(seen[rejected[0]]['reasons']) else 1.)
@@ -540,6 +700,28 @@ class Envelope:
                             s = seen[v] = point(v, seen[good], 'beyond a moved end')
                             if s['valid']:good = v
                             else:rejected = [v]
+                        continue
+                if numerical(seen[rejected[0]]) and bridges:
+                    # No limit ends the row here: the states only stop (Do 17 Z-2: its propellers have no steady state
+                    # over a few km/h at some altitudes). Inside a row such a stretch is drawn across if it is narrow
+                    # (BRIDGED_SAMPLES steps); so the row goes on if level flight is found again within that distance,
+                    # looked for from rest at a few speeds.
+                    bridges -= 1;found = None
+                    for offset in (4.*self.bracket, .25*self.step, .5*self.step, self.step, 2.*self.step, BRIDGED_SAMPLES*self.step):
+                        v = good+way*offset
+                        if not self.low <= v <= self.high:break
+                        if v not in seen or not (seen[v]['valid'] or seen[v].get('complete')):seen[v] = point(v, None, 'beyond a hole')
+                        if seen[v]['valid']:
+                            found = v;break
+                    if found is not None:
+                        good, rejected = found, [u for u in rejected if (u-found)*way > 0.]
+                        while not rejected:
+                            v = min(max(good+way*self.step, self.low), self.high)
+                            if v == good:return good, SPEED_END
+                            s = at(v, seen[good], full=True, robust=True)
+                            if s['valid']:good = v
+                            else:rejected = [v]
+                        trusted = True
                         continue
                 # The bracket has closed on a state that only failed to solve: that is no limit, so look just beyond it.
                 beyond = rejected[0]+way*2.*self.bracket
@@ -890,22 +1072,55 @@ class Envelope:
             if between and (b-a > BRIDGED_SAMPLES*self.step or not all(NUMERICAL >= set(r) for r in between)):gaps.append((a, b))
         return Row(height, seen, left, right, (left_label, right_label), gaps, spacing, jumps)
 
-    def mismatch(self, below, middle, above):
-        """How far a row is from what the rows on either side predict: SEP (m/s, kinder where SEP is far from zero, as
-        contours lie further apart there, and leaving out the jumps, which move with altitude), and its two ends (km/h,
-        against their own tolerance)."""
-        kept = [s for s in middle.samples.values() if s['valid'] and middle.left <= s['speed_kmh'] <= middle.right]
-        fractions = np.array([(s['speed_kmh']-middle.left)/max(middle.right-middle.left, 1e-6) for s in kept])
-        values = np.array([s['ps_mps'] for s in kept])
-        scale = 1.+np.abs(values)/20.
-        if STEEP_KIND and kept:
-            speeds = np.array([s['speed_kmh'] for s in kept])
-            scale = np.maximum(scale, np.abs(np.asarray(middle.slope(speeds), dtype=float))*self.end_tolerance/self.sep_tolerance)
-        errors = np.abs(.5*(below.at_fractions(fractions)+above.at_fractions(fractions))-values)/scale
-        errors = errors[np.isfinite(errors) & ~(below.by_a_jump(fractions, self.step) | middle.by_a_jump(fractions, self.step) | above.by_a_jump(fractions, self.step))]
-        return max(float(errors.max()) if errors.size else 0.,
-                   self.sep_tolerance*abs(.5*(below.left+above.left)-middle.left)/self.end_tolerance,
-                   self.sep_tolerance*abs(.5*(below.right+above.right)-middle.right)/self.end_tolerance)
+    def mismatch(self, below, middle, above, beyond=()):
+        """How far a row is from what the rows on either side predict (Blend): SEP (m/s, kinder where SEP is far from
+        zero, as contours lie further apart there, or changes fast along the row), and its two ends and its jumps
+        (km/h, against their own tolerance). beyond: the next rows out, below and above. Where the curve through
+        those as well passes the row (SMOOTH of the straight line's miss), SEP bends smoothly with altitude there, and
+        what is left between the rows once this one is in is a quarter of the miss: it counts as 1/ROW_SMOOTH of it.
+        A kink (a critical altitude, a table's corner) is missed by both, and counts in full."""
+        outer = [r for r in beyond if r is not None]
+        ordered = sorted([below, middle, above]+outer, key=lambda r:r.height)
+        blend = Blend(ordered, JUMP_REACH*self.step)
+        lower, here, upper = (ordered.index(r) for r in (below, middle, above))
+        others = [i for i in range(len(ordered)) if i != here]
+        t = (middle.height-below.height)/(above.height-below.height)
+        speeds = np.array(sorted(u for u, state in middle.samples.items() if state['valid'] and middle.left <= u <= middle.right))
+        worst, where = 0., None
+        if speeds.size:
+            segments, fractions = blend.place(here, speeds)
+            values = blend.reading(here, segments, fractions)
+            scale = 1.+np.abs(values)/20.
+            if STEEP_KIND:scale = np.maximum(scale, np.abs(middle.slope(speeds))*self.end_tolerance/self.sep_tolerance)
+            read = {i:blend.reading(i, segments, fractions) for i in others}
+            errors = np.abs((1.-t)*read[lower]+t*read[upper]-values)/scale
+            if len(others) > 2 and ROW_SMOOTH > 1.:
+                curve = 0.
+                for i in others:
+                    weight = 1.
+                    for k in others:
+                        if k != i:weight *= (middle.height-ordered[k].height)/(ordered[i].height-ordered[k].height)
+                    curve = curve+weight*read[i]
+                errors = np.where(np.abs(curve-values)/scale <= SMOOTH*errors, errors/ROW_SMOOTH, errors)
+            # A jump that not all three rows have (it ends between them, or is too small to be found in one) is no line
+            # to read along: the states next to it are left out, as the ones next to every jump were before.
+            ending = False
+            for track in blend.tracks:
+                if not all(i in track for i in (lower, here, upper)):
+                    for i in (lower, here, upper):
+                        if i in track:
+                            errors[np.abs(speeds-track[i]) < self.step] = math.nan
+                            row = ordered[i];size = row.steps[min(range(len(row.jumps)), key=lambda k:abs(row.jumps[k]-track[i]))]
+                            # a jump worth more than JUMP_END tolerances ends between these rows: more rows, to find where
+                            ending = ending or size > JUMP_END*self.sep_tolerance*(1.+abs(float(row.sep(track[i])))/20.)
+            if np.isfinite(errors).any():
+                worst = float(np.nanmax(errors));where = float(speeds[int(np.nanargmax(errors))])
+            if ending:worst = max(worst, 2.*self.sep_tolerance)
+        # the ends, and the jumps all three rows have
+        moved = [abs((1.-t)*blend.bounds[lower, k]+t*blend.bounds[upper, k]-blend.bounds[here, k]) for k in (0, blend.segments)]
+        moved += [abs((1.-t)*track[lower]+t*track[upper]-track[here]) for track in blend.tracks if all(i in track for i in (lower, here, upper))]
+        if MISMATCH_LOG is not None:MISMATCH_LOG.append((middle.height, above.height-below.height, worst/self.sep_tolerance, where, [round(m/self.end_tolerance, 2) for m in moved]))
+        return max(worst, self.sep_tolerance*max(moved)/self.end_tolerance)
 
     def rows(self, report=None):
         heights = np.arange(self.bottom, self.top, self.spacing).tolist()+[self.top]
@@ -923,6 +1138,10 @@ class Envelope:
                 if near is None:continue
                 empty = height;break
             rows.append(row);near = row
+            if len(rows) == 1 and GRID_STATES:
+                wider = int(round((row.right-row.left)/(self.step*GRID_STATES)))
+                if wider > 1:
+                    self.step *= wider;self.speeds = np.arange(self.low, self.high, self.step).tolist()+[self.high]
         if not rows:return rows
         # The top of level flight, if it lies inside the range.
         if empty is not None:
@@ -939,18 +1158,17 @@ class Envelope:
             if report:report(.4+.6*solved/(solved+len(pairs)+1))
             if middle is None:continue
             rows.append(middle)
-            if self.mismatch(below, middle, above) > self.sep_tolerance:
+            lower = max((r for r in rows if r.height < below.height), key=lambda r:r.height, default=None)
+            higher = min((r for r in rows if r.height > above.height), key=lambda r:r.height, default=None)
+            if self.mismatch(below, middle, above, (lower, higher)) > self.sep_tolerance:
                 pairs += [(below, middle), (middle, above)]
         rows.sort(key=lambda r:r.height)
         return rows
 
 
-def surface_of(rows):
-    """SEP on a grid of altitude rows by fraction of each row's speed span (0 at its slow end, 1 at its fast end)."""
-    span = max(r.right-r.left for r in rows)
-    fractions = np.linspace(0., 1., min(801, max(61, int(span/2.5)+1)))
-    return dict(fraction=fractions, altitude_m=np.array([r.height for r in rows]), left_kmh=np.array([r.left for r in rows]),
-                right_kmh=np.array([r.right for r in rows]), sep_mps=np.array([r.at_fractions(fractions) for r in rows]))
+def surface_of(rows, reach, spacing):
+    """SEP between the rows, on a grid for each segment between jump lines (Blend.surface)."""
+    return Blend(rows, reach).surface(spacing)
 
 
 def round_step(value):
@@ -980,17 +1198,21 @@ def contour_levels(aircraft):
 
 
 def contours_of(surface, levels):
-    heights = surface['altitude_m']
-    if len(heights) < 2:return []
-    z = np.ma.masked_invalid(surface['sep_mps'])
-    if z.count() < 4 or not z.max() > z.min():return []
-    contour = contourpy.contour_generator(x=surface['fraction'], y=heights, z=z, name='mpl2014', corner_mask=False)
     paths = []
-    for level in levels:
-        for segment in contour.lines(level)[0]:
-            if len(segment) < 2:continue
-            left, right = np.interp(segment[:, 1], heights, surface['left_kmh']), np.interp(segment[:, 1], heights, surface['right_kmh'])
-            paths.append(dict(level=float(level), x=np.round(left+segment[:, 0]*(right-left), 3).tolist(), y=np.round(segment[:, 1], 2).tolist()))
+    for part in surface['groups']:
+        heights, speed = part['altitude_m'], part['speed_kmh']
+        if len(heights) < 2:continue
+        z = np.ma.masked_invalid(part['sep_mps'])
+        if z.count() < 4 or not z.max() > z.min():continue
+        contour = contourpy.contour_generator(x=np.arange(speed.shape[1], dtype=float), y=np.arange(len(heights), dtype=float), z=z, name='mpl2014', corner_mask=False)
+        for level in levels:
+            for line in contour.lines(level)[0]:
+                if len(line) < 2:continue
+                # a vertex lies on a grid line: between two columns of one row, or two rows of one column
+                c = np.clip(np.floor(line[:, 0]).astype(int), 0, speed.shape[1]-2);r = np.clip(np.floor(line[:, 1]).astype(int), 0, len(heights)-2)
+                u, w = line[:, 0]-c, line[:, 1]-r
+                x = (1.-w)*((1.-u)*speed[r, c]+u*speed[r, c+1])+w*((1.-u)*speed[r+1, c]+u*speed[r+1, c+1])
+                paths.append(dict(level=float(level), x=np.round(x, 3).tolist(), y=np.round((1.-w)*heights[r]+w*heights[r+1], 2).tolist()))
     return paths
 
 
@@ -1045,7 +1267,7 @@ def calculate_entry(config, entry, index, check, report=None):
     seeds = []
     if rows:
         solved = [s for row in rows for s in sorted(row.samples.values(), key=lambda s:s['speed_kmh']) if s['valid']]
-        item.update(surface=surface_of(rows), boundary=outline_of(rows, envelope.top), overrev_lines=over_rev_lines(rows),
+        item.update(surface=surface_of(rows, JUMP_REACH*envelope.step, envelope.closest), boundary=outline_of(rows, envelope.top), overrev_lines=over_rev_lines(rows),
                     points=[dict({k:s.get(k) for k in ('speed_kmh', 'altitude_m', 'valid', 'ps_mps', 'alpha_deg', 'ias_kmh', 'mach')},
                                  turn_dps=s['altitude_m'], load_g=1., reasons=[]) for s in solved],
                     best_climb=dict(speed_kmh=[round(r.best_speed, 2) for r in rows], altitude_m=[r.height for r in rows],
