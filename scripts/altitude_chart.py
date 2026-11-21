@@ -473,7 +473,7 @@ class Envelope:
                 if seed is None and wanted and s.get('sid') is not None and not s['unchecked']:
                     try:seed = seed_of(row.engine.state_row(s['sid']))
                     except RuntimeError:seed = None
-                if seed:out.append(dict(seed, speed_kmh=s['speed_kmh'], altitude_m=s['altitude_m']))
+                if seed:out.append(dict(seed, speed_kmh=s['speed_kmh'], altitude_m=s['altitude_m'], sliding=bool(s.get('sliding'))))
         return out
 
     def row_steps(self, chart, solve, engine, height, near, predicted, base=False):
@@ -483,6 +483,11 @@ class Envelope:
         upward = height >= UPWARD_FROM_M
         ratio = []          # indicated per true airspeed at this altitude
 
+        # The engine's level step (with the sliding state at a blade-polar jump, as a chart column takes it); a build
+        # without it has the plain correction.
+        level = getattr(engine, 'level_step', None)
+        if level is None:level = lambda sid, v, nfev, evals, slide=True:engine.debug_level(sid, v, nfev, evals)
+
         def sample(v, sid, valid, reasons, unchecked=False):
             s = dict(speed_kmh=v, altitude_m=height, valid=bool(valid or unchecked), unchecked=unchecked, reasons=list(reasons) or ['no candidate'], sid=sid)
             if s['valid']:
@@ -490,6 +495,7 @@ class Envelope:
                 s.update(ps_mps=info['ps'], alpha_deg=info['alpha'], mach=info['mach'], thrust=info['thrust'], ias_kmh=None)
                 pairs = [a/b for a, b in zip(info['rpm'], info['rpm_limit']) if b]
                 if pairs:s['rpm_ratio'] = max(pairs)
+                if info['slide']:s['sliding'] = True
             return s
 
         def seed_for(origin):
@@ -535,10 +541,11 @@ class Envelope:
             takes longer to fail)."""
             if origin.get('sid') is None:return point(v, origin, 'no state id')
             self.solves += 1
-            out = engine.debug_level(origin['sid'], v, STEP_NFEV, STEP_EVALS)
+            # the sliding state only with the larger budget: a first correction that does not close is tried regular again
+            out = level(origin['sid'], v, STEP_NFEV, STEP_EVALS, bool(origin.get('sliding')))
             if out is None and robust:
                 self.solves += 1
-                out = engine.debug_level(origin['sid'], v, ROBUST_NFEV, ROBUST_EVALS)
+                out = level(origin['sid'], v, ROBUST_NFEV, ROBUST_EVALS)
             if out is None:return dict(sample(v, None, False, ()), weak=not robust)   # weak: the larger budget was not tried
             sid, valid, _, reasons = out
             if not valid and upward and reasons == [NOT_CLOSED]:
@@ -1329,16 +1336,45 @@ def contour_paths(data, levels):
 
 
 def clicked_point(data, seeds, entry, speed, height):
-    """The full EM point at a clicked speed and altitude, in the report format of an EM chart's clicked point, and its solver."""
+    """The full EM point at a clicked speed and altitude, in the report format of an EM chart's clicked point, and its
+    solver. Where the point solver finds no state, the chart's own way to it: level flight continued from the nearest
+    regular state of the chart by the engine's level step, which takes the sliding state at a blade-polar jump (the
+    point solver has none for a governing propeller)."""
     chosen = next(e for e in data['settings']['entries'] if e['id'] == entry)
     chart, _ = solver_at(chosen['aircraft_id'], condition_of(data['settings'], chosen), height)
-    near = min(seeds, key=lambda p:((p['speed_kmh']-speed)/speed)**2+((p['altitude_m']-height)/2000.)**2) if seeds else None
+    distance = lambda p:((p['speed_kmh']-speed)/speed)**2+((p['altitude_m']-height)/2000.)**2
+    near = min(seeds, key=distance) if seeds else None
     point = settle(chart, chart.solve, speed, level_point(chart, chart.solve, speed, near))
+    if (point is None or not point.get('valid')) and NATIVE_STEPS:
+        stepped = stepped_point(chart, [p for p in seeds if not p.get('sliding')], speed, height, distance)
+        if stepped is not None:point = stepped
     if point is None:
         # No candidate established: a gap at this state, not an absence proof.
         point = dict(speed_kmh=speed, load_g=1., status='unresolved', valid=False, chart_usable=False,
                      reasons=['stationary search unresolved'], search_unresolved='No level-flight state was established here')
     return point, chart
+
+
+def stepped_point(chart, seeds, speed, height, distance, reach=5.):
+    """Level flight at this speed continued from the nearest of these states in steps of at most `reach` km/h, or None."""
+    import em_march_native
+    engine = em_march_native.engine(chart)
+    if engine is None or not hasattr(engine, 'level_step') or not seeds:return None
+    solve = engine.get_point_solver().solve_row
+    for near in sorted(seeds, key=distance)[:3]:
+        start = level_point(chart, solve, near['speed_kmh'], near)
+        if not start or not start.get('valid'):continue
+        sid = next((i for i in range(len(engine.rows)-1, -1, -1) if engine.rows[i] is start), None)
+        if sid is None:continue
+        v, way = near['speed_kmh'], 1. if speed > near['speed_kmh'] else -1.
+        while sid is not None and abs(speed-v) > 1e-9:
+            v = speed if abs(speed-v) <= reach else v+way*reach
+            out = engine.level_step(sid, v, STEP_NFEV, STEP_EVALS, False) or engine.level_step(sid, v, ROBUST_NFEV, ROBUST_EVALS)
+            sid = out[0] if out and out[1] else None
+        if sid is not None:
+            try:return engine.state_row(sid)
+            except RuntimeError:return None
+    return None
 
 
 def export_csv(data):

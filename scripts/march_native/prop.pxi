@@ -496,6 +496,8 @@ cdef double target_omega(const EngineT* p, const EngState* s, double nitro) noex
     return p.target_y[p.ntargets-1]
 
 
+DEF PITCH_WIDE = .1         # governed sliding: the range of pitch fraction searched for the jump (each side)
+DEF PITCH_STEPS = 64        # governed sliding: steps each side of that range
 DEF SLIDE_WIDE = .08        # overrev follow-up: the shaft-speed range (fraction) of the wide blocking-jump search
 DEF SLIDE_WIDE_STEPS = 64   # overrev follow-up: steps each side of PropModel.locate_blocking's shaft-speed range
 

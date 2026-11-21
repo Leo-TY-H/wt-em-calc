@@ -400,6 +400,8 @@ cdef class MarchEngine:
         self.wide_slide = int(os.environ.get("WT_OVERREV_SLIDE", "63")) if self.overrev else 0
         if self.fin is not None and self.fin.pm is not None:
             self.fin.pm.blocking = self.overrev and os.environ.get("WT_OVERREV_BLOCKING", "0") == "1"
+            # governed sliding (WT_MARCH_PITCH_SLIDE=0: a governing shaft never slides, as before 2026-11-21)
+            self.fin.pm.pitch_slide = self.sliding and os.environ.get("WT_MARCH_PITCH_SLIDE", "1") != "0"
         self.brake_log = [] if os.environ.get("WT_MARCH_BRAKE_LOG") else None
         self.brake_depth = 0
         self.brake_retry = False
@@ -1586,6 +1588,36 @@ cdef class MarchEngine:
         """Diagnostics: the level-flight correction (FIX_LOAD 1 g) at ``speed`` from state ``sid``: (state id, valid,
         physical, reasons) or None."""
         cdef int p = self.correct(sid, self.st[sid].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, nfev, evals, 2e-6, speed, NULL, NULL)
+        if p < 0:return None
+        return p, bool(self.st[p].valid), bool(self.physical(p)), self.reason_list(p)
+
+    def level_step(self, int seed, double speed, int nfev=12, int evals=40, bint slide=True):
+        """Level flight (1 g) at ``speed`` continued from state ``seed``, as a chart column takes it from the level
+        flight of the speed beside (Column.level_from): the prescribed-load correction and, where that finds no state
+        the march could pass next to a blade-polar jump, the sliding state (Column.slide_at: from a regular seed the
+        shafts whose jump blocks their torque balance at the target slide; from a sliding seed the jump check again
+        at the target; not with ``slide`` False). (state id, valid, physical, reasons), or None. The altitude envelope's rows are made of it."""
+        cdef SlideSpec spec
+        cdef int p, q
+        cdef bint go
+        p = self.correct(seed, self.st[seed].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, nfev, evals, 2e-6, speed, NULL, NULL)
+        if (p < 0 or not self.passable(p)) and slide and self.sliding and self.is_prop:
+            spec.n = 0
+            if self.st[seed].slide.n > 0:
+                if self.s9:
+                    self.slide_candidate(seed, &spec, self.st[seed].sol[0], self.st[seed].sol[1], 1., True, speed, True, 0.)
+                    if spec.n > 0 and self.same_slide(&spec, &self.st[seed].slide):spec.n = 0
+                go = True
+            else:
+                self.slide_candidate(seed, &spec, self.st[seed].sol[0], self.st[seed].sol[1], 1., True, speed, False, 0.)
+                go = spec.n > 0
+            if go:
+                self.slide_override = spec;self.use_override = True
+                try:
+                    q = self.correct(seed, self.st[seed].sol, 1., True, FIX_LOAD, 1., 0, 0, 0, 30, 120, 2e-6, speed, NULL, NULL)
+                finally:
+                    self.use_override = False
+                if q >= 0 and self.passable(q):p = q
         if p < 0:return None
         return p, bool(self.st[p].valid), bool(self.physical(p)), self.reason_list(p)
 
