@@ -50,6 +50,32 @@ cdef unsigned long long cl_jump_sides(const BPolar* p, double alpha, unsigned lo
     return code
 
 
+cdef int cl_jump_points(const BPolar* p, double* out) noexcept nogil:
+    """The breakpoints of calc_cl64 where the lift jumps (cl_jump_sides' own list and test), into ``out`` (12)."""
+    cdef double pts[12]
+    cdef double b, d, lo, hi, mx = pmax(40., p.maxDistAng)
+    cdef int k, n = 0, m = 0
+    pts[n] = p.aoaLineL;n += 1
+    pts[n] = p.aoaLineH;n += 1
+    pts[n] = p.aoaLineH-0.01;n += 1
+    pts[n] = p.aoaCritH;n += 1
+    pts[n] = p.aoaCritL;n += 1
+    pts[n] = p.aoaCritH+p.parabAngle;n += 1
+    pts[n] = p.aoaCritL-p.parabAngle;n += 1
+    pts[n] = p.maxDistAng;n += 1
+    pts[n] = -p.maxDistAng;n += 1
+    pts[n] = mx;n += 1
+    pts[n] = -mx;n += 1
+    for k in range(n):
+        b = pts[k]
+        if not isfinite(b):continue
+        d = 1e-7*(1.+fabs(b))
+        lo = calc_cl64(p, b-d);hi = calc_cl64(p, b+d)
+        if fabs(hi-lo) > 1e-4*(1.+fabs(lo)):
+            out[m] = b;m += 1
+    return m
+
+
 cdef struct SlideSpec:
     # S8: the shafts sliding on a blade-polar jump (PropModel.set_slide) and, for a state, where (theta, shaft speeds)
     int n
@@ -198,6 +224,16 @@ cdef class PropModel:
     # balance, not only the nearest jump (two jumps 1.3% apart: Bf 109 F-4 RB at 65% pitch, 478.5 km/h near 2.7 g, the
     # nearer at 3,432 rpm does not block, the one at 3,477 rpm does)
     cdef public bint blocking
+    # Governed sliding (Leo, 2026-11-21): a shaft whose governor is holding its target speed (pitch between the stops)
+    # can have no torque balance either, where a blade section sits on a jump of its polar at that speed: the shaft
+    # torque steps through zero for a hair of pitch (Do 17 Z-2 at 3,950 m, 200-259 km/h: +141 / -202 N m). The game's
+    # 48 Hz step (governor and shaft, recovered code) then flips the shaft speed across the jump every frame by a
+    # revolution or so a minute, the pitch holds still, and thrust alternates between the two sides; its mean is their
+    # mix that balances the shaft to 0.7%. So the same sliding state, with the jump located along the pitch fraction at
+    # the shaft's target speed instead of along shaft speed at a held pitch. Such a shaft's spec has frac = -1, and
+    # its hint, lo and hi are 300 x the pitch fraction at the jump (cw = 0), so cw + lo/300 is its regular coordinate.
+    cdef public bint pitch_slide
+    cdef double slide_last[NP]      # governed sliding: where the jump was at the last evaluation (the next search starts there)
     # the last sliding evaluation (for records): theta and the shaft speeds either side of the jump
     cdef double slide_theta[NP]
     cdef double slide_lo[NP]
@@ -408,7 +444,7 @@ cdef class PropModel:
             self.path_i[k] = path[1];self.path_j[k] = path[2] if len(path) > 2 else 0
             self.scales[k] = scales[k];self.lower[k] = lo[k];self.upper[k] = hi[k];self.initial[k] = ini[k]
         self.samples = 0
-        self.nslide = 0;self.slide_width = .02;self.blocking = False
+        self.nslide = 0;self.slide_width = .02;self.blocking = False;self.pitch_slide = False
         for k in range(NP):
             self.slide[k] = False;self.slide_coord[k] = -1
 
@@ -794,6 +830,10 @@ cdef class PropModel:
                         index = i
                 if not (300.*self.lower[index] <= omega and omega <= 300.*self.upper[index]):
                     return 1
+                if self.nslide and self.slide[shaft] and self.slide_frac[shaft] < 0.:
+                    # governed sliding: the shaft holds its target speed, and its coordinate carries theta
+                    q[k] = 0.
+                    continue
                 assigned[shaft] = omega; q[index] = omega/300.
                 q[k] = pmin(1., pmax(0., c))
         if self.nslide:
@@ -823,6 +863,7 @@ cdef class PropModel:
             if k < 0:continue
             self.slide[s] = True;self.slide_coord[s] = k;self.slide_c0[s] = c0[s];self.slide_frac[s] = frac[s]
             self.slide_hint[s] = hint[s];self.nslide += 1
+            self.slide_last[s] = hint[s]/300.
         return 0
 
     cdef int shaft_coordinate(self, int s) noexcept:
@@ -846,6 +887,8 @@ cdef class PropModel:
         for s in range(NP):
             if self.slide[s]:
                 sp.theta[s] = self.slide_theta[s];sp.lo[s] = self.slide_lo[s];sp.hi[s] = self.slide_hi[s]
+                # governed sliding: the jump's pitch moves with the flight condition, so the state keeps where it is now
+                if self.slide_frac[s] < 0.:sp.hint[s] = self.slide_lo[s]
 
     cdef int jump_near(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest,
                        SlideSpec* out, bint straddle=True, double wide=0.) except -1:
@@ -882,6 +925,21 @@ cdef class PropModel:
             if j < 0:continue
             c = coords[j]
             if self.path_kind[self.active[j]] == 1:
+                if self.governor_saturation and 0. < c and c < 1.:
+                    # a governing shaft: the jump along its pitch fraction at its target speed that blocks its torque
+                    # balance (governed sliding)
+                    if not self.pitch_slide or not straddle or wide > 0.:continue
+                    if self.locate_pitch(s, prep, q, assigned[s], c, PITCH_WIDE, PITCH_STEPS, coords, request_indices, nrequest, j,
+                                         &lo, &hi):continue
+                    out.flag[s] = True;out.frac[s] = -1.;out.hint[s] = 300.*lo;out.cw[s] = 0.
+                    out.lo[s] = 300.*lo;out.hi[s] = 300.*hi
+                    out.theta[s] = 0. if c <= lo else 1.
+                    out.c0[s] = c-out.theta[s]
+                    k = self.active[j]
+                    if self.upper[k]-self.lower[k] > 1.+2e-9:
+                        out.c0[s] = pmin(pmax(out.c0[s], self.lower[k]+1e-9), self.upper[k]-1.-1e-9)
+                    out.n += 1
+                    continue
                 if not self.governor_saturation or (0. < c and c < 1.):continue
                 frac = 1. if c >= 1. else 0.
                 omega = assigned[s]+300.*(c if c < 0. else c-1.)
@@ -910,6 +968,92 @@ cdef class PropModel:
                 if self.upper[k]-self.lower[k] > 1.+2e-9:
                     out.c0[s] = pmin(pmax(out.c0[s], self.lower[k]+1e-9), self.upper[k]-1.-1e-9)
             out.n += 1
+        return 0
+
+    cdef int locate_pitch(self, int s, const PropPrep* prep, const double* q, double omega, double hint, double wide,
+                          int steps, const double* coords, const int* request_indices, int nrequest, int j,
+                          double* lo_out, double* hi_out) except -1:
+        """Governed sliding: the blade-polar jump of shaft ``s`` along its pitch fraction nearest ``hint`` (within
+        ``wide`` of it, inside the stops) at shaft speed ``omega``: (lo, hi) bracketing the change of signature() to
+        1e-11; with ``j`` >= 0 (the shaft's coordinate in ``coords``) only one that blocks its torque balance
+        (straddles). 1 where none."""
+        cdef double step = wide/steps, a, b, m, prev
+        cdef unsigned long long sm, sa
+        cdef int k, side, it
+        cdef double last[2]
+        cdef unsigned long long sig[2]
+        sig[0] = sig[1] = self.signature(s, prep, q, hint, omega);last[0] = last[1] = hint
+        for k in range(1, steps+1):
+            for side in range(2):
+                m = hint+(k*step if side == 0 else -k*step)
+                if m <= 0. or m >= 1.:continue
+                sm = self.signature(s, prep, q, m, omega)
+                if sm != sig[side]:
+                    a = last[side] if side == 0 else m
+                    b = m if side == 0 else last[side]
+                    sa = self.signature(s, prep, q, a, omega)
+                    for it in range(80):
+                        if b-a <= 1e-11:break
+                        prev = .5*(a+b)
+                        if self.signature(s, prep, q, prev, omega) == sa:a = prev
+                        else:b = prev
+                    if j < 0 or self.straddles(prep, coords, request_indices, nrequest, s, j, 0., 300.*a, 300.*b):
+                        lo_out[0] = a;hi_out[0] = b
+                        return 0
+                    sig[side] = sm
+                last[side] = m
+        return 1
+
+    cdef int pitch_jump(self, int s, const PropPrep* prep, const double* q, double omega, double hint, double wide,
+                        double* lo_out, double* hi_out) noexcept:
+        """Governed sliding, for the evaluations of a sliding state: locate_pitch's nearest jump worked out instead of
+        searched for. A blade section's angle of attack is linear in the pitch fraction (pitch - inflow angle + twist),
+        so each breakpoint where its lift jumps is met at one fraction; the nearest of them to ``hint`` within ``wide``,
+        bracketed by 1e-10 either side and confirmed by signature(). 1 where there is none (the caller then searches)."""
+        cdef int kk, idx, k, rotor, nrot, i, n
+        cdef const PropT* p
+        cdef PropState st
+        cdef double local[3]
+        cdef double local_w[3]
+        cdef double points[12]
+        cdef double tsq, transverse, axial, lo, hi, om, angular, radius, tangential, phi, speed, mach, f, best = -1.
+        cdef double sound = speed_of_sound(self.altitude, F(288.16), F(18300.))
+        cdef BPolar polar
+        if not self.s9:return 1
+        for kk in range(self.trans[s].np):
+            idx = self.trans[s].props[kk].index;p = &self.props[idx]
+            st = self.seed_props[idx]
+            for k in range(self.npaths):
+                if self.path_kind[k] == 2 and self.path_i[k] == idx:st.flow[self.path_j[k]] = q[k]*self.scales[k]
+            if p.governor and not st.auto and not (p.governor == 1 or p.governor == 2):continue
+            om = omega*self.trans[s].props[kk].ratio
+            self.pitch_limits(p, prep.velocity, prep.rates, om, &lo, &hi)
+            if not hi-lo > 1e-12:continue
+            local_flow32(p, prep.velocity, prep.rates, local, local_w, &tsq, &transverse)
+            axial = local[0]+.5*(st.flow[0]+st.flow[1])
+            nrot = 2 if p.coaxial else 1
+            for rotor in range(nrot):
+                angular = (.25 if rotor == 0 else -.25)*st.flow[2]
+                for k in range(4):
+                    radius = p.station_radius[k]
+                    tangential = radius*(om-angular)
+                    phi = atan2(axial, tangential) if fabs(om) >= 1e-5 else M_PI/2
+                    speed = hypot2(tangential+transverse, axial)
+                    if speed == 0.:continue
+                    mach = speed/sound
+                    evaluate_polar(&p.polar, mach, &polar)
+                    if polar.aoaLineL == polar.aoaLineH:
+                        points[0] = polar.aoaLineH-0.01;n = 1
+                    else:
+                        n = cl_jump_points(&polar, points)
+                    for i in range(n):
+                        f = (points[i]/RAD_TO_DEG+phi-p.twist[k]-lo)/(hi-lo)
+                        if f > 0. and f < 1. and fabs(f-hint) <= wide and (best < 0. or fabs(f-hint) < fabs(best-hint)):
+                            best = f
+        if best < 0.:return 1
+        lo = best-1e-10;hi = best+1e-10
+        if self.signature(s, prep, q, lo, omega) == self.signature(s, prep, q, hi, omega):return 1
+        lo_out[0] = lo;hi_out[0] = hi
         return 0
 
     cdef bint straddles(self, const PropPrep* prep, const double* coords, const int* request_indices, int nrequest, int s,
@@ -1162,6 +1306,17 @@ cdef class PropModel:
         for s in range(self.nt):
             if not self.slide[s]:continue
             theta[s] = coords[self.slide_coord[s]]-self.slide_c0[s]
+            if self.slide_frac[s] < 0.:
+                # governed sliding: the pitch fraction either side of the jump, at the shaft's target speed
+                if self.pitch_jump(s, prep, qlo, assigned[s], self.slide_last[s], PITCH_WIDE, &lo, &hi):
+                    if self.locate_pitch(s, prep, qlo, assigned[s], self.slide_last[s], PITCH_WIDE, PITCH_STEPS, NULL, NULL, 0, -1,
+                                         &lo, &hi):return 1
+                self.slide_last[s] = lo
+                self.slide_lo[s] = 300.*lo;self.slide_hi[s] = 300.*hi;self.slide_theta[s] = theta[s]
+                for k in range(self.npaths):
+                    if self.path_kind[k] == 1 and self.path_i[k] == s:
+                        qlo[k] = lo;qhi[k] = hi;q[k] = lo
+                continue
             for k in range(self.npaths):
                 if self.path_kind[k] == 1 and self.path_i[k] == s:
                     qlo[k] = self.slide_frac[s];qhi[k] = self.slide_frac[s];q[k] = self.slide_frac[s]

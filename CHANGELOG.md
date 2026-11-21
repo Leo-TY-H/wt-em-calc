@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.11.21.1
+
+- **The altitude envelope is about twice as fast**, two to three times for most aircraft. Each row is now marched with the EM chart's own compiled level-flight step. Examples at Smooth: Bf 109 F-4 2.2 s to 1.5 s, B-17G 7.8 s to 3.5 s, F-4E 9.4 s to 3.3 s, MiG-25PD 13.7 s to 4.9 s.
+- **Altitude envelope edges** are placed where the limit is actually reached and no longer wobble by a km/h from row to row. Values next to the stall, which were several tolerances off for jets, are now within tolerance.
+- **Where two propeller states exist at one speed, the altitude envelope takes the one with more thrust**, and contours run cleanly up to the line where the state changes instead of smearing across it (B-17G).
+- **Propellers that cannot settle.** Where a governed propeller's blade section sits on a step of its lift curve, no pitch balances the shaft and the game's governor hunts across the step every frame. The solver now gives the average of that, as it already did for propellers on a pitch stop. The Do 17 Z-2 had no level flight between 200 and 259 km/h at about 4 km; its altitude envelope loses its notched slow edge, and its EM chart gains the missing speeds there.
+- The control mode still decides the slow edge of the altitude envelope: Mouse aim ends at the Instructor's limit, Realistic and Full real at the stall.
+- EM charts are unchanged except where a governed propeller had no state before.
+
 ## 2026.11.19.1
 
 - **Engine performance is much faster.** A propeller aircraft's curve over speed is solved at every whole km/h and its curve over altitude at every whole metre, inside the compiled solver. Examples: Bf 109 G-2 over speed 2.9 s to about 0.1 s, B-17G 8 to 11 s to 0.2 s; over altitude Bf 109 G-2 about 3 s to 0.4 s, Tu-95M 37 s to under 3 s. SEP in level flight takes 0.2 to 0.7 s (was 1.3 to 4.4 s and more). Jet curves are several times faster too.
