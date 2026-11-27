@@ -205,7 +205,7 @@ def elevator_inverted(key,entry):
 
 def solve_point(key,entry,speed_kmh,load_g):
     """Full-model state at a clicked position of a stored chart, seeded from the nearest admitted sample."""
-    for label,value,low,high in (('Speed',speed_kmh,50.,MAX_SPEED_KMH),('Load',load_g,1.,64.)):
+    for label,value,low,high in (('Speed',speed_kmh,1.,MAX_SPEED_KMH),('Load',load_g,1.,64.)):
         if not math.isfinite(value) or not low<=value<=high:raise ValueError(f'{label} out of range')
     with LOCK:result=RESULTS.get(key)
     if result is None:raise FileNotFoundError('Result expired')
@@ -239,7 +239,7 @@ def public_point(value):
 
 def solve_altitude_point(key,entry,speed_kmh,altitude_m):
     """Full-model state at a clicked position of a stored altitude envelope."""
-    for label,value,low,high in (('Speed',speed_kmh,50.,MAX_SPEED_KMH),('Altitude',altitude_m,0.,MAX_ALTITUDE_M)):
+    for label,value,low,high in (('Speed',speed_kmh,1.,MAX_SPEED_KMH),('Altitude',altitude_m,0.,MAX_ALTITUDE_M)):
         if not math.isfinite(value) or not low<=value<=high:raise ValueError(f'{label} out of range')
     with LOCK:result=RESULTS.get(key)
     if result is None:raise FileNotFoundError('Result expired')

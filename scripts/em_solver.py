@@ -49,6 +49,9 @@ SOFT_REASONS = frozenset(('engine RPM limit', 'IAS limit', 'flap automatic retra
 # row is at 29 km.
 MAX_ALTITUDE_M = 30000
 MAX_SPEED_KMH = 4000
+# Lowest true airspeed of a chart's speed range (Leo 2026-11-27: no lower bound; it was 100 km/h, above the stall of the
+# slowest aircraft: the Po-2 flies level from 65 km/h). Speeds with no level flight simply hold no states.
+MIN_SPEED_KMH = 0
 DEFAULTS = dict(aircraft=REFERENCE, altitude_m=0., fuel_percent=30., throttle=1.1,
                 manual_engine_controls=False,propeller_pitch_auto=True,propeller_pitch_percent=50.,oil_radiator_percent=0.,radiator_percent=0.,
                 afterburner=True, torque_gyro=False, turn_direction='left', engine_control_mode='quasi_steady', aircraft_trim_mode='discrete', trim_mode='optimized', trim_limit=1., fixed_trim=[0., 0., 0.],
@@ -130,7 +133,7 @@ def settings(values=None):
         if not AIRCRAFT[name]['supported']:raise ValueError(AIRCRAFT[name]['name']+': '+AIRCRAFT[name]['reason'])
     limits={'altitude_m': (0,MAX_ALTITUDE_M), 'fuel_percent': (1,100), 'booster_fuel_percent': (0,100), 'throttle': (0,1.1),
             'propeller_pitch_percent':(0,100),'oil_radiator_percent':(0,100),'radiator_percent':(0,100),
-            'trim_limit': (0,1), 'extra_mass_kg': (0,5000), 'speed_min_kmh': (100,MAX_SPEED_KMH-100),
+            'trim_limit': (0,1), 'extra_mass_kg': (0,5000), 'speed_min_kmh': (MIN_SPEED_KMH,MAX_SPEED_KMH-100),
             'speed_max_kmh': (200,MAX_SPEED_KMH), 'max_load_g': (1.1,20), 'global_load_cap_g': (1.1,64),
             'speed_samples': (7,129), 'load_samples': (5,49), 'timestep_hz': (30,120),
             'sep_tolerance_mps':(.05,5.),'surface_resolution':(201,1201),'sweep_percent':(0,100),'flaps_percent':(0,100)}

@@ -55,8 +55,8 @@ function syncSpeedAxis(){
   $('speed-axis-'+state.speedAxis).checked=true;
   $('speed-range-label').firstChild.textContent=name+' range ';
   $('speed-min').setAttribute('aria-label','Minimum '+name.toLowerCase());$('speed-max').setAttribute('aria-label','Maximum '+name.toLowerCase());
-  // An indicated airspeed below the lowest true airspeed is a valid entry at altitude.
-  $('speed-min').min=ias?10:TAS_LIMITS.min[0];$('speed-max').min=ias?20:TAS_LIMITS.max[0];
+  // The highest speed's own minimum is a true airspeed: a lower indicated airspeed is a valid entry at altitude.
+  $('speed-max').min=ias?10:TAS_LIMITS.max[0];
   fitSpeedSteps();
 }
 function setSpeedAxis(axis){
@@ -768,7 +768,7 @@ function renderChart(){
   const unit=speedUnit(data),place=altitude?'%{x:.0f} km/h · %{y:,.0f} m':`%{x:.0f} km/h${unit} · %{y:.2f}°/s`;
   const showSamples=$('show-samples').checked,showRejected=$('show-rejected').checked;
   // Analytic guides need their own drawing grid; trim columns can be sparse.
-  const guideMin=data.settings.speed_min_kmh,guideMax=data.settings.speed_max_kmh;
+  const guideMin=Math.max(data.settings.speed_min_kmh,1),guideMax=data.settings.speed_max_kmh;
   const guideSpeeds=Array.from({length:1201},(_,i)=>guideMin*Math.pow(guideMax/guideMin,i/1200));
   // Constant-load guides belong to one altitude on the IAS axis: drawn when every shown aircraft shares it.
   const scales=[...new Set(displayed.map(a=>speedScale(a,data)))],guideScale=scales.length===1?scales[0]:null;

@@ -518,7 +518,7 @@ def export_figure(data, path, selected=None, levels=None, format=None):
                     ax.text(px,py,'SEP 0',color=color,fontsize=8,ha='center',va='center',
                             bbox=dict(facecolor='white',edgecolor='none',alpha=.8,pad=.8))
         # Draw the analytic guides independently of the adaptive trim columns.
-        v=np.geomspace(data['settings']['speed_min_kmh'],data['settings']['speed_max_kmh'],1201)
+        v=np.geomspace(max(data['settings']['speed_min_kmh'],1.),data['settings']['speed_max_kmh'],1201)
         for n in [2,4,6,9,12,16]:
             if n>data['plot_max_load_g']:continue
             rate=np.degrees(9.8100004196167*np.sqrt(n*n-1)/(v/3.6))
