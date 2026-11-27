@@ -25,17 +25,29 @@ const speedScale=(a,data)=>iasAxis(data)?iasFactor((a.settings||{...data.setting
 const speedUnit=data=>iasAxis(data)?' IAS':'';
 function speedLimits(data){
   // The calculated speed range in the axis's unit: on the IAS axis, the part every aircraft's chart covers.
-  const lo=data.settings.speed_min_kmh,hi=data.settings.speed_max_kmh;
-  if(!iasAxis(data))return [lo,hi];
-  const k=data.aircraft.map(a=>speedScale(a,data)),shared=[Math.ceil(lo*Math.max(...k)-1e-6),Math.floor(hi*Math.min(...k)+1e-6)];
-  return shared[1]>=shared[0]+100?shared:[lo*Math.min(...k),hi*Math.max(...k)];
+  const range=[data.settings.speed_min_kmh,data.settings.speed_max_kmh];
+  return iasAxis(data)?iasRange(range,data.aircraft.map(a=>speedScale(a,data))):range;
 }
+// A speed range between the two units, in whole km/h, for aircraft with IAS factors k (one per aircraft). The IAS range
+// is the part every aircraft covers; the TAS range is wide enough for every aircraft. A range taken to IAS and back, or
+// the other way, returns to itself wherever rounding allows.
+function iasRange([lo,hi],k){
+  const shared=[Math.ceil(lo*Math.max(...k)-1e-6),Math.floor(hi*Math.min(...k)+1e-6)];
+  return shared[1]>=shared[0]+10?shared:[Math.floor(lo*Math.min(...k)+1e-6),Math.ceil(hi*Math.max(...k)-1e-6)];
+}
+const tasRange=([lo,hi],k)=>[Math.floor(lo/Math.max(...k)+1e-6),Math.ceil(hi/Math.min(...k)-1e-6)];
+const entryFactors=()=>state.entries.length?state.entries.map(e=>iasFactor(state.conditions[e.id]?.altitude_m)):[1];
+// The calculator's own limits on the true airspeed range (the page's fields as they load).
+const TAS_LIMITS={min:[+$('speed-min').min,+$('speed-min').max],max:[+$('speed-max').min,+$('speed-max').max]};
+const clampTas=([lo,hi])=>[Math.min(TAS_LIMITS.min[1],Math.max(TAS_LIMITS.min[0],lo)),Math.min(TAS_LIMITS.max[1],Math.max(TAS_LIMITS.max[0],hi))];
 function requestSpeeds(){
   // The true airspeed range to calculate: on the IAS axis, wide enough for the typed range at every entry's altitude.
-  const lo=+$('speed-min').value,hi=+$('speed-max').value;
-  if(state.tool!=='em'||state.speedAxis!=='ias'||!state.entries.length)return [lo,hi];
-  const k=state.entries.map(e=>iasFactor(state.conditions[e.id]?.altitude_m));
-  return [Math.min(+$('speed-min').max,Math.max(+$('speed-min').min,Math.floor(lo/Math.max(...k)+1e-6))),Math.min(+$('speed-max').max,Math.ceil(hi/Math.min(...k)-1e-6))];
+  const typed=[+$('speed-min').value,+$('speed-max').value];
+  return state.tool==='em'&&state.speedAxis==='ias'?clampTas(tasRange(typed,entryFactors())):typed;
+}
+function fitSpeedSteps(){
+  // Arrow steps of 10 km/h on round values; any whole km/h is accepted (a converted range is rarely round).
+  for(const id of ['speed-min','speed-max']){const field=$(id);field.step=(+field.value%10||+field.min%10)?1:10;}
 }
 function syncSpeedAxis(){
   const ias=state.tool==='em'&&state.speedAxis==='ias',name=ias?'Indicated airspeed':'True airspeed';
@@ -43,6 +55,26 @@ function syncSpeedAxis(){
   $('speed-axis-'+state.speedAxis).checked=true;
   $('speed-range-label').firstChild.textContent=name+' range ';
   $('speed-min').setAttribute('aria-label','Minimum '+name.toLowerCase());$('speed-max').setAttribute('aria-label','Maximum '+name.toLowerCase());
+  // An indicated airspeed below the lowest true airspeed is a valid entry at altitude.
+  $('speed-min').min=ias?10:TAS_LIMITS.min[0];$('speed-max').min=ias?20:TAS_LIMITS.max[0];
+  fitSpeedSteps();
+}
+function setSpeedAxis(axis){
+  // The range fields keep describing the same speeds: converted to the new unit, or put back exactly as they were typed
+  // when the switch is undone. The chart is drawn again from the same result.
+  const from=state.speedAxis,fields=[+$('speed-min').value,+$('speed-max').value],memo=state.speedMemo;
+  if(axis===from)return;
+  if(fields.every(Number.isFinite)&&fields[0]<fields[1]){
+    const next=memo?.axis===axis&&memo.shown[0]===fields[0]&&memo.shown[1]===fields[1]?memo.values:
+      axis==='ias'?iasRange(fields,entryFactors()):clampTas(tasRange(fields,entryFactors()));
+    state.speedMemo={axis:from,values:fields,shown:next};
+    [$('speed-min').value,$('speed-max').value]=next;
+  }
+  state.speedAxis=axis;try{localStorage.setItem(SPEED_AXIS_KEY,axis);}catch{}
+  syncSpeedAxis();
+  // Open details would name their speed in the other unit.
+  state.inspection=(state.inspection||0)+1;$('inspector').hidden=true;
+  if(state.data&&!altitudeChart(state.data))renderChart();
 }
 // Accuracy drives refinement; all presets start with a small speed stencil.
 const quality = {quick:[9,7,1.], standard:[9,9,.5], fine:[9,13,.15]};
@@ -1326,7 +1358,7 @@ function formChanged(e){
   syncLabels();
 }
 $('scenario').addEventListener('input',formChanged);$('scenario').addEventListener('change',formChanged);
-$('reset').addEventListener('click',()=>{populate(state.meta.defaults);[$('speed-min').value,$('speed-max').value]=defaultSpeeds(state.tool);syncLabels();error('');if(altitudeChart(state.data))refreshContours();});
+$('reset').addEventListener('click',()=>{populate(state.meta.defaults);[$('speed-min').value,$('speed-max').value]=defaultSpeeds(state.tool);fitSpeedSteps();syncLabels();error('');if(altitudeChart(state.data))refreshContours();});
 $('cancel').addEventListener('click',async()=>{if(state.activeJob){$('cancel').disabled=true;try{state.jobQueue=[];await api(`/api/jobs/${state.activeJob}/cancel`,{method:'POST'},state.activeVersion);$('progress-label').textContent='Stopping calculation and retaining partial results…';}catch(e){error(e.message);$('cancel').disabled=false;}}});
 $('chart-tabs').addEventListener('click',event=>{
   const button=event.target.closest('[data-view]');if(!button)return;
@@ -1348,14 +1380,8 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
-for(const input of document.querySelectorAll('input[name="speed-axis"]'))input.addEventListener('change',()=>{
-  if(!input.checked)return;
-  state.speedAxis=input.value;try{localStorage.setItem(SPEED_AXIS_KEY,input.value);}catch{}
-  syncSpeedAxis();
-  // The chart is drawn again from the same result; open details would name their speed in the other unit.
-  state.inspection=(state.inspection||0)+1;$('inspector').hidden=true;
-  if(state.data&&!altitudeChart(state.data))renderChart();
-});
+for(const input of document.querySelectorAll('input[name="speed-axis"]'))input.addEventListener('change',()=>{if(input.checked)setSpeedAxis(input.value);});
+for(const id of ['speed-min','speed-max'])$(id).addEventListener('input',fitSpeedSteps);
 // ---- The EM diagram and the altitude envelope on one page -------------------------------------------------------
 // Aircraft cards and their settings are shared; each calculator keeps its own chart, contours, sampling text and details.
 const QUALITY_LABELS={em:{quick:'Preview · 1 m/s / 0.04°/s',standard:'Smooth · 0.5 m/s / 0.02°/s',fine:'Detailed · 0.15 m/s / 0.01°/s'},
