@@ -12,6 +12,38 @@ const state = {data:null, dataJob:null, activeJob:null, view:'compare', meta:nul
 const altitudeChart=data=>data?.kind==='altitude';
 // Each calculator keeps its own speed range; these are where they start (Leo, 2026-10-30: 100-2,500 km/h on this one).
 const defaultSpeeds=tool=>tool==='altitude'?[100,2500]:[state.meta.defaults.speed_min_kmh,state.meta.defaults.speed_max_kmh];
+// The EM diagram's speed axis (Leo, 2026-11-26): true or indicated airspeed. Indicated = true airspeed x sqrt(air density /
+// sea-level density) at the entry's altitude, with the game's density law (control_mixer.density_at_height). Charts are
+// calculated over true airspeed either way; the page converts what it draws, and the speed range it asks for.
+const SPEED_AXIS_KEY='em-speed-axis';
+try{state.speedAxis=localStorage.getItem(SPEED_AXIS_KEY)==='ias'?'ias':'tas';}catch{state.speedAxis='tas';}
+const densityRatio=h=>{const top=18300,x=Math.min(h,top);return ((((2.287190065873038e-19*x-5.83556030646186e-14)*x+3.5311800150594763e-09)*x-9.593870345270261e-05)*x+1)*top/Math.max(h,top);};
+const iasFactor=h=>Math.sqrt(densityRatio(Math.max(0,+h||0)));
+const iasAxis=data=>state.speedAxis==='ias'&&!altitudeChart(data);
+// Axis speed per km/h of true airspeed, for one charted aircraft.
+const speedScale=(a,data)=>iasAxis(data)?iasFactor((a.settings||{...data.settings,...data.settings.aircraft_settings?.[a.id]}).altitude_m):1;
+const speedUnit=data=>iasAxis(data)?' IAS':'';
+function speedLimits(data){
+  // The calculated speed range in the axis's unit: on the IAS axis, the part every aircraft's chart covers.
+  const lo=data.settings.speed_min_kmh,hi=data.settings.speed_max_kmh;
+  if(!iasAxis(data))return [lo,hi];
+  const k=data.aircraft.map(a=>speedScale(a,data)),shared=[Math.ceil(lo*Math.max(...k)-1e-6),Math.floor(hi*Math.min(...k)+1e-6)];
+  return shared[1]>=shared[0]+100?shared:[lo*Math.min(...k),hi*Math.max(...k)];
+}
+function requestSpeeds(){
+  // The true airspeed range to calculate: on the IAS axis, wide enough for the typed range at every entry's altitude.
+  const lo=+$('speed-min').value,hi=+$('speed-max').value;
+  if(state.tool!=='em'||state.speedAxis!=='ias'||!state.entries.length)return [lo,hi];
+  const k=state.entries.map(e=>iasFactor(state.conditions[e.id]?.altitude_m));
+  return [Math.min(+$('speed-min').max,Math.max(+$('speed-min').min,Math.floor(lo/Math.max(...k)+1e-6))),Math.min(+$('speed-max').max,Math.ceil(hi/Math.min(...k)-1e-6))];
+}
+function syncSpeedAxis(){
+  const ias=state.tool==='em'&&state.speedAxis==='ias',name=ias?'Indicated airspeed':'True airspeed';
+  $('speed-axis-field').hidden=state.tool!=='em';
+  $('speed-axis-'+state.speedAxis).checked=true;
+  $('speed-range-label').firstChild.textContent=name+' range ';
+  $('speed-min').setAttribute('aria-label','Minimum '+name.toLowerCase());$('speed-max').setAttribute('aria-label','Maximum '+name.toLowerCase());
+}
 // Accuracy drives refinement; all presets start with a small speed stencil.
 const quality = {quick:[9,7,1.], standard:[9,9,.5], fine:[9,13,.15]};
 const fmt = (v,d=1) => Number.isFinite(v) ? v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}) : '—';
@@ -234,9 +266,10 @@ function addEntry(name,condition,version){
 function readConfig() {
   saveCondition();
   const grid=quality[$('quality').value] || [state.data?.settings.speed_samples||25,state.data?.settings.load_samples||19,state.data?.settings.sep_tolerance_mps||.5];
+  const speeds=requestSpeeds();
   return {...requestConditions(state.meta.defaults),aircraft:[...new Set(state.entries.map(e=>e.aircraft_id))],compare_instructor:false,aircraft_settings:{},
     entries:state.entries.map(e=>({...e,settings:requestConditions(state.conditions[e.id])})),
-    speed_min_kmh:+$('speed-min').value,speed_max_kmh:+$('speed-max').value,max_load_g:null,
+    speed_min_kmh:speeds[0],speed_max_kmh:speeds[1],max_load_g:null,
     speed_samples:grid[0],load_samples:grid[1],sampling:'adaptive',sep_tolerance_mps:grid[2],surface_resolution:601,
     sep_contour_levels_mps:[...state.contourLevels],enable_exports:$('enable-exports').checked,
     ...(state.tool==='altitude'?{altitude_min_m:+$('altitude-min').value,altitude_max_m:+$('altitude-max').value,auto_contours:!state.customContours}:{})};
@@ -525,9 +558,10 @@ function sustainedCurve(aircraft,data){
 }
 function envelopeEnd(aircraft,data){
   // The speed axis ends just past the fastest drawn envelope, within the requested range.
-  const fastest=Math.max(0,...aircraft.flatMap(a=>(a.boundary||[]).map(p=>Number.isFinite(p.speed_kmh)?p.speed_kmh:0)));
-  if(!fastest)return data.settings.speed_max_kmh;
-  return Math.min(data.settings.speed_max_kmh,Math.max(Math.ceil((fastest+40)/50)*50,data.settings.speed_min_kmh+100));
+  const [lo,hi]=speedLimits(data);
+  const fastest=Math.max(0,...aircraft.flatMap(a=>{const k=speedScale(a,data);return (a.boundary||[]).map(p=>Number.isFinite(p.speed_kmh)?p.speed_kmh*k:0);}));
+  if(!fastest)return hi;
+  return Math.min(hi,Math.max(Math.ceil((fastest+40)/50)*50,lo+100));
 }
 function chartYRange(aircraft,data){
   if(!altitudeChart(data))return [0,envelopeTop(aircraft)];
@@ -544,7 +578,7 @@ function contourLabels(displayed,data,view){
   // slanted along its contour. Text is an annotation (rotatable); an invisible marker keeps hover and click.
   const chart=$('chart'),size=chart._fullLayout?._size;
   const width=size?.w||Math.max(300,(chart.clientWidth||1000)-80),height=size?.h||Math.max(200,(chart.clientHeight||700)-54-Math.max(40,(displayed.length+wingKeys(displayed,data).length)*22));
-  const [x0,x1]=view?.x||[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],[y0,y1]=view?.y||chartYRange(displayed,data),cell=6;
+  const [x0,x1]=view?.x||[speedLimits(data)[0],envelopeEnd(displayed,data)],[y0,y1]=view?.y||chartYRange(displayed,data),cell=6;
   const px=(x,y)=>[(x-x0)/(x1-x0)*width,(y1-y)/(y1-y0)*height];
   const lines=new Map(),shown=displayed.filter(a=>!state.hiddenVehicles.has(a.id));
   const mark=(key,xs,ys)=>{
@@ -555,13 +589,16 @@ function contourLabels(displayed,data,view){
         if(!lines.has(c))lines.set(c,new Set());lines.get(c).add(key);}
     }
   };
+  // Lines are laid out where they are drawn: speeds in the axis's unit.
+  const scale=new Map(displayed.map(a=>[a.id,speedScale(a,data)]));
   for(const a of shown){
+    const k=scale.get(a.id),axis=xs=>k===1?xs:xs.map(v=>Number.isFinite(v)?v*k:v);
     const edge=(a.boundary||[]).filter(q=>Number.isFinite(q.speed_kmh)&&Number.isFinite(q.turn_dps));
-    mark(a.id+'|envelope',edge.map(q=>q.speed_kmh),edge.map(q=>q.turn_dps));
-    for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,path.x,path.y);
-    for(const line of a.overrev_lines||[])mark(a.id+'|line',line.speed_kmh,line.turn_dps);
+    mark(a.id+'|envelope',edge.map(q=>q.speed_kmh*k),edge.map(q=>q.turn_dps));
+    for(const path of a.contours)if(state.contourLevels.includes(path.level))mark(a.id+'|'+path.level,axis(path.x),path.y);
+    for(const line of a.overrev_lines||[])mark(a.id+'|line',axis(line.speed_kmh),line.turn_dps);
     // The wing line and the dashed Instructor line (null rates are gaps, skipped by mark).
-    if(!altitudeChart(data))for(const points of [a.wing_line,a.secondary_boundary?.points])if(points?.length)mark(a.id+'|line',points.map(q=>q.speed_kmh),points.map(q=>q.turn_dps));
+    if(!altitudeChart(data))for(const points of [a.wing_line,a.secondary_boundary?.points])if(points?.length)mark(a.id+'|line',points.map(q=>q.speed_kmh*k),points.map(q=>q.turn_dps));
     if(a.best_climb)mark(a.id+'|line',a.best_climb.speed_kmh,a.best_climb.altitude_m);
   }
   const placed=[],inside=(x,y)=>x>=4&&y>=4&&x<=width-4&&y<=height-4;
@@ -575,9 +612,9 @@ function contourLabels(displayed,data,view){
     const text=`SEP ${level>0?'+':''}${level}`,w=text.length*6.6+6,h=15,own=a.id+'|'+level;
     let best=null;
     // Labels sit on the pieces inside the wing line; a level with no room there is labelled past it.
-    const pieces=a.contours.filter(q=>q.level===level&&q.x.length>2);
+    const pieces=a.contours.filter(q=>q.level===level&&q.x.length>2),k=scale.get(a.id);
     for(const past of [false,true])for(const path of best?[]:pieces.filter(q=>!!q.past_wing===past)){
-      const pts=path.x.map((x,i)=>Number.isFinite(x)&&Number.isFinite(path.y[i])?px(x,path.y[i]):null);
+      const pts=path.x.map((x,i)=>Number.isFinite(x)&&Number.isFinite(path.y[i])?px(x*k,path.y[i]):null);
       const along=[0];for(let i=1;i<pts.length;i++)along.push(along[i-1]+(pts[i]&&pts[i-1]?Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]):0));
       const total=along.at(-1);if(total<w*1.5)continue;
       for(let f=.08;f<=.92;f+=.02){
@@ -620,18 +657,19 @@ function relabelContours(){
   Plotly.relayout(chart,{annotations:[...(chart.layout.annotations||[]).filter(item=>!item.sepLabel),...labels.annotations]}).finally(()=>{state.relabeling=false;});
 }
 function projectedContourPoint(event,a,level){
-  return projectedPoint(event,a.contours.filter(path=>path.level===level));
+  return projectedPoint(event,a.contours.filter(path=>path.level===level),speedScale(a,state.data));
 }
-function projectedPoint(event,paths){
-  // The clicked position on the drawn lines, projected in screen coordinates.
+function projectedPoint(event,paths,k=1){
+  // The clicked position on the drawn lines, projected in screen coordinates. Paths and the answer are in true
+  // airspeed; k is the drawn axis speed per km/h of it.
   const chart=$('chart'),rect=chart.getBoundingClientRect(),plot=chart._fullLayout._size;
   const [xmin,xmax]=chart._fullLayout.xaxis.range,[ymin,ymax]=chart._fullLayout.yaxis.range;
   const cursor=[(event.event.clientX-rect.left-plot.l)/plot.w,1-(event.event.clientY-rect.top-plot.t)/plot.h];
   let best=null;
   for(const path of paths)for(let i=1;i<path.x.length;i++){
     if(![path.x[i-1],path.y[i-1],path.x[i],path.y[i]].every(Number.isFinite))continue;
-    const start=[(path.x[i-1]-xmin)/(xmax-xmin),(path.y[i-1]-ymin)/(ymax-ymin)];
-    const end=[(path.x[i]-xmin)/(xmax-xmin),(path.y[i]-ymin)/(ymax-ymin)];
+    const start=[(path.x[i-1]*k-xmin)/(xmax-xmin),(path.y[i-1]-ymin)/(ymax-ymin)];
+    const end=[(path.x[i]*k-xmin)/(xmax-xmin),(path.y[i]-ymin)/(ymax-ymin)];
     const dx=end[0]-start[0],dy=end[1]-start[1],length=dx*dx+dy*dy;
     const t=length?Math.max(0,Math.min(1,((cursor[0]-start[0])*dx+(cursor[1]-start[1])*dy)/length)):0;
     const distance=(cursor[0]-start[0]-t*dx)**2+(cursor[1]-start[1]-t*dy)**2;
@@ -640,19 +678,19 @@ function projectedPoint(event,paths){
   return best;
 }
 function speedBoundaryAnnotations(a,data){
-  const labels=a.speed_boundary_labels||[];
+  const labels=a.speed_boundary_labels||[],k=speedScale(a,data);
   const threshold=data.settings.speed_min_kmh+.75*(data.settings.speed_max_kmh-data.settings.speed_min_kmh);
-  return labels.map(p=>({name:a.id,x:p.speed_kmh,y:p.dashed ? .5 : p.turn_dps,xref:'x',yref:p.dashed?'paper':'y',
+  return labels.map(p=>({name:a.id,x:p.speed_kmh*k,y:p.dashed ? .5 : p.turn_dps,xref:'x',yref:p.dashed?'paper':'y',
     text:escapeText(p.text).replace(/\n/g,'<br>'),textangle:-90,showarrow:false,
     xanchor:p.speed_kmh>threshold?'right':'left',yanchor:'middle',xshift:p.speed_kmh>threshold?-7:7,
     font:{color:a.color,size:12,family:'WTSymbols, Segoe UI, sans-serif'},bgcolor:'rgba(0,0,0,.85)',
     visible:!state.hiddenVehicles.has(a.id),
-    hoverlabel:{bordercolor:a.color},hovertext:`${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh,1)} km/h TAS${p.description?'<br>'+escapeText(p.description):''}`}));
+    hoverlabel:{bordercolor:a.color},hovertext:`${escapeText(p.text).replace(/\n/g,'<br>')}<br>${fmt(p.speed_kmh*k,1)} km/h ${iasAxis(data)?'IAS':'TAS'}${p.description?'<br>'+escapeText(p.description):''}`}));
 }
 function nearestSolved(a,speed,rate,showRejected){
   // Nearest on screen: distances in pixels of the current view.
   const layout=$('chart')._fullLayout,[x0,x1]=layout.xaxis.range,[y0,y1]=layout.yaxis.range;
-  const sx=layout._size.w/(x1-x0),sy=layout._size.h/(y1-y0);
+  const sx=layout._size.w/(x1-x0)*speedScale(a,state.data),sy=layout._size.h/(y1-y0);
   let best=null;
   for(const point of [...a.points,...(a.sustained||[])]){
     if(!chartUsable(point)&&!showRejected)continue;
@@ -667,7 +705,7 @@ async function solveAt(a,position,origin,showRejected){
   const load=Math.hypot(1,(position.speed/3.6)*(position.rate*Math.PI/180)/9.8100004196167);
   const clicked={...origin,speed:position.speed,rate:position.rate};
   $('inspector').hidden=false;
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed,0)} km/h · ${altitude?fmt(position.rate,0)+' m':fmt(position.rate,2)+' °/s'}`;
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(position.speed*speedScale(a,state.data),0)} km/h${speedUnit(state.data)} · ${altitude?fmt(position.rate,0)+' m':fmt(position.rate,2)+' °/s'}`;
   $('point-status').innerHTML='<span class="point-pill">Solving the clicked point…</span>';
   $('point-content').innerHTML='';
   let point;
@@ -695,17 +733,21 @@ function renderChart(){
   if(!state.data)return;
   const data=state.data,displayed=data.aircraft.filter(a=>state.view==='compare'||a.id===state.view),traces=[],altitude=altitudeChart(data);
   // A chart position in the hovers: speed and turn rate, or speed and altitude.
-  const place=altitude?'%{x:.0f} km/h · %{y:,.0f} m':'%{x:.0f} km/h · %{y:.2f}°/s';
+  const unit=speedUnit(data),place=altitude?'%{x:.0f} km/h · %{y:,.0f} m':`%{x:.0f} km/h${unit} · %{y:.2f}°/s`;
   const showSamples=$('show-samples').checked,showRejected=$('show-rejected').checked;
   // Analytic guides need their own drawing grid; trim columns can be sparse.
   const guideMin=data.settings.speed_min_kmh,guideMax=data.settings.speed_max_kmh;
   const guideSpeeds=Array.from({length:1201},(_,i)=>guideMin*Math.pow(guideMax/guideMin,i/1200));
-  for(const n of altitude?[]:[2,4,6,9,12,16]){
+  // Constant-load guides belong to one altitude on the IAS axis: drawn when every shown aircraft shares it.
+  const scales=[...new Set(displayed.map(a=>speedScale(a,data)))],guideScale=scales.length===1?scales[0]:null;
+  for(const n of altitude||guideScale==null?[]:[2,4,6,9,12,16]){
     if(n>(data.plot_max_load_g||data.settings.max_load_g))continue;
-    traces.push({type:'scatter',mode:'lines',x:guideSpeeds,y:guideSpeeds.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
+    traces.push({type:'scatter',mode:'lines',x:guideScale===1?guideSpeeds:guideSpeeds.map(v=>v*guideScale),y:guideSpeeds.map(v=>180/Math.PI*9.8100004196167*Math.sqrt(n*n-1)/(v/3.6)),
       line:{color:'rgba(240,240,250,.12)',width:1,simplify:false},hoverinfo:'skip',showlegend:false});
   }
   for(const a of displayed){
+    // Drawn speeds are in the axis's unit (k per km/h of true airspeed); radii, hovers' other figures and clicks stay in true airspeed.
+    const k=speedScale(a,data),axis=xs=>k===1?xs:xs.map(v=>Number.isFinite(v)?v*k:v),at=v=>Number.isFinite(v)?v*k:v;
     for(const level of [...new Set(a.contours.map(c=>c.level))]){
       if(!state.contourLevels.includes(level))continue;
       if(level===0&&a.sustained?.length>1)continue;
@@ -713,7 +755,7 @@ function renderChart(){
       for(const past of [false,true]){
         const paths=a.contours.filter(c=>c.level===level&&!!c.past_wing===past);if(!paths.length)continue;
         const x=[],y=[],over=[];for(const path of paths){x.push(...path.x,null);y.push(...path.y,null);over.push(...pathOverrev(path),'');}
-        traces.push({type:'scatter',mode:'lines',x,y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+        traces.push({type:'scatter',mode:'lines',x:axis(x),y,name:`${a.name} · SEP ${level}`,meta:{id:a.id,kind:'contour',level},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
           line:{color:rgba(a.color,(level===0?.95:displayed.length===1?.75:.46)*(past?.55:1)),width:level===0?3.6:2.2,dash:past?'dot':'dash'},
           text:altitude?undefined:x.map((v,i)=>turnRadius(v,y[i])),customdata:over,
           hovertemplate:`SEP ${level>0?'+':''}${level} m/s<br>${place}${altitude?'':'<br>Turn radius %{text}'}%{customdata}${past?'<br>Past the wing line':''}<extra></extra>`,showlegend:false});
@@ -724,20 +766,20 @@ function renderChart(){
       // Where over-rev starts (RPM = RPMMaxAllowed); the higher-speed side over-revs. Amber dots, apart from contours and jumps.
       const stop=new Map((line.stop_after_s||[]).map(([over,seconds])=>[over,seconds]));
       const quits=stop.has(0)?`<br>Engine quits after about ${fmt(stop.get(0),0)} s just over${stop.has(5)?`, ${fmt(stop.get(5),0)} s at 5% over`:''}`:'';
-      traces.push({type:'scatter',mode:'lines',x:line.speed_kmh,y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
+      traces.push({type:'scatter',mode:'lines',x:axis(line.speed_kmh),y:line.turn_dps,name:`${a.name} · over-rev`,meta:{id:a.id,kind:'overrev'},legendgroup:a.id,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         // Approximate kinds (jump links, column crossings: traced false) are drawn fainter than traced lines.
         line:{color:line.traced===false?'rgba(246,190,109,.5)':'rgba(246,190,109,.95)',width:line.traced===false?2:2.6,dash:'dot'},showlegend:false,
         hovertemplate:`Over-rev starts${line.engine!=null&&a.overrev_lines.some(other=>other.engine!==line.engine)?' · engine '+(line.engine+1):''} · RPM ${fmt(line.rpm_limit,0)}${quits}${line.traced===false?'<br>Approximate line':''}<br>${place}<extra></extra>`});
     }
-    traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>p.speed_kmh),y:a.boundary.map(p=>p.turn_dps),
+    traces.push({type:'scatter',mode:'lines',x:a.boundary.map(p=>at(p.speed_kmh)),y:a.boundary.map(p=>p.turn_dps),
       name:legendName(a.name)+(a.version_label?' · '+a.version_label:''),meta:{id:a.id,kind:'boundary'},legendgroup:a.id,showlegend:true,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,cliponaxis:false,line:{color:rgba(a.color,.95),width:2.8,dash:'solid'},
       customdata:a.boundary.map(p=>[Number.isFinite(p.alpha_deg)?fmt(p.alpha_deg,2)+'°':'—',turnRadius(p.speed_kmh,p.turn_dps),p.at_plot_ceiling?'Search limit; aircraft limit not established':p.limit_label||p.edge_kind||'Calculated envelope; limit unavailable in this saved result',overrevText(p.percent_over,p.overrev_s)+wingOverText(p.wing_break_s)]),
-      hovertemplate:altitude?`%{customdata[2]}<br>AoA %{customdata[0]}<br>Altitude %{y:,.0f} m<br>Speed %{x:.0f} km/h<extra></extra>`:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[3]}<extra></extra>`});
+      hovertemplate:altitude?`%{customdata[2]}<br>AoA %{customdata[0]}<br>Altitude %{y:,.0f} m<br>Speed %{x:.0f} km/h<extra></extra>`:`%{customdata[2]}<br>AoA %{customdata[0]}<br>Radius %{customdata[1]}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h${unit}%{customdata[3]}<extra></extra>`});
     if(!altitude&&a.wing_line?.length){
       // Where the wing reaches its breaking load (wing load ratio 1), red for every aircraft; gaps are null rates. The
       // hover gives the time to break when the load above it, at the envelope, is held. Four customdata entries: the
       // click handler reads arrays of three as stored samples.
-      traces.push({type:'scatter',mode:'lines',x:a.wing_line.map(p=>p.speed_kmh),y:a.wing_line.map(p=>p.turn_dps??null),
+      traces.push({type:'scatter',mode:'lines',x:a.wing_line.map(p=>at(p.speed_kmh)),y:a.wing_line.map(p=>p.turn_dps??null),
         name:`${a.name} · wing breaks`,meta:{id:a.id,kind:'wing'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:WING_RED,width:2.4,dash:'solid'},
         customdata:a.wing_line.map(p=>[fmt(p.load_g,2),turnRadius(p.speed_kmh,p.turn_dps),Number.isFinite(p.break_s_at_boundary)?`<br>Held at the envelope above: breaks after about ${breakText(p.break_s_at_boundary)}`:'',0]),
         hovertemplate:`Wing breaks (wing load)<br>%{customdata[0]} g · radius %{customdata[1]}<br>${place}%{customdata[2]}<extra></extra>`});
@@ -745,20 +787,20 @@ function renderChart(){
     if(!altitude&&a.secondary_boundary?.points?.length){
       // The Instructor's other wing-protection state (held or released), long dashes in the aircraft's colour.
       const other=a.secondary_boundary;
-      traces.push({type:'scatter',mode:'lines',x:other.points.map(p=>p.speed_kmh),y:other.points.map(p=>p.turn_dps??null),
+      traces.push({type:'scatter',mode:'lines',x:other.points.map(p=>at(p.speed_kmh)),y:other.points.map(p=>p.turn_dps??null),
         name:`${a.name} · ${other.label}`,meta:{id:a.id,kind:'secondary'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:rgba(a.color,.95),width:2.4,dash:'longdash'},
         customdata:other.points.map(p=>[wingOverText(p.wing_break_s),0]),
-        hovertemplate:`${escapeText(other.label)}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h%{customdata[0]}<extra></extra>`});
+        hovertemplate:`${escapeText(other.label)}<br>Rate %{y:.2f}°/s<br>Speed %{x:.0f} km/h${unit}%{customdata[0]}<extra></extra>`});
     }
     if(altitude&&a.best_climb?.speed_kmh.length)traces.push({type:'scatter',mode:'lines',x:a.best_climb.speed_kmh,y:a.best_climb.altitude_m,name:`${a.name} · best climb`,meta:{id:a.id,kind:'best-climb'},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
       line:{color:rgba(a.color,.8),width:1.6,dash:'dot'},customdata:a.best_climb.ps_mps,hovertemplate:`Best climb speed<br>SEP %{customdata:.1f} m/s<br>${place}<extra></extra>`});
     if(showRejected&&a.numerical_boundaries?.length){
-      traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>p.speed_kmh),y:a.numerical_boundaries.map(p=>p.turn_dps),
+      traces.push({type:'scatter',mode:'markers',x:a.numerical_boundaries.map(p=>at(p.speed_kmh)),y:a.numerical_boundaries.map(p=>p.turn_dps),
         name:a.name+' unresolved boundary',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,marker:{size:8,symbol:'x',color:'#f6be6d'},
         hovertemplate:'Unresolved numerical boundary<br>Highest verified interior point; aircraft limit not established<extra></extra>'});
     }
     if(showRejected&&a.numerical_gaps?.length){
-      traces.push({type:'scatter',mode:'markers',x:a.numerical_gaps.map(p=>p.speed_kmh),y:a.numerical_gaps.map(p=>p.turn_dps),
+      traces.push({type:'scatter',mode:'markers',x:a.numerical_gaps.map(p=>at(p.speed_kmh)),y:a.numerical_gaps.map(p=>p.turn_dps),
         customdata:a.numerical_gaps.map(p=>p.valid_side_loads),name:a.name+' equilibrium gaps',meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         marker:{size:7,symbol:'circle-open',color:'#f6be6d',line:{width:1.5}},
         hovertemplate:'Unresolved local equilibrium<br>Valid solutions bracket %{customdata[0]:.5f}–%{customdata[1]:.5f} g<br>This narrow interval remains masked<extra></extra>'});
@@ -766,23 +808,23 @@ function renderChart(){
     if(state.contourLevels.includes(0)&&a.sustained?.length){
       const roots=new Map(a.sustained.map((p,i)=>[p.speed_kmh,{p,i}]));
       const curve=sustainedCurve(a,data);
-      traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:curve?.x||data.speeds_kmh,y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
+      traces.push({type:'scatter',mode:curve?'lines':'lines+markers',x:axis(curve?.x||data.speeds_kmh),y:curve?.y||data.speeds_kmh.map(v=>roots.get(v)?.p.turn_dps??null),
         name:a.name+' SEP 0',meta:{id:a.id,kind:'contour',level:0},legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,connectgaps:false,line:{color:a.color,width:4,dash:'dash'},marker:{size:4,color:a.color},
         customdata:curve?null:data.speeds_kmh.map(v=>roots.has(v)?[a.id,'root',roots.get(v).i]:null),
         text:(curve?.x||data.speeds_kmh).map((v,i)=>{const rate=curve?curve.y[i]:roots.get(v)?.p.turn_dps;return turnRadius(v,rate)+(curve?.overrev?.[i]||'');}),
-        hovertemplate:`${data.preview?'Preview · ':''}SEP 0 m/s<br>%{x:.0f} km/h · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
+        hovertemplate:`${data.preview?'Preview · ':''}SEP 0 m/s<br>%{x:.0f} km/h${unit} · %{y:.2f}°/s<br>Turn radius %{text}<extra></extra>`});
     }
     const valid=a.points.map((p,i)=>({p,i})).filter(r=>chartUsable(r.p));
-    if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>r.p.speed_kmh),y:valid.map(r=>r.p.turn_dps),
+    if(showSamples)traces.push({type:'scatter',mode:'markers',x:valid.map(r=>at(r.p.speed_kmh)),y:valid.map(r=>r.p.turn_dps),
       marker:{size:showSamples?5:9,color:showSamples?rgba(a.color,.5):'rgba(0,0,0,0)'},name:a.name,meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
       customdata:valid.map(r=>[a.id,'grid',r.i]),text:valid.map(r=>`${fmt(r.p.load_g,2)} g<br>SEP ${fmt(r.p.ps_mps,1)} m/s`),
       hovertemplate:`%{text}<br>${place}<extra></extra>`});
     if(showRejected){
       const rejected=a.points.map((p,i)=>({p,i})).filter(r=>!chartUsable(r.p));
-      traces.push({type:'scatter',mode:'markers',x:rejected.map(r=>r.p.speed_kmh),y:rejected.map(r=>r.p.turn_dps),
+      traces.push({type:'scatter',mode:'markers',x:rejected.map(r=>at(r.p.speed_kmh)),y:rejected.map(r=>r.p.turn_dps),
         marker:{size:5,symbol:'x',color:rgba(a.color,.33)},name:a.name+((data.stationary_full_chart||data.stationary_baseline_chart)?' unresolved':' rejected'),meta:a.id,legendgroup:a.id,showlegend:false,visible:state.hiddenVehicles.has(a.id)?'legendonly':true,
         customdata:rejected.map(r=>[a.id,'grid',r.i]),text:rejected.map(r=>((data.stationary_full_chart||data.stationary_baseline_chart)?[r.p.chart_status,...r.p.reasons]:r.p.reasons).filter(Boolean).join(', ')),
-        hovertemplate:`${(data.stationary_full_chart||data.stationary_baseline_chart)?'Unresolved':'Rejected'}<br>%{text}<br>%{x:.0f} km/h · %{y:.2f}°/s<extra></extra>`});
+        hovertemplate:`${(data.stationary_full_chart||data.stationary_baseline_chart)?'Unresolved':'Rejected'}<br>%{text}<br>%{x:.0f} km/h${unit} · %{y:.2f}°/s<extra></extra>`});
     }
   }
   // Legend keys without a group: one for the wing line, one per dashed Instructor label (a legend click ignores them).
@@ -793,17 +835,17 @@ function renderChart(){
   for(const trace of traces){const owner=displayed.find(a=>a.id===trace.legendgroup);if(owner)trace.hoverlabel={...trace.hoverlabel,bordercolor:owner.color};}
   const [ymin,ymax]=chartYRange(displayed,data);
   // Grid every 100 km/h and 1,000 m as before; the wider ranges allowed since 2026.11.14.1 (up to 4,000 km/h and 30,000 m) every 200 km/h and 2,000 m.
-  const xTick=envelopeEnd(displayed,data)-data.settings.speed_min_kmh>2700?200:100;
+  const xRange=[speedLimits(data)[0],envelopeEnd(displayed,data)],xTick=xRange[1]-xRange[0]>2700?200:100;
   const layout={paper_bgcolor:'#000',plot_bgcolor:'#000',font:{family:'WTSymbols, D-DIN, Bahnschrift, DIN Alternate, Segoe UI, sans-serif',color:'#b9b9c4',size:12},
     annotations:[...displayed.flatMap(a=>speedBoundaryAnnotations(a,data)),...sepLabels.annotations],
     shapes:displayed.flatMap(a=>(a.speed_boundary_labels||[]).filter(p=>p.dashed).map(p=>({
-      name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh,x1:p.speed_kmh,y0:0,y1:1,
+      name:a.id,type:'line',xref:'x',yref:'paper',x0:p.speed_kmh*speedScale(a,data),x1:p.speed_kmh*speedScale(a,data),y0:0,y1:1,
       line:{color:rgba(a.color,.7),width:1.4,dash:'dash'},visible:!state.hiddenVehicles.has(a.id)}))),
     margin:{l:58,r:22,t:Math.max(40,(displayed.length+keys.length)*22),b:54},hovermode:'closest',hoverlabel:{bgcolor:'#0c0c0f',bordercolor:'rgba(240,240,250,.35)',font:{color:'#f4f4fc',size:12}},
-    xaxis:{title:{text:'True airspeed (km/h)',standoff:8,font:{size:13}},range:[data.settings.speed_min_kmh,envelopeEnd(displayed,data)],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:xTick,tickfont:{size:12},constrain:'domain'},
+    xaxis:{title:{text:iasAxis(data)?'Indicated airspeed (km/h)':'True airspeed (km/h)',standoff:8,font:{size:13}},range:xRange,gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:xTick,tickfont:{size:12},constrain:'domain'},
     yaxis:{title:{text:altitude?'Altitude (m)':'Turn rate (°/s)',standoff:8,font:{size:13}},range:[ymin,ymax],gridcolor:'rgba(240,240,250,.09)',zeroline:false,dtick:altitude?(ymax-ymin>20000?2000:1000):5,tickformat:altitude?',d':undefined,tickfont:{size:12}},
     legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12},bgcolor:'rgba(0,0,0,0)',traceorder:'normal',groupclick:'togglegroup',itemdoubleclick:false},
-    uirevision:state.dataJob+'-'+state.view+'-'+showRejected,dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
+    uirevision:state.dataJob+'-'+state.view+'-'+showRejected+(iasAxis(data)?'-ias':''),dragmode:'pan',modebar:{bgcolor:'rgba(0,0,0,0)',color:'#8a8a96',activecolor:'#f0f0fa'}};
   if(!$('chart').classList.contains('js-plotly-plot'))$('chart').innerHTML='';
   Plotly.react('chart',traces,layout,{responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToRemove:['select2d','lasso2d'],
     // Downloads sit in the chart's own toolbar: Plotly's PNG of the current view, then the result's data files.
@@ -841,14 +883,14 @@ function renderChart(){
     }
     if(p.data.meta?.kind==='boundary'){
       const a=data.aircraft.find(a=>a.id===p.data.meta.id);
-      const position=a&&projectedPoint(event,[{x:a.boundary.map(q=>q.speed_kmh),y:a.boundary.map(q=>q.turn_dps)}]);
+      const position=a&&projectedPoint(event,[{x:a.boundary.map(q=>q.speed_kmh),y:a.boundary.map(q=>q.turn_dps)}],speedScale(a,data));
       if(position)return solveAt(a,position,{boundary:true},showRejected);
     }
     if(p.data.meta?.kind==='wing'){
       // The wing line is solved where it is clicked; the dashed Instructor line falls to the nearest sample below
       // (the point solver runs the chart's main Instructor state).
       const a=data.aircraft.find(a=>a.id===p.data.meta.id);
-      const position=a&&projectedPoint(event,[{x:a.wing_line.map(q=>q.speed_kmh),y:a.wing_line.map(q=>q.turn_dps)}]);
+      const position=a&&projectedPoint(event,[{x:a.wing_line.map(q=>q.speed_kmh),y:a.wing_line.map(q=>q.turn_dps)}],speedScale(a,data));
       if(position)return solveAt(a,position,{wing:true},showRejected);
     }
     if(altitude){
@@ -863,7 +905,7 @@ function renderChart(){
     const candidates=displayed.filter(a=>!p.data.meta||a.id===(p.data.meta.id||p.data.meta));let best=null;
     for(const a of candidates)for(const point of a.points){
       if(!chartUsable(point)&&!showRejected)continue;
-      const d=((point.speed_kmh-p.x)/(data.settings.speed_max_kmh-data.settings.speed_min_kmh))**2+((point.turn_dps-p.y)/ymax)**2;
+      const d=((point.speed_kmh-p.x/speedScale(a,data))/(data.settings.speed_max_kmh-data.settings.speed_min_kmh))**2+((point.turn_dps-p.y)/ymax)**2;
       if(!best||d<best.d)best={a,point,d};
     }
     if(best)inspect(best.a,best.point);
@@ -917,10 +959,11 @@ async function inspect(a,p,clicked){
   if(sequence!==state.inspection)return;
   $('inspector').hidden=false;
   const altitude=altitudeChart(state.data);
-  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh,0)} km/h · ${altitude?fmt(p.altitude_m,0)+' m':fmt(p.turn_dps,2)+' °/s'}`;
+  const k=speedScale(a,state.data),unit=speedUnit(state.data);
+  $('point-title').textContent=`${cleanName(a.name)} · ${fmt(p.speed_kmh*k,0)} km/h${unit} · ${altitude?fmt(p.altitude_m,0)+' m':fmt(p.turn_dps,2)+' °/s'}`;
   // Only exceptions get a status tag; a normal solved point needs none (Leo, 2026-10-26).
   $('point-status').innerHTML=clicked?.nearest||!chartUsable(p)?`<span class="point-pill ${chartUsable(p)?'':'rejected'}">${clicked?.nearest?'Nearest solved point':p.status==='unresolved'?'Unresolved':'Rejected'}</span>`:'';
-  const where=clicked&&`${clicked.boundary?'the envelope':clicked.wing?'the wing line':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed,1)} km/h · ${fmt(clicked.rate,2)} °/s`;
+  const where=clicked&&`${clicked.boundary?'the envelope':clicked.wing?'the wing line':`the SEP ${clicked.level>0?'+':''}${clicked.level} m/s contour`} at ${fmt(clicked.speed*k,1)} km/h${unit} · ${fmt(clicked.rate,2)} °/s`;
   const note=clicked?.nearest?`<div class="point-note">Clicked ${where}. The details are for the nearest solved point; this server cannot solve the clicked point.</div>`:'';
   // A third row entry hides that row on the page; it stays in the markup (Leo, 2026-10-23).
   const dl=rows=>'<dl>'+rows.map(([k,v,hide])=>`<dt${hide?' hidden':''}>${k}</dt><dd${hide?' hidden':''}>${v}</dd>`).join('')+'</dl>';
@@ -946,7 +989,7 @@ async function inspect(a,p,clicked){
     ['Aircraft model',aircraftModelLabel(p),true],
     ['Model experiment',experimentLabel(p),true],
     ...(altitude?[['Altitude',fmt(p.altitude_m,0)+' m']]:[['Turn rate',fmt(p.turn_dps,3)+' °/s'],['Turn radius',turnRadius(p.speed_kmh,p.turn_dps)]]),
-    ['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],...liftDrag(p),
+    ...(unit?[['True airspeed',fmt(p.speed_kmh,0)+' km/h']]:[]),['Longitudinal IAS',fmt(p.ias_kmh,0)+' km/h'],['Mach',fmt(p.mach,3)],...liftDrag(p),
     ...(wingBreak!=null?[['Wing load',`${fmt(wingRatio*100,1)}% of the breaking load · breaks after about ${breakText(wingBreak)}`]]:[])])}${section('ATTITUDE & CONTROLS',[
     ['Angle of attack',fmt(p.alpha_deg,3)+'°'],['Angle of sideslip',sideslip(p)],...(altitude?[]:[['Bank',fmt(p.bank_deg,3)+'° '+(resultConditions(a).turn_direction==='right'?'right':'left')]]),...controlDeflections(p),
     ...(p.sweep_percent==null?[]:[['Fixed wing sweep',fmt(p.sweep_percent,0)+'%'],['Available sweep',p.sweep_available_percent.map(x=>fmt(x,1)).join('–')+'%']])])}${section('ENGINE',engine)}<div hidden><h3>LIMITS & CONVERGENCE</h3>${dl([
@@ -1305,13 +1348,21 @@ $('contour-add').addEventListener('click',()=>{
 });
 $('contour-input').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();$('contour-add').click();}});
 for(const id of ['show-samples','show-rejected'])$(id).addEventListener('change',renderChart);
+for(const input of document.querySelectorAll('input[name="speed-axis"]'))input.addEventListener('change',()=>{
+  if(!input.checked)return;
+  state.speedAxis=input.value;try{localStorage.setItem(SPEED_AXIS_KEY,input.value);}catch{}
+  syncSpeedAxis();
+  // The chart is drawn again from the same result; open details would name their speed in the other unit.
+  state.inspection=(state.inspection||0)+1;$('inspector').hidden=true;
+  if(state.data&&!altitudeChart(state.data))renderChart();
+});
 // ---- The EM diagram and the altitude envelope on one page -------------------------------------------------------
 // Aircraft cards and their settings are shared; each calculator keeps its own chart, contours, sampling text and details.
 const QUALITY_LABELS={em:{quick:'Preview · 1 m/s / 0.04°/s',standard:'Smooth · 0.5 m/s / 0.02°/s',fine:'Detailed · 0.15 m/s / 0.01°/s'},
   altitude:{quick:'Preview · 1 m/s',standard:'Smooth · 0.5 m/s',fine:'Detailed · 0.15 m/s'}};
 function showToolFields(){
   const altitude=state.tool==='altitude';
-  $('altitude-range').hidden=!altitude;$('altitude-field').hidden=altitude;
+  $('altitude-range').hidden=!altitude;$('altitude-field').hidden=altitude;syncSpeedAxis();
   for(const option of $('quality').options)if(QUALITY_LABELS[state.tool][option.value])option.textContent=QUALITY_LABELS[state.tool][option.value];
   $('chart').setAttribute('aria-label',altitude?'Altitude envelope':'Energy maneuverability diagram');
   showCondition(state.editing);
@@ -1376,7 +1427,7 @@ document.querySelectorAll('[data-export]').forEach(a=>a.addEventListener('click'
   [state.meta]=await Promise.all([defaultMeta||api('/api/meta?refresh=1'),document.fonts?.load('14px WTSymbols','▄').catch(()=>[])]);
   $('calculate').disabled=false;
   state.meta.defaults=requestConditions({...state.meta.defaults,default_ammunition:true,aircraft:[]});
-  populateAircraft();populate(state.meta.defaults);addDevAircraft();
+  populateAircraft();populate(state.meta.defaults);addDevAircraft();syncSpeedAxis();
   if(state.meta.game_data?.version)$('runtime-footer').textContent='Game data '+state.meta.game_data.version;
   if(state.meta.public_static){
     $('hosting-notice').hidden=false;
